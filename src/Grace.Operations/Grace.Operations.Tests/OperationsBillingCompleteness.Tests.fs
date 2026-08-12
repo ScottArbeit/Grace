@@ -1,13 +1,16 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Operations.Worker
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Data.SqlClient
+open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.Data
 open System.Text.Json
 open System.Threading
@@ -71,6 +74,22 @@ type private ObservedOperationsUsageTransactionScope
                         operationCancellationToken),
                 cancellationToken
             )
+
+/// Observes that rejection evidence is committed before a worker asks Service Bus to terminally settle its message.
+type private InspectingUsageMessageActions(events: List<string>, beforeDeadLetterAsync: unit -> Task) =
+
+    interface IOperationsUsageMessageActions with
+
+        member _.CompleteAsync(_cancellationToken) = Task.CompletedTask
+
+        member _.AbandonAsync(_cancellationToken) = Task.CompletedTask
+
+        member _.DeadLetterAsync(_reason, _description, _cancellationToken) =
+            task {
+                do! beforeDeadLetterAsync ()
+                events.Add("dead-letter")
+            }
+            :> Task
 
 /// Proves the owner-month completeness coordination boundary against isolated real SQL Server databases.
 [<TestFixture>]
@@ -147,6 +166,21 @@ type OperationsBillingCompletenessTests() =
 
     /// Serializes a UsageFact payload exactly as the production Operations storage boundary receives it.
     let payloadFor usageFact = JsonSerializer.SerializeToUtf8Bytes(usageFact, Constants.JsonSerializerOptions)
+
+    /// Creates the supported worker envelope used by production-adapter ingestion proofs.
+    let workerMessage usageFact =
+        let properties = Dictionary<string, obj>()
+        properties[OperationalFactEnvelope.UsageFactMessageTypeProperty] <- box OperationalFactEnvelope.UsageFactMessageType
+        properties[OperationalFactEnvelope.UsageFactKindProperty] <- box "RepositoryStorageBytesMinute"
+
+        {
+            MessageId = $"billing-completeness-{usageFact.UsageFactId}"
+            CorrelationId = "billing-completeness-worker"
+            DeliveryCount = 1
+            Subject = OperationalFactEnvelope.UsageFactSubject
+            ApplicationProperties = properties :> IReadOnlyDictionary<string, obj>
+            Body = payloadFor usageFact
+        }
 
     /// Derives a validated owner-month scope or fails the test with contract details.
     let scopeFor ownerId organizationId repositoryId observedAt =
@@ -786,6 +820,83 @@ VALUES
                 Assert.That(unscopedRecorded.IsOk, Is.True)
                 let! stillComplete = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
                 Assert.That(stillComplete, Is.EqualTo(Complete))
+            })
+
+    /// Proves the production worker records a SQL-shape rejection before dead-lettering, blocks only that scope, and accepts replay repair.
+    [<Test>]
+    member _.WorkerAdapterRecordsSqlShapeRejectionBeforeDeadLetterAndCorrectedAcceptanceRepairsCompleteness() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let usageFactId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let unrelatedScope = scopeFor ownerId organizationId (Guid.NewGuid()) observedAt
+
+                let rejectedFact =
+                    UsageFact.RepositoryStorageBytesMinute(
+                        usageFactId,
+                        CorrelationId(String('c', OperationsUsageSql.CorrelationIdMaxLength + 1)),
+                        ownerId,
+                        organizationId,
+                        repositoryId,
+                        StoragePoolId(String('s', OperationsUsageSql.StoragePoolIdMaxLength + 1)),
+                        4096L,
+                        observedAt
+                    )
+
+                let repairedFact = fact usageFactId ownerId organizationId repositoryId observedAt
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let processor =
+                    OperationsUsageIngestionProcessor(
+                        OperationsUsageFactStoreAdapter(store),
+                        NullLogger<OperationsUsageIngestionProcessor>
+                            .Instance
+                    )
+
+                let events = List<string>()
+                let mutable completenessAtDeadLetter = None
+                let mutable unrelatedCompletenessAtDeadLetter = None
+                let mutable activeRejectionCountAtDeadLetter = None
+
+                let beforeDeadLetterAsync () =
+                    task {
+                        let! scopedCompleteness = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+                        let! unrelatedCompleteness = store.EvaluateBillingCompletenessAsync(unrelatedScope, CancellationToken.None)
+                        let! activeRejectionCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageFactRejection WHERE IsActive = 1;"
+                        completenessAtDeadLetter <- Some scopedCompleteness
+                        unrelatedCompletenessAtDeadLetter <- Some unrelatedCompleteness
+                        activeRejectionCountAtDeadLetter <- Some activeRejectionCount
+                    }
+                    :> Task
+
+                let actions = InspectingUsageMessageActions(events, beforeDeadLetterAsync)
+                do! processor.ProcessMessageAsync(workerMessage rejectedFact, actions, CancellationToken.None)
+
+                let! repaired = store.StoreUsageFactAsync(repairedFact, payloadFor repairedFact, CancellationToken.None)
+                let! completenessAfterRepair = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+                let! activeRejectionCountAfterRepair = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageFactRejection WHERE IsActive = 1;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(String.Join("|", events), Is.EqualTo("dead-letter"))
+                        Assert.That(completenessAtDeadLetter, Is.EqualTo(Some BlockedByActiveScopedRejection))
+                        Assert.That(unrelatedCompletenessAtDeadLetter, Is.EqualTo(Some Complete))
+                        Assert.That(activeRejectionCountAtDeadLetter, Is.EqualTo(Some 1))
+                        Assert.That(repaired.IsOk, Is.True)
+
+                        Assert.That(
+                            repaired
+                            |> Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted),
+                            Is.True
+                        )
+
+                        Assert.That(completenessAfterRepair, Is.EqualTo(Complete))
+                        Assert.That(activeRejectionCountAfterRepair, Is.Zero))
+                )
             })
 
     /// Proves the first instant of the next UTC month derives a different scope and lock identity from the prior month.

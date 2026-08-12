@@ -8,6 +8,7 @@ open Azure.Storage.Blobs
 open Grace.Operations.Data
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Data.SqlClient
 open Microsoft.Extensions.Configuration
@@ -82,12 +83,18 @@ type IOperationsUsageFactStore =
     abstract StoreUsageFactAsync:
         fact: UsageFact * rawPayload: byte array * cancellationToken: CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>
 
+    /// Persists complete scope blockers or partial operator evidence before the worker terminally rejects parsed input.
+    abstract RecordUsageFactRejectionAsync:
+        rejection: UsageFactRejection * cancellationToken: CancellationToken -> Task<Result<UsageFactRejection option, string list>>
+
 /// Adapts the concrete operations data store to the worker's fakeable ingestion dependency.
 type OperationsUsageFactStoreAdapter(store: OperationsUsageStore) =
 
     interface IOperationsUsageFactStore with
 
         member _.StoreUsageFactAsync(fact, rawPayload, cancellationToken) = store.StoreUsageFactAsync(fact, rawPayload, cancellationToken)
+
+        member _.RecordUsageFactRejectionAsync(rejection, cancellationToken) = store.RecordUsageFactRejectionAsync(rejection, cancellationToken)
 
 /// Carries deterministic compressed JSONL bytes and the Blob authority they must verify against.
 type OperationsUsageArchiveBlob = { Pointer: RawUsageFactArchivePointer; Content: byte array }
@@ -1748,6 +1755,95 @@ type OperationsUsageIngestionProcessor
     /// Builds the deterministic unsupported-schema description used for settlement and readiness.
     let unsupportedSchemaDescription schemaVersion = $"UsageFact SchemaVersion '{schemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'."
 
+    /// Bounds durable rejection diagnostics to the Operations SQL contract without recording untrusted payload bytes.
+    let rejectionReason (errors: string list) =
+        let prefix = "Worker rejected UsageFact: "
+
+        let maximumDetailLength =
+            OperationsUsageSql.ArchiveFailureReasonMaxLength
+            - prefix.Length
+
+        let detail = describeErrors errors
+
+        if detail.Length <= maximumDetailLength then
+            prefix + detail
+        else
+            prefix + detail.Substring(0, maximumDetailLength)
+
+    /// Creates canonical completeness evidence when a parsed fact has a stable full tuple, otherwise retains usable partial operator evidence.
+    let tryCreateUsageFactRejection (usageFact: UsageFact) errors =
+        let usageFactId = usageFact.UsageFactId
+
+        let reportedScope =
+            {
+                OwnerId =
+                    if usageFact.Scope.OwnerId = OwnerId.Empty then
+                        None
+                    else
+                        Some usageFact.Scope.OwnerId
+                OrganizationId =
+                    if usageFact.Scope.OrganizationId = OrganizationId.Empty then
+                        None
+                    else
+                        Some usageFact.Scope.OrganizationId
+                RepositoryId =
+                    if usageFact.Scope.RepositoryId = RepositoryId.Empty then
+                        None
+                    else
+                        Some usageFact.Scope.RepositoryId
+                ObservedAt = Some usageFact.ObservedAt
+            }
+
+        match BillingCompletenessScope.tryCreate usageFact.Scope.OwnerId usageFact.Scope.OrganizationId usageFact.Scope.RepositoryId usageFact.ObservedAt with
+        | Ok scope when usageFactId <> UsageFactId.Empty ->
+            Some
+                {
+                    RejectionId = Guid.NewGuid()
+                    UsageFactId = Some usageFactId
+                    Scope = Some scope
+                    ReportedScope = None
+                    Reason = rejectionReason errors
+                    IsActive = true
+                }
+        | Error _
+        | Ok _ ->
+            let hasReportedIdentity =
+                reportedScope.OwnerId.IsSome
+                || reportedScope.OrganizationId.IsSome
+                || reportedScope.RepositoryId.IsSome
+
+            let isCompleteReportedScope =
+                reportedScope.OwnerId.IsSome
+                && reportedScope.OrganizationId.IsSome
+                && reportedScope.RepositoryId.IsSome
+                && reportedScope.ObservedAt.IsSome
+
+            if hasReportedIdentity && not isCompleteReportedScope then
+                Some
+                    {
+                        RejectionId = Guid.NewGuid()
+                        UsageFactId = if usageFactId = UsageFactId.Empty then None else Some usageFactId
+                        Scope = None
+                        ReportedScope = Some reportedScope
+                        Reason = rejectionReason errors
+                        IsActive = true
+                    }
+            else
+                None
+
+    /// Records parsed rejection evidence before terminal settlement and fails the processing attempt when the durable record is unavailable.
+    let recordUsageFactRejectionAsync (usageFact: UsageFact) errors cancellationToken =
+        task {
+            match tryCreateUsageFactRejection usageFact errors with
+            | Some rejection ->
+                let! recorded = store.RecordUsageFactRejectionAsync(rejection, cancellationToken)
+
+                match recorded with
+                | Ok _ -> return ()
+                | Error recordErrors -> return invalidOp $"UsageFact rejection evidence could not be recorded: {describeErrors recordErrors}"
+            | None -> return invalidOp "UsageFact rejection cannot be terminally settled because it supplied no recordable stable or partial identity."
+        }
+
     /// Records unsupported schema readiness and dead-letters without exposing the message body.
     let deadLetterUnsupportedSchemaAsync readinessAttempt schemaVersion (message: OperationsUsageMessage) actions cancellationToken =
         let description = unsupportedSchemaDescription schemaVersion
@@ -1824,6 +1920,14 @@ type OperationsUsageIngestionProcessor
                             let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                             ()
                         elif usageFact.SchemaVersion <> UsageFactSchemaVersion then
+                            do!
+                                recordUsageFactRejectionAsync
+                                    usageFact
+                                    [
+                                        unsupportedSchemaDescription usageFact.SchemaVersion
+                                    ]
+                                    cancellationToken
+
                             let! _ = deadLetterUnsupportedSchemaAsync readinessAttempt usageFact.SchemaVersion message actions cancellationToken
                             ()
                         else
@@ -1837,6 +1941,7 @@ type OperationsUsageIngestionProcessor
                                     describeErrors errors
                                 )
 
+                                do! recordUsageFactRejectionAsync usageFact errors cancellationToken
                                 let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                                 ()
                             | Ok () ->
@@ -1852,6 +1957,7 @@ type OperationsUsageIngestionProcessor
                                         describeErrors errors
                                     )
 
+                                    do! recordUsageFactRejectionAsync usageFact errors cancellationToken
                                     let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                                     ()
                                 | Ok result ->

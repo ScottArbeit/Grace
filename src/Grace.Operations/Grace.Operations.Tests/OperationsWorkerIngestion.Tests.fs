@@ -192,16 +192,21 @@ type private ThrowingSettlementMessageActions(events: List<string>, operationToT
 type private StubUsageFactStore
     (
         storeAsync: UsageFact -> byte array -> CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>,
+        recordRejectionAsync: UsageFactRejection -> CancellationToken -> Task<Result<UsageFactRejection option, string list>>,
         events: List<string>
     ) =
     let storedFacts = ResizeArray<UsageFact>()
     let storedPayloads = ResizeArray<byte array>()
+    let recordedRejections = ResizeArray<UsageFactRejection>()
 
     /// Returns the facts sent to the fake store.
     member _.StoredFacts = storedFacts |> Seq.toList
 
     /// Returns the raw payloads sent to the fake store.
     member _.StoredPayloads = storedPayloads |> Seq.map Array.copy |> Seq.toList
+
+    /// Returns rejection evidence sent to the fake store before terminal settlement.
+    member _.RecordedRejections = recordedRejections |> Seq.toList
 
     interface IOperationsUsageFactStore with
 
@@ -210,6 +215,11 @@ type private StubUsageFactStore
             storedPayloads.Add(Array.copy rawPayload)
             events.Add("store")
             storeAsync fact rawPayload cancellationToken
+
+        member _.RecordUsageFactRejectionAsync(rejection, cancellationToken) =
+            recordedRejections.Add rejection
+            events.Add("record-rejection")
+            recordRejectionAsync rejection cancellationToken
 
 /// Records formatted log output from worker infrastructure tests.
 type private RecordingLogger<'T>() =
@@ -229,14 +239,6 @@ type private RecordingLogger<'T>() =
 
         member _.Log<'TState>(_logLevel, _eventId, state: 'TState, ex: exn, formatter: Func<'TState, exn, string>) = messages.Add(formatter.Invoke(state, ex))
 
-/// Fails if deterministic validation lets an invalid fact reach a storage transaction.
-type private FailingOperationsUsageTransactionScope() =
-
-    interface IOperationsUsageTransactionScope with
-
-        member _.ExecuteAsync<'T>(_operation, _cancellationToken) =
-            Task.FromException<'T>(InvalidOperationException("Invalid usage facts must be rejected before opening a storage transaction."))
-
 /// Covers the Grace operations worker usage fact ingestion loop.
 [<TestFixture>]
 type OperationsWorkerIngestionTests() =
@@ -248,9 +250,9 @@ type OperationsWorkerIngestionTests() =
             .Build()
 
     /// Creates a processor with deterministic fake dependencies and an inspectable readiness state.
-    let createProcessorWithReadinessRaw storeAsync =
+    let createProcessorWithReadinessRaw storeAsync recordRejectionAsync =
         let events = List<string>()
-        let store = StubUsageFactStore(storeAsync, events)
+        let store = StubUsageFactStore(storeAsync, recordRejectionAsync, events)
         let readiness = OperationsUsageReadinessState()
 
         let logger =
@@ -264,7 +266,15 @@ type OperationsWorkerIngestionTests() =
         readiness
 
     /// Creates a processor with deterministic fake dependencies and a store callback that ignores raw payload bytes.
-    let createProcessorWithReadiness storeAsync = createProcessorWithReadinessRaw (fun fact _rawPayload cancellationToken -> storeAsync fact cancellationToken)
+    let successfulRejectionRecord _ _ = Task.FromResult(Ok None)
+
+    /// Creates a processor whose fake store records all rejections successfully.
+    let createProcessorWithReadiness storeAsync =
+        createProcessorWithReadinessRaw (fun fact _rawPayload cancellationToken -> storeAsync fact cancellationToken) successfulRejectionRecord
+
+    /// Creates a processor with independent fake accepted-storage and rejection-recording outcomes.
+    let createProcessorWithRejectionReadiness storeAsync recordRejectionAsync =
+        createProcessorWithReadinessRaw (fun fact _rawPayload cancellationToken -> storeAsync fact cancellationToken) recordRejectionAsync
 
     /// Creates a processor with deterministic fake dependencies.
     let createProcessor storeAsync =
@@ -273,22 +283,8 @@ type OperationsWorkerIngestionTests() =
 
     /// Creates a processor with deterministic fake dependencies and inspectable raw payload forwarding.
     let createProcessorRaw storeAsync =
-        let processor, store, actions, events, _readiness = createProcessorWithReadinessRaw storeAsync
+        let processor, store, actions, events, _readiness = createProcessorWithReadinessRaw storeAsync successfulRejectionRecord
         processor, store, actions, events
-
-    /// Creates a processor backed by the real data-layer validation path.
-    let createProcessorWithRealStore () =
-        let events = List<string>()
-
-        let store =
-            OperationsUsageStore(FailingOperationsUsageTransactionScope())
-            |> OperationsUsageFactStoreAdapter
-
-        let logger =
-            NullLogger<OperationsUsageIngestionProcessor>
-                .Instance
-
-        OperationsUsageIngestionProcessor(store, logger), RecordingMessageActions(events), events
 
     /// Formats ordered fake events for overload-free assertions.
     let eventText (events: seq<string>) = String.Join("|", events)
@@ -860,9 +856,9 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
-    /// Verifies missing UsageFact identity is treated as impossible poison input.
+    /// Verifies a parsed fact without a stable identity remains retryable because the existing contract cannot record its complete tuple as canonical evidence.
     [<Test>]
-    member _.MissingUsageFactIdIsDeadLetteredWithoutStorage() =
+    member _.MissingUsageFactIdIsAbandonedWithoutStorageOrTerminalSettlement() =
         task {
             let fact = { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("14141414-1414-4414-8414-141414141414")) with UsageFactId = Guid.Empty }
 
@@ -878,12 +874,12 @@ type OperationsWorkerIngestionTests() =
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(store.StoredFacts, Is.Empty)
-                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
-                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
+                    Assert.That(eventText events, Is.EqualTo("abandon"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon")))
             )
         }
 
-    /// Verifies non-positive quantities are treated as impossible poison input.
+    /// Verifies non-positive quantities record their known scope before terminal settlement without reaching accepted storage.
     [<Test>]
     member _.InvalidQuantityIsDeadLetteredWithoutStorage() =
         task {
@@ -901,7 +897,7 @@ type OperationsWorkerIngestionTests() =
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(store.StoredFacts, Is.Empty)
-                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(eventText events, Is.EqualTo("record-rejection|dead-letter"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
             )
         }
@@ -1859,7 +1855,7 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
-    /// Verifies usage facts that violate SQL-bound shape limits dead-letter instead of being retried.
+    /// Verifies storage validation rejections are recorded before the worker terminally dead-letters the message.
     [<Test>]
     member _.SqlShapeValidationFailureIsDeadLettered() =
         task {
@@ -1879,7 +1875,14 @@ type OperationsWorkerIngestionTests() =
                     Instant.FromUtc(2026, 7, 4, 12, 39, 0)
                 )
 
-            let processor, actions, events = createProcessorWithRealStore ()
+            let processor, store, actions, events, _readiness =
+                createProcessorWithRejectionReadiness
+                    (fun _ _ ->
+                        Task.FromResult(
+                            Error [ $"CorrelationId must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer for operations SQL storage."
+                                    $"Resource.StoragePoolId must be {OperationsUsageSql.StoragePoolIdMaxLength} characters or fewer for operations SQL storage." ]
+                        ))
+                    (fun rejection _ -> Task.FromResult(Ok(Some rejection)))
 
             let message =
                 fact
@@ -1890,8 +1893,100 @@ type OperationsWorkerIngestionTests() =
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
-                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
+                    Assert.That(eventText events, Is.EqualTo("store|record-rejection|dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact"))
+                    Assert.That(store.RecordedRejections.Length, Is.EqualTo(1))
+                    Assert.That(Option.isSome store.RecordedRejections.Head.Scope, Is.True))
+            )
+        }
+
+    /// Verifies a parsed invalid fact with a full tuple persists a scoped blocker before dead-letter settlement.
+    [<Test>]
+    member _.ParsedInvalidFactRecordsScopedRejectionBeforeDeadLetter() =
+        task {
+            let fact = { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("f1111111-1111-4111-8111-111111111111")) with Quantity = 0L }
+
+            let processor, store, actions, events, _readiness =
+                createProcessorWithRejectionReadiness
+                    (fun _ _ ->
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(
+                            InvalidOperationException("Parsed invalid input must not reach accepted storage.")
+                        ))
+                    (fun rejection _ -> Task.FromResult(Ok(Some rejection)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("record-rejection|dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact"))
+                    Assert.That(Option.isSome store.RecordedRejections.Head.Scope, Is.True)
+                    Assert.That(Option.isNone store.RecordedRejections.Head.ReportedScope, Is.True))
+            )
+        }
+
+    /// Verifies parsed invalid input with incomplete identities retains nonblocking operator evidence before dead-letter settlement.
+    [<Test>]
+    member _.ParsedInvalidFactRecordsPartialRejectionBeforeDeadLetter() =
+        task {
+            let source = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("f2222222-2222-4222-8222-222222222222"))
+            let fact = { source with Scope = { source.Scope with OwnerId = OwnerId.Empty } }
+
+            let processor, store, actions, events, _readiness =
+                createProcessorWithRejectionReadiness
+                    (fun _ _ ->
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(
+                            InvalidOperationException("Parsed invalid input must not reach accepted storage.")
+                        ))
+                    (fun rejection _ -> Task.FromResult(Ok(Some rejection)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("record-rejection|dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact"))
+                    Assert.That(Option.isNone store.RecordedRejections.Head.Scope, Is.True)
+                    Assert.That(Option.isSome store.RecordedRejections.Head.ReportedScope, Is.True))
+            )
+        }
+
+    /// Verifies rejection-record failure abandons the message so Service Bus can retry instead of terminally omitting scoped usage.
+    [<Test>]
+    member _.RejectionRecordFailureLeavesParsedInvalidFactRetryable() =
+        task {
+            let fact = { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("f4444444-4444-4444-8444-444444444444")) with Quantity = 0L }
+
+            let processor, store, actions, events, _readiness =
+                createProcessorWithRejectionReadiness
+                    (fun _ _ ->
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(
+                            InvalidOperationException("Parsed invalid input must not reach accepted storage.")
+                        ))
+                    (fun _ _ -> Task.FromResult(Error [ "forced rejection storage failure" ]))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("record-rejection|abandon"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon"))
+                    Assert.That(store.RecordedRejections.Length, Is.EqualTo(1)))
             )
         }
 
