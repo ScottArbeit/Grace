@@ -12,7 +12,7 @@ $modulePath = Join-Path $repositoryRoot 'scripts/modules/WduLifecycleProjection.
 $canonicalSource = Join-Path $repositoryRoot 'docs/Working Directory Update.md'
 $getCommand = Join-Path $repositoryRoot 'scripts/get-wdu-lifecycle-projection.ps1'
 $checkCommand = Join-Path $repositoryRoot 'scripts/check-wdu-lifecycle-projections.ps1'
-$artifactIds = @('adr-0011', 'epic-835', 'issue-842', 'issue-843', 'issue-846', 'issue-869', 'issue-870', 'issue-871', 'issue-872')
+$artifactIds = @('adr-0011', 'epic-835', 'issue-842', 'issue-843', 'issue-846', 'issue-869', 'issue-898', 'issue-899', 'issue-900', 'issue-901', 'issue-871', 'issue-872')
 
 function Assert-True {
     param([bool] $Condition, [string] $Message)
@@ -106,15 +106,15 @@ try {
 
     Invoke-Case 'checks a complete packet with paths containing spaces and Unicode in arbitrary input order' {
         $packet = New-Packet 'paths with spaces é'
-        $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath @($packet.Paths[8..0]))
-        Assert-True ($result.Count -eq 9) 'complete packet returns one scoped result per assignment'
+        $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath @($packet.Paths[11..0]))
+        Assert-True ($result.Count -eq 12) 'complete packet returns one scoped result per assignment'
         Assert-True (($result | Select-Object -ExpandProperty Artifact) -join '|' -ceq ($artifactIds -join '|')) 'results are in canonical assignment order'
     }
 
     Invoke-Case 'normalizes LF and CRLF only while checking exact blocks' {
         $packet = New-Packet 'crlf packet' -CrLf
         $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath $packet.Paths)
-        Assert-True ($result.Count -eq 9) 'CRLF packet succeeds under the documented normalization'
+        Assert-True ($result.Count -eq 12) 'CRLF packet succeeds under the documented normalization'
     }
 
     }
@@ -152,11 +152,23 @@ try {
 
     Invoke-Case 'rejects reordered required assignment artifacts' {
         $packet = New-Packet 'reordered-required-assignment-artifacts'
-        $reordered = Replace-Once (Get-TestText $packet.Canonical) '"artifact":"issue-870"' '"artifact":"temporary-ordering-artifact"'
-        $reordered = Replace-Once $reordered '"artifact":"issue-871"' '"artifact":"issue-870"'
+        $reordered = Replace-Once (Get-TestText $packet.Canonical) '"artifact":"issue-901"' '"artifact":"temporary-ordering-artifact"'
+        $reordered = Replace-Once $reordered '"artifact":"issue-871"' '"artifact":"issue-901"'
         $reordered = Replace-Once $reordered '"artifact":"temporary-ordering-artifact"' '"artifact":"issue-871"'
         Write-TestText $packet.Canonical $reordered
-        Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } "required artifact 'issue-870'"
+        Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } "required artifact 'issue-901'"
+    }
+
+    Invoke-Case 'rejects closed issue-870 as a replacement packet member' {
+        $packet = New-Packet 'closed-issue-870-member'
+        Write-TestText $packet.Canonical (Replace-Once (Get-TestText $packet.Canonical) '"artifact":"issue-901"' '"artifact":"issue-870"')
+        Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } "required artifact 'issue-901'"
+    }
+
+    Invoke-Case 'requires the declared non-lifecycle exclusion for issue-897' {
+        $packet = New-Packet 'issue-897-non-lifecycle-exclusion'
+        Write-TestText $packet.Canonical (Replace-Once (Get-TestText $packet.Canonical) 'checker exports lifecycle consumers only.' 'changed reason.')
+        Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } "stale reason for excluded artifact 'issue-897'"
     }
     }
 
@@ -246,7 +258,7 @@ try {
             Write-TestText $path $block
         }
         $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath $packet.Paths)
-        Assert-True ($result.Count -eq 9) 'empty surrounding content is ignored'
+        Assert-True ($result.Count -eq 12) 'empty surrounding content is ignored'
     }
 
     }
@@ -285,7 +297,7 @@ try {
         Assert-True ($LASTEXITCODE -eq 0) 'second generator invocation succeeds'
         Assert-True ([Convert]::ToHexString([IO.File]::ReadAllBytes($first)) -ceq [Convert]::ToHexString([IO.File]::ReadAllBytes($second))) 'stdout generation is byte-identical'
         $checked = @(& $checkCommand -CanonicalPath $packet.Canonical -ArtifactPath $packet.Paths)
-        Assert-True ($checked.Count -eq 9) 'thin checker returns the nine scoped results'
+        Assert-True ($checked.Count -eq 12) 'thin checker returns the twelve scoped results'
     }
     }
 }

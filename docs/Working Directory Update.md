@@ -29,10 +29,10 @@ when lower-level details are incomplete.
 | DEC-002 | Successful Save or no-Save admission seals the sole accepted baseline. | `AcceptedBranchPhase` carries SQLite revision, full-status fingerprint, and action token through preparation. | #872 |
 | DEC-003 | Marker evidence retains typed dispositions. | Missing, exact, different operation, malformed, unsupported, unreadable, and exact-cleanup-failed never collapse to a Boolean. | #869 |
 | DEC-004 | Reference finalization is repeatable from persisted typed facts. | Previous Branch publishes once, selected Branch proves prior publication, and a third Branch retains pending. | #871 |
-| DEC-005 | Planning and verification cover complete tracked topology. | Empty directories, path-type transitions, ignored content, object verification, and complete-root proof are included. | #870 |
+| DEC-005 | Planning and verification cover complete tracked topology. | Empty directories, path-type transitions, ignored content, object verification, and complete-root proof are included. | #898 and #899 |
 | DEC-006 | The lifecycle table is the sole ordering authority. | Cancellation, cleanup, publication/proof, terminal recording, outcomes, and retry follow `WDU-LC-*` rows only. | #881 |
-| DEC-007 | The Branch module has one exact five-input seam. | Inputs are sealed phase, typed selection, exact target graph, immutable prepared content, and diagnostic correlation. | #870 |
-| DEC-008 | Proof is split by stable boundary. | Real filesystem/SQLite tests activate lifecycle failures; built commands prove selectors and public projections. | #870–#872 |
+| DEC-007 | The Branch module has one exact five-input seam. | Inputs are sealed phase, typed selection, exact target graph, immutable prepared content, and diagnostic correlation. | #899 and #901 |
+| DEC-008 | Proof is split by stable boundary. | Real filesystem/SQLite tests activate lifecycle failures; built commands prove selectors and public projections. | #898–#901 |
 | DEC-009 | #868 and PR #873 are superseded planning evidence. | Their review findings inform this table but their commits and competing prose are not implementation authority. | #881 |
 
 No product decision remains open. Projection of this table into consumer issue bodies is required before the
@@ -228,25 +228,68 @@ immediately before that write begins. These statements identify row families and
 
 | ID | Requirement | Primary owner | Required lifecycle rows or proof |
 | --- | --- | --- | --- |
-| REQ-001 | One deep Branch transaction module | #870 | All `initial` rows and one reachable `run` seam. |
+| REQ-001 | One deep Branch transaction module | #899 | All `initial` rows and one reachable five-input `run` seam. |
 | REQ-002 | Exact typed target and operation identity | #869 | Persisted facts select the row predicates. |
 | REQ-003 | Exact immutable prepared content | #837 | `WDU-LC-200`–`WDU-LC-210` fresh-plan and boundary proof. |
 | REQ-004 | Stable repository/local-root serialization | #839 | Every non-replay row runs under the same lease scope. |
 | REQ-005 | Typed, versioned marker evidence | #869 | `WDU-LC-200`–`WDU-LC-212`, `WDU-LC-010`–`WDU-LC-015`, and `WDU-LC-100`–`WDU-LC-116`. |
-| REQ-006 | Fresh planning and local-content safety | #870 | `WDU-LC-200`–`WDU-LC-212` and `WDU-LC-001`–`WDU-LC-006`. |
-| REQ-007 | Verified object-first application | #870 | Initial-run proof before SQLite local completion. |
-| REQ-008 | Complete final-root verification | #870 | Required before every initial post-completion row. |
+| REQ-006 | Fresh planning and local-content safety | #898 | The finite collision matrix and immutable complete topology plan are proven before C2 consumes them. |
+| REQ-007 | Verified object-first application | #899 | Initial-run proof before SQLite local completion. |
+| REQ-008 | Complete final-root verification | #899 | Required before every initial post-completion row. |
 | REQ-009 | Canonical atomic local completion | #838 | Distinct boundary preceding `WDU-LC-010`–`WDU-LC-037`. |
 | REQ-010 | Bounded pending and terminal completion | #838 | Every terminal row names `durableResult`; routing rows name only valid successors. |
 | REQ-011 | Idempotent finalization and blocking | #871 | `WDU-LC-020`–`WDU-LC-037` and `WDU-LC-100`–`WDU-LC-143`. |
 | REQ-012 | Truthful outcomes, exits, and Doctor guidance | #871 | Every terminal row names outcome, exit class, and guidance. |
-| REQ-013 | Deterministic cancellation precedence | #870 | `WDU-LC-207`–`WDU-LC-210`, `WDU-LC-001`, `WDU-LC-003`, `WDU-LC-004`, `WDU-LC-101`, `WDU-LC-103`, `WDU-LC-110`, `WDU-LC-114`, `WDU-LC-120`, `WDU-LC-123`, `WDU-LC-140`, `WDU-LC-143`. |
+| REQ-013 | Deterministic cancellation precedence | #900 | DirectoryVersion retry selects its first applicable write from fresh durable evidence and then follows evidence, not cancellation. |
 | REQ-014 | Same-operation adoption replans freshly | #869 | `WDU-LC-200`–`WDU-LC-212`; no admission may reuse a prior plan. |
 | REQ-015 | Branch-only Doctor recovery without file mutation | #842 | All `finalizationRetry` rows require `workingFiles: unchanged`; Watch proof remains #843. |
 | REQ-016 | Caller-specific ordering | #871 | Branch order is exclusively the normative table; later callers consume it. |
 | REQ-017 | Current public and contributor documentation | #846 | Final audit validates row references and removes competing sequences. |
 
 Each row has one primary implementation owner even when companion issues prove a selector or recovery projection.
+
+### Serial supersession ownership
+
+Closed #870 and PR #895 are historical counterexamples only. They have no active requirement, lifecycle-row,
+dependency, checklist, assignment, or primary-delivery role. The active Branch packet is serial:
+
+| Former #870 delivery | Exact active owner | Primary scope |
+| --- | --- | --- |
+| Collision-safe topology classification and immutable plan | #898 | The finite pre-mutation matrix; it neither acquires a lease nor changes files. |
+| `WDU-LC-200`–`WDU-LC-212`, `WDU-LC-001`, `WDU-LC-002`, `WDU-LC-004`–`WDU-LC-006` | #899 | The real five-input transaction through verified pending SQLite completion. |
+| `WDU-LC-003`, `WDU-LC-010`–`WDU-LC-015`, `WDU-LC-026`, `WDU-LC-027`, `WDU-LC-036`, `WDU-LC-037`, `WDU-LC-100`–`WDU-LC-103`, `WDU-LC-115`, `WDU-LC-116`, and `WDU-LC-140`–`WDU-LC-143` | #900 | DirectoryVersion terminalization and exact filesystem-free retry. |
+| Hash-selected Branch orchestration and its public projection | #901 | Remote resolution and preparation outside local serialization, then the proven five-input call. |
+
+The primary requirement mapping is REQ-001, REQ-007, and REQ-008 to #899; REQ-006 to #898; and REQ-013 to #900.
+Issue #901 is the necessary production Branch consumer of those completed facts; its direct public wiring is not a
+second primary delivery claim for a transaction requirement.
+
+### Selected Product V1 boundaries
+
+The finite collision matrix is mandatory before mutation: a target file may replace only an absent or verified tracked
+file, or a tracked directory whose complete descendants are scheduled tracked removals; a target directory may replace
+only absence, a tracked directory, or a tracked file scheduled for removal. Ignored or untracked files, directories,
+or nested descendants reject and preserve the complete local subtree. Tracked empty-directory removal is deepest-first,
+creation is shallowest-first, and case-insensitive duplicate or ambiguous target shapes reject. Only tracked blockers
+named by the immutable plan may be removed.
+
+The lease inventory is also finite. No-Save admission, hash-prefix resolution, target graph retrieval, object download,
+and immutable preparation hold none of the Branch workflow, legacy materialization, or WDU leases. The sealed phase
+handoff holds none. Only the WDU transaction holds `working-directory-update.lease` during local reread, mutation,
+SQLite completion, and terminal outcome. Marker and sidecar files are evidence, never leases; no second lease is added.
+
+For DirectoryVersion retry, fresh pending SQLite and marker evidence select one first applicable write before any
+cancellation observation: an exact marker selects exact-marker cleanup; a missing marker selects terminal SQLite
+recording; foreign, malformed, unsupported, or unreadable marker evidence permits no write and retains pending; an
+exact terminal SQLite result selects no write and returns `Unchanged`. Cancellation is controlling only immediately
+before the selected cleanup or terminal-recording write. Once that write begins, cleanup and SQLite evidence determine
+the result and cancellation is non-controlling.
+
+SQLite completion is decisive durable truth. Terminal SQLite wins over stale marker or sidecar evidence; pending SQLite
+requires the exact retry path; markers and sidecars are readable evidence only and cannot create, downgrade, or replace
+SQLite completion. Production proof invokes the real five-input transaction and persisted retry entry with real
+filesystem and SQLite facts. Helper-only, source-string, sleep-based, and impossible-state fixtures do not establish
+this contract.
 
 ## 6. Proof, propagation, and readiness
 
@@ -260,6 +303,9 @@ source-string assertions, sleeps, and impossible hand-built states are insuffici
 ```json
 {
   "schema": "grace.wdu.lifecycle-projection-plan/v1",
+  "nonLifecycleArtifacts": [
+    {"artifact":"issue-897","reason":"The supersession correction owns packet alignment and publication preparation, not a lifecycle-row delivery; the checker exports lifecycle consumers only."}
+  ],
   "assignments": [
     {"artifact":"adr-0011","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-023","WDU-LC-025","WDU-LC-026","WDU-LC-030","WDU-LC-033","WDU-LC-035","WDU-LC-036","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"],"proof":"Record the lasting Branch transaction lifecycle and reference canonical rows without copying their order."},
     {"artifact":"epic-835","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-030","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"],"proof":"Keep the epic dependency and requirement packet aligned with the sole canonical lifecycle."},
@@ -267,7 +313,10 @@ source-string assertions, sleeps, and impossible hand-built states are insuffici
     {"artifact":"issue-843","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-101","WDU-LC-103"],"proof":"Consume the completed Branch lifecycle while deferring the first real Watch producer and retry proof to this issue."},
     {"artifact":"issue-846","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-030","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"],"proof":"Audit the completed 17/9 packet, public outcomes, Doctor guidance, and removal of competing lifecycle paths."},
     {"artifact":"issue-869","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-100"],"proof":"Persist typed selection and marker facts that select canonical admission, refusal, cleanup, and retry rows."},
-    {"artifact":"issue-870","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-026","WDU-LC-027","WDU-LC-036","WDU-LC-037","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-115","WDU-LC-116","WDU-LC-140","WDU-LC-141","WDU-LC-142","WDU-LC-143","WDU-LC-003"],"proof":"Implement exact-root DirectoryVersion switching with fresh planning, mutation boundaries, retry, and current-Branch retention."},
+    {"artifact":"issue-898","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212"],"proof":"Prove the immutable collision-safe topology plan consumed by fresh admission and final pre-mutation reread."},
+    {"artifact":"issue-899","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006"],"proof":"Invoke the production five-input transaction through verified pending SQLite completion without terminal finalization."},
+    {"artifact":"issue-900","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-003","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-026","WDU-LC-027","WDU-LC-036","WDU-LC-037","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-115","WDU-LC-116","WDU-LC-140","WDU-LC-141","WDU-LC-142","WDU-LC-143"],"proof":"Terminalize DirectoryVersion pending completion and retry from decisive SQLite and marker evidence with one conditional cancellation boundary."},
+    {"artifact":"issue-901","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-001","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-003","WDU-LC-140","WDU-LC-141","WDU-LC-142","WDU-LC-143"],"proof":"Route both production hash selectors through the proven transaction while remote work holds no local serialization lease."},
     {"artifact":"issue-871","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-020","WDU-LC-021","WDU-LC-022","WDU-LC-023","WDU-LC-024","WDU-LC-025","WDU-LC-030","WDU-LC-031","WDU-LC-032","WDU-LC-033","WDU-LC-034","WDU-LC-035","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109","WDU-LC-110","WDU-LC-111","WDU-LC-112","WDU-LC-113","WDU-LC-114","WDU-LC-120","WDU-LC-121","WDU-LC-122","WDU-LC-123","WDU-LC-130","WDU-LC-003"],"proof":"Implement repeatable Reference previous, selected, and third-state finalization with truthful retry outcomes."},
     {"artifact":"issue-872","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-003"],"proof":"Prove Save and no-Save admission preserve one sealed baseline and action token through the final pre-mutation reread."}
   ]
@@ -278,7 +327,10 @@ source-string assertions, sleeps, and impossible hand-built states are insuffici
 The following consumers carry generated projections rather than competing lifecycle sequences:
 
 - #869 persists selection and marker predicates.
-- #870 proves initial-run and cancellation rows.
+- #898 proves collision-safe planning without mutation.
+- #899 proves initial-run through pending SQLite completion.
+- #900 proves DirectoryVersion terminalization and retry cancellation precedence.
+- #901 proves production hash-selector consumption of the completed transaction.
 - #871 proves Reference and retry row families.
 - #872 proves Save/no-Save admission reaches the same initial rows.
 - #842 proves Branch-only retry rows without working-file mutation.
@@ -289,6 +341,10 @@ ADR 0011 and active issue bodies remain contextual consumers. The #890 checker v
 marker-delimited projections and required packet membership, ignoring surrounding Markdown or prose. The Plan-ready
 boundary is the closed structural proof from #889 plus the exact-projection proof from #890; normal review and later
 runtime proof establish lifecycle meaning.
+
+The exact projection packet contains lifecycle consumers only: ADR 0011, epic #835, #842, #843, #846, #869, and issues #898–#901, #871, and #872. Issue #897 is intentionally excluded because it corrects ownership and prepares publication
+without delivering or consuming a lifecycle row; its declared exclusion is part of the plan above. Closed #870 is not a
+packet artifact.
 
 The bounded Product V1 residual risk remains interruption after working-tree mutation but before SQLite local
 completion. `WDU-LC-002` requires truthful `UpdateIncomplete` and fresh revalidation; Grace does not guess, roll back,
