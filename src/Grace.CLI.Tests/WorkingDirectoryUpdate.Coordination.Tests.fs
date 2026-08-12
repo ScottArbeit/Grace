@@ -315,7 +315,7 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.Adopt
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
 
             let differentRootDirectoryVersion =
                 targetWith
@@ -349,7 +349,7 @@ module WorkingDirectoryUpdateCoordinationTests =
                 ] do
                 WorkingDirectoryUpdateCoordination.Marker.inspect scope differentTarget operation
                 |> fun task -> task.GetAwaiter().GetResult()
-                |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
+                |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
 
             let differentOperation =
                 WorkingDirectoryUpdate.Operation.watchReplay repositoryId branchId "different-cursor"
@@ -357,7 +357,7 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget differentOperation
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
 
             let persistedMarker = File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
 
@@ -369,7 +369,7 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
 
             let unsupported = persistedMarker.Replace("\"schemaVersion\":1", "\"schemaVersion\":2", StringComparison.Ordinal)
 
@@ -382,13 +382,13 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
 
             File.WriteAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, "{not-json")
 
             WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor)
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported)
 
     /// Proves cleanup rereads marker ownership and never removes a replacement attempt token.
     [<Test>]
@@ -423,14 +423,71 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope firstToken
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal false
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.DifferentOperationEvidence
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal true
 
             WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope secondToken
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal true
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false)
+
+    /// Proves an unreadable marker is preserved rather than treated as missing or adoptable evidence.
+    [<Test>]
+    let ``marker inspection distinguishes unreadable evidence`` () =
+        withTempRoot (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let selectedTarget = target repositoryId branchId
+            let operation = branchOperation selectedTarget
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdate.AttemptToken.create ()) selectedTarget operation
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            use markerHandle = new FileStream(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, FileMode.Open, FileAccess.Read, FileShare.None)
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable)
+
+    /// Proves a matching marker remains visible when exact-token cleanup cannot delete its current file.
+    [<Test>]
+    let ``marker cleanup distinguishes exact cleanup failure`` () =
+        withTempRoot (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let selectedTarget = target repositoryId branchId
+            let operation = branchOperation selectedTarget
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let token = WorkingDirectoryUpdate.AttemptToken.create ()
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope token selectedTarget operation
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            use markerHandle = new FileStream(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope token
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactCleanupFailed
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal true)
