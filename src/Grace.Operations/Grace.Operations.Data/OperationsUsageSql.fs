@@ -16,6 +16,10 @@ module OperationsUsageSql =
     [<Literal>]
     let RawUsageFactTable = "ops.RawUsageFact"
 
+    /// Names operator-visible rejection evidence that blocks a scope only when its complete tuple is known.
+    [<Literal>]
+    let UsageFactRejectionTable = "ops.UsageFactRejection"
+
     /// Names the minute aggregate table without schema qualification for EF migrations.
     [<Literal>]
     let UsageAggregateMinuteTableName = "UsageAggregateMinute"
@@ -59,6 +63,74 @@ module OperationsUsageSql =
     /// Limits the operator-visible archive failure summary retained with a raw fact row.
     [<Literal>]
     let ArchiveFailureReasonMaxLength = 400
+
+    /// Acquires the sole transaction-owned application lock used by accepted usage, replay, rejection, and reads.
+    [<Literal>]
+    let AcquireBillingCompletenessScopeLock =
+        """
+DECLARE @LockResult int;
+EXEC @LockResult = sys.sp_getapplock
+    @Resource = @BillingCompletenessLockResource,
+    @LockMode = 'Exclusive',
+    @LockOwner = 'Transaction',
+    @LockTimeout = @BillingCompletenessLockTimeoutMilliseconds;
+IF @LockResult < 0
+    THROW 57220, 'Could not acquire the Operations billing completeness coordination lock.', 1;
+"""
+
+    /// Records the first active scoped rejection unless accepted durable usage already owns the exact fact and scope.
+    [<Literal>]
+    let RecordScopedUsageFactRejection =
+        """
+IF EXISTS (SELECT 1 FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK) WHERE UsageFactId = @UsageFactId
+           AND (OwnerId <> @OwnerId OR OrganizationId <> @OrganizationId OR RepositoryId <> @RepositoryId
+                OR ObservedAtUtc < @MonthStartUtc OR ObservedAtUtc >= @NextMonthStartUtc))
+    THROW 57221, 'UsageFactId is already accepted for a different billing completeness scope.', 1;
+
+IF NOT EXISTS (SELECT 1 FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK) WHERE UsageFactId = @UsageFactId
+               AND OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+               AND ObservedAtUtc >= @MonthStartUtc AND ObservedAtUtc < @NextMonthStartUtc)
+AND NOT EXISTS (SELECT 1 FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK) WHERE UsageFactId = @UsageFactId
+                AND OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+                AND MonthStartUtc = @MonthStartUtc AND IsActive = 1)
+BEGIN
+    INSERT INTO ops.UsageFactRejection (RejectionId, UsageFactId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, Reason, IsActive)
+    VALUES (@RejectionId, @UsageFactId, @OwnerId, @OrganizationId, @RepositoryId, @MonthStartUtc, @Reason, 1);
+END;
+
+SELECT TOP (1) RejectionId, UsageFactId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, Reason, IsActive
+FROM ops.UsageFactRejection
+WHERE UsageFactId = @UsageFactId AND OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+  AND MonthStartUtc = @MonthStartUtc AND IsActive = 1
+ORDER BY CreatedAtUtc ASC, RejectionId ASC;
+"""
+
+    /// Stores partial rejection evidence without attaching it to an invented scope.
+    [<Literal>]
+    let RecordUnscopedUsageFactRejection =
+        """
+INSERT INTO ops.UsageFactRejection (RejectionId, UsageFactId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, Reason, IsActive)
+VALUES (@RejectionId, @UsageFactId, @OwnerId, @OrganizationId, @RepositoryId, @MonthStartUtc, @Reason, 1);
+"""
+
+    /// Resolves the exact scoped blocker inside the accepted usage transaction.
+    [<Literal>]
+    let ResolveScopedUsageFactRejection =
+        """
+UPDATE ops.UsageFactRejection SET IsActive = 0, ResolvedAtUtc = SYSUTCDATETIME()
+WHERE UsageFactId = @UsageFactId AND OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+  AND MonthStartUtc = @MonthStartUtc AND IsActive = 1;
+"""
+
+    /// Reads whether an active blocker remains after the caller acquires the central scope lock.
+    [<Literal>]
+    let HasActiveScopedUsageFactRejection =
+        """
+SELECT CASE WHEN EXISTS (SELECT 1 FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK)
+                         WHERE OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+                           AND MonthStartUtc = @MonthStartUtc AND IsActive = 1)
+THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END;
+"""
 
     /// Caps expired temporary-hot cleanup statements to a practical SQL Server row batch.
     [<Literal>]

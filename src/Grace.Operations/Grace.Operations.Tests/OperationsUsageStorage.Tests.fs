@@ -108,6 +108,10 @@ type private InMemoryOperationsUsageTransactionScope() =
 
                 let transaction =
                     { new IOperationsUsageTransaction with
+                        member _.AcquireBillingCompletenessScopeAsync(_scope, lockCancellationToken) =
+                            lockCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
+
                         member _.TryInsertRawUsageFactAsync(rawFact, insertCancellationToken) =
                             insertCancellationToken.ThrowIfCancellationRequested()
 
@@ -140,6 +144,22 @@ type private InMemoryOperationsUsageTransactionScope() =
 
                                 aggregates[aggregate.Key] <- current + aggregate.Quantity
                                 Task.CompletedTask
+
+                        member _.RecordScopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
+                            rejectionCancellationToken.ThrowIfCancellationRequested()
+                            Task.FromResult(None)
+
+                        member _.RecordUnscopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
+                            rejectionCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
+
+                        member _.ResolveScopedUsageFactRejectionAsync(_usageFactId, _scope, repairCancellationToken) =
+                            repairCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
+
+                        member _.HasActiveScopedUsageFactRejectionAsync(_scope, readCancellationToken) =
+                            readCancellationToken.ThrowIfCancellationRequested()
+                            Task.FromResult false
                     }
 
                 let! result = operation transaction cancellationToken

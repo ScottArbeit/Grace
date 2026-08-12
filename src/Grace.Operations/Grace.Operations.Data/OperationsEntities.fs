@@ -72,6 +72,40 @@ type RawUsageFactEntity() =
     /// Stores the SQL-created UTC timestamp for the raw fact row.
     member val CreatedAtUtc = DateTime.MinValue with get, set
 
+/// Represents durable rejection evidence that blocks completeness only when every scope field is present.
+[<AllowNullLiteral>]
+type UsageFactRejectionEntity() =
+
+    /// Stores the stable rejection identity used for operator repair.
+    member val RejectionId = Guid.Empty with get, set
+
+    /// Stores the rejected fact identity when it was supplied.
+    member val UsageFactId = Nullable<Guid>() with get, set
+
+    /// Stores the reported owner without inferring a scope when other fields are absent.
+    member val OwnerId = Nullable<Guid>() with get, set
+
+    /// Stores the reported organization without inferring a scope when other fields are absent.
+    member val OrganizationId = Nullable<Guid>() with get, set
+
+    /// Stores the reported repository without inferring a scope when other fields are absent.
+    member val RepositoryId = Nullable<Guid>() with get, set
+
+    /// Stores the UTC month only when an observation timestamp was actually supplied.
+    member val MonthStartUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the bounded operator-visible rejection reason.
+    member val Reason = String.Empty with get, set
+
+    /// States whether this rejection blocks its exact complete scope.
+    member val IsActive = false with get, set
+
+    /// Stores when accepted usage repaired a scoped blocker.
+    member val ResolvedAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores SQL-created ordering evidence for diagnostics.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
 /// Represents one repository resource aggregate row for a UTC minute.
 [<AllowNullLiteral>]
 type UsageAggregateMinuteEntity() =
