@@ -226,7 +226,7 @@ type OperationsChargePreviewTests() =
             Assert.That(sql, Does.Contain("fact.ObservedAtUtc >= @PeriodFromUtc"))
             Assert.That(sql, Does.Contain("fact.ObservedAtUtc < @PeriodToUtc"))
             Assert.That(sql, Does.Contain("assignment.EffectiveFromUtc"))
-            Assert.That(sql, Does.Contain("plan.EffectiveFromUtc"))
+            Assert.That(sql, Does.Contain("pricingPlan.EffectiveFromUtc"))
             Assert.That(sql, Does.Contain("mapping.EffectiveFromUtc"))
             Assert.That(sql, Does.Contain("rate.EffectiveFromUtc"))
             Assert.That(sql, Does.Contain("MAX(boundary.EffectiveFromUtc)"))
@@ -244,7 +244,7 @@ type OperationsChargePreviewTests() =
                 "..",
                 "Grace.Operations.Data",
                 "Migrations",
-                "20260812110000_AddUsageFactJournal.fs"
+                "20260812130000_AddBillingPeriodClose.fs"
             )
             |> Path.GetFullPath
 
@@ -274,7 +274,7 @@ type OperationsChargePreviewTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
-        let migration = AddUsageFactJournal().TargetModel
+        let migration = AddBillingPeriodClose().TargetModel
 
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()
@@ -344,6 +344,10 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
+            Assert.That(migration.FindEntityType(typeof<BillingPeriodEntity>), Is.Not.Null)
+            Assert.That(migration.FindEntityType(typeof<ChargeEntity>), Is.Not.Null)
+            Assert.That(migration.FindEntityType(typeof<BillingPeriodCloseEvidenceEntity>), Is.Not.Null)
+            Assert.That(migration.FindEntityType(typeof<BillingPeriodLateWorkEntity>), Is.Not.Null)
             Assert.That(rejection, Is.Not.Null)
             Assert.That((migrationShape = snapshotShape), Is.True)
 

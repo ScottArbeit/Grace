@@ -1,6 +1,7 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Operations.Worker
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Data.SqlClient
@@ -191,6 +192,75 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             Assert.Fail($"Expected a Closed billing-period result but received {result}.")
             Unchecked.defaultof<int>
 
+    /// Proves terminal pricing scopes cannot exhaust a bounded discovery batch and every month in one assignment is emitted.
+    [<Test>]
+    member _.DiscoverySkipsClosedPricingScopesAndExpandsEveryCompletedAssignmentMonth() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    """
+DECLARE @PlanId uniqueidentifier = NEWID();
+INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc)
+VALUES (@PlanId, 'discovery-plan', 'Discovery plan', '2026-01-01T00:00:00');
+
+DECLARE @index int = 0;
+WHILE @index < 101
+BEGIN
+    DECLARE @OwnerId uniqueidentifier = CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('owner-', @index)));
+    DECLARE @OrganizationId uniqueidentifier = CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('organization-', @index)));
+    DECLARE @RepositoryId uniqueidentifier = CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('repository-', @index)));
+    DECLARE @MonthStartUtc datetime2(7) = '2026-01-01T00:00:00';
+    INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc,EffectiveToUtc)
+    VALUES (NEWID(), @OwnerId, @OrganizationId, @RepositoryId, @PlanId, @MonthStartUtc, '2026-02-01T00:00:00');
+    INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State)
+    VALUES (NEWID(), @OwnerId, @OrganizationId, @RepositoryId, @MonthStartUtc, '2026-02-01T00:00:00', 2);
+    SET @index = @index + 1;
+END;
+
+INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc,EffectiveToUtc)
+VALUES (NEWID(), @TargetOwnerId, @TargetOrganizationId, @TargetRepositoryId, @PlanId, '2026-01-01T00:00:00', '2026-07-01T00:00:00');
+"""
+
+                command.Parameters.Add("@TargetOwnerId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+                command.Parameters.Add("@TargetOrganizationId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+                command.Parameters.Add("@TargetRepositoryId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+                let! firstPass = OperationsBillingPeriodCloseDiscovery.discoverAsync connectionString CancellationToken.None
+                let! repeatedPass = OperationsBillingPeriodCloseDiscovery.discoverAsync connectionString CancellationToken.None
+
+                let months (scopes: BillingCompletenessScope array) : Instant array =
+                    scopes
+                    |> Array.filter (fun candidate ->
+                        candidate.OwnerId = scope.OwnerId
+                        && candidate.OrganizationId = scope.OrganizationId
+                        && candidate.RepositoryId = scope.RepositoryId)
+                    |> Array.map (fun candidate -> candidate.MonthStart)
+                    |> Array.sort
+
+                let expected =
+                    [|
+                        Instant.FromUtc(2026, 1, 1, 0, 0)
+                        Instant.FromUtc(2026, 2, 1, 0, 0)
+                        Instant.FromUtc(2026, 3, 1, 0, 0)
+                        Instant.FromUtc(2026, 4, 1, 0, 0)
+                        Instant.FromUtc(2026, 5, 1, 0, 0)
+                        Instant.FromUtc(2026, 6, 1, 0, 0)
+                    |]
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(firstPass.Length, Is.EqualTo(6))
+                        Assert.That(months firstPass, Is.EqualTo(expected :> obj))
+                        Assert.That(months repeatedPass, Is.EqualTo(expected :> obj)))
+                )
+            })
+
     /// Proves accepted usage before close appears in exactly one immutable posting and does not create late work.
     [<Test>]
     member _.AcceptanceBeforeCloseIsIncludedWithoutLateWork() =
@@ -246,27 +316,47 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
                 )
             })
 
-    /// Proves a pricing-covered empty period closes and its first later accepted fact becomes late work rather than changing the initial posting.
+    /// Proves an empty period remains nonterminal until complete pricing coverage exists, then closes and hands later usage to late work.
     [<Test>]
-    member _.ZeroEntryCloseThenFirstAcceptanceCreatesLateWork() =
+    member _.ZeroEntryPricingCoverageBlocksThenRetryClosesAndFirstAcceptanceCreatesLateWork() =
         withDatabaseAsync (fun connectionString ->
             task {
                 let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
                 let scope = scopeFor ownerId organizationId repositoryId
-                do! addPricingAsync connectionString scope
                 let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
-                let! _ = closer.CloseAsync(request scope, CancellationToken.None)
+                let! blocked = closer.CloseAsync(request scope, CancellationToken.None)
+                let! blockedChargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! blockedEvidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+
+                let! blockedDiagnosticCount =
+                    countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0, 1) AND RetryDiagnostic IS NOT NULL;"
+
+                do! addPricingAsync connectionString scope
+                let! closed = closer.CloseAsync(request scope, CancellationToken.None)
                 let fact = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 4) 5L
                 do! acceptAsync connectionString fact
                 let! periodCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State = 2;"
                 let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
                 let! lateWorkCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
+                let! clearedDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL;"
 
                 Assert.Multiple(
                     Action (fun () ->
+                        Assert.That(
+                            (match blocked with
+                             | BillingPeriodCloseResult.Blocked _ -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(blockedChargeCount, Is.Zero)
+                        Assert.That(blockedEvidenceCount, Is.Zero)
+                        Assert.That(blockedDiagnosticCount, Is.EqualTo(1))
+                        Assert.That(closedChargeCount closed, Is.Zero)
                         Assert.That(periodCount, Is.EqualTo(1))
                         Assert.That(chargeCount, Is.Zero)
-                        Assert.That(lateWorkCount, Is.EqualTo(1)))
+                        Assert.That(lateWorkCount, Is.EqualTo(1))
+                        Assert.That(clearedDiagnosticCount, Is.Zero))
                 )
             })
 

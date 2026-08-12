@@ -27,6 +27,10 @@ type BillingPeriodCloseResult =
     | Provisional of billingPeriodId: Guid * previewLineCount: int
     | Closed of billingPeriodId: Guid * chargeCount: int
 
+/// Signals a retryable zero-fact pricing-coverage failure after the scope lock has been acquired.
+type private ZeroFactPricingCoverageException(diagnostic: string) =
+    inherit Exception(diagnostic)
+
 /// Exposes the bounded preview and final-close operations used by the scheduled shell.
 type IBillingPeriodCloser =
     /// Rebuilds an eligible preview under the exact shared scope lock.
@@ -321,6 +325,71 @@ WHERE BillingPeriodId=@BillingPeriodId AND State IN (0,1);
             return rows |> Seq.toList
         }
 
+    /// Verifies that a zero-fact period still has one complete current pricing grain before it can be closed.
+    let zeroFactPricingCoverageDiagnosticAsync
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (scope: BillingCompletenessScope)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use check =
+                command
+                    connection
+                    transaction
+                    """
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM ops.PricingAssignment AS assignment
+    INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
+    WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+      AND assignment.EffectiveFromUtc<=@MonthStartUtc
+      AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc>=@NextMonthStartUtc)
+      AND pricingPlan.EffectiveFromUtc<=@MonthStartUtc
+      AND (pricingPlan.EffectiveToUtc IS NULL OR pricingPlan.EffectiveToUtc>=@NextMonthStartUtc)
+)
+    SELECT CAST('Complete pricing assignment and plan coverage is required for zero-fact billing close.' AS nvarchar(400));
+ELSE IF NOT EXISTS
+(
+    SELECT 1
+    FROM ops.BillableUsageKindMapping AS mapping
+    WHERE mapping.EffectiveFromUtc<=@MonthStartUtc
+      AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc>=@NextMonthStartUtc)
+)
+    SELECT CAST('Complete billable usage-kind mapping coverage is required for zero-fact billing close.' AS nvarchar(400));
+ELSE IF EXISTS
+(
+    SELECT 1
+    FROM ops.BillableUsageKindMapping AS mapping
+    WHERE mapping.EffectiveFromUtc<=@MonthStartUtc
+      AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc>=@NextMonthStartUtc)
+      AND NOT EXISTS
+      (
+          SELECT 1
+          FROM ops.PricingAssignment AS assignment
+          INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
+          INNER JOIN ops.PricingRate AS rate ON rate.PricingPlanId=pricingPlan.PricingPlanId
+          WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+            AND assignment.EffectiveFromUtc<=@MonthStartUtc
+            AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc>=@NextMonthStartUtc)
+            AND pricingPlan.EffectiveFromUtc<=@MonthStartUtc
+            AND (pricingPlan.EffectiveToUtc IS NULL OR pricingPlan.EffectiveToUtc>=@NextMonthStartUtc)
+            AND rate.BillableUsageKind=mapping.BillableUsageKind
+            AND rate.EffectiveFromUtc<=@MonthStartUtc
+            AND (rate.EffectiveToUtc IS NULL OR rate.EffectiveToUtc>=@NextMonthStartUtc)
+      )
+)
+    SELECT CAST('Complete pricing-rate coverage is required for zero-fact billing close.' AS nvarchar(400));
+ELSE
+    SELECT CAST(NULL AS nvarchar(400));
+"""
+
+            addScope check scope
+            let! result = check.ExecuteScalarAsync cancellationToken
+            return if Convert.IsDBNull result then None else Some(result :?> string)
+        }
+
     /// Replaces only the current period preview after successful calculation has produced every replacement line.
     let replacePreviewAsync
         (connection: SqlConnection)
@@ -541,6 +610,16 @@ WHERE BillingPeriodId=@BillingPeriodId AND State IN (0,1);
                         | None ->
                             let! pricedFacts = readPricedFactsAsync connection transaction request.Scope cancellationToken
 
+                            let! zeroFactPricingDiagnostic =
+                                if List.isEmpty pricedFacts then
+                                    zeroFactPricingCoverageDiagnosticAsync connection transaction request.Scope cancellationToken
+                                else
+                                    Task.FromResult None
+
+                            match zeroFactPricingDiagnostic with
+                            | Some diagnostic -> raise (ZeroFactPricingCoverageException(diagnostic))
+                            | None -> ()
+
                             let previewScope: ChargePreviewScope =
                                 {
                                     OwnerId = request.Scope.OwnerId
@@ -577,6 +656,10 @@ WHERE BillingPeriodId=@BillingPeriodId AND State IN (0,1);
                 do! transaction.CommitAsync cancellationToken
                 return Blocked ex.Message
             | :? OverflowException as ex ->
+                do! setDiagnosticAsync connection transaction (billingPeriodId request.Scope) (Some ex.Message) cancellationToken
+                do! transaction.CommitAsync cancellationToken
+                return Blocked ex.Message
+            | :? ZeroFactPricingCoverageException as ex ->
                 do! setDiagnosticAsync connection transaction (billingPeriodId request.Scope) (Some ex.Message) cancellationToken
                 do! transaction.CommitAsync cancellationToken
                 return Blocked ex.Message

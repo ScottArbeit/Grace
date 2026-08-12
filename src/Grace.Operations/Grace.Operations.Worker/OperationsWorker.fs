@@ -2354,52 +2354,63 @@ type internal IOperationsUsageJournalSignalSender =
     /// Sends the immutable Pending entry that was reread immediately before this call.
     abstract SendAsync: entry: UsageFactJournalEntry * cancellationToken: CancellationToken -> Task
 
-/// Runs bounded, repeatable billing-period discovery without persisting a second claim or retry lifecycle.
-type OperationsBillingPeriodCloseWorkerService
-    (
-        settings: OperationsWorkerSettings,
-        schema: IOperationsUsageSchemaInitializer,
-        closer: IBillingPeriodCloser,
-        logger: ILogger<OperationsBillingPeriodCloseWorkerService>
-    ) =
-    inherit BackgroundService()
+/// Discovers bounded nonterminal billing scopes without adding a second claim or retry lifecycle.
+module internal OperationsBillingPeriodCloseDiscovery =
 
     /// Caps one discovery pass so a worker restart or long history cannot monopolize the hosted process.
     let batchSize = 100
 
-    /// Uses a short fixed cadence because database eligibility and the scope-locked closer remain the source of truth.
-    let cadence = TimeSpan.FromMinutes(5.0)
-
-    /// Discovers accepted-usage, pricing-coverage, and existing nonterminal scopes in a single bounded SQL read.
-    let discoverAsync cancellationToken =
+    /// Reads accepted-usage, pricing-coverage, and existing nonterminal scopes while excluding terminal exact periods.
+    let discoverAsync connectionString cancellationToken =
         task {
-            use connection = new SqlConnection(settings.SqlConnectionString)
+            use connection = new SqlConnection(connectionString)
             do! connection.OpenAsync cancellationToken
             use command = connection.CreateCommand()
             command.Parameters.Add("@BatchSize", SqlDbType.Int).Value <- batchSize
 
             command.CommandText <-
                 """
-WITH candidate AS
+WITH pricingCandidate AS
 (
-    SELECT OwnerId, OrganizationId, RepositoryId,
+    SELECT assignment.OwnerId, assignment.OrganizationId, assignment.RepositoryId,
+           DATETIME2FROMPARTS(YEAR(assignment.EffectiveFromUtc), MONTH(assignment.EffectiveFromUtc), 1, 0, 0, 0, 0, 7) AS MonthStartUtc,
+           assignment.EffectiveToUtc
+    FROM ops.PricingAssignment AS assignment
+    WHERE assignment.EffectiveFromUtc < DATETIME2FROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1, 0, 0, 0, 0, 7)
+
+    UNION ALL
+
+    SELECT OwnerId, OrganizationId, RepositoryId, DATEADD(month, 1, MonthStartUtc), EffectiveToUtc
+    FROM pricingCandidate
+    WHERE DATEADD(month, 1, MonthStartUtc) < DATETIME2FROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1, 0, 0, 0, 0, 7)
+      AND (EffectiveToUtc IS NULL OR DATEADD(month, 1, MonthStartUtc) < EffectiveToUtc)
+),
+candidate AS
+(
+    SELECT fact.OwnerId, fact.OrganizationId, fact.RepositoryId,
            DATETIME2FROMPARTS(YEAR(ObservedAtUtc), MONTH(ObservedAtUtc), 1, 0, 0, 0, 0, 7) AS MonthStartUtc
-    FROM ops.RawUsageFact
+    FROM ops.RawUsageFact AS fact
     UNION
     SELECT OwnerId, OrganizationId, RepositoryId, MonthStartUtc
     FROM ops.BillingPeriod
     WHERE State IN (0, 1)
     UNION
-    SELECT assignment.OwnerId, assignment.OrganizationId, assignment.RepositoryId,
-           DATETIME2FROMPARTS(YEAR(assignment.EffectiveFromUtc), MONTH(assignment.EffectiveFromUtc), 1, 0, 0, 0, 0, 7)
-    FROM ops.PricingAssignment AS assignment
-    WHERE assignment.EffectiveFromUtc < SYSUTCDATETIME()
-      AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > DATEADD(month, DATEDIFF(month, 0, assignment.EffectiveFromUtc), 0))
+    SELECT OwnerId, OrganizationId, RepositoryId, MonthStartUtc
+    FROM pricingCandidate
 )
 SELECT TOP (@BatchSize) OwnerId, OrganizationId, RepositoryId, MonthStartUtc
 FROM candidate
 WHERE MonthStartUtc < DATETIME2FROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1, 0, 0, 0, 0, 7)
-ORDER BY MonthStartUtc, OwnerId, OrganizationId, RepositoryId;
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM ops.BillingPeriod AS period
+      WHERE period.OwnerId=candidate.OwnerId AND period.OrganizationId=candidate.OrganizationId AND period.RepositoryId=candidate.RepositoryId
+        AND period.MonthStartUtc=candidate.MonthStartUtc AND period.NextMonthStartUtc=DATEADD(month, 1, candidate.MonthStartUtc)
+        AND period.State=2
+  )
+ORDER BY MonthStartUtc, OwnerId, OrganizationId, RepositoryId
+OPTION (MAXRECURSION 100);
 """
 
             use! reader = command.ExecuteReaderAsync cancellationToken
@@ -2416,18 +2427,31 @@ ORDER BY MonthStartUtc, OwnerId, OrganizationId, RepositoryId;
                             OwnerId = reader.GetGuid 0
                             OrganizationId = reader.GetGuid 1
                             RepositoryId = reader.GetGuid 2
-                            MonthStart = reader.GetDateTime 3 |> Instant.FromDateTimeUtc
+                            MonthStart = Instant.FromDateTimeUtc(DateTime.SpecifyKind(reader.GetDateTime 3, DateTimeKind.Utc))
                         }
                     )
 
             return scopes |> Seq.toArray
         }
 
+/// Runs bounded, repeatable billing-period discovery without persisting a second claim or retry lifecycle.
+type OperationsBillingPeriodCloseWorkerService
+    (
+        settings: OperationsWorkerSettings,
+        schema: IOperationsUsageSchemaInitializer,
+        closer: IBillingPeriodCloser,
+        logger: ILogger<OperationsBillingPeriodCloseWorkerService>
+    ) =
+    inherit BackgroundService()
+
+    /// Uses a short fixed cadence because database eligibility and the scope-locked closer remain the source of truth.
+    let cadence = TimeSpan.FromMinutes(5.0)
+
     /// Revalidates every discovered candidate through the closer; stale scans cannot decide close eligibility.
     let runPassAsync cancellationToken =
         task {
             do! schema.EnsureCreatedAsync cancellationToken
-            let! scopes = discoverAsync cancellationToken
+            let! scopes = OperationsBillingPeriodCloseDiscovery.discoverAsync settings.SqlConnectionString cancellationToken
             let mutable index = 0
 
             while index < scopes.Length do

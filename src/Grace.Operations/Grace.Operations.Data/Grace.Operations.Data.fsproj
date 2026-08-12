@@ -29,8 +29,8 @@
     <Compile Include="Migrations\20260709110000_AddPricingPlanRateAssignment.fs" />
     <Compile Include="Migrations\20260711090000_AddChargePreviewLines.fs" />
     <Compile Include="Migrations\20260812090000_AddBillingCompletenessCoordination.fs" />
-    <Compile Include="Migrations\20260812130000_AddBillingPeriodClose.fs" />
     <Compile Include="Migrations\20260812110000_AddUsageFactJournal.fs" />
+    <Compile Include="Migrations\20260812130000_AddBillingPeriodClose.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
     <Compile Include="OperationsBillingPeriod.fs" />
