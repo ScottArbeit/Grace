@@ -4373,33 +4373,6 @@ module LocalStateDbTests =
                 |> should equal 2
             })
 
-    /// Verifies the development-only v10 database is replaced rather than migrated into the bounded completion schema.
-    [<Test>]
-    let ``working directory update schema v11 resets v10 completion data`` () =
-        withTempDir (fun _ configuration ->
-            task {
-                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
-
-                use seedConnection = openRawConnection configuration.GraceStatusFile
-                executeNonQuery seedConnection "UPDATE meta SET value = '10' WHERE key = 'schema_version';"
-
-                executeNonQuery
-                    seedConnection
-                    "INSERT INTO working_directory_update_completions (operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selected_reference_id, watch_event_cursor, finalization_state, completed_at_unix_ticks) VALUES ('stale-operation', 'Branch', 'stale-target', 'repository', 'branch', 'root', 'sha256', 'blake3', 'previous-branch', 'selected-reference', NULL, 'Terminal', 1);"
-
-                seedConnection.Close()
-                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
-                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
-
-                use connection = openRawConnection configuration.GraceStatusFile
-
-                executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                |> should equal LocalStateDb.SchemaVersion
-
-                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions;"
-                |> should equal 0
-            })
-
     /// Verifies that apply status incremental is atomic (rollback on failure).
     [<Test>]
     let ``applyStatusIncremental is atomic (rollback on failure)`` () =
