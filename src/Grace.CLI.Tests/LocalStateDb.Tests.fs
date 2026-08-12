@@ -264,7 +264,7 @@ module LocalStateDbTests =
 
         executeNonQuery
             connection
-            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, target_repository_id TEXT NOT NULL, target_branch_id TEXT NOT NULL, target_root_directory_version_id TEXT NOT NULL, target_root_directory_sha256_hash TEXT NOT NULL, target_root_directory_blake3_hash TEXT NOT NULL, branch_previous_branch_id TEXT NULL, branch_selected_reference_id TEXT NULL, watch_event_cursor TEXT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL, CHECK ((caller_kind = 'Branch' AND branch_previous_branch_id IS NOT NULL AND branch_selected_reference_id IS NOT NULL AND watch_event_cursor IS NULL) OR (caller_kind = 'Watch' AND branch_previous_branch_id IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NOT NULL) OR (caller_kind = 'Connect' AND branch_previous_branch_id IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NULL)));"
+            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, target_repository_id TEXT NOT NULL, target_branch_id TEXT NOT NULL, target_root_directory_version_id TEXT NOT NULL, target_root_directory_sha256_hash TEXT NOT NULL, target_root_directory_blake3_hash TEXT NOT NULL, branch_previous_branch_id TEXT NULL, branch_selection_kind TEXT NULL CHECK (branch_selection_kind IN ('Reference', 'DirectoryVersion')), branch_selected_reference_id TEXT NULL, watch_event_cursor TEXT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL, CHECK ((caller_kind = 'Branch' AND branch_previous_branch_id IS NOT NULL AND ((branch_selection_kind = 'Reference' AND branch_selected_reference_id IS NOT NULL) OR (branch_selection_kind = 'DirectoryVersion' AND branch_selected_reference_id IS NULL)) AND watch_event_cursor IS NULL) OR (caller_kind = 'Watch' AND branch_previous_branch_id IS NULL AND branch_selection_kind IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NOT NULL) OR (caller_kind = 'Connect' AND branch_previous_branch_id IS NULL AND branch_selection_kind IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NULL)));"
 
         executeNonQuery
             connection
@@ -2222,6 +2222,41 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Proves a complete prior v10 database is replaced instead of being read through as the v11 typed-selector shape.
+    [<Test>]
+    let ``ensureDbInitialized cleanly recreates v10 local state for typed Branch selectors`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                seedSchemaVersionOnly configuration.GraceStatusFile "10"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                |> should equal "11"
+
+                let selectorColumn =
+                    use command = connection.CreateCommand()
+
+                    command.CommandText <-
+                        "SELECT COUNT(*) FROM pragma_table_info('working_directory_update_completions') WHERE name = 'branch_selection_kind';"
+
+                    command.ExecuteScalar() |> Convert.ToInt32
+
+                selectorColumn |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that ensure db initialized recreates db when schema v6 has a malformed Watch journal table.
     [<Test>]
     let ``ensureDbInitialized recreates DB when schema v6 watch journal shape is malformed`` () =
@@ -3850,7 +3885,7 @@ module LocalStateDbTests =
                 | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
                                                                                                           persistedOperation,
                                                                                                           persistedPreviousBranchId,
-                                                                                                          persistedSelectedReferenceId)) ->
+                                                                                                          persistedSelection)) ->
                     WorkingDirectoryUpdate.Target.canonical persistedTarget
                     |> should equal (WorkingDirectoryUpdate.Target.canonical target)
 
@@ -3860,8 +3895,8 @@ module LocalStateDbTests =
                     persistedPreviousBranchId
                     |> should equal previousBranchId
 
-                    persistedSelectedReferenceId
-                    |> should equal selectedReferenceId
+                    persistedSelection
+                    |> should equal (WorkingDirectoryUpdate.BranchSelection.Reference selectedReferenceId)
                 | _ -> failwith "Expected the persisted Branch finalizer after restart."
 
                 do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target branchOperation
@@ -3914,6 +3949,57 @@ module LocalStateDbTests =
 
                 Assert.ThrowsAsync<InvalidOperationException>(alteredRead)
                 |> ignore
+            })
+
+    /// Proves reopening a hash-selected Branch finalization retains its typed no-Reference selector.
+    [<Test>]
+    let ``working directory update pending finalization reconstructs DirectoryVersion Branch selection after restart`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "c")
+                let blake3Hash = Blake3Hash(String.replicate 64 "d")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 224L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let previousBranchId = configuration.BranchId
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization previousBranchId)
+                        target
+                        operation
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile
+
+                match pending with
+                | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
+                                                                                                          persistedOperation,
+                                                                                                          persistedPreviousBranchId,
+                                                                                                          WorkingDirectoryUpdate.BranchSelection.DirectoryVersion)) ->
+                    persistedPreviousBranchId
+                    |> should equal previousBranchId
+
+                    WorkingDirectoryUpdate.Target.canonical persistedTarget
+                    |> should equal (WorkingDirectoryUpdate.Target.canonical target)
+
+                    WorkingDirectoryUpdate.Operation.value persistedOperation
+                    |> should equal (WorkingDirectoryUpdate.Operation.value operation)
+                | _ -> failwith "Expected the persisted hash-selected Branch finalizer after restart."
             })
 
     /// Verifies Connect cursor progress and its terminal completion cannot commit separately from matching local facts.

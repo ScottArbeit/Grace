@@ -73,7 +73,7 @@ remote retrieval, scheduling, and presentation policies where they belong.
 | `src/Grace.CLI/Command/Branch.CLI.fs` | Branch owns a workflow lease, Watch-clean preflight, marker handling, working-directory updates, local status, branch identity, and cache refresh. | Branch is the first public tracer and has a real post-update finalizer. | Current source around `runBranchSwitchWorkflowWithLease` and `updateWorkingDirectory`. |
 | `src/Grace.CLI/Command/Watch.CLI.fs` | Watch has private plan/apply clients, an object-cache apply path, marker sidecars, serialized replay, and cursor acknowledgement. | Watch supplies the most demanding ordering and retry scenarios. | Current source around `CurrentBranchRemoteMaterializationPlan`, `applyCurrentBranchMaterializationTargets`, and cursor replay. |
 | `src/Grace.CLI/Command/Connect.CLI.fs` | Connect writes configuration before optional retrieval, streams a server zip, writes working and object files together, and ignores undeclared zip files. | The design preserves zip retrieval while replacing extraction, verification, and outcome behavior. | Current source around `extractZipEntries` and `connectImpl`. |
-| `src/Grace.CLI/LocalStateDb.CLI.fs` | Schema version 9 stores status, object-cache metadata, and remote-reference boundaries. Boundary writes require complete root identity matching. | Schema replacement adds bounded update completion rows and extends atomic commit operations. | Current source around `replaceStatusSnapshotWithRevisionCore` and cursor operations. |
+| `src/Grace.CLI/LocalStateDb.CLI.fs` | Schema version 11 stores status, object-cache metadata, remote-reference boundaries, and bounded completion rows. Boundary writes require complete root identity matching. | A clean development-only schema replacement persists typed Branch selector facts and extends atomic commit operations. | Current source around `replaceStatusSnapshotWithRevisionCore` and cursor operations. |
 | `src/Grace.CLI/Command/Doctor.CLI.fs` | `--repair-local-state` proves an unchanged working tree against server root and branch history before atomic reconstruction. | Doctor is the sole explicit recovery gesture and will gain recorded-finalization retry. | Current source around `repairLocalState`. |
 | `src/Grace.Types/Reference.Types.fs` | `ReferenceMaterializationBoundaryDto` combines target root identity with an event cursor. | The internal update target must separate root identity from caller progress. | Current source at `ReferenceMaterializationBoundaryDto`. |
 | `src/Grace.CLI/Grace.CLI.fsproj` | Connect currently compiles before the shared module. | The new module and adapters must compile before Connect, Branch, Watch, and Doctor. | Current project file. |
@@ -127,6 +127,7 @@ termination and manual intervention when interrupted bytes match no known server
 | DEC-014 | architecture | accepted | The same deterministic operation may adopt a known orphaned marker after lease acquisition and fresh replanning. | Separate operation ID from random attempt token. | Same, different, malformed, and completed marker tests. |
 | DEC-015 | product | accepted | Incomplete outcomes use nonzero exit status; `FinalizationIncomplete` says bytes were updated and recommends Doctor. | Add typed human and machine projections. | Exit-code, JSON, and no-mixed-output proof. |
 | DEC-016 | proof | accepted | `grace switch` is the first value-bearing tracer. | Build the core module through one object-backed Branch path before Watch and Connect migration. | Public tracer proves the shared transaction and finalization. |
+| DEC-017 | product | accepted | A Branch request selected by branch name, branch ID, or Reference uses `Reference(referenceId)` and may transition branch identity. A request selected by SHA-256 or BLAKE3 uses `DirectoryVersion`, bound by its exact target root; it keeps the current branch identity and has no Reference ID. | Persist selector kind and the optional Reference ID, and reconstruct the same typed facts for retry. Replace the development-only local schema cleanly at version 11. | Prove both selector forms, including equivalent hash prefixes resolving to one operation and reopen of both persisted shapes. |
 
 ### Capability inventory
 
@@ -162,7 +163,9 @@ The deterministic caller-specific tuple that distinguishes retry, stale work, an
 canonical serialization of the tuple. Correlation IDs are diagnostic and do not affect idempotency.
 
 - Watch: caller kind, repository, branch, and exact event cursor.
-- Branch: caller kind, repository, previous branch, selected branch, selected Reference, and target root.
+- Branch `Reference(referenceId)`: caller kind, repository, previous branch, selected branch, selected Reference, and target root.
+- Branch `DirectoryVersion`: caller kind, repository, current branch, selector kind, and target root. SHA-256 and BLAKE3
+  prefixes that resolve to that same exact root are the same operation.
 - Connect: caller kind, repository, selected branch, target root, initial cursor, and local root scope.
 
 ### Attempt token
@@ -182,8 +185,10 @@ cursor when applicable, and the operation completion row. This is the irreversib
 
 ### Finalization
 
-An idempotent caller action performed after local completion while the lease remains held. Branch persists selected
-branch identity. Watch advances the exact cursor. Connect ordinarily has no separate finalization.
+An idempotent caller action performed after local completion while the lease remains held. A Reference-selected Branch
+persists the selected branch identity. A DirectoryVersion-selected Branch verifies that the current branch remains
+unchanged and never publishes branch identity. Watch advances the exact cursor. Connect ordinarily has no separate
+finalization.
 
 ### Local root scope
 
@@ -194,10 +199,13 @@ lease, marker, and sidecar files. It is not a DirectoryVersion identity.
 
 ### Successful Branch tracer
 
-Branch completes admission and content preparation, constructs a deterministic request, and calls `run`. The module
+Branch completes admission and content preparation, constructs a deterministic request, and calls `run`. A branch or
+Reference selection creates `Reference(referenceId)`; a SHA-256 or BLAKE3 selection creates `DirectoryVersion` bound
+to the resolved target root. The module
 acquires the lease, revalidates selection and clean local state, plans from current bytes, marks, applies from verified
 objects, verifies the target, commits local completion, removes the marker, and finalizes selected branch identity.
-The command returns `Updated` with exit code 0.
+The Reference form transitions branch identity. The DirectoryVersion form keeps the current branch identity. The command
+returns `Updated` with exit code 0.
 
 ### Already-matching target
 

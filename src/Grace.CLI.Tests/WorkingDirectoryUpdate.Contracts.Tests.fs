@@ -114,6 +114,30 @@ module WorkingDirectoryUpdateContractsTests =
         |> Result.isError
         |> should equal true
 
+    /// Proves a hash-resolved target is a typed Branch operation without inventing a Reference identity.
+    [<Test>]
+    let ``DirectoryVersion Branch selection binds identity to the exact target rather than a hash prefix`` () =
+        let selectedTarget = selectedTarget ()
+        let previousBranchId = Guid.Parse("2c461ab1-72a0-42c3-9c2e-ea9c0c3b83de")
+
+        let sha256PrefixOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion selectedTarget
+            |> required
+
+        let blake3PrefixOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion selectedTarget
+            |> required
+
+        let referenceOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId (Guid.Parse("d9622ad2-552d-4ab1-996e-2d756af82047")) selectedTarget
+            |> required
+
+        WorkingDirectoryUpdate.Operation.value sha256PrefixOperation
+        |> should equal (WorkingDirectoryUpdate.Operation.value blake3PrefixOperation)
+
+        WorkingDirectoryUpdate.Operation.value sha256PrefixOperation
+        |> should not' (equal (WorkingDirectoryUpdate.Operation.value referenceOperation))
+
         WorkingDirectoryUpdate.Operation.branchSwitch Guid.Empty (Guid.NewGuid()) selectedTarget
         |> Result.isError
         |> should equal true
@@ -164,7 +188,7 @@ module WorkingDirectoryUpdateContractsTests =
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
 
         branchValue
-        |> should equal "sha256:e08980617e39f55a9fd1272b848b88b871bca0b11680ff4b99c5d8209518f1c2"
+        |> should equal "sha256:8c706ec29cafceeb72203b736ac4bf16112413af8a48bddf2a112d287ad520e8"
 
         connectValue |> should equal expectedConnectValue
 
