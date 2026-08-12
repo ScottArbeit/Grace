@@ -11,6 +11,7 @@ open NUnit.Framework
 open System
 open System.Data
 open System.Diagnostics
+open System.IO
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -91,33 +92,43 @@ type OperationsTracerBulletServerTests() =
 
         message
 
-    /// Inserts a canonical Pending journal fact through the AppHost SQL boundary before the hosted dispatcher emits its Service Bus signal.
+    /// Invokes the Operations-owned test executable so the AppHost tracer enters canonical production append without a root-to-Operations project reference.
     let appendJournalFactAsync (fact: UsageFact) =
         task {
-            use connection = new SqlConnection(operationsSqlConnectionString)
-            do! connection.OpenAsync()
-            use command = connection.CreateCommand()
+            let projectPath =
+                Path.GetFullPath(
+                    Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Operations", "Grace.Operations.ProofHost", "Grace.Operations.ProofHost.fsproj")
+                )
 
-            command.CommandText <-
-                $"""
-INSERT INTO {operationsUsageFactJournalTable}
-    (UsageFactId, RawPayload, CorrelationId, FactKind, OwnerId, OrganizationId, RepositoryId, StoragePoolId, Quantity, ObservedAtUtc, State)
-VALUES
-    (@UsageFactId, @RawPayload, @CorrelationId, @FactKind, @OwnerId, @OrganizationId, @RepositoryId, @StoragePoolId, @Quantity, @ObservedAtUtc, 0);
-"""
+            let startInfo = ProcessStartInfo("dotnet")
+            startInfo.UseShellExecute <- false
+            startInfo.RedirectStandardOutput <- true
+            startInfo.RedirectStandardError <- true
+            startInfo.ArgumentList.Add("run")
+            startInfo.ArgumentList.Add("--configuration")
+            startInfo.ArgumentList.Add("Release")
+            startInfo.ArgumentList.Add("--project")
+            startInfo.ArgumentList.Add(projectPath)
+            startInfo.ArgumentList.Add("--no-launch-profile")
+            startInfo.ArgumentList.Add("--")
+            startInfo.ArgumentList.Add(operationsSqlConnectionString)
+            startInfo.ArgumentList.Add(Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)))
 
-            command.Parameters.Add("@UsageFactId", SqlDbType.UniqueIdentifier).Value <- fact.UsageFactId
-            command.Parameters.Add("@RawPayload", SqlDbType.VarBinary, -1).Value <- JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
-            command.Parameters.Add("@CorrelationId", SqlDbType.NVarChar, 200).Value <- fact.CorrelationId
-            command.Parameters.Add("@FactKind", SqlDbType.Int).Value <- int fact.FactKind
-            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- fact.Scope.OwnerId
-            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- fact.Scope.OrganizationId
-            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- fact.Scope.RepositoryId
-            command.Parameters.Add("@StoragePoolId", SqlDbType.NVarChar, operationsStoragePoolIdMaxLength).Value <- fact.Resource.StoragePoolId
-            command.Parameters.Add("@Quantity", SqlDbType.BigInt).Value <- fact.Quantity
-            command.Parameters.Add("@ObservedAtUtc", SqlDbType.DateTime2).Value <- fact.ObservedAt.ToDateTimeUtc()
-            let! _ = command.ExecuteNonQueryAsync()
-            return ()
+            use child = Process.Start(startInfo)
+
+            if isNull child then
+                failwith "The Operations append proof executable did not start."
+
+            use timeout = new CancellationTokenSource(proofTimeout)
+            let! output = child.StandardOutput.ReadToEndAsync(timeout.Token)
+            let! error = child.StandardError.ReadToEndAsync(timeout.Token)
+            do! child.WaitForExitAsync(timeout.Token)
+
+            if
+                child.ExitCode <> 0
+                || not (output.Contains("appended-pending", StringComparison.Ordinal))
+            then
+                failwith $"The Operations append proof executable failed with exit code {child.ExitCode}. Output: {output}. Error: {error}"
         }
 
     /// Sends one raw message directly to the operational facts topic for duplicate and invalid-payload proof.
