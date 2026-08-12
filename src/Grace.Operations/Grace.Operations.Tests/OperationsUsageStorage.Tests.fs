@@ -112,6 +112,10 @@ type private InMemoryOperationsUsageTransactionScope() =
                             lockCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
 
+                        member _.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(_usageFactId, _scope, scopeCancellationToken) =
+                            scopeCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
+
                         member _.TryInsertRawUsageFactAsync(rawFact, insertCancellationToken) =
                             insertCancellationToken.ThrowIfCancellationRequested()
 

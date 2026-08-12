@@ -78,15 +78,49 @@ IF @LockResult < 0
     THROW 57220, 'Could not acquire the Operations billing completeness coordination lock.', 1;
 """
 
+    /// Rejects a reused fact identity unless all committed accepted or active rejection evidence has the exact requested scope.
+    [<Literal>]
+    let EnsureUsageFactIdMatchesBillingCompletenessScope =
+        """
+IF EXISTS
+(
+    SELECT 1
+    FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK)
+    WHERE UsageFactId = @UsageFactId
+      AND
+      (
+          OwnerId <> @OwnerId
+          OR OrganizationId <> @OrganizationId
+          OR RepositoryId <> @RepositoryId
+          OR ObservedAtUtc < @MonthStartUtc
+          OR ObservedAtUtc >= @NextMonthStartUtc
+      )
+)
+OR EXISTS
+(
+    SELECT 1
+    FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK)
+    WHERE UsageFactId = @UsageFactId
+      AND IsActive = 1
+      AND
+      (
+          OwnerId IS NULL
+          OR OrganizationId IS NULL
+          OR RepositoryId IS NULL
+          OR MonthStartUtc IS NULL
+          OR OwnerId <> @OwnerId
+          OR OrganizationId <> @OrganizationId
+          OR RepositoryId <> @RepositoryId
+          OR MonthStartUtc <> @MonthStartUtc
+      )
+)
+    THROW 57221, 'UsageFactId is already bound to a different billing completeness scope.', 1;
+"""
+
     /// Records the first active scoped rejection unless accepted durable usage already owns the exact fact and scope.
     [<Literal>]
     let RecordScopedUsageFactRejection =
         """
-IF EXISTS (SELECT 1 FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK) WHERE UsageFactId = @UsageFactId
-           AND (OwnerId <> @OwnerId OR OrganizationId <> @OrganizationId OR RepositoryId <> @RepositoryId
-                OR ObservedAtUtc < @MonthStartUtc OR ObservedAtUtc >= @NextMonthStartUtc))
-    THROW 57221, 'UsageFactId is already accepted for a different billing completeness scope.', 1;
-
 IF NOT EXISTS (SELECT 1 FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK) WHERE UsageFactId = @UsageFactId
                AND OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
                AND ObservedAtUtc >= @MonthStartUtc AND ObservedAtUtc < @NextMonthStartUtc)

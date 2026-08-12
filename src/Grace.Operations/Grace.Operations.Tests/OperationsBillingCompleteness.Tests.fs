@@ -31,6 +31,9 @@ type private ObservedOperationsUsageTransaction
                 do! afterScopeLockAsync scope cancellationToken
             }
 
+        member _.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(usageFactId, scope, cancellationToken) =
+            inner.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(usageFactId, scope, cancellationToken)
+
         member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) = inner.TryInsertRawUsageFactAsync(rawFact, cancellationToken)
 
         member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
@@ -788,6 +791,156 @@ VALUES
                 Assert.That(stillComplete, Is.EqualTo(Complete))
             })
 
+    /// Proves a reused fact identity cannot repair or acknowledge a different scope in online or replay storage paths.
+    [<Test>]
+    member _.ReusedFactIdentityRejectsCrossScopeOnlineAndReplayWithoutClearingEitherBlocker() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryAId = Guid.NewGuid()
+                let repositoryBId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let monthStartUtc = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let factIdAcceptedFirst = Guid.NewGuid()
+                let acceptedFirstA = fact factIdAcceptedFirst ownerId organizationId repositoryAId observedAt
+                let acceptedFirstB = fact factIdAcceptedFirst ownerId organizationId repositoryBId observedAt
+                let scopeA = scopeFor ownerId organizationId repositoryAId observedAt
+                let scopeB = scopeFor ownerId organizationId repositoryBId observedAt
+
+                let! accepted = store.StoreUsageFactAsync(acceptedFirstA, payloadFor acceptedFirstA, CancellationToken.None)
+
+                let accepted =
+                    accepted
+                    |> Result.defaultWith (fun errors ->
+                        let errorText = String.Join("; ", errors)
+                        Assert.Fail($"Initial exact-scope acceptance failed: {errorText}")
+                        Unchecked.defaultof<UsageFactPersistenceResult>)
+
+                Assert.That(accepted.Status, Is.EqualTo(UsageFactPersistenceStatus.Accepted))
+
+                let! sameScopeDuplicate = store.StoreUsageFactAsync(acceptedFirstA, payloadFor acceptedFirstA, CancellationToken.None)
+
+                let sameScopeDuplicate =
+                    sameScopeDuplicate
+                    |> Result.defaultWith (fun errors ->
+                        let errorText = String.Join("; ", errors)
+                        Assert.Fail($"Same-scope duplicate failed: {errorText}")
+                        Unchecked.defaultof<UsageFactPersistenceResult>)
+
+                Assert.That(sameScopeDuplicate.Status, Is.EqualTo(UsageFactPersistenceStatus.AlreadyProcessed))
+
+                do!
+                    executeNonQueryAsync
+                        connectionString
+                        (directRejectionInsertSql
+                            (Guid.NewGuid())
+                            (Some factIdAcceptedFirst)
+                            (Some ownerId)
+                            (Some organizationId)
+                            (Some repositoryBId)
+                            (Some monthStartUtc)
+                            "cross-scope blocker after accepted fact"
+                            true
+                            None)
+
+                Assert.ThrowsAsync<SqlException>(
+                    Func<Task> (fun () ->
+                        task {
+                            let! _ = store.StoreUsageFactAsync(acceptedFirstB, payloadFor acceptedFirstB, CancellationToken.None)
+                            return ()
+                        }
+                        :> Task)
+                )
+                |> ignore
+
+                Assert.ThrowsAsync<SqlException>(
+                    Func<Task> (fun () ->
+                        task {
+                            let! _ = replayAsync store acceptedFirstB
+                            return ()
+                        }
+                        :> Task)
+                )
+                |> ignore
+
+                let! acceptedFirstRawCount =
+                    executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{factIdAcceptedFirst:D}';"
+
+                let! acceptedFirstBlockerCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{factIdAcceptedFirst:D}' AND IsActive = 1;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(acceptedFirstRawCount, Is.EqualTo(1))
+                        Assert.That(acceptedFirstBlockerCount, Is.EqualTo(1)))
+                )
+
+                let factIdRejectedFirst = Guid.NewGuid()
+                let rejectedFirstA = fact factIdRejectedFirst ownerId organizationId repositoryAId observedAt
+                let rejectedFirstB = fact factIdRejectedFirst ownerId organizationId repositoryBId observedAt
+                let! rejection = store.RecordUsageFactRejectionAsync(scopedRejection factIdRejectedFirst scopeB, CancellationToken.None)
+                Assert.That(rejection.IsOk, Is.True)
+
+                do!
+                    executeNonQueryAsync
+                        connectionString
+                        (directRejectionInsertSql
+                            (Guid.NewGuid())
+                            (Some factIdRejectedFirst)
+                            (Some ownerId)
+                            (Some organizationId)
+                            (Some repositoryAId)
+                            (Some monthStartUtc)
+                            "cross-scope blocker before accepted fact"
+                            true
+                            None)
+
+                Assert.ThrowsAsync<SqlException>(
+                    Func<Task> (fun () ->
+                        task {
+                            let! _ = store.StoreUsageFactAsync(rejectedFirstA, payloadFor rejectedFirstA, CancellationToken.None)
+                            return ()
+                        }
+                        :> Task)
+                )
+                |> ignore
+
+                Assert.ThrowsAsync<SqlException>(
+                    Func<Task> (fun () ->
+                        task {
+                            let! _ = replayAsync store rejectedFirstA
+
+                            return ()
+                        }
+                        :> Task)
+                )
+                |> ignore
+
+                let! rejectedFirstRawCount =
+                    executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{factIdRejectedFirst:D}';"
+
+                let! rejectedFirstBlockerCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{factIdRejectedFirst:D}' AND IsActive = 1;"
+
+                let! scopeACompleteness = store.EvaluateBillingCompletenessAsync(scopeA, CancellationToken.None)
+                let! scopeBCompleteness = store.EvaluateBillingCompletenessAsync(scopeB, CancellationToken.None)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(rejectedFirstRawCount, Is.EqualTo(0))
+                        Assert.That(rejectedFirstBlockerCount, Is.EqualTo(2))
+                        Assert.That(scopeACompleteness, Is.EqualTo(BlockedByActiveScopedRejection))
+                        Assert.That(scopeBCompleteness, Is.EqualTo(BlockedByActiveScopedRejection)))
+                )
+            })
+
     /// Proves accepted durable usage suppresses stale rejection evidence and default partial evidence has no derived month.
     [<Test>]
     member _.AcceptedFactsWinOverStaleRejectionAndDefaultPartialEvidenceHasNoMonth() =
@@ -815,13 +968,13 @@ VALUES
                 let partial =
                     {
                         RejectionId = Guid.NewGuid()
-                        UsageFactId = None
+                        UsageFactId = Some(Guid.NewGuid())
                         Scope = None
                         ReportedScope =
                             Some
                                 {
                                     OwnerId = Some ownerId
-                                    OrganizationId = None
+                                    OrganizationId = Some organizationId
                                     RepositoryId = Some repositoryId
                                     ObservedAt = Some Constants.DefaultTimestamp
                                 }
@@ -842,6 +995,49 @@ VALUES
                         "SELECT COUNT(*) FROM ops.UsageFactRejection WHERE Reason = 'default timestamp is partial evidence' AND MonthStartUtc IS NULL;"
 
                 Assert.That(absentMonth, Is.EqualTo(1))
+
+                let missingTimestamp =
+                    {
+                        RejectionId = Guid.NewGuid()
+                        UsageFactId = Some(Guid.NewGuid())
+                        Scope = None
+                        ReportedScope =
+                            Some { OwnerId = Some ownerId; OrganizationId = Some organizationId; RepositoryId = Some repositoryId; ObservedAt = None }
+                        Reason = "missing timestamp is partial evidence"
+                        IsActive = true
+                    }
+
+                let missingScope =
+                    {
+                        RejectionId = Guid.NewGuid()
+                        UsageFactId = None
+                        Scope = None
+                        ReportedScope = None
+                        Reason = "missing scope is partial evidence"
+                        IsActive = true
+                    }
+
+                let! missingTimestampRecorded = store.RecordUsageFactRejectionAsync(missingTimestamp, CancellationToken.None)
+                let! missingScopeRecorded = store.RecordUsageFactRejectionAsync(missingScope, CancellationToken.None)
+                Assert.That(missingTimestampRecorded.IsOk, Is.True)
+                Assert.That(missingScopeRecorded.IsOk, Is.True)
+
+                let! allPartialRowsHaveNoMonth =
+                    executeInt32Async
+                        connectionString
+                        """
+SELECT COUNT(*)
+FROM ops.UsageFactRejection
+WHERE Reason IN
+(
+    'default timestamp is partial evidence',
+    'missing timestamp is partial evidence',
+    'missing scope is partial evidence'
+)
+  AND MonthStartUtc IS NULL;
+"""
+
+                Assert.That(allPartialRowsHaveNoMonth, Is.EqualTo(3))
             })
 
     /// Proves the first instant of the next UTC month derives a different scope and lock identity from the prior month.
