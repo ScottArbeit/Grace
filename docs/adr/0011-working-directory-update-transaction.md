@@ -1,114 +1,103 @@
 ---
 status: accepted
-date: 2026-08-11
+date: 2026-08-12
 decision-makers:
   - Scott Arbeit
 consulted:
   - Codex
 ---
 
-# Use one verified Working Directory Update transaction
+# Use one Branch-derived Working Directory Update transaction
 
-Grace will route Branch switching, Watch current-Reference replay, and Connect retrieval through one deep internal
-`WorkingDirectoryUpdate` module. The module owns the ordering-sensitive local transaction while each caller retains
-admission, target selection, remote retrieval, scheduling, and presentation.
+Grace will first route `grace switch` through one deep, private Branch-derived `WorkingDirectoryUpdate` transaction.
+The module owns local ordering, verification, completion, marker handling, and Branch finalization. Watch and Connect
+are deferred callers; they do not justify a generic request model before their own work is ready.
 
 ## Context
 
-The current `WorkingDirectoryMaterialization` module serializes arbitrary callbacks but does not own planning, marker
-behavior, filesystem mutation, content verification, durable local state, finalization, or failure classification.
-Branch and Watch each implement substantial private mutation workflows, while Connect extracts a server zip directly
-into working and object paths without the same lease or marker contract.
+The earlier all-caller planning and PR #854 combined typed selection persistence, filesystem planning, finalization,
+Save admission, output, and phase proof in one implementation slice. Exact-head review showed that a broad private
+request made core Branch rules implicit: typed marker evidence could be lost, Reference finalization could not repeat,
+planning could use a pre-Save graph, path topology was incomplete, and cancellation was detached from the public action.
 
-These paths can change the same local directory and SQLite state. Their differences are real—Watch advances an ordered
-cursor, Branch publishes selected branch identity, and Connect preserves zip retrieval—but those differences do not
-justify three local-integrity implementations.
+The replacement sequence needs one real Branch path with a small input and explicit durable facts. Hash selectors remain
+supported: they select an exact root without a Reference and keep the current Branch active.
 
 ## Decision
 
-- The internal module exposes one generic `run` operation and one `retryFinalization` operation. Caller-specific
-  constructors create private normalized requests.
-- Target identity contains repository, branch, root DirectoryVersion, SHA-256, and BLAKE3. Caller operation identity is
-  separate and deterministic. Each execution attempt receives a separate random marker token.
-- Prepared-content adapters expose exact immutable manifests and readable uncompressed bytes. They never provide
-  mutation plans or database callbacks.
-- A repository ID plus normalized local-root-path hash scopes the exclusive file lease, versioned marker, and completion
-  sidecar. Branch identity is excluded from the physical scope.
-- The module rereads selected target and local state after acquiring the lease, builds a fresh plan, mutates only proven
-  paths, verifies object and working bytes with SHA-256 and BLAKE3, and proves the final selected root.
-- SQLite local completion is the irreversible point. One transaction records matching status, required object-cache
-  metadata, Connect's initial cursor when present, and a bounded update completion row.
-- SQLite stores no running operation. It retains the latest terminal row per caller and one unresolved pending
-  finalization.
-- The completion sidecar is derived Watch notification evidence. It cannot override SQLite completion truth.
-- Branch and Watch finalization is idempotent and runs after local completion while the lease remains held. A failed
-  finalization blocks every different update in that local scope.
-- The five outcomes are `Unchanged`, `Updated`, `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete`.
-  Incomplete outcomes return nonzero. `FinalizationIncomplete` says the working directory was updated and recommends
+- The first private `WorkingDirectoryUpdate.run` input is Branch-only. Its caller provides only typed Branch selection,
+  exact target graph, verified prepared content, and diagnostic correlation.
+- The module derives canonical configuration, working/object/SQLite paths, scan input, current revision and complete
+  status fingerprint, operation identity, completion facts, marker disposition, and typed Branch finalization facts.
+  It does not accept an arbitrary path or context bag, old status graph, selected-state reader, finalizer callback,
+  mutation plan, or database handle.
+- Branch selection is typed. `Reference` carries the required selected Reference ID. Hash-selected `DirectoryVersion`
+  carries no Reference ID, binds the operation to its exact selected root, and retains the current Branch as both
+  previous and selected Branch.
+- A successful current-version Save produces the only accepted local baseline for a Save-enabled switch: its SQLite
+  revision plus a canonical fingerprint of the complete status graph. After acquiring the lease, the module rereads and
+  requires that binding before planning.
+- The module inspects and cleans markers through explicit dispositions. Missing or exact-cleaned evidence may advance
+  the relevant phase. Different-operation, malformed or unsupported, unreadable, and exact-cleanup-failed evidence is
+  preserved and never converted into success.
+- The module plans the complete tracked topology, including empty directories and file/directory transitions; it
+  preserves ignored content. It verifies dual-hash objects before use and independently verifies the complete final
+  graph and both root hashes before local completion.
+- The public action token applies through admission, Save, resolution, preparation, lease waiting, object publication,
+  and the final pre-mutation check. It is deferred only after working-tree mutation starts.
+- SQLite local completion remains the irreversible local point. `Reference` finalization occurs afterward while the
+  lease is held: previous Branch applies once, exact selected Branch is already applied, and any third Branch rejects.
+  `DirectoryVersion` finalization proves the current Branch remains active and changes no Branch identity.
+- The existing five outcomes remain unchanged. A post-local-completion cleanup or finalization failure is
+  `FinalizationIncomplete`, is nonzero, says that bytes were updated, and recommends
   `grace doctor --repair-local-state`.
-- The same deterministic operation may adopt a known orphaned marker only after acquiring the lease and performing
-  complete revalidation and replanning. Different or unrecognized markers require Doctor.
-- Doctor first attempts a filesystem-free retry of recorded finalization, then may use exact local-state reconstruction.
-  Doctor never rolls back or guesses working-directory content.
-- Connect keeps its zip download. It stages and validates the zip before lease acquisition, performs no network reads
-  under the lease, verifies objects before populating the working directory, and limits `--force` to conflicting target
-  paths.
+- Real filesystem and SQLite tests prove phase and recovery behavior. Bounded built-command tests prove selector routing
+  and public output. Every failure seam is deterministically activated by one of those proof boundaries.
 
-The complete requirements, state model, propagation map, and proof contract are in
+The complete requirement ownership, phase table, and proof contract are in
 [Working Directory Update](../Working%20Directory%20Update.md).
 
 ## Consequences
 
-The module becomes deep: a small typed interface hides cross-process serialization, stale-state rejection, fresh
-planning, marker ownership, object publication, working-directory mutation, verification, SQLite commit, cleanup,
-finalization, cancellation, and outcome classification.
+The module becomes deep without becoming generic. Branch callers are small and cannot assemble contradictory local
+facts, while the module owns the current Branch transaction end to end. Issue #869 persists typed facts and marker
+evidence; #870 delivers the hash-selected tracer; #871 adds repeatable Reference finalization; #872 adds Save-enabled
+baseline binding. Issue #842 later uses the same exact pending Branch facts for Doctor recovery without working-file
+mutation.
 
-Callers remain locally understandable because their policy stays outside the module. A new prepared content form can
-reuse the local transaction, but a new caller kind or finalization rule requires an explicit design decision.
+Watch and Connect stay outside this interface until a later accepted design names their independent admission and
+finalization rules. This avoids treating one future caller's callback or path needs as a current Branch contract.
 
-Product V1 recovery is deliberate rather than comprehensive. Exact same-operation retry and Doctor recovery are
-supported; rollback, durable per-file journals, automatic general recovery, hostile-local-process defense, and
-multi-host coordination are not.
-
-The local SQLite schema can be replaced without migration because Grace has no production local data contract. Public
-CLI output changes with implementation, while server DTOs, HTTP routes, SDK facades, OpenAPI, and generated clients are
-expected to remain unchanged.
+Product V1 still excludes rollback, durable per-file journals, automatic general recovery, migration, compatibility,
+and network access under the lease. Local schema replacement remains allowed because Grace has no production local-data
+compatibility obligation.
 
 ## Rejected alternatives
 
-### Keep the callback-only serialization wrapper
+### Restore the generic all-caller request
 
-A lease around arbitrary caller callbacks leaves the critical plan, mutation, verification, commit, and recovery order
-duplicated and unprovable as one contract.
+An interface that permits callers to supply alternate local paths, prior status, selected-state reading, or finalization
+returns the trust boundary to callers. It recreates the shape superseded after PR #854 rather than solving its review
+findings.
 
-### Expose separate Branch, Watch, and Connect transaction operations
+### Treat hash selection as a Reference
 
-Caller-oriented entries are ergonomic but make today's caller taxonomy the architecture. Private request constructors
-provide the same ergonomics without three transaction implementations.
+A selected root can have no Reference or more than one Reference. Inventing one would change Branch identity semantics
+and make persisted recovery facts false. `DirectoryVersion` keeps the exact root and current Branch instead.
 
-### Expose generic transaction participants
+### Plan from the pre-Save status
 
-Pluggable local commits, SQL callbacks, or caller-supplied mutation plans would move the hardest invariants back into
-callers and make the module shallow.
+After a successful Save, the earlier graph no longer names the accepted current version. Using it would make the
+subsequent plan stale by construction.
 
-### Use only the completion sidecar
+### Collapse marker evidence to cleanup succeeded or failed
 
-A sidecar written after status commit leaves an uncertain crash gap and cannot atomically identify the completed
-operation. SQLite completion closes that gap; the sidecar remains notification evidence only.
-
-### Hold the lease while reading the remote zip
-
-Remote reads can stall, retry, or outlive signed access. Local staging keeps the mutation phase bounded to local
-filesystem and SQLite work.
-
-### Add rollback or a durable per-file journal
-
-Those capabilities add inverse planning, restart state, compaction, abandonment, and recovery policy beyond the Product
-V1 contract. Exact retry and explicit Doctor recovery provide the selected value without that machinery.
+Different, malformed, unsupported, unreadable, and exact-cleanup-failed evidence have distinct recovery implications.
+A Boolean cannot preserve enough information to make finalization or Doctor behavior truthful.
 
 ## Related decisions
 
-- [ADR 0009](0009-refresh-watch-signalr-subscriptions-at-branch-transition.md) defines Watch subscription refresh after
-  Branch finalization.
-- [ADR 0010](0010-current-branch-materialization-trust-boundary.md) defines Watch's ordered current-Reference replay and
-  cursor rules, which become caller policy around this shared local transaction.
+- [ADR 0009](0009-refresh-watch-signalr-subscriptions-at-branch-transition.md) remains the accepted Watch refresh
+  decision; Watch integration is deferred from this Branch transaction.
+- [ADR 0010](0010-current-branch-materialization-trust-boundary.md) remains the accepted Watch replay boundary; it does
+  not create a Watch request constructor in the current Branch slice.

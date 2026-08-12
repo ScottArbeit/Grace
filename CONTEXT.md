@@ -24,10 +24,10 @@ parity, and non-version SHA-256 uses that intentionally stay SHA-256.
 _Avoid_: FileContentHash, ChunkAddress, ContentBlockAddress, ManifestAddress
 
 **Working Directory Update**:
-The accepted, Plan-ready design for a Grace-controlled operation that will change indexed working-directory content and
-durable local state to match one selected server root, then commit caller-specific progress only after verifying that
-match. After implementation, Branch switching, Watch current-Reference replay, and Connect retrieval will use this
-shared operation while retaining their own admission and presentation policies.
+The accepted, Plan-ready Branch transaction that will change indexed working-directory content and durable local state
+to match one selected server root, then finalize Branch identity only after verifying that match. Its first private
+interface is Branch-derived; Watch current-Reference replay and Connect retrieval remain deferred until their separate
+work names their own admission and finalization rules.
 _Avoid_: WorkingDirectoryMaterialization, exact materialization, caller-owned filesystem transaction
 
 **FileManifest**:
