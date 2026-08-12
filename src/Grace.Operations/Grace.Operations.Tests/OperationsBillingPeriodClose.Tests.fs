@@ -170,6 +170,47 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             return ()
         }
 
+    /// Adds one complete effective pricing grain for a chosen half-open interval through the real Operations schema.
+    let addPricingWindowAsync connectionString (scope: BillingCompletenessScope) factKind (effectiveFrom: DateTime) (effectiveTo: DateTime) =
+        task {
+            let planId = Guid.NewGuid()
+            let mappingId = Guid.NewGuid()
+            let rateId = Guid.NewGuid()
+            let assignmentId = Guid.NewGuid()
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                """
+INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc,EffectiveToUtc)
+VALUES (@PlanId,@PlanCode,@DisplayName,@EffectiveFrom,@EffectiveTo);
+INSERT INTO ops.BillableUsageKindMapping (BillableUsageKindMappingId,FactKind,BillableUsageKind,DisplayName,EffectiveFromUtc,EffectiveToUtc)
+VALUES (@MappingId,@FactKind,@BillableUsageKind,@MappingName,@EffectiveFrom,@EffectiveTo);
+INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc)
+VALUES (@RateId,@PlanId,@BillableUsageKind,'USD','byte-minute',1,2,@EffectiveFrom,@EffectiveTo);
+INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc,EffectiveToUtc)
+VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveFrom,@EffectiveTo);
+"""
+
+            command.Parameters.Add("@PlanId", System.Data.SqlDbType.UniqueIdentifier).Value <- planId
+            command.Parameters.Add("@PlanCode", System.Data.SqlDbType.NVarChar, 80).Value <- $"close-window-{planId:N}"
+            command.Parameters.Add("@DisplayName", System.Data.SqlDbType.NVarChar, 200).Value <- "Billing close test window"
+            command.Parameters.Add("@MappingId", System.Data.SqlDbType.UniqueIdentifier).Value <- mappingId
+            command.Parameters.Add("@MappingName", System.Data.SqlDbType.NVarChar, 200).Value <- "Storage byte minute"
+            command.Parameters.Add("@FactKind", System.Data.SqlDbType.Int).Value <- factKind
+            command.Parameters.Add("@BillableUsageKind", System.Data.SqlDbType.Int).Value <- 100 + factKind
+            command.Parameters.Add("@RateId", System.Data.SqlDbType.UniqueIdentifier).Value <- rateId
+            command.Parameters.Add("@AssignmentId", System.Data.SqlDbType.UniqueIdentifier).Value <- assignmentId
+            command.Parameters.Add("@OwnerId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@EffectiveFrom", System.Data.SqlDbType.DateTime2).Value <- effectiveFrom
+            command.Parameters.Add("@EffectiveTo", System.Data.SqlDbType.DateTime2).Value <- effectiveTo
+            let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+            return ()
+        }
+
     /// Executes a trusted scalar count command against the isolated SQL database.
     let countAsync connectionString sql =
         task {
@@ -258,6 +299,70 @@ VALUES (NEWID(), @TargetOwnerId, @TargetOrganizationId, @TargetRepositoryId, @Pl
                         Assert.That(firstPass.Length, Is.EqualTo(6))
                         Assert.That(months firstPass, Is.EqualTo(expected :> obj))
                         Assert.That(months repeatedPass, Is.EqualTo(expected :> obj)))
+                )
+            })
+
+    /// Proves a later closable scope is reached after the first page remains occupied by retryable nonterminal periods.
+    [<Test>]
+    member _.DiscoveryCursorReachesLaterClosableScopeWithoutDiscardingPersistentBlockers() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    """
+DECLARE @index int = 0;
+WHILE @index < 100
+BEGIN
+    INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
+    VALUES
+    (
+        NEWID(),
+        CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('blocked-owner-', @index))),
+        CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('blocked-organization-', @index))),
+        CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('blocked-repository-', @index))),
+        '2026-01-01T00:00:00',
+        '2026-02-01T00:00:00',
+        0,
+        'Missing pricing remains retryable.',
+        SYSUTCDATETIME()
+    );
+    SET @index = @index + 1;
+END;
+"""
+
+                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+                do! addPricingAsync connectionString scope
+
+                let! firstPage = OperationsBillingPeriodCloseDiscovery.discoverAsync connectionString CancellationToken.None
+
+                let! secondPage =
+                    OperationsBillingPeriodCloseDiscovery.discoverAfterAsync connectionString (Some firstPage[firstPage.Length - 1]) CancellationToken.None
+
+                let targetDiscovered =
+                    secondPage
+                    |> Array.exists (fun candidate ->
+                        candidate.OwnerId = scope.OwnerId
+                        && candidate.OrganizationId = scope.OrganizationId
+                        && candidate.RepositoryId = scope.RepositoryId
+                        && candidate.MonthStart = scope.MonthStart)
+
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! targetClose = closer.CloseAsync(request scope, CancellationToken.None)
+                let! blockedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1) AND RetryDiagnostic IS NOT NULL;"
+                let! closedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State = 2;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(firstPage.Length, Is.EqualTo(100))
+                        Assert.That(targetDiscovered, Is.True)
+                        Assert.That(closedChargeCount targetClose, Is.Zero)
+                        Assert.That(blockedCount, Is.EqualTo(100))
+                        Assert.That(closedCount, Is.EqualTo(1)))
                 )
             })
 
@@ -357,6 +462,72 @@ VALUES (NEWID(), @TargetOwnerId, @TargetOrganizationId, @TargetRepositoryId, @Pl
                         Assert.That(chargeCount, Is.Zero)
                         Assert.That(lateWorkCount, Is.EqualTo(1))
                         Assert.That(clearedDiagnosticCount, Is.Zero))
+                )
+            })
+
+    /// Proves adjacent effective grains collectively cover a zero-fact month while a one-tick gap remains retryable.
+    [<Test>]
+    member _.ZeroFactCloseAcceptsAdjacentCoverageAndRejectsOneTickGapUntilRepaired() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let adjacentScope = scopeFor ownerId organizationId repositoryId
+                let gapScope = { adjacentScope with MonthStart = Instant.FromUtc(2026, 7, 1, 0, 0) }
+                let monthStartUtc = adjacentScope.MonthStart.ToDateTimeUtc()
+
+                let nextMonthStartUtc =
+                    (BillingCompletenessScope.nextMonthStart adjacentScope)
+                        .ToDateTimeUtc()
+
+                let gapMonthStartUtc = gapScope.MonthStart.ToDateTimeUtc()
+
+                let gapNextMonthStartUtc =
+                    (BillingCompletenessScope.nextMonthStart gapScope)
+                        .ToDateTimeUtc()
+
+                let boundary = monthStartUtc.AddDays 15.0
+                let gapBoundary = gapMonthStartUtc.AddDays 15.0
+                let afterGapBoundary = gapBoundary.AddTicks 1L
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+
+                do! addPricingWindowAsync connectionString adjacentScope 1 monthStartUtc boundary
+                do! addPricingWindowAsync connectionString adjacentScope 1 boundary nextMonthStartUtc
+                let! adjacentResult = closer.CloseAsync(request adjacentScope, CancellationToken.None)
+
+                do! addPricingWindowAsync connectionString gapScope 1 gapMonthStartUtc gapBoundary
+                do! addPricingWindowAsync connectionString gapScope 1 afterGapBoundary gapNextMonthStartUtc
+                let! gappedResult = closer.CloseAsync(request gapScope, CancellationToken.None)
+
+                let! gappedPostingCount =
+                    countAsync
+                        connectionString
+                        "SELECT COUNT(*) FROM ops.Charge WHERE BillingPeriodId IN (SELECT BillingPeriodId FROM ops.BillingPeriod WHERE RepositoryId <> '00000000-0000-0000-0000-000000000000');"
+
+                let! gappedEvidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! gappedDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL;"
+
+                do! addPricingWindowAsync connectionString gapScope 1 gapBoundary afterGapBoundary
+                let! repairedResult = closer.CloseAsync(request gapScope, CancellationToken.None)
+                let! repairedDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL;"
+                let! closedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State = 2;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(closedChargeCount adjacentResult, Is.Zero)
+
+                        Assert.That(
+                            (match gappedResult with
+                             | BillingPeriodCloseResult.Blocked _ -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(gappedPostingCount, Is.Zero)
+                        Assert.That(gappedEvidenceCount, Is.EqualTo(1))
+                        Assert.That(gappedDiagnosticCount, Is.EqualTo(1))
+                        Assert.That(closedChargeCount repairedResult, Is.Zero)
+                        Assert.That(repairedDiagnosticCount, Is.Zero)
+                        Assert.That(closedCount, Is.EqualTo(2)))
                 )
             })
 

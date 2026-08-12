@@ -338,51 +338,128 @@ WHERE BillingPeriodId=@BillingPeriodId AND State IN (0,1);
                     connection
                     transaction
                     """
-IF NOT EXISTS
+;WITH assignmentPlanApplicability AS
 (
-    SELECT 1
+    SELECT rangeStart.EffectiveFromUtc, rangeEnd.EffectiveToUtc
     FROM ops.PricingAssignment AS assignment
     INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
+    CROSS APPLY
+    (
+        SELECT CASE WHEN assignment.EffectiveFromUtc > pricingPlan.EffectiveFromUtc
+                    THEN assignment.EffectiveFromUtc ELSE pricingPlan.EffectiveFromUtc END AS EffectiveFromUtc
+    ) AS rangeStart
+    CROSS APPLY
+    (
+        SELECT CASE WHEN ISNULL(assignment.EffectiveToUtc,@NextMonthStartUtc) < ISNULL(pricingPlan.EffectiveToUtc,@NextMonthStartUtc)
+                    THEN ISNULL(assignment.EffectiveToUtc,@NextMonthStartUtc) ELSE ISNULL(pricingPlan.EffectiveToUtc,@NextMonthStartUtc) END AS EffectiveToUtc
+    ) AS rangeEnd
     WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-      AND assignment.EffectiveFromUtc<=@MonthStartUtc
-      AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc>=@NextMonthStartUtc)
-      AND pricingPlan.EffectiveFromUtc<=@MonthStartUtc
-      AND (pricingPlan.EffectiveToUtc IS NULL OR pricingPlan.EffectiveToUtc>=@NextMonthStartUtc)
-)
-    SELECT CAST('Complete pricing assignment and plan coverage is required for zero-fact billing close.' AS nvarchar(400));
-ELSE IF NOT EXISTS
+      AND rangeStart.EffectiveFromUtc < @NextMonthStartUtc AND rangeEnd.EffectiveToUtc > @MonthStartUtc
+),
+assignmentPlanBoundary AS
 (
-    SELECT 1
-    FROM ops.BillableUsageKindMapping AS mapping
-    WHERE mapping.EffectiveFromUtc<=@MonthStartUtc
-      AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc>=@NextMonthStartUtc)
-)
-    SELECT CAST('Complete billable usage-kind mapping coverage is required for zero-fact billing close.' AS nvarchar(400));
-ELSE IF EXISTS
+    SELECT @MonthStartUtc AS BoundaryUtc
+    UNION
+    SELECT CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
+    FROM assignmentPlanApplicability
+),
+mappingApplicability AS
 (
-    SELECT 1
+    SELECT mapping.FactKind, mapping.BillableUsageKind, mapping.EffectiveFromUtc,
+           ISNULL(mapping.EffectiveToUtc,@NextMonthStartUtc) AS EffectiveToUtc
     FROM ops.BillableUsageKindMapping AS mapping
-    WHERE mapping.EffectiveFromUtc<=@MonthStartUtc
-      AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc>=@NextMonthStartUtc)
-      AND NOT EXISTS
-      (
-          SELECT 1
-          FROM ops.PricingAssignment AS assignment
-          INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
-          INNER JOIN ops.PricingRate AS rate ON rate.PricingPlanId=pricingPlan.PricingPlanId
-          WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-            AND assignment.EffectiveFromUtc<=@MonthStartUtc
-            AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc>=@NextMonthStartUtc)
-            AND pricingPlan.EffectiveFromUtc<=@MonthStartUtc
-            AND (pricingPlan.EffectiveToUtc IS NULL OR pricingPlan.EffectiveToUtc>=@NextMonthStartUtc)
-            AND rate.BillableUsageKind=mapping.BillableUsageKind
-            AND rate.EffectiveFromUtc<=@MonthStartUtc
-            AND (rate.EffectiveToUtc IS NULL OR rate.EffectiveToUtc>=@NextMonthStartUtc)
-      )
+    WHERE mapping.EffectiveFromUtc < @NextMonthStartUtc
+      AND ISNULL(mapping.EffectiveToUtc,@NextMonthStartUtc) > @MonthStartUtc
+),
+mappingBoundary AS
+(
+    SELECT FactKind, @MonthStartUtc AS BoundaryUtc
+    FROM mappingApplicability
+    GROUP BY FactKind
+    UNION
+    SELECT FactKind, CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
+    FROM mappingApplicability
+),
+completeGrainApplicability AS
+(
+    SELECT mapping.FactKind, rangeStart.EffectiveFromUtc, rangeEnd.EffectiveToUtc
+    FROM ops.PricingAssignment AS assignment
+    INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
+    INNER JOIN mappingApplicability AS mapping ON 1=1
+    INNER JOIN ops.PricingRate AS rate ON rate.PricingPlanId=pricingPlan.PricingPlanId
+                                           AND rate.BillableUsageKind=mapping.BillableUsageKind
+    CROSS APPLY
+    (
+        SELECT MAX(boundary.EffectiveFromUtc) AS EffectiveFromUtc
+        FROM (VALUES (assignment.EffectiveFromUtc), (pricingPlan.EffectiveFromUtc), (mapping.EffectiveFromUtc), (rate.EffectiveFromUtc)) AS boundary(EffectiveFromUtc)
+    ) AS rangeStart
+    CROSS APPLY
+    (
+        SELECT MIN(boundary.EffectiveToUtc) AS EffectiveToUtc
+        FROM (VALUES (ISNULL(assignment.EffectiveToUtc,@NextMonthStartUtc)), (ISNULL(pricingPlan.EffectiveToUtc,@NextMonthStartUtc)), (mapping.EffectiveToUtc), (ISNULL(rate.EffectiveToUtc,@NextMonthStartUtc))) AS boundary(EffectiveToUtc)
+    ) AS rangeEnd
+    WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+      AND rangeStart.EffectiveFromUtc < @NextMonthStartUtc AND rangeEnd.EffectiveToUtc > @MonthStartUtc
+),
+completeGrainBoundary AS
+(
+    SELECT FactKind, @MonthStartUtc AS BoundaryUtc
+    FROM mappingApplicability
+    GROUP BY FactKind
+    UNION
+    SELECT FactKind, CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
+    FROM mappingApplicability
+    UNION
+    SELECT FactKind, CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
+    FROM completeGrainApplicability
 )
-    SELECT CAST('Complete pricing-rate coverage is required for zero-fact billing close.' AS nvarchar(400));
-ELSE
-    SELECT CAST(NULL AS nvarchar(400));
+SELECT CAST
+(
+    CASE
+        WHEN EXISTS
+        (
+            SELECT 1
+            FROM assignmentPlanBoundary AS boundary
+            WHERE boundary.BoundaryUtc < @NextMonthStartUtc
+              AND NOT EXISTS
+              (
+                  SELECT 1
+                  FROM assignmentPlanApplicability AS applicability
+                  WHERE applicability.EffectiveFromUtc <= boundary.BoundaryUtc
+                    AND boundary.BoundaryUtc < applicability.EffectiveToUtc
+              )
+        ) THEN 'Complete pricing assignment and plan coverage is required for zero-fact billing close.'
+        WHEN EXISTS
+        (
+            SELECT 1
+            FROM mappingBoundary AS boundary
+            WHERE boundary.BoundaryUtc < @NextMonthStartUtc
+              AND NOT EXISTS
+              (
+                  SELECT 1
+                  FROM mappingApplicability AS applicability
+                  WHERE applicability.FactKind=boundary.FactKind
+                    AND applicability.EffectiveFromUtc <= boundary.BoundaryUtc
+                    AND boundary.BoundaryUtc < applicability.EffectiveToUtc
+              )
+        ) THEN 'Complete billable usage-kind mapping coverage is required for zero-fact billing close.'
+        WHEN EXISTS
+        (
+            SELECT 1
+            FROM completeGrainBoundary AS boundary
+            WHERE boundary.BoundaryUtc < @NextMonthStartUtc
+              AND NOT EXISTS
+              (
+                  SELECT 1
+                  FROM completeGrainApplicability AS applicability
+                  WHERE applicability.FactKind=boundary.FactKind
+                    AND applicability.EffectiveFromUtc <= boundary.BoundaryUtc
+                    AND boundary.BoundaryUtc < applicability.EffectiveToUtc
+              )
+        ) THEN 'Complete pricing-rate coverage is required for zero-fact billing close.'
+        ELSE NULL
+    END AS nvarchar(400)
+);
 """
 
             addScope check scope

@@ -2360,13 +2360,30 @@ module internal OperationsBillingPeriodCloseDiscovery =
     /// Caps one discovery pass so a worker restart or long history cannot monopolize the hosted process.
     let batchSize = 100
 
-    /// Reads accepted-usage, pricing-coverage, and existing nonterminal scopes while excluding terminal exact periods.
-    let discoverAsync connectionString cancellationToken =
+    /// Reads one stable discovery page after an optional exact scope cursor while excluding terminal exact periods.
+    let discoverAfterAsync connectionString (afterScope: BillingCompletenessScope option) cancellationToken =
         task {
             use connection = new SqlConnection(connectionString)
             do! connection.OpenAsync cancellationToken
             use command = connection.CreateCommand()
             command.Parameters.Add("@BatchSize", SqlDbType.Int).Value <- batchSize
+
+            let afterMonthStart = command.Parameters.Add("@AfterMonthStartUtc", SqlDbType.DateTime2)
+            let afterOwner = command.Parameters.Add("@AfterOwnerId", SqlDbType.UniqueIdentifier)
+            let afterOrganization = command.Parameters.Add("@AfterOrganizationId", SqlDbType.UniqueIdentifier)
+            let afterRepository = command.Parameters.Add("@AfterRepositoryId", SqlDbType.UniqueIdentifier)
+
+            match afterScope with
+            | Some scope ->
+                afterMonthStart.Value <- scope.MonthStart.ToDateTimeUtc()
+                afterOwner.Value <- scope.OwnerId
+                afterOrganization.Value <- scope.OrganizationId
+                afterRepository.Value <- scope.RepositoryId
+            | None ->
+                afterMonthStart.Value <- DBNull.Value
+                afterOwner.Value <- DBNull.Value
+                afterOrganization.Value <- DBNull.Value
+                afterRepository.Value <- DBNull.Value
 
             command.CommandText <-
                 """
@@ -2401,6 +2418,30 @@ candidate AS
 SELECT TOP (@BatchSize) OwnerId, OrganizationId, RepositoryId, MonthStartUtc
 FROM candidate
 WHERE MonthStartUtc < DATETIME2FROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1, 0, 0, 0, 0, 7)
+  AND
+  (
+      @AfterMonthStartUtc IS NULL
+      OR MonthStartUtc > @AfterMonthStartUtc
+      OR
+      (
+          MonthStartUtc = @AfterMonthStartUtc
+          AND
+          (
+              CONVERT(binary(16), OwnerId) > CONVERT(binary(16), @AfterOwnerId)
+              OR
+              (
+                  OwnerId = @AfterOwnerId
+                  AND CONVERT(binary(16), OrganizationId) > CONVERT(binary(16), @AfterOrganizationId)
+              )
+              OR
+              (
+                  OwnerId = @AfterOwnerId
+                  AND OrganizationId = @AfterOrganizationId
+                  AND CONVERT(binary(16), RepositoryId) > CONVERT(binary(16), @AfterRepositoryId)
+              )
+          )
+      )
+  )
   AND NOT EXISTS
   (
       SELECT 1
@@ -2409,7 +2450,7 @@ WHERE MonthStartUtc < DATETIME2FROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDAT
         AND period.MonthStartUtc=candidate.MonthStartUtc AND period.NextMonthStartUtc=DATEADD(month, 1, candidate.MonthStartUtc)
         AND period.State=2
   )
-ORDER BY MonthStartUtc, OwnerId, OrganizationId, RepositoryId
+ORDER BY MonthStartUtc, CONVERT(binary(16), OwnerId), CONVERT(binary(16), OrganizationId), CONVERT(binary(16), RepositoryId)
 OPTION (MAXRECURSION 100);
 """
 
@@ -2434,6 +2475,9 @@ OPTION (MAXRECURSION 100);
             return scopes |> Seq.toArray
         }
 
+    /// Starts a bounded discovery pass at the first ordered scope.
+    let discoverAsync connectionString cancellationToken = discoverAfterAsync connectionString None cancellationToken
+
 /// Runs bounded, repeatable billing-period discovery without persisting a second claim or retry lifecycle.
 type OperationsBillingPeriodCloseWorkerService
     (
@@ -2447,11 +2491,14 @@ type OperationsBillingPeriodCloseWorkerService
     /// Uses a short fixed cadence because database eligibility and the scope-locked closer remain the source of truth.
     let cadence = TimeSpan.FromMinutes(5.0)
 
-    /// Revalidates every discovered candidate through the closer; stale scans cannot decide close eligibility.
+    /// Retains only the volatile cursor for a fully processed page; SQL rows remain the retry source after restart.
+    let mutable resumeAfter: BillingCompletenessScope option = None
+
+    /// Revalidates one stable candidate page through the closer, advancing only after every scope in that page completed.
     let runPassAsync cancellationToken =
         task {
             do! schema.EnsureCreatedAsync cancellationToken
-            let! scopes = OperationsBillingPeriodCloseDiscovery.discoverAsync settings.SqlConnectionString cancellationToken
+            let! scopes = OperationsBillingPeriodCloseDiscovery.discoverAfterAsync settings.SqlConnectionString resumeAfter cancellationToken
             let mutable index = 0
 
             while index < scopes.Length do
@@ -2472,6 +2519,12 @@ type OperationsBillingPeriodCloseWorkerService
                     ()
 
                 index <- index + 1
+
+            resumeAfter <-
+                if scopes.Length = OperationsBillingPeriodCloseDiscovery.batchSize then
+                    Some scopes[scopes.Length - 1]
+                else
+                    None
         }
 
     /// Repeats bounded discovery and leaves every failure retryable through the next scan without an additional claim table.
