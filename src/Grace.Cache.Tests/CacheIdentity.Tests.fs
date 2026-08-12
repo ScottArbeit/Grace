@@ -5,6 +5,7 @@ open NUnit.Framework
 open System
 open System.IO
 open System.Security.Cryptography
+open System.Text
 open System.Text.Json
 
 /// Exercises the protected Linux static identity boundary without starting the Cache host or contacting Grace Server.
@@ -128,6 +129,22 @@ type CacheIdentityTests() =
 
         publicKey
 
+    /// Produces canonical base64url coordinates for production writer/parser tests that do not require Linux files.
+    let base64Url (bytes: byte array) =
+        Convert
+            .ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_')
+
+    /// Requires a non-filesystem ready-registration serialization result while reporting rejected facts directly.
+    let requireSerializedReadyRegistration configuration =
+        match CacheIdentity.trySerializeReadyRegistrationBytes configuration with
+        | Some bytes -> bytes
+        | None ->
+            Assert.Fail("Expected the production ready-registration writer and parser to accept the complete configuration.")
+            Array.empty
+
     /// Verifies one fresh P-256 key becomes an attempt with exact protected modes and no ready marker.
     [<Test>]
     member _.``createAttempt writes one protected P-256 key and reports an opaque attempt``() =
@@ -186,13 +203,6 @@ type CacheIdentityTests() =
                     )
 
                     Assert.That(registration.GetProperty("OwnerId").GetString(), Is.EqualTo("22222222-2222-2222-2222-222222222222"))
-
-                    Assert.That(
-                        registration
-                            .GetProperty("HasOrganizationId")
-                            .GetBoolean(),
-                        Is.True
-                    )
 
                     Assert.That(
                         registration
@@ -262,6 +272,84 @@ type CacheIdentityTests() =
             )
 
             requireInspection CacheIdentityInspection.Ready (CacheIdentity.inspect root))
+
+    /// Verifies the production private-file writer and strict parser work without Linux filesystem primitives.
+    [<Test>]
+    member _.``ready registration writer and parser preserve accepted facts and reject malformed JSON``() =
+        use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let parameters = key.ExportParameters(false)
+
+        let publicKey = { PublicKeyX = base64Url parameters.Q.X; PublicKeyY = base64Url parameters.Q.Y }
+
+        let configuration = acceptedConfiguration publicKey
+        let bytes = requireSerializedReadyRegistration configuration
+        let registrationJson = Encoding.UTF8.GetString(bytes)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(registrationJson.Trim(), Is.Not.EqualTo("{}"))
+                Assert.That(CacheIdentity.tryValidateReadyRegistrationBytes bytes, Is.EqualTo(Some(expectedFingerprint publicKey)))
+
+                Assert.That(
+                    CacheIdentity.trySerializeReadyRegistrationBytes { configuration with BoundaryKind = "Owner"; OrganizationId = None }
+                    |> Option.isSome,
+                    Is.True
+                ))
+        )
+
+        let replace oldValue newValue = registrationJson.Replace(oldValue, newValue, StringComparison.Ordinal)
+
+        let invalidDocuments =
+            [|
+                "unknown root field",
+                "{\"RotationDueAt\":\"2026-08-12T00:00:00Z\","
+                + registrationJson.Substring(1)
+                "duplicate root field", replace "\"CacheId\":" "\"CacheId\":\"00000000-0000-0000-0000-000000000001\",\"CacheId\":"
+                "missing required field", replace "\"ProtocolVersion\":\"v1\"," ""
+                "wrong endpoint type", replace "\"Endpoint\":\"https://cache.example.test\"" "\"Endpoint\":123"
+                "malformed cache id", replace "11111111-1111-1111-1111-111111111111" "not-a-guid"
+                "malformed public coordinate", replace publicKey.PublicKeyX "not-base64url"
+                "unsupported endpoint scheme", replace "https://cache.example.test" "ftp://cache.example.test"
+                "invalid boundary combination", replace "\"BoundaryKind\":\"Organization\"" "\"BoundaryKind\":\"Owner\""
+                "malformed nested repository id", replace "44444444-4444-4444-4444-444444444444" "not-a-guid"
+                "duplicate repository id", replace "55555555-5555-5555-5555-555555555555" "44444444-4444-4444-4444-444444444444"
+                "unknown nested field",
+                replace
+                    "\"RepositoryId\":\"44444444-4444-4444-4444-444444444444\""
+                    "\"RepositoryId\":\"44444444-4444-4444-4444-444444444444\",\"RotationDueAt\":\"stale\""
+                "trailing JSON", registrationJson + " trailing"
+            |]
+
+        for name, invalidJson in invalidDocuments do
+            Assert.That(CacheIdentity.tryValidateReadyRegistrationBytes (Encoding.UTF8.GetBytes(invalidJson)), Is.EqualTo(None), name)
+
+    /// Verifies strict parsing rejects malformed ready files after protected Linux publication without exposing their contents.
+    [<Test>]
+    member _.``inspect rejects unknown endpoint and nested scope ready registration fields``() =
+        withLinuxRoot (fun root ->
+            readyIdentity root |> ignore
+            let registrationPath = Path.Combine(root, "ready", "registration.json")
+            let originalRegistration = File.ReadAllText(registrationPath)
+            let originalRegistrationMode = File.GetUnixFileMode(registrationPath)
+
+            let invalidRegistrations =
+                [|
+                    "unknown field",
+                    "{\"RotationDueAt\":\"stale\","
+                    + originalRegistration.Substring(1)
+                    "unsupported endpoint", originalRegistration.Replace("https://cache.example.test", "ftp://cache.example.test", StringComparison.Ordinal)
+                    "malformed nested scope", originalRegistration.Replace("44444444-4444-4444-4444-444444444444", "not-a-guid", StringComparison.Ordinal)
+                |]
+
+            try
+                for name, invalidRegistration in invalidRegistrations do
+                    File.WriteAllText(registrationPath, invalidRegistration)
+                    requireInspection CacheIdentityInspection.Invalid (CacheIdentity.inspect root)
+                    Assert.That(File.GetUnixFileMode(registrationPath), Is.EqualTo(originalRegistrationMode), name)
+            finally
+                if File.Exists(registrationPath) then
+                    File.WriteAllText(registrationPath, originalRegistration)
+                    File.SetUnixFileMode(registrationPath, originalRegistrationMode))
 
     /// Verifies an accepted configuration carrying a different P-256 identity cannot create a ready marker.
     [<Test>]
