@@ -12,13 +12,18 @@ open Grace.Shared.Validation.Errors
 open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.Reference
+open Microsoft.Data.Sqlite
 open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
+open System.Net
+open System.Net.Sockets
+open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups branch command coverage for the CLI test project.
@@ -156,10 +161,118 @@ module BranchCommandTests =
             resetConfiguration ()
             Services.parseResult <- originalParseResult
             Environment.CurrentDirectory <- originalDir
+            SqliteConnection.ClearAllPools()
 
-            if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+            /// Retries deletion briefly while the local SQLite worker releases its test database handle.
+            let rec deleteTempDirectory remainingAttempts =
+                try
+                    if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+                with
+                | :? IOException when remainingAttempts > 0 ->
+                    Thread.Sleep(100)
+                    deleteTempDirectory (remainingAttempts - 1)
 
-    /// Builds a trusted Watch IPC inspection snapshot for branch switch preflight tests.
+            deleteTempDirectory 10
+
+    /// Runs an in-process HTTP endpoint that responds to selector reads and records the production SDK requests.
+    let private withSwitchRequestCapture (currentBranch: Grace.Types.Branch.BranchDto) (action: (unit -> string list) -> unit) =
+        use listener = new TcpListener(IPAddress.Loopback, 0)
+        use cancellation = new CancellationTokenSource()
+        listener.Start()
+        let requests = ResizeArray<string>()
+        let correlationId = "branch-switch-built-fixture"
+
+        let successfulBranch =
+            GraceReturnValue.Create currentBranch correlationId
+            |> serialize
+
+        let rejectedRequest =
+            GraceError.Create "fixture stops after selector dispatch" correlationId
+            |> serialize
+
+        /// Writes successful current-Branch reads and terminates the selected-version request after it is observed.
+        let writeResponse (client: TcpClient) =
+            task {
+                use client = client
+                use stream = client.GetStream()
+                use requestBytes = new MemoryStream()
+                let buffer = Array.zeroCreate<byte> 8192
+                let mutable complete = false
+
+                while not complete do
+                    let! read = stream.ReadAsync(buffer, 0, buffer.Length, cancellation.Token)
+
+                    if read = 0 then
+                        complete <- true
+                    else
+                        requestBytes.Write(buffer, 0, read)
+                        let requestText = Encoding.UTF8.GetString(requestBytes.ToArray())
+                        complete <- requestText.Contains("\r\n\r\n", StringComparison.Ordinal)
+
+                let requestText = Encoding.UTF8.GetString(requestBytes.ToArray())
+                requests.Add(requestText)
+
+                let statusCode, reasonPhrase, body =
+                    if requestText.Contains("POST /branch/GetVersion", StringComparison.Ordinal) then
+                        400, "Bad Request", rejectedRequest
+                    else
+                        200, "OK", successfulBranch
+
+                let bodyBytes = Encoding.UTF8.GetBytes(body)
+
+                let headers =
+                    $"HTTP/1.1 {statusCode} {reasonPhrase}\r\nContent-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n"
+
+                let headerBytes = Encoding.ASCII.GetBytes(headers)
+                do! stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellation.Token)
+                do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length, cancellation.Token)
+            }
+
+        /// Serves one SDK request at a time until the fixture is disposed.
+        let rec serve requestNumber =
+            task {
+                if not cancellation.IsCancellationRequested
+                   && requestNumber < 6 then
+                    try
+                        let! client =
+                            listener
+                                .AcceptTcpClientAsync(cancellation.Token)
+                                .AsTask()
+
+                        do! writeResponse client
+                        return! serve (requestNumber + 1)
+                    with
+                    | :? OperationCanceledException -> return ()
+                    | :? ObjectDisposedException -> return ()
+            }
+
+        let serverTask = Task.Run(Func<Task>(fun () -> serve 0))
+        let endpoint = $"http://127.0.0.1:{(listener.LocalEndpoint :?> IPEndPoint).Port}"
+        let originalServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+
+        try
+            let configuration = Current()
+            configuration.ServerUri <- endpoint
+            updateConfiguration configuration
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, endpoint)
+            action (fun () -> requests |> Seq.toList)
+        finally
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri)
+            cancellation.Cancel()
+            listener.Stop()
+
+            if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
+                Assert.Fail("Timed out waiting for the branch switch HTTP fixture to stop.")
+
+    /// Drives the production CLI parser and dispatch through a selector until the fixture rejects the selected-version request.
+    let private invokeSwitchSelector selectorArguments =
+        GraceCommand.main (
+            Array.concat [ [| "branch"; "switch" |]
+                           selectorArguments
+                           [| "--output"; "Silent" |] ]
+        )
+
+    /// Builds a trusted Watch IPC snapshot needed by the production Branch switch admission path.
     let private branchSwitchWatchStatus () : GraceWatchStatus =
         let current = Current()
         let rootDirectoryId = Guid.NewGuid()
@@ -182,6 +295,72 @@ module BranchCommandTests =
             DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
         }
 
+    /// Writes the production-compatible Watch IPC file that Branch switch reads before local mutation.
+    let private writeBranchSwitchWatchStatus (fileName: string) status =
+        Directory.CreateDirectory(Path.GetDirectoryName(fileName))
+        |> ignore
+
+        File.WriteAllText(fileName, serialize status)
+
+    /// Verifies SHA-256 and BLAKE3 selectors reach the production version lookup after current-Branch admission.
+    [<TestCase("--sha256-hash", "deadc0de")>]
+    [<TestCase("--blake3-hash", "beadfeed")>]
+    [<Category("BranchSwitchSelectorFixture")>]
+    let ``built switch selector dispatch preserves the supplied hash evidence`` optionName hashPrefix =
+        withTempBranchSwitchRepo (fun () ->
+            let configuration = Current()
+            configuration.OwnerId <- ownerId
+            configuration.OrganizationId <- organizationId
+            configuration.RepositoryId <- repositoryId
+            configuration.BranchId <- branchId
+
+            LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            writeBranchSwitchWatchStatus (Services.IpcFileName()) (branchSwitchWatchStatus ())
+
+            let currentBranch =
+                { Grace.Types.Branch.BranchDto.Default with
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    BranchName = Grace.Types.Common.BranchName "branch-switch-current"
+                    SaveEnabled = false
+                }
+
+            let parsedSelector =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "switch"
+                        optionName
+                        hashPrefix
+                        "--output"
+                        "Silent"
+                    |]
+                )
+
+            parsedSelector.Errors.Count |> should equal 0
+
+            parsedSelector.GetValue<string>(optionName)
+            |> should equal hashPrefix
+
+            withSwitchRequestCapture currentBranch (fun getRequests ->
+                let exitCode =
+                    invokeSwitchSelector [| optionName
+                                            hashPrefix |]
+
+                exitCode |> should not' (equal 0)
+                let requests = getRequests ()
+
+                let selectedVersionRequest =
+                    requests
+                    |> List.tryFind (fun request -> request.Contains("POST /branch/GetVersion", StringComparison.Ordinal))
+
+                selectedVersionRequest.IsSome |> should equal true
+
+                selectedVersionRequest.Value
+                |> should contain hashPrefix))
+
     /// Wraps a status snapshot in the inspection shape consumed by branch switch preflight.
     let private branchSwitchWatchInspection persistedMode status =
         { Exists = true; Status = Some status; PersistedMode = persistedMode; SafetyFlags = status.SafetyFlags; ReadError = None }
@@ -189,13 +368,6 @@ module BranchCommandTests =
     /// Builds clean durable journal evidence for branch switch preflight tests.
     let private cleanPendingJournalSummary () : LocalStateDb.WatchJournalPendingWorkSummary =
         { DbPath = Current().GraceStatusFile; AppliedThroughSequence = 0L; PendingRowCount = 0L }
-
-    /// Writes a Watch IPC status snapshot for branch switch preflight tests.
-    let private writeBranchSwitchWatchStatus (fileName: string) status =
-        Directory.CreateDirectory(Path.GetDirectoryName(fileName))
-        |> ignore
-
-        File.WriteAllText(fileName, serialize status)
 
     /// Runs branch switch preflight with injected side effects and reports which effects occurred.
     let private runBranchSwitchPreflight markerExists inspection =

@@ -904,15 +904,9 @@ module internal WorkingDirectoryUpdate =
                             | WorkingDirectoryUpdateCoordination.MalformedOrUnsupported
                             | WorkingDirectoryUpdateCoordination.Unreadable ->
                                 return! complete (Rejected(failure "Working Directory Update marker requires `grace doctor --repair-local-state` recovery."))
+                            | WorkingDirectoryUpdateCoordination.Missing
                             | WorkingDirectoryUpdateCoordination.ExactMatch ->
-                                return!
-                                    complete (
-                                        Rejected(
-                                            failure
-                                                "Working Directory Update found matching incomplete marker evidence; run `grace doctor --repair-local-state`."
-                                        )
-                                    )
-                            | WorkingDirectoryUpdateCoordination.Missing ->
+                                // An exact orphaned marker is adopted only after the complete post-lease reread above; the fresh marker below owns this attempt.
                                 match! buildPlan scanInput localRoot priorStatus preparedContent with
                                 | Error error -> return! complete (Rejected(failure error))
                                 | Ok (targetFiles, deletions) ->
