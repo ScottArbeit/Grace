@@ -27,6 +27,7 @@
     <Compile Include="Migrations\20260709090000_AddRawUsageFactRehydrationExpiryIndex.fs" />
     <Compile Include="Migrations\20260709110000_AddPricingPlanRateAssignment.fs" />
     <Compile Include="Migrations\20260711090000_AddChargePreviewLines.fs" />
+    <Compile Include="Migrations\20260812090000_AddBillingCompletenessCoordination.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>

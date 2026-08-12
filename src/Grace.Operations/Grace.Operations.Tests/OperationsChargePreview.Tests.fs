@@ -232,9 +232,9 @@ type OperationsChargePreviewTests() =
             Assert.That(sql, Does.Contain("MAX(boundary.EffectiveFromUtc)"))
             Assert.That(sql, Does.Contain("MIN(boundary.EffectiveToUtc)")))
 
-    /// Verifies the migration target is literal and the complete EF model agrees across all reviewed representations.
+    /// Verifies the latest migration target is literal and the complete EF model agrees across all reviewed representations.
     [<Test>]
-    member _.PreviewMigrationAndModelsAgreeOnPersistedIdentity() =
+    member _.LatestMigrationAndModelsAgreeOnPersistedIdentity() =
         let migrationPath =
             Path.Combine(
                 TestContext.CurrentContext.TestDirectory,
@@ -244,7 +244,7 @@ type OperationsChargePreviewTests() =
                 "..",
                 "Grace.Operations.Data",
                 "Migrations",
-                "20260711090000_AddChargePreviewLines.fs"
+                "20260812090000_AddBillingCompletenessCoordination.fs"
             )
             |> Path.GetFullPath
 
@@ -274,7 +274,7 @@ type OperationsChargePreviewTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
-        let migration = AddChargePreviewLines().TargetModel
+        let migration = AddBillingCompletenessCoordination().TargetModel
 
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()
@@ -326,9 +326,11 @@ type OperationsChargePreviewTests() =
         let snapshotShape = modelShape snapshot
         let migrationShape = modelShape migration
         let preview = runtime.FindEntityType(typeof<ChargePreviewLineEntity>)
+        let rejection = runtime.FindEntityType(typeof<UsageFactRejectionEntity>)
 
         ChargePreviewTestData.multiple (fun () ->
             Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
+            Assert.That(migrationSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
             Assert.That(snapshotModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
             Assert.That(targetModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
             Assert.That(snapshotModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
@@ -338,6 +340,9 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
+            Assert.That(targetModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
+            Assert.That(snapshotModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
+            Assert.That(rejection, Is.Not.Null)
             Assert.That((migrationShape = snapshotShape), Is.True)
 
             Assert.That(
