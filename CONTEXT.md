@@ -28,6 +28,8 @@ The accepted, Plan-ready design for a Grace-controlled operation that will chang
 durable local state to match one selected server root, then commit caller-specific progress only after verifying that
 match. After implementation, Branch switching, Watch current-Reference replay, and Connect retrieval will use this
 shared operation while retaining their own admission and presentation policies.
+Its canonical lifecycle rows and nine generated consumer projections are checked as one exact offline packet before
+later implementation starts.
 _Avoid_: WorkingDirectoryMaterialization, exact materialization, caller-owned filesystem transaction
 
 **FileManifest**:
