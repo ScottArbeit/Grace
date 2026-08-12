@@ -9,15 +9,30 @@ function Fail-Contract {
     throw "WDU lifecycle contract '$Path': $Reason"
 }
 
+function Test-ExactDictionaryKey {
+    param([System.Collections.IDictionary] $Value, [string] $Name)
+    foreach ($key in $Value.Keys) {
+        if ([string] $key -ceq $Name) { return $true }
+    }
+    return $false
+}
+
+function Assert-AllowedObjectProperties {
+    param([object] $Value, [string[]] $AllowedNames, [string[]] $RequiredNames, [string] $Path, [string] $SourcePath)
+    if ($Value -isnot [System.Collections.IDictionary]) { Fail-Contract $SourcePath "$Path must be a JSON object" }
+    $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in $AllowedNames) { $null = $allowed.Add($name) }
+    foreach ($name in $Value.Keys) {
+        if (-not $allowed.Contains([string] $name)) { Fail-Contract $SourcePath "$Path has unknown property '$name'" }
+    }
+    foreach ($name in $RequiredNames) {
+        if (-not (Test-ExactDictionaryKey $Value $name)) { Fail-Contract $SourcePath "$Path is missing property '$name'" }
+    }
+}
+
 function Assert-ExactObject {
     param([object] $Value, [string[]] $Names, [string] $Path, [string] $SourcePath)
-    if ($Value -isnot [System.Collections.IDictionary]) { Fail-Contract $SourcePath "$Path must be a JSON object" }
-    foreach ($name in $Value.Keys) {
-        if ($Names -notcontains $name) { Fail-Contract $SourcePath "$Path has unknown property '$name'" }
-    }
-    foreach ($name in $Names) {
-        if (-not $Value.Contains($name)) { Fail-Contract $SourcePath "$Path is missing property '$name'" }
-    }
+    Assert-AllowedObjectProperties $Value $Names $Names $Path $SourcePath
 }
 
 function Assert-StringValue {
@@ -74,20 +89,26 @@ function Assert-NoDuplicateProperties {
 
 function Get-DeclaredEnumValues {
     param([System.Collections.IDictionary] $Enums, [string] $Name, [string] $SourcePath)
-    if (-not $Enums.Contains($Name)) { Fail-Contract $SourcePath "machineGrammar.concreteEnums is missing '$Name'" }
+    if (-not (Test-ExactDictionaryKey $Enums $Name)) { Fail-Contract $SourcePath "machineGrammar.concreteEnums is missing '$Name'" }
     return @(Assert-StringArray $Enums[$Name] "machineGrammar.concreteEnums.$Name" $SourcePath)
 }
 
 function Expand-Predicate {
     param(
-        [System.Collections.IDictionary] $Predicate,
+        [object] $Predicate,
         [string] $Axis,
         [System.Collections.IDictionary] $ConcreteEnums,
         [System.Collections.IDictionary] $Aggregates,
         [string] $RowPath,
         [string] $SourcePath
     )
-    if ($Predicate -isnot [System.Collections.IDictionary] -or -not $Predicate.Contains('kind')) {
+    if ($Predicate -isnot [System.Collections.IDictionary]) {
+        Fail-Contract $SourcePath "$RowPath.$Axis must be a predicate object with kind"
+    }
+    if (-not (Test-ExactDictionaryKey $Predicate 'kind')) {
+        foreach ($name in $Predicate.Keys) {
+            if ([string] $name -ieq 'kind') { Fail-Contract $SourcePath "$RowPath.$Axis has unknown property '$name'" }
+        }
         Fail-Contract $SourcePath "$RowPath.$Axis must be a predicate object with kind"
     }
     $values = Get-DeclaredEnumValues $ConcreteEnums $Axis $SourcePath
@@ -106,11 +127,11 @@ function Expand-Predicate {
         'aggregate' {
             Assert-ExactObject $Predicate @('kind', 'name') "$RowPath.$Axis" $SourcePath
             Assert-StringValue $Predicate['name'] "$RowPath.$Axis.name" $SourcePath
-            if (-not $Aggregates.Contains($Axis) -or $Aggregates[$Axis] -isnot [System.Collections.IDictionary]) {
+            if (-not (Test-ExactDictionaryKey $Aggregates $Axis) -or $Aggregates[$Axis] -isnot [System.Collections.IDictionary]) {
                 Fail-Contract $SourcePath "$RowPath.$Axis aggregate is not declared for this axis"
             }
             $axisAggregates = $Aggregates[$Axis]
-            if (-not $axisAggregates.Contains($Predicate['name'])) {
+            if (-not (Test-ExactDictionaryKey $axisAggregates $Predicate['name'])) {
                 Fail-Contract $SourcePath "$RowPath.$Axis aggregate '$($Predicate['name'])' is not declared"
             }
             $expanded = @(Assert-StringArray $axisAggregates[$Predicate['name']] "machineGrammar.aggregates.$Axis.$($Predicate['name'])" $SourcePath)
@@ -145,6 +166,10 @@ function Read-WduLifecycleContract {
     try {
         if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) { Fail-Contract $sourcePath 'marked payload must be a JSON object' }
         Assert-NoDuplicateProperties $document.RootElement '$' $sourcePath
+        $rawRows = @($document.RootElement.EnumerateObject() | Where-Object { $_.Name -ceq 'rows' })
+        if ($rawRows.Count -eq 1 -and $rawRows[0].Value.ValueKind -ne [Text.Json.JsonValueKind]::Array) {
+            Fail-Contract $sourcePath 'rows must be a JSON array'
+        }
     }
     finally { $document.Dispose() }
     try { $contract = $json | ConvertFrom-Json -AsHashtable -Depth 100 }
@@ -198,19 +223,22 @@ function Read-WduLifecycleContract {
     foreach ($name in @('rule', 'routing')) { Assert-StringValue $grammar['overlap'][$name] "machineGrammar.overlap.$name" $sourcePath }
     foreach ($name in $grammar['terminalReplay'].Keys) { Assert-StringValue $grammar['terminalReplay'][$name] "machineGrammar.terminalReplay.$name" $sourcePath }
 
-    if ($contract['rows'] -is [string] -or $contract['rows'] -isnot [System.Collections.IEnumerable]) { Fail-Contract $sourcePath 'rows must be a JSON array' }
+    if ($contract['rows'] -is [string] -or $contract['rows'] -is [System.Collections.IDictionary] -or $contract['rows'] -isnot [System.Collections.IEnumerable]) {
+        Fail-Contract $sourcePath 'rows must be a JSON array'
+    }
     $rows = @($contract['rows']); if ($rows.Count -eq 0) { Fail-Contract $sourcePath 'rows must not be empty' }
-    $rowIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $rowLookup = [ordered]@{}
+    $rowIds = [Collections.Generic.List[string]]::new()
+    $rowIdUniqueness = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $rowsById = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     $keyOwners = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
     foreach ($row in $rows) {
         $rowPath = 'rows[]'
         $allowed = @('id', 'match', 'firstApplicableRetryWrite', 'requiredActions', 'workingFiles', 'branchIdentity', 'durableResult', 'outcome', 'exitClass', 'doctorGuidance', 'resultingMarker', 'nextRows')
-        if ($row -isnot [System.Collections.IDictionary]) { Fail-Contract $sourcePath "$rowPath must be a JSON object" }
-        foreach ($name in $row.Keys) { if ($allowed -notcontains $name) { Fail-Contract $sourcePath "$rowPath has unknown property '$name'" } }
-        foreach ($name in $allowed[0..9]) { if (-not $row.Contains($name)) { Fail-Contract $sourcePath "$rowPath is missing property '$name'" } }
+        Assert-AllowedObjectProperties $row $allowed @($allowed[0..9]) $rowPath $sourcePath
         Assert-StringValue $row['id'] "$rowPath.id" $sourcePath
-        if (-not $rowIds.Add($row['id'])) { Fail-Contract $sourcePath "duplicate row ID '$($row['id'])'" }
+        if (-not $rowIdUniqueness.Add($row['id'])) { Fail-Contract $sourcePath "duplicate row ID '$($row['id'])'" }
+        if (-not $rowsById.TryAdd($row['id'], $row)) { Fail-Contract $sourcePath "duplicate row ID '$($row['id'])'" }
+        $rowIds.Add($row['id'])
         $rowPath = "row $($row['id'])"
         Assert-ExactObject $row['match'] $axes "$rowPath.match" $sourcePath
         $expandedAxes = foreach ($axis in $axes) { ,@(Expand-Predicate $row['match'][$axis] $axis $enums $aggregates $rowPath $sourcePath) }
@@ -225,8 +253,8 @@ function Read-WduLifecycleContract {
         Assert-NullableString $row['exitClass'] "$rowPath.exitClass" $sourcePath
         if ($null -ne $row['exitClass'] -and (Get-DeclaredEnumValues $enums 'exitClass' $sourcePath) -cnotcontains $row['exitClass']) { Fail-Contract $sourcePath "$rowPath.exitClass is not declared" }
         Assert-NullableBoolean $row['doctorGuidance'] "$rowPath.doctorGuidance" $sourcePath
-        if ($row.Contains('resultingMarker')) { Assert-StringValue $row['resultingMarker'] "$rowPath.resultingMarker" $sourcePath }
-        if ($row.Contains('nextRows')) {
+        if (Test-ExactDictionaryKey $row 'resultingMarker') { Assert-StringValue $row['resultingMarker'] "$rowPath.resultingMarker" $sourcePath }
+        if (Test-ExactDictionaryKey $row 'nextRows') {
             $nextRows = @(Assert-StringArray $row['nextRows'] "$rowPath.nextRows" $sourcePath)
             if ($null -ne $row['outcome']) { Fail-Contract $sourcePath "$rowPath routing row must not have an outcome" }
         }
@@ -248,15 +276,15 @@ function Read-WduLifecycleContract {
             if ($keyOwners.ContainsKey($key)) { Fail-Contract $sourcePath "duplicate applicability key for rows '$($keyOwners[$key])' and '$($row['id'])'" }
             $keyOwners.Add($key, $row['id'])
         }
-        $null = $rowLookup[$row['id']] = $row
     }
+    if ($rows.Count -ne $rowIds.Count -or $rows.Count -ne $rowsById.Count) { Fail-Contract $sourcePath 'row identity counts are inconsistent' }
     foreach ($row in $rows) {
-        if ($row.Contains('nextRows')) {
-            foreach ($target in $row['nextRows']) { if (-not $rowLookup.Contains($target)) { Fail-Contract $sourcePath "row '$($row['id'])' has dangling nextRows target '$target'" } }
+        if (Test-ExactDictionaryKey $row 'nextRows') {
+            foreach ($target in $row['nextRows']) { if (-not $rowsById.ContainsKey($target)) { Fail-Contract $sourcePath "row '$($row['id'])' has dangling nextRows target '$target'" } }
         }
     }
     $digestBytes = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))
-    return [pscustomobject]@{ Digest = [Convert]::ToHexString($digestBytes).ToLowerInvariant(); RowIds = @($rowLookup.Keys); ApplicabilityKeys = @($keyOwners.Keys); RowsById = $rowLookup }
+    return [pscustomobject]@{ Digest = [Convert]::ToHexString($digestBytes).ToLowerInvariant(); RowIds = @($rowIds); ApplicabilityKeys = @($keyOwners.Keys); RowsById = $rowsById }
 }
 
 Export-ModuleMember -Function Read-WduLifecycleContract

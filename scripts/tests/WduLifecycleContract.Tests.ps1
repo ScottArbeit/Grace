@@ -82,6 +82,8 @@ try {
         [IO.File]::Copy($canonicalPath, $copy, $true)
         $contract = Read-WduLifecycleContract -Path $copy
         Assert-True ($contract.RowIds.Count -eq 67) 'the canonical lifecycle has 67 rows'
+        Assert-True ($contract.RowsById.Count -eq 67) 'the row index has one exact entry for every parsed row'
+        Assert-True ($contract.RowIds.Count -eq $contract.RowsById.Count) 'the returned row IDs and row index have equal cardinality'
         Assert-True ($contract.ApplicabilityKeys.Count -eq 254) 'the canonical lifecycle has 254 disjoint applicability keys'
         Assert-True ($contract.Digest -match '^[0-9a-f]{64}$') 'the normalized digest is lowercase SHA-256'
     }
@@ -147,12 +149,39 @@ try {
         }
     }
 
+    Invoke-Case 'rejects a rows object that PowerShell could enumerate' {
+        $copy = New-CanonicalCopy 'rows-object'
+        $text = [regex]::Replace((Get-TestText $copy), '(?s)"rows":\s*\[.*?\]\s*\n\}', '"rows": {"id":"not-an-array"}' + "`n}", 1)
+        Set-TestText $copy $text
+        try { Read-WduLifecycleContract $copy | Out-Null }
+        catch {
+            Assert-True $_.Exception.Message.Contains($copy, [StringComparison]::Ordinal) 'rows diagnostic includes the canonical path'
+            Assert-True $_.Exception.Message.Contains('rows must be a JSON array', [StringComparison]::Ordinal) 'rows diagnostic names the raw array requirement'
+            return
+        }
+        throw 'Expected a rows-object failure'
+    }
+
     foreach ($mutation in @(
         @{ Name = 'unknown root property'; Old = '"schema": "grace.wdu.branch-lifecycle/v1",'; New = '"schema": "grace.wdu.branch-lifecycle/v1", "unknown": true,'; Reason = 'unknown property' },
         @{ Name = 'wrong token kind'; Old = '"doctorCommand": "grace doctor --repair-local-state"'; New = '"doctorCommand": true'; Reason = 'doctorCommand must be a JSON string' },
         @{ Name = 'duplicate case property'; Old = '"schema": "grace.wdu.branch-lifecycle/v1",'; New = '"schema": "grace.wdu.branch-lifecycle/v1", "Schema": "x",'; Reason = 'duplicate case-equivalent' },
         @{ Name = 'nested duplicate case property'; Old = '"invocation":{"kind":"one","value":"initial"}'; New = '"invocation":{"kind":"one","Kind":"one","value":"initial"}'; Reason = 'duplicate case-equivalent' },
         @{ Name = 'grammar shape wrong token kind'; Old = '"kind":"one","value":"<concrete-enum-member>"'; New = '"kind":"one","value":true'; Reason = 'jsonShape.value must be a JSON string' }
+    )) {
+        Invoke-Case $mutation.Name {
+            $copy = New-CanonicalCopy $mutation.Name.Replace(' ', '-')
+            Set-TestText $copy (Replace-Once (Get-TestText $copy) $mutation.Old $mutation.New)
+            Assert-Fails { Read-WduLifecycleContract $copy } $mutation.Reason
+        }
+    }
+
+    foreach ($mutation in @(
+        @{ Name = 'wrong-case root property'; Old = '"schema": "grace.wdu.branch-lifecycle/v1"'; New = '"Schema": "grace.wdu.branch-lifecycle/v1"'; Reason = "unknown property 'Schema'" },
+        @{ Name = 'wrong-case row property'; Old = '"id":"WDU-LC-200"'; New = '"Id":"WDU-LC-200"'; Reason = "unknown property 'Id'" },
+        @{ Name = 'wrong-case predicate property'; Old = '"invocation":{"kind":"one","value":"initial"}'; New = '"invocation":{"Kind":"one","value":"initial"}'; Reason = "unknown property 'Kind'" },
+        @{ Name = 'wrong-case optional resulting marker'; Old = '"resultingMarker":"exact"'; New = '"ResultingMarker":"exact"'; Reason = "unknown property 'ResultingMarker'" },
+        @{ Name = 'wrong-case optional next rows'; Old = '"nextRows":["WDU-LC-207","WDU-LC-208"'; New = '"NextRows":["WDU-LC-207","WDU-LC-208"'; Reason = "unknown property 'NextRows'" }
     )) {
         Invoke-Case $mutation.Name {
             $copy = New-CanonicalCopy $mutation.Name.Replace(' ', '-')
@@ -180,7 +209,9 @@ try {
     foreach ($mutation in @(
         @{ Name = 'duplicate applicability'; Old = '"trigger":{"kind":"one","value":"exactSameOperationAdoption"},"marker":{"kind":"one","value":"exact"}'; New = '"trigger":{"kind":"one","value":"missingMarkerFreshAdmission"},"marker":{"kind":"one","value":"missing"}'; Reason = "rows 'WDU-LC-200' and 'WDU-LC-201'" },
         @{ Name = 'duplicate row ID'; Old = '"id":"WDU-LC-201"'; New = '"id":"WDU-LC-200"'; Reason = "duplicate row ID 'WDU-LC-200'" },
+        @{ Name = 'case-equivalent row ID'; Old = '"id":"WDU-LC-201"'; New = '"id":"wdu-lc-200"'; Reason = "duplicate row ID 'wdu-lc-200'" },
         @{ Name = 'dangling graph target'; Old = '"WDU-LC-207","WDU-LC-208"'; New = '"WDU-LC-missing","WDU-LC-208"'; Reason = 'dangling nextRows target' },
+        @{ Name = 'wrong-case graph target'; Old = '"WDU-LC-207","WDU-LC-208"'; New = '"wdu-lc-207","WDU-LC-208"'; Reason = 'dangling nextRows target' },
         @{ Name = 'routing terminal result'; Old = '"outcome":null,"exitClass":null,"doctorGuidance":null,"resultingMarker":"exact","nextRows"'; New = '"outcome":"Updated","exitClass":null,"doctorGuidance":null,"resultingMarker":"exact","nextRows"'; Reason = 'routing row must not have an outcome' },
         @{ Name = 'routing without successor'; Old = '"doctorGuidance":null,"resultingMarker":"exact","nextRows":["WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212"]'; New = '"doctorGuidance":null,"resultingMarker":"exact"'; Reason = 'terminal row must have an outcome' },
         @{ Name = 'terminal successor'; Old = '"doctorGuidance":true},'; New = '"doctorGuidance":true,"nextRows":["WDU-LC-203"]},'; Reason = 'routing row must not have an outcome' }
@@ -189,6 +220,20 @@ try {
             $copy = New-CanonicalCopy $mutation.Name.Replace(' ', '-')
             Set-TestText $copy (Replace-Once (Get-TestText $copy) $mutation.Old $mutation.New)
             Assert-Fails { Read-WduLifecycleContract $copy } $mutation.Reason
+        }
+    }
+
+    foreach ($predicateToken in @('true', '[]', '"initial"', 'null')) {
+        Invoke-Case "wrapper reports a scoped non-object predicate $predicateToken" {
+            $copy = New-CanonicalCopy ('predicate-token-' + [guid]::NewGuid().ToString('N'))
+            Set-TestText $copy (Replace-Once (Get-TestText $copy) '"invocation":{"kind":"one","value":"initial"}' ('"invocation":' + $predicateToken))
+            $wrapper = Join-Path $repositoryRoot 'scripts/validate-wdu-lifecycle-contract.ps1'
+            $diagnostic = & pwsh -NoProfile -File $wrapper -Path $copy 2>&1
+            Assert-True ($LASTEXITCODE -ne 0) 'wrapper exits nonzero for a non-object predicate'
+            $message = $diagnostic -join "`n"
+            Assert-True ($message.Contains($copy, [StringComparison]::Ordinal)) 'wrapper diagnostic includes the file path'
+            Assert-True ($message.Contains('row WDU-LC-200.invocation', [StringComparison]::Ordinal)) 'wrapper diagnostic includes the row and axis'
+            Assert-True ($message.Contains('must be a predicate object with kind', [StringComparison]::Ordinal)) 'wrapper diagnostic includes the reason'
         }
     }
 
