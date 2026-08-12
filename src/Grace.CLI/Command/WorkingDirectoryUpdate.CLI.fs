@@ -724,9 +724,17 @@ module internal WorkingDirectoryUpdate =
 
                     fileIndex <- fileIndex + 1
 
+                let expectedDirectSize =
+                    if directory.Files.Count = 0
+                       && directory.Size = Grace.Shared.Constants.InitialDirectorySize then
+                        0L
+                    else
+                        directory.Size
+
                 match fileError with
                 | Some error -> return Error error
-                | None when directSize <> directory.Size -> return Error $"Directory '{directory.RelativePath}' has an unexpected direct-file size."
+                | None when directSize <> expectedDirectSize ->
+                    return Error $"Directory '{directory.RelativePath}' has an unexpected direct-file size: expected {expectedDirectSize}, found {directSize}."
                 | None ->
                     let childIds = directory.Directories |> Seq.toArray
                     let mutable childIndex = 0

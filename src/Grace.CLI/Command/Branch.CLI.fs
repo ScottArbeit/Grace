@@ -3281,6 +3281,8 @@ module Branch =
                     let mutable rootDirectoryId = DirectoryVersionId.Empty
                     /// The SHA-256 hash of the root directory version.
                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
+                    /// The truthful terminal Working Directory Update classification rendered by the Branch command.
+                    let mutable workingDirectoryOutcomeText = String.Empty
                     /// The set of DirectoryIds in the working directory after the current version is saved.
                     let mutable directoryIdsInNewGraceStatus: HashSet<DirectoryVersionId> = null
 
@@ -4030,23 +4032,41 @@ module Branch =
                                         let! outcome = WorkingDirectoryUpdate.run request CancellationToken.None
 
                                         match outcome with
-                                        | WorkingDirectoryUpdateContracts.Updated _
+                                        | WorkingDirectoryUpdateContracts.Updated _ ->
+                                            newGraceStatus <- targetStatus
+                                            rootDirectoryId <- targetStatus.RootDirectoryId
+                                            rootDirectorySha256Hash <- targetStatus.RootDirectorySha256Hash
+                                            directoryIdsInNewGraceStatus <- targetStatus.Index.Keys.ToHashSet()
+                                            t |> setProgressTaskValue showOutput 100.0
+                                            workingDirectoryOutcomeText <- "Updated: Working Directory Update completed."
+                                            return Ok(showOutput, parseResult, parameters, newBranch, workingDirectoryOutcomeText)
                                         | WorkingDirectoryUpdateContracts.Unchanged _ ->
                                             newGraceStatus <- targetStatus
                                             rootDirectoryId <- targetStatus.RootDirectoryId
                                             rootDirectorySha256Hash <- targetStatus.RootDirectorySha256Hash
                                             directoryIdsInNewGraceStatus <- targetStatus.Index.Keys.ToHashSet()
                                             t |> setProgressTaskValue showOutput 100.0
-                                            return Ok(showOutput, parseResult, parameters, newBranch, "Working Directory Update completed.")
-                                        | WorkingDirectoryUpdateContracts.Rejected failure
+                                            workingDirectoryOutcomeText <- "Unchanged: Working Directory Update already matches the selected root."
+                                            return Ok(showOutput, parseResult, parameters, newBranch, workingDirectoryOutcomeText)
+                                        | WorkingDirectoryUpdateContracts.Rejected failure ->
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        $"Rejected: {WorkingDirectoryUpdateContracts.Failure.value failure}"
+                                                        (getCorrelationId parseResult)
+                                                )
                                         | WorkingDirectoryUpdateContracts.UpdateIncomplete failure ->
                                             return
-                                                Error(GraceError.Create (WorkingDirectoryUpdateContracts.Failure.value failure) (getCorrelationId parseResult))
+                                                Error(
+                                                    GraceError.Create
+                                                        $"UpdateIncomplete: {WorkingDirectoryUpdateContracts.Failure.value failure}"
+                                                        (getCorrelationId parseResult)
+                                                )
                                         | WorkingDirectoryUpdateContracts.FinalizationIncomplete (_, failure) ->
                                             return
                                                 Error(
                                                     GraceError.Create
-                                                        $"Working-directory bytes were updated, but Branch finalization is incomplete: {WorkingDirectoryUpdateContracts.Failure.value failure}. Run `grace doctor --repair-local-state`."
+                                                        $"FinalizationIncomplete: Working-directory bytes were updated, but Branch finalization is incomplete: {WorkingDirectoryUpdateContracts.Failure.value failure}. Run `grace doctor --repair-local-state`."
                                                         (getCorrelationId parseResult)
                                                 )
                                     with
@@ -4071,14 +4091,17 @@ module Branch =
                                 >>=! createSaveReference progressTasks[9]
 
                             match result with
-                            | Ok _ -> return 0
-                            | Error error ->
-                                if parseResult |> verbose then
-                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error}[/]")
-                                else
-                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error}[/]")
+                            | Ok _ ->
+                                let message = workingDirectoryOutcomeText
 
-                                return -1
+                                if parseResult |> normal then
+                                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{Markup.Escape(message)}[/]")
+
+                                return
+                                    GraceReturnValue.Create message (getCorrelationId parseResult)
+                                    |> Ok
+                                    |> renderOutput parseResult
+                            | Error error -> return Error error |> renderOutput parseResult
                         }
 
                     if showOutput then
@@ -4145,10 +4168,10 @@ module Branch =
                                               emptyTask |]
                 with
                 | ex ->
-                    logToConsole $"{ExceptionResponse.Create ex}"
-                    logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
-                    logToAnsiConsole Colors.Important $"CorrelationId: {(parseResult |> getCorrelationId)}"
-                    return -1
+                    return
+                        GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
+                        |> Error
+                        |> renderOutput parseResult
             }
 
         /// Runs the asynchronous switch action when System.CommandLine dispatches the parsed command.
@@ -4167,13 +4190,7 @@ module Branch =
                 let! preflightResult = runBranchSwitchWatchCleanPreflight preflightOperations (getCorrelationId parseResult)
 
                 match preflightResult with
-                | Error error ->
-                    if parseResult |> verbose then
-                        AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
-                    else
-                        AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
-
-                    return -1
+                | Error error -> return Error error |> renderOutput parseResult
                 | Ok () ->
                     let switchParameters = SwitchParameters()
 

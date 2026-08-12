@@ -212,6 +212,14 @@ returns `Updated` with exit code 0.
 If current working bytes and status already match the target, the module performs no filesystem mutation. The same
 operation returns its existing completion; a new operation receives its own local completion and finalization.
 
+### Branch outcome projection
+
+`grace branch switch` projects `Updated` and `Unchanged` as successful human text or a single
+`GraceReturnValue<string>` JSON envelope, with exit code `0`. `Rejected`, `UpdateIncomplete`, and
+`FinalizationIncomplete` project their outcome name and reason through the normal human error or `GraceError` JSON
+envelope, with a nonzero exit code. `FinalizationIncomplete` states that working-directory bytes were updated and
+recommends exactly `grace doctor --repair-local-state`.
+
 ### Watch replay
 
 Watch retains replay admission and server ordering. The module applies one selected Reference from verified object

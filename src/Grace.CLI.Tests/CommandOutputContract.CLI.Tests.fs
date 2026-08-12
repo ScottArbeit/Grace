@@ -246,15 +246,14 @@ module CommandOutputContractRegistryTests =
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 186
+        |> should equal 187
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
         countBy ConditionalCheckStatusEnvelope
         |> should equal 1
 
-        countBy HumanProgressOnlySuccess
-        |> should equal 10
+        countBy HumanProgressOnlySuccess |> should equal 9
 
         countBy PartialManualSuccess |> should equal 0
         countBy ManualJsonUnenveloped |> should equal 0
@@ -297,10 +296,10 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 186
+        jsonReady |> should equal 187
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
-        deferredV2 |> should equal 11
+        deferredV2 |> should equal 10
         sourceOnly |> should equal 9
         deleted |> should equal 0
 
@@ -574,7 +573,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 186
+        commonEntries.Length |> should equal 187
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -592,7 +591,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 186
+        commonEntries.Length |> should equal 187
 
         let parserInvalidEntries =
             commonEntries
@@ -1054,7 +1053,7 @@ module CommandOutputContractRegistryTests =
                 | ConditionalGraceResultEnvelope _ -> true
                 | _ -> false)
 
-        eligibleEntries.Length |> should equal 187
+        eligibleEntries.Length |> should equal 188
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status

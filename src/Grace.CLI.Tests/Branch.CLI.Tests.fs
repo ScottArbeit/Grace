@@ -11,6 +11,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Annotation
 open Grace.Types.Common
+open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
 open Microsoft.Data.Sqlite
 open NodaTime
@@ -174,23 +175,15 @@ module BranchCommandTests =
 
             deleteTempDirectory 10
 
-    /// Runs an in-process HTTP endpoint that responds to selector reads and records the production SDK requests.
-    let private withSwitchRequestCapture (currentBranch: Grace.Types.Branch.BranchDto) (action: (unit -> string list) -> unit) =
+    /// Runs a bounded in-process HTTP endpoint for production Branch switch parser and dispatch fixtures.
+    let private withSwitchRequestFixture (responseForRequest: string -> int * string * string) (action: (unit -> string list) -> unit) =
         use listener = new TcpListener(IPAddress.Loopback, 0)
         use cancellation = new CancellationTokenSource()
         listener.Start()
         let requests = ResizeArray<string>()
         let correlationId = "branch-switch-built-fixture"
 
-        let successfulBranch =
-            GraceReturnValue.Create currentBranch correlationId
-            |> serialize
-
-        let rejectedRequest =
-            GraceError.Create "fixture stops after selector dispatch" correlationId
-            |> serialize
-
-        /// Writes successful current-Branch reads and terminates the selected-version request after it is observed.
+        /// Writes one deterministic SDK response for each production request the fixture observes.
         let writeResponse (client: TcpClient) =
             task {
                 use client = client
@@ -213,10 +206,14 @@ module BranchCommandTests =
                 requests.Add(requestText)
 
                 let statusCode, reasonPhrase, body =
-                    if requestText.Contains("POST /branch/GetVersion", StringComparison.Ordinal) then
-                        400, "Bad Request", rejectedRequest
-                    else
-                        200, "OK", successfulBranch
+                    try
+                        responseForRequest requestText
+                    with
+                    | ex ->
+                        500,
+                        "Fixture Error",
+                        (GraceError.Create $"fixture response failed: {ex.Message}" correlationId
+                         |> serialize)
 
                 let bodyBytes = Encoding.UTF8.GetBytes(body)
 
@@ -228,11 +225,11 @@ module BranchCommandTests =
                 do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length, cancellation.Token)
             }
 
-        /// Serves one SDK request at a time until the fixture is disposed.
+        /// Serves a bounded sequence of SDK requests and shuts down without an unbounded accept loop.
         let rec serve requestNumber =
             task {
                 if not cancellation.IsCancellationRequested
-                   && requestNumber < 6 then
+                   && requestNumber < 16 then
                     try
                         let! client =
                             listener
@@ -263,6 +260,26 @@ module BranchCommandTests =
 
             if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
                 Assert.Fail("Timed out waiting for the branch switch HTTP fixture to stop.")
+
+    /// Records selector traffic and refuses after the selected-version request without allowing the update path to run.
+    let private withSwitchRequestCapture (currentBranch: Grace.Types.Branch.BranchDto) (action: (unit -> string list) -> unit) =
+        let correlationId = "branch-switch-built-fixture"
+
+        let successfulBranch =
+            GraceReturnValue.Create currentBranch correlationId
+            |> serialize
+
+        let rejectedRequest =
+            GraceError.Create "fixture stops after selector dispatch" correlationId
+            |> serialize
+
+        withSwitchRequestFixture
+            (fun requestText ->
+                if requestText.Contains("POST /branch/GetVersion", StringComparison.Ordinal) then
+                    400, "Bad Request", rejectedRequest
+                else
+                    200, "OK", successfulBranch)
+            action
 
     /// Drives the production CLI parser and dispatch through a selector until the fixture rejects the selected-version request.
     let private invokeSwitchSelector selectorArguments =
@@ -360,6 +377,167 @@ module BranchCommandTests =
 
                 selectedVersionRequest.Value
                 |> should contain hashPrefix))
+
+    /// Proves an explicit Reference crosses the production parser and dispatch path, commits its exact root, and only then changes Branch identity.
+    [<Test>]
+    [<Category("BranchSwitchSelectorFixture")>]
+    let ``built switch Reference selection applies the exact target then changes Branch identity`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let targetBranchId = Guid.NewGuid()
+            let targetRootDirectoryId = Guid.NewGuid()
+            let targetReferenceId = Guid.NewGuid()
+
+            let targetRoot =
+                DirectoryVersion.CreateWithHashes
+                    targetRootDirectoryId
+                    ownerId
+                    organizationId
+                    repositoryId
+                    Constants.RootDirectoryPath
+                    (Grace.Shared.Services.computeSha256ForDirectoryEntries Constants.RootDirectoryPath Seq.empty)
+                    (Grace.Shared.Services.computeBlake3ForDirectory Constants.RootDirectoryPath Seq.empty)
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>())
+                    0L
+
+            let targetReference =
+                { ReferenceDto.Default with
+                    ReferenceId = targetReferenceId
+                    OwnerId = ownerId
+                    OrganizationId = organizationId
+                    RepositoryId = repositoryId
+                    BranchId = targetBranchId
+                    DirectoryId = targetRootDirectoryId
+                    Sha256Hash = targetRoot.Sha256Hash
+                    Blake3Hash = targetRoot.Blake3Hash
+                }
+
+            let currentBranch =
+                { Grace.Types.Branch.BranchDto.Default with
+                    OwnerId = ownerId
+                    OrganizationId = organizationId
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    BranchName = Grace.Types.Common.BranchName "branch-switch-current"
+                    SaveEnabled = false
+                }
+
+            let targetBranch =
+                { currentBranch with
+                    BranchId = targetBranchId
+                    BranchName = Grace.Types.Common.BranchName "branch-switch-target"
+                    LatestReference = targetReference
+                }
+
+            let configuration = Current()
+            configuration.OwnerId <- ownerId
+            configuration.OrganizationId <- organizationId
+            configuration.RepositoryId <- repositoryId
+            configuration.BranchId <- branchId
+            configuration.BranchName <- "branch-switch-current"
+
+            LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let initialRootDirectoryId = Guid.NewGuid()
+
+            let initialRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    initialRootDirectoryId
+                    ownerId
+                    organizationId
+                    repositoryId
+                    Constants.RootDirectoryPath
+                    targetRoot.Sha256Hash
+                    targetRoot.Blake3Hash
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>())
+                    0L
+                    DateTime.UtcNow
+
+            let initialIndex = GraceIndex()
+
+            initialIndex.TryAdd(initialRootDirectoryId, initialRoot)
+            |> ignore
+
+            { GraceStatus.Default with
+                Index = initialIndex
+                RootDirectoryId = initialRootDirectoryId
+                RootDirectorySha256Hash = initialRoot.Sha256Hash
+                RootDirectoryBlake3Hash = initialRoot.Blake3Hash
+            }
+            |> LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            writeBranchSwitchWatchStatus (Services.IpcFileName()) (branchSwitchWatchStatus ())
+            let correlationId = "branch-switch-built-fixture"
+            let mutable branchGetCount = 0
+
+            let response value =
+                GraceReturnValue.Create value correlationId
+                |> serialize
+
+            withSwitchRequestFixture
+                (fun request ->
+                    if request.Contains("POST /branch/GetReference", StringComparison.Ordinal) then
+                        200, "OK", response targetReference
+                    elif request.Contains("POST /branch/GetVersion", StringComparison.Ordinal) then
+                        200, "OK", response [| targetRootDirectoryId |]
+                    elif request.Contains("POST /directory/GetByDirectoryIds", StringComparison.Ordinal) then
+                        200, "OK", response [| { DirectoryVersionDto.Default with DirectoryVersion = targetRoot } |]
+                    elif request.Contains("POST /branch/Get", StringComparison.Ordinal) then
+                        branchGetCount <- branchGetCount + 1
+
+                        if branchGetCount = 1 then
+                            200, "OK", response currentBranch
+                        else
+                            200, "OK", response targetBranch
+                    else
+                        200, "OK", response currentBranch)
+                (fun getRequests ->
+                    let exitCode, output =
+                        captureOutput (fun () ->
+                            GraceCommand.main [| "branch"
+                                                 "switch"
+                                                 "--reference-id"
+                                                 targetReferenceId.ToString()
+                                                 "--output"
+                                                 "Normal" |])
+
+                    if exitCode <> 0 then
+                        Assert.Fail($"Expected the Reference switch fixture to complete, got: {output}")
+
+                    Current().BranchId |> should equal targetBranchId
+
+                    Current().BranchName
+                    |> should equal "branch-switch-target"
+
+                    let completedStatus =
+                        LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                        |> fun task -> task.GetAwaiter().GetResult()
+
+                    completedStatus.RootDirectoryId
+                    |> should equal targetRootDirectoryId
+
+                    completedStatus.RootDirectorySha256Hash
+                    |> should equal targetRoot.Sha256Hash
+
+                    completedStatus.RootDirectoryBlake3Hash
+                    |> should equal targetRoot.Blake3Hash
+
+                    let requests = getRequests ()
+
+                    requests
+                    |> List.exists (fun request ->
+                        request.Contains("POST /branch/GetReference", StringComparison.Ordinal)
+                        && request.Contains(targetReferenceId.ToString(), StringComparison.Ordinal))
+                    |> should equal true
+
+                    requests
+                    |> List.exists (fun request ->
+                        request.Contains("POST /branch/GetVersion", StringComparison.Ordinal)
+                        && request.Contains(targetReferenceId.ToString(), StringComparison.Ordinal))
+                    |> should equal true))
 
     /// Wraps a status snapshot in the inspection shape consumed by branch switch preflight.
     let private branchSwitchWatchInspection persistedMode status =

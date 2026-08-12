@@ -144,10 +144,10 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
 - Total leaf commands: `207`
-- JSON-ready routed commands: `186`
+- JSON-ready routed commands: `187`
 - Conditionally JSON-ready routed commands: `1`
 - Intentionally human-only commands: `0`
-- Deferred routed commands with explicit V2 scope: `11`
+- Deferred routed commands with explicit V2 scope: `10`
 - Source-only/unrouted commands: `9`
 - Deleted commands: `0`
 
@@ -174,7 +174,6 @@ metadata and V2 scope because their success paths still need migration before Gr
 
 - `branch.rebase`
 - `branch.status`
-- `branch.switch`
 - `diff.checkpoint`
 - `diff.commit`
 - `diff.directoryid`
@@ -231,20 +230,27 @@ grace --output Json doctor --select Status
 grace watch --check --select Mode
 ```
 
-## Planned Working Directory Update outcomes
+## Working Directory Update outcomes
 
-The Plan-ready [Working Directory Update specification](Working%20Directory%20Update.md) defines a typed local-update
-outcome for Branch switching, Connect retrieval, and Watch diagnostics. `Unchanged` and `Updated` return exit code `0`;
-`Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` return nonzero. `FinalizationIncomplete` states that the
-working directory was updated and includes `grace doctor --repair-local-state` as the recommended command.
+`grace branch switch` returns the normal `GraceReturnValue<string>` JSON envelope for `Updated` and `Unchanged`.
+Both return exit code `0`. `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` return a `GraceError` JSON
+envelope and a nonzero exit code. The error text begins with the corresponding outcome name.
 
-When implemented, Connect output will distinguish successful repository configuration from its optional update result.
-`branch.switch` will leave the V2 deferral list only when its stable outcome DTO, schema, example, selection behavior,
-and exit-code proof are complete. Foreground Watch remains a continuous command; its existing check projection and
-human diagnostics will report blocked update state without emitting a second JSON document.
+`FinalizationIncomplete` means the working-directory bytes were updated, while the final Branch identity action did
+not complete. It always recommends this explicit recovery command:
 
-This is an accepted future contract. The inventory and deferral counts above remain the current executable inventory
-until implementation changes the command registry.
+```powershell
+grace doctor --repair-local-state
+```
+
+```bash
+grace doctor --repair-local-state
+```
+
+The Branch selection inputs remain unchanged: Branch or Reference selection can transition the active Branch after
+local completion; SHA-256 or BLAKE3 selection applies the selected exact root while keeping the current Branch active.
+Foreground Watch remains a continuous command; its existing check projection and human diagnostics report blocked
+update state without emitting a second JSON document.
 
 ## V2 Deferrals
 

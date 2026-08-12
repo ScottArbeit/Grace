@@ -682,6 +682,7 @@ module CommandOutputContract =
         | "branch.get-tags" -> typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
         | "branch.get-recursive-size" -> typeof<int64>
         | "branch.list-contents" -> typeof<IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>>
+        | "branch.switch" -> typeof<string>
         | "candidate.attestations" -> typeof<Grace.Shared.Parameters.Review.CandidateAttestationsResult>
         | "candidate.cancel"
         | "candidate.gate.rerun"
@@ -1199,7 +1200,7 @@ module CommandOutputContract =
             row [ "branch" ] "set-name" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "set-promotion-mode" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "status" true false human_progress_only_success read_list_search composite_local_server RequiresCliDto
-            row [ "branch" ] "switch" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
+            row [ "branch" ] "switch" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "branch" ] "tag" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "update-parent-branch" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "attestations" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
