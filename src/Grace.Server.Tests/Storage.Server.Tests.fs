@@ -2139,9 +2139,9 @@ type StorageManifestUploadSessionRoutes() =
             )
         }
 
-    /// Verifies the confirm content block upload deletes final CAS when actor rejects after confirm race scenario.
+    /// Verifies the confirm content block upload rejects a racing confirm after finalization and retains final shared CAS.
     [<Test>]
-    member _.ConfirmContentBlockUploadDeletesFinalCasWhenActorRejectsAfterConfirmRace() =
+    member _.ConfirmContentBlockUploadRejectsRacingConfirmAndRetainsFinalSharedCas() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -2260,10 +2260,14 @@ type StorageManifestUploadSessionRoutes() =
             let! racingResponse = racingConfirmTask
             let! racingBody = racingResponse.Content.ReadAsStringAsync()
             Assert.That(racingResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), racingBody)
-            Assert.That(racingBody, Does.Contain("RetentionPending"))
 
             let! finalBlockExists = finalContentBlockExistsByAddress racingUploadUri racingBlock.Address
-            Assert.That(finalBlockExists, Is.False)
+
+            match (deserialize<GraceError> racingBody).Error with
+            | "UploadSession is waiting for cleanup and cannot be changed by ConfirmBlockUploaded." -> Assert.That(finalBlockExists, Is.True)
+            | "UploadSession must be active before confirming a ContentBlock upload; current state is RetentionPending." ->
+                Assert.That(finalBlockExists, Is.False)
+            | error -> Assert.Fail($"Unexpected racing confirm error: {error}")
         }
 
     /// Verifies the confirm content block upload rejects terminal session before final CAS materialization scenario.
