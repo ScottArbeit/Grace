@@ -384,7 +384,6 @@ type EndpointAuthorizationManifestTests() =
     member _.CacheProofRoutesAllowAnonymousAndAdministrativeRoutesRequireAuthentication() =
         [
             "POST", "/cache/refresh"
-            "POST", "/cache/rotate-key"
             "GET", "/cache/validation-keys"
         ]
         |> assertRoutesUseSecurity AllowAnonymous

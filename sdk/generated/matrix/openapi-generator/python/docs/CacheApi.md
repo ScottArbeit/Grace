@@ -9,7 +9,6 @@ Method | HTTP request | Description
 [**get_artifact_grant_validation_keys**](CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 [**refresh_cache**](CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
 [**revoke_cache**](CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
-[**rotate_cache_key**](CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
 
 
 # **assign_cache_repositories**
@@ -387,76 +386,6 @@ Name | Type | Description  | Notes
 **400** | Bad Request |  -  |
 **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
 **403** | Forbidden |  -  |
-**500** | Internal Server Error |  -  |
-
-[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
-
-# **rotate_cache_key**
-> CacheRegistrationReturnValue rotate_cache_key(cache_key_rotation_request)
-
-Rotate a Cache identity key after proof by the currently accepted key.
-
-### Example
-
-
-```python
-import grace_generated_openapi_probe
-from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest
-from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue
-from grace_generated_openapi_probe.rest import ApiException
-from pprint import pprint
-
-# Defining the host is optional and defaults to http://localhost:5000
-# See configuration.py for a list of all supported configuration parameters.
-configuration = grace_generated_openapi_probe.Configuration(
-    host = "http://localhost:5000"
-)
-
-
-# Enter a context with an instance of the API client
-with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
-    # Create an instance of the API class
-    api_instance = grace_generated_openapi_probe.CacheApi(api_client)
-    cache_key_rotation_request = grace_generated_openapi_probe.CacheKeyRotationRequest() # CacheKeyRotationRequest | 
-
-    try:
-        # Rotate a Cache identity key after proof by the currently accepted key.
-        api_response = api_instance.rotate_cache_key(cache_key_rotation_request)
-        print("The response of CacheApi->rotate_cache_key:\n")
-        pprint(api_response)
-    except Exception as e:
-        print("Exception when calling CacheApi->rotate_cache_key: %s\n" % e)
-```
-
-
-
-### Parameters
-
-
-Name | Type | Description  | Notes
-------------- | ------------- | ------------- | -------------
- **cache_key_rotation_request** | [**CacheKeyRotationRequest**](CacheKeyRotationRequest.md)|  | 
-
-### Return type
-
-[**CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
-
-### Authorization
-
-No authorization required
-
-### HTTP request headers
-
- - **Content-Type**: application/json
- - **Accept**: application/json, text/plain
-
-### HTTP response details
-
-| Status code | Description | Response headers |
-|-------------|-------------|------------------|
-**200** | OK |  -  |
-**400** | Bad Request |  -  |
-**401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
 **500** | Internal Server Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

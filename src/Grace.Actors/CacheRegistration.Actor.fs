@@ -122,37 +122,6 @@ module CacheRegistrationActor =
                     return Ok(this.ReturnResult(result, correlationId))
                 }
 
-            /// Replaces the accepted identity key only after verifying the request against the pre-rotation key.
-            member this.RotateKey(request, now, correlationId) =
-                task {
-                    match this.TryGet(request.CacheId) with
-                    | None ->
-                        let _, result = Lifecycle.rotateKey currentState request now
-                        return Ok(this.ReturnResult(result, correlationId))
-                    | Some registration when
-                        not
-                            (
-                                CacheRegistrationProof.validate
-                                    now
-                                    registration.PublicKey
-                                    request.CacheId
-                                    CacheRegistrationProof.RotateKeyOperation
-                                    (CacheRegistrationProof.rotationRequestDigest request)
-                                    request.Proof
-                            )
-                        ->
-                        return Error(GraceError.Create "Cache key-rotation proof is invalid, stale, or does not match the current identity key." correlationId)
-                    | Some _ when not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey) ->
-                        return Error(GraceError.Create "Cache key rotation requires a canonical P-256 public key." correlationId)
-                    | Some _ ->
-                        let nextState, result = Lifecycle.rotateKey currentState request now
-
-                        if result.Status = CacheRegistrationRefreshStatus.Rotated then
-                            do! this.Save nextState
-
-                        return Ok(this.ReturnResult(result, correlationId))
-                }
-
             /// Returns the authoritative stored record without applying selection eligibility filters.
             member this.Get(cacheId, _correlationId) = this.TryGet(cacheId) |> returnTask
 

@@ -18,8 +18,6 @@ Result classification for Cache enrollment and lifecycle operations.
 
 * `UPDATED` (value: `'updated'`)
 
-* `ROTATED` (value: `'rotated'`)
-
 * `ENDPOINTMISMATCH` (value: `'endpointMismatch'`)
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

@@ -53,15 +53,13 @@ pub struct CacheRegistration {
     pub refresh_after: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "ExpiresAt")]
     pub expires_at: chrono::DateTime<chrono::FixedOffset>,
-    #[serde(rename = "RotationDueAt")]
-    pub rotation_due_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "RevokedAt", skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 impl CacheRegistration {
     /// Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
-    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, rotation_due_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
+    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
         CacheRegistration {
             class,
             cache_id,
@@ -82,7 +80,6 @@ impl CacheRegistration {
             last_refreshed_at,
             refresh_after,
             expires_at,
-            rotation_due_at,
             revoked_at: None,
         }
     }

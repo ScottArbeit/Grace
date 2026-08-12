@@ -33,8 +33,6 @@ module CacheRegistration =
         let ActiveLifetime = Duration.FromHours 2
         /// The earliest normal interval at which a Cache may refresh its registration.
         let RefreshAfter = Duration.FromHours 1
-        /// The default Cache host key-rotation schedule advertised by the server contract.
-        let KeyRotationInterval = Duration.FromHours 4
 
     /// Carries the canonical public half of a Cache identity P-256 key. No private material appears in this contract.
     [<CLIMutable; GenerateSerializer>]
@@ -136,10 +134,6 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRevocationRequest = { Class: string; CacheId: Guid }
 
-    /// Represents a current-key-proven Cache identity rotation. The server accepts the new public key before retiring the old key.
-    [<CLIMutable; GenerateSerializer>]
-    type CacheKeyRotationRequest = { Class: string; CacheId: Guid; NewPublicKey: CacheIdentityPublicKey; Proof: SignedCacheRequestProof }
-
     /// Represents the server-owned durable registration for one Cache identity.
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistration =
@@ -163,7 +157,6 @@ module CacheRegistration =
             LastRefreshedAt: Instant
             RefreshAfter: Instant
             ExpiresAt: Instant
-            RotationDueAt: Instant
             RevokedAt: Instant option
         }
 
@@ -176,7 +169,6 @@ module CacheRegistration =
         | NotFound = 5
         | Revoked = 6
         | Updated = 7
-        | Rotated = 8
         | EndpointMismatch = 9
 
     /// Represents a server response for Cache enrollment and lifecycle operations.
@@ -381,7 +373,6 @@ module CacheRegistration =
                     LastRefreshedAt = now
                     RefreshAfter = now.Plus RegistrationLifetime.RefreshAfter
                     ExpiresAt = now.Plus RegistrationLifetime.ActiveLifetime
-                    RotationDueAt = now.Plus RegistrationLifetime.KeyRotationInterval
                     RevokedAt = None
                 }
 
@@ -527,36 +518,6 @@ module CacheRegistration =
                     }
 
                 next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, Some revoked, "Cache registration was revoked.")
-
-        /// Replaces the current public key only after the caller proved possession of the accepted old key.
-        let rotateKey (state: CacheRegistrationState) (request: CacheKeyRotationRequest) (now: Instant) =
-            let current = if isNull (box state) then CacheRegistrationState.Empty else state
-
-            match current.Registrations
-                  |> Array.tryFind (fun registration -> registration.CacheId = request.CacheId)
-                with
-            | None -> current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "Cache registration was not found.")
-            | Some registration when registration.RevokedAt.IsSome ->
-                current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, Some registration, "Cache registration is revoked.")
-            | Some registration when now >= registration.ExpiresAt ->
-                current,
-                CacheRegistrationResult.Create(
-                    CacheRegistrationRefreshStatus.Expired,
-                    Some registration,
-                    "Cache registration is expired and must enroll again."
-                )
-            | Some registration ->
-                let rotated = { registration with PublicKey = request.NewPublicKey; RotationDueAt = now.Plus RegistrationLifetime.KeyRotationInterval }
-
-                let next =
-                    {
-                        Class = nameof CacheRegistrationState
-                        Registrations =
-                            current.Registrations
-                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then rotated else existing)
-                    }
-
-                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Rotated, Some rotated, "Cache identity key was rotated.")
 
         /// Selects active healthy Cache registrations by exact durable repository assignment only.
         let selectEligible (state: CacheRegistrationState) (query: CacheRegistrationSelectionQuery) (now: Instant) =

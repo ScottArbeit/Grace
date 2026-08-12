@@ -26,7 +26,6 @@ Name | Type
 `lastRefreshedAt` | Date
 `refreshAfter` | Date
 `expiresAt` | Date
-`rotationDueAt` | Date
 `revokedAt` | Date
 
 ## Example
@@ -55,7 +54,6 @@ const example = {
   "lastRefreshedAt": null,
   "refreshAfter": null,
   "expiresAt": null,
-  "rotationDueAt": null,
   "revokedAt": null,
 } satisfies CacheRegistration
 

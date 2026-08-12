@@ -754,11 +754,11 @@ stable repository IDs within that boundary. Grace Server revalidates the adminis
 permissions before the atomic enrollment or assignment change; no installation-wide service-principal allowlist or
 global cache-scope configuration exists.
 
-The future Cache host generates a canonical P-256 key pair and sends only its public key to `/cache/enroll`. Grace Server
-stores that public key, the display name, operational facts, explicit repository assignments, and enrollment audit identity.
-It never receives or stores the private key. A refresh or key rotation proves possession of the currently accepted key by
-signing the canonical request payload that binds `CacheId`, operation, request digest, and Unix-millisecond timestamp.
-Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration state.
+The future Cache host generates one canonical P-256 key pair and sends only its public key to `/cache/enroll`. Grace
+Server stores that public key, the display name, operational facts, explicit repository assignments, and enrollment audit
+identity. It never receives or stores the private key. A refresh proves possession of the static enrolled key by signing
+the canonical request payload that binds `CacheId`, operation, request digest, and Unix-millisecond timestamp. Malformed,
+wrong-key, stale, or tampered proofs are rejected without changing registration state.
 
 Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
 when the future `grace cache --allow-http` host is deliberately configured for it. Grace persists that approval with the
@@ -773,10 +773,10 @@ foundation. Refresh reports the enrolled endpoint as an exact immutable match an
 software/protocol version, Prefetch support, and liveness timestamps; it cannot change the endpoint, `AllowHttpEndpoint`,
 a Cache's display name, repository assignments, boundary, public key, or administrative state.
 
-Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. A current-key-proven
-`/cache/rotate-key` request immediately accepts the new canonical P-256 public key, retires the old key, and resets the
-four-hour rotation schedule. A lost key requires revocation and re-enrollment. Cache enrollment does not require cache
-environment variables, service principal IDs, or private-key configuration in Grace Server.
+Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. The enrolled identity
+key is static. A lost or compromised key requires manual recovery: revoke the registration, delete the local key material,
+and re-enroll with a new key. Cache enrollment does not require cache environment variables, service principal IDs, or
+private-key configuration in Grace Server.
 
 ---
 
