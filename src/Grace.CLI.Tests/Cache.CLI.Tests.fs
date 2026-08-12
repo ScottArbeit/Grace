@@ -69,6 +69,58 @@ module CacheCliTests =
 
         root
 
+    /// Runs a command-path test against an isolated protected cache root instead of the fixed service-account deployment root.
+    let private withCacheStateRoot action =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Linux cache enrollment command-path behavior is verified on the supported deployment platform.")
+
+        let root = createCacheRoot ()
+        CacheCommand.setStateRootForTests root
+
+        try
+            action root
+        finally
+            CacheCommand.resetStateRootForTests ()
+
+            if Directory.Exists(root) then Directory.Delete(root, true)
+
+    /// Applies process environment values for one serialized CLI invocation and restores the caller's values afterward.
+    let private withEnvironmentOverrides (overrides: (string * string option) list) action =
+        let originalValues =
+            overrides
+            |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable(name))
+
+        try
+            overrides
+            |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value |> Option.toObj))
+
+            action ()
+        finally
+            originalValues
+            |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+
+    /// Supplies valid owner-scoped cache enrollment input for command-path behavior tests.
+    let private validEnrollmentArguments =
+        [|
+            "--output"
+            "Json"
+            "cache"
+            "enroll"
+            "--display-name"
+            "Loopback cache"
+            "--endpoint"
+            "http://127.0.0.1:5001"
+            "--allow-http"
+            "--boundary"
+            "owner"
+            "--owner-id"
+            "11111111-1111-1111-1111-111111111111"
+            "--repository-organization-id"
+            "22222222-2222-2222-2222-222222222222"
+            "--repository-id"
+            "33333333-3333-3333-3333-333333333333"
+        |]
+
     /// Runs a command against a loopback endpoint and exposes the number of attempted HTTP connections.
     let private withRequestCounter action =
         use listener = new TcpListener(IPAddress.Loopback, 0)
@@ -320,47 +372,91 @@ module CacheCliTests =
         finally
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri)
 
-    /// Verifies standalone enrollment transport honors the configured endpoint and normal bearer authentication without repository configuration.
+    /// Verifies credential failure stops the actual standalone command before staging, repository state, or endpoint transport.
     [<Test>]
-    let ``cache enrollment transport uses configured server without repository configuration`` () =
-        let temporaryDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-cli-tests-{Guid.NewGuid():N}")
-        let originalDirectory = Environment.CurrentDirectory
-        let originalServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+    let ``cache enroll resolves credential before protected staging or endpoint transport`` () =
+        let noCredentialOverrides =
+            [
+                Constants.EnvironmentVariables.GraceToken, None
+                Constants.EnvironmentVariables.GraceTokenFile, None
+                Constants.EnvironmentVariables.GraceAuthOidcAuthority, None
+                Constants.EnvironmentVariables.GraceAuthOidcAudience, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+            ]
 
-        Directory.CreateDirectory(temporaryDirectory)
-        |> ignore
+        withCacheStateRoot (fun root ->
+            withEnvironmentOverrides noCredentialOverrides (fun () ->
+                withRequestCounter (fun requestCount ->
+                    let exitCode, output, createdGraceDirectory = invokeWithoutRepositoryConfig validEnrollmentArguments
+                    let outputLines = output.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
 
-        try
-            Environment.CurrentDirectory <- temporaryDirectory
-            Auth.setTokenProvider (fun () -> Task.FromResult(Some "cache-cli-test-token"))
+                    Assert.That(exitCode, Is.EqualTo(-1))
+                    Assert.That(outputLines, Has.Length.EqualTo 1)
+                    Assert.That(createdGraceDirectory, Is.False)
+                    Assert.That(requestCount (), Is.Zero)
+                    Assert.That(Directory.GetFileSystemEntries(root), Is.Empty)
 
-            let parameters = Grace.Shared.Parameters.CacheRegistration.EnrollCacheParameters()
-            parameters.CorrelationId <- "cache-cli-test"
+                    use document = JsonDocument.Parse(output)
 
-            let result, requestPath, authorization, responseBody =
+                    Assert.That(
+                        document.RootElement.TryGetProperty("Error")
+                        |> fst,
+                        Is.True
+                    )
+
+                    Assert.That(
+                        document
+                            .RootElement
+                            .GetProperty("Error")
+                            .GetString(),
+                        Does.Contain("Authentication")
+                    ))))
+
+    /// Verifies actual standalone enrollment uses the configured Grace Server, normal bearer authentication, and one protected ready commit.
+    [<Test>]
+    let ``cache enroll uses configured server and normal authentication without repository configuration`` () =
+        let token = Grace.Types.PersonalAccessToken.formatToken "cache-cli-test" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withCacheStateRoot (fun root ->
+            let (exitCode, output, createdGraceDirectory), requestPath, authorization, responseBody =
                 withEnrollmentEndpoint (fun serverUri ->
-                    Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, serverUri.AbsoluteUri)
-                    let configuredServerUri = Uri(Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri))
+                    withEnvironmentOverrides
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, Some token
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                        ]
+                        (fun () -> invokeWithoutRepositoryConfig validEnrollmentArguments))
 
-                    Grace.SDK.CacheRegistration.Enroll(parameters, configuredServerUri, CancellationToken.None)
-                    |> fun task -> task.GetAwaiter().GetResult())
+            let outputLines = output.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            let ready = Path.Combine(root, "ready")
 
-            match result with
-            | Ok _ -> ()
-            | Error error -> Assert.Fail($"Expected loopback enrollment success, got: {error.Error}{Environment.NewLine}Response: {responseBody}")
+            Assert.That(exitCode, Is.Zero, responseBody)
+            Assert.That(outputLines, Has.Length.EqualTo 1)
+            Assert.That(requestPath, Is.EqualTo("/cache/enroll"))
+            Assert.That(authorization, Is.EqualTo($"Bearer {token}"))
+            Assert.That(createdGraceDirectory, Is.False)
+            Assert.That(Directory.Exists(ready), Is.True)
+            Assert.That(Directory.GetDirectories(root, "staging-*"), Is.Empty)
 
-            requestPath |> should equal "/cache/enroll"
+            Assert.That(
+                (CacheIdentity.status root CancellationToken.None)
+                    .Enrollment,
+                Is.EqualTo("enrolled")
+            )
 
-            authorization
-            |> should equal "Bearer cache-cli-test-token"
+            use document = JsonDocument.Parse(output)
 
-            Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
-            |> should equal false
-        finally
-            Auth.clearTokenProvider ()
-            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri)
-            Environment.CurrentDirectory <- originalDirectory
-            Directory.Delete(temporaryDirectory, true)
+            Assert.That(
+                document.RootElement.TryGetProperty("ReturnValue")
+                |> fst,
+                Is.True
+            ))
 
     /// Verifies cancellation immediately after private-key staging neither starts transport nor leaves a staging directory.
     [<Test>]

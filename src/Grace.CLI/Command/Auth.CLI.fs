@@ -953,8 +953,8 @@ module Auth =
                         })
         }
 
-    /// Tries to map get access token and returns a GraceError instead of throwing on unsupported input.
-    let tryGetAccessToken () =
+    /// Resolves a normal CLI credential, optionally avoiding Grace Server discovery before callers are ready to send a request.
+    let private tryGetAccessTokenWithServerDiscovery allowServerDiscovery =
         task {
             match tryGetGraceTokenFromEnv () with
             | Error message -> return Error message
@@ -996,7 +996,17 @@ module Auth =
                             | Ok token -> return Ok(Some token.AccessToken)
                     | None ->
                         let correlationId = ensureNonEmptyCorrelationId String.Empty
-                        let! cliConfigResult = tryGetOidcCliConfig correlationId
+
+                        let! cliConfigResult =
+                            if allowServerDiscovery then
+                                tryGetOidcCliConfig correlationId
+                            else
+                                task {
+                                    return
+                                        match tryGetOidcCliConfigFromEnv () with
+                                        | Some config -> Ok(Some config)
+                                        | None -> Ok None
+                                }
 
                         match cliConfigResult with
                         | Ok None ->
@@ -1008,6 +1018,12 @@ module Auth =
                             return tokenResult
                         | Error error -> return Error error.Error
         }
+
+    /// Resolves a normal CLI credential, including configured Grace Server discovery for interactive login.
+    let tryGetAccessToken () = tryGetAccessTokenWithServerDiscovery true
+
+    /// Resolves a normal CLI credential without sending a Grace Server discovery request before a command's local preflight completes.
+    let tryGetAccessTokenWithoutServerDiscovery () = tryGetAccessTokenWithServerDiscovery false
 
     /// Tries to map get access token for sdk and returns a GraceError instead of throwing on unsupported input.
     let private tryGetAccessTokenForSdk () =

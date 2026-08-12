@@ -158,11 +158,13 @@ type CacheIdentityTests() =
             Assert.Ignore("Linux file-mode persistence is verified on the supported deployment platform.")
 
         let root = createRoot ()
+        let mutable protectedPath = String.Empty
+        let mutable originalMode = UnixFileMode.None
 
         try
             let ready = commitReadyIdentity root
 
-            let protectedPath =
+            protectedPath <-
                 match target with
                 | "root" -> root
                 | "ready" -> ready
@@ -172,6 +174,7 @@ type CacheIdentityTests() =
                     Assert.Fail("Unexpected protected state target.")
                     String.Empty
 
+            originalMode <- File.GetUnixFileMode(protectedPath)
             File.SetUnixFileMode(protectedPath, UnixFileMode.UserRead ||| UnixFileMode.GroupRead)
 
             let status = CacheIdentity.status root cancellationToken
@@ -183,24 +186,11 @@ type CacheIdentityTests() =
             Assert.That(serialized, Does.Not.Contain(root))
             Assert.That(serialized, Does.Not.Contain("identity.pkcs8"))
         finally
-            if target = "root" && Directory.Exists(root) then
-                File.SetUnixFileMode(
-                    root,
-                    UnixFileMode.UserRead
-                    ||| UnixFileMode.UserWrite
-                    ||| UnixFileMode.UserExecute
-                )
-
-            if target = "ready" then
-                let ready = Path.Combine(root, "ready")
-
-                if Directory.Exists(ready) then
-                    File.SetUnixFileMode(
-                        ready,
-                        UnixFileMode.UserRead
-                        ||| UnixFileMode.UserWrite
-                        ||| UnixFileMode.UserExecute
-                    )
+            if
+                File.Exists(protectedPath)
+                || Directory.Exists(protectedPath)
+            then
+                File.SetUnixFileMode(protectedPath, originalMode)
 
             deleteRoot root
 
