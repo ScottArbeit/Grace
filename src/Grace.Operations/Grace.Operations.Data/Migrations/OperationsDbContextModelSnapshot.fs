@@ -289,6 +289,120 @@ type OperationsDbContextModelSnapshot() =
             .HasDatabaseName("IX_ops_UsageFactRejection_ActiveScope")
         |> ignore
 
+        let journal = modelBuilder.Entity<UsageFactJournalEntity>()
+
+        journal.ToTable(
+            "UsageFactJournal",
+            "ops",
+            fun (table: TableBuilder<UsageFactJournalEntity>) ->
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactJournal_Identity",
+                    "[UsageFactId] <> '00000000-0000-0000-0000-000000000000' AND [OwnerId] <> '00000000-0000-0000-0000-000000000000' AND [OrganizationId] <> '00000000-0000-0000-0000-000000000000' AND [RepositoryId] <> '00000000-0000-0000-0000-000000000000' AND LEN(LTRIM(RTRIM([CorrelationId]))) > 0 AND LEN(LTRIM(RTRIM([StoragePoolId]))) > 0 AND DATALENGTH([RawPayload]) > 0"
+                )
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactJournal_State",
+                    "([State] = 0 AND [TerminalAtUtc] IS NULL) OR ([State] IN (1, 2) AND [TerminalAtUtc] IS NOT NULL)"
+                )
+                |> ignore
+        )
+        |> ignore
+
+        journal
+            .HasKey([| "UsageFactId" |])
+            .HasName("PK_ops_UsageFactJournal")
+        |> ignore
+
+        journal
+            .Property<Guid>("UsageFactId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        journal
+            .Property<byte array>("RawPayload")
+            .HasColumnType("varbinary(max)")
+            .IsRequired()
+        |> ignore
+
+        journal
+            .Property<string>("CorrelationId")
+            .HasMaxLength(200)
+            .IsRequired()
+        |> ignore
+
+        journal.Property<int>("FactKind").IsRequired()
+        |> ignore
+
+        for name in
+            [
+                "OwnerId"
+                "OrganizationId"
+                "RepositoryId"
+            ] do
+            journal
+                .Property<Guid>(name)
+                .HasColumnType("uniqueidentifier")
+                .IsRequired()
+            |> ignore
+
+        journal
+            .Property<string>("StoragePoolId")
+            .HasMaxLength(256)
+            .UseCollation("Latin1_General_100_BIN2")
+            .IsRequired()
+        |> ignore
+
+        journal.Property<int64>("Quantity").IsRequired()
+        |> ignore
+
+        journal
+            .Property<DateTime>("ObservedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        journal.Property<int>("State").IsRequired()
+        |> ignore
+
+        journal
+            .Property<DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        journal
+            .Property<Nullable<DateTime>>("TerminalAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        journal
+            .HasIndex(
+                [|
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "ObservedAtUtc"
+                    "State"
+                    "UsageFactId"
+                |]
+            )
+            .HasDatabaseName("IX_ops_UsageFactJournal_ScopeState")
+        |> ignore
+
+        journal
+            .HasIndex(
+                [|
+                    "State"
+                    "CreatedAtUtc"
+                    "UsageFactId"
+                |]
+            )
+            .HasDatabaseName("IX_ops_UsageFactJournal_PendingDispatch")
+        |> ignore
+
         let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()
 
         aggregate.ToTable("UsageAggregateMinute", "ops")

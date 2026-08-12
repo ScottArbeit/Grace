@@ -82,12 +82,24 @@ type IOperationsUsageFactStore =
     abstract StoreUsageFactAsync:
         fact: UsageFact * rawPayload: byte array * cancellationToken: CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>
 
-/// Adapts the concrete operations data store to the worker's fakeable ingestion dependency.
-type OperationsUsageFactStoreAdapter(store: OperationsUsageStore) =
+/// Adapts the journal processor to the worker's fakeable ingestion dependency without letting a broker message create a fact.
+type OperationsUsageFactStoreAdapter(journal: IOperationsUsageJournalStore) =
 
     interface IOperationsUsageFactStore with
 
-        member _.StoreUsageFactAsync(fact, rawPayload, cancellationToken) = store.StoreUsageFactAsync(fact, rawPayload, cancellationToken)
+        member _.StoreUsageFactAsync(fact, rawPayload, cancellationToken) =
+            task {
+                let! result = journal.ProcessAsync(fact, rawPayload, cancellationToken)
+
+                return
+                    match result with
+                    | AcceptedFromJournal -> Ok { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = fact.UsageFactId; Aggregate = None }
+                    | AlreadyAccepted -> Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
+                    | UsageFactJournalProcessResult.AlreadyRejected ->
+                        Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
+                    | MissingJournal -> Error [ "Unsupported UsageFact message has no matching journal row." ]
+                    | JournalConflict -> Error [ "Unsupported UsageFact message conflicts with its immutable journal row." ]
+            }
 
 /// Carries deterministic compressed JSONL bytes and the Blob authority they must verify against.
 type OperationsUsageArchiveBlob = { Pointer: RawUsageFactArchivePointer; Content: byte array }
@@ -2334,3 +2346,180 @@ type OperationsUsageWorkerService
 
         /// Stops operational usage ingestion.
         member _.StopAsync(cancellationToken: CancellationToken) = stopBackgroundProcessingAsync cancellationToken
+
+/// Sends one journal entry through a retryable signal transport without making the transport a source of truth.
+type internal IOperationsUsageJournalSignalSender =
+
+    /// Sends the immutable Pending entry that was reread immediately before this call.
+    abstract SendAsync: entry: UsageFactJournalEntry * cancellationToken: CancellationToken -> Task
+
+/// Observes the narrow gap between one Pending scan and its per-row production reread for deterministic stale-scan proof.
+type internal IOperationsUsageJournalDispatchInterleaving =
+
+    /// Runs after a bounded scan and before the production loop rereads each selected identity.
+    abstract AfterPendingScanAsync: entries: UsageFactJournalEntry list * cancellationToken: CancellationToken -> Task
+
+/// Keeps normal dispatch free of test interleavings while retaining the production loop as the proof seam.
+type private NoOperationsUsageJournalDispatchInterleaving() =
+
+    interface IOperationsUsageJournalDispatchInterleaving with
+
+        member _.AfterPendingScanAsync(_entries, _cancellationToken) = Task.CompletedTask
+
+/// Runs the bounded production journal dispatch loop with a current-state reread immediately before every signal send.
+module internal OperationsUsageJournalDispatcher =
+
+    /// Sends only rows that remain Pending after a scan-to-send interleaving, so stale candidates cannot signal terminal truth.
+    let dispatchCurrentPendingAsync
+        (journal: IOperationsUsageJournalStore)
+        batchSize
+        (interleaving: IOperationsUsageJournalDispatchInterleaving)
+        (sender: IOperationsUsageJournalSignalSender)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let! pending = journal.ListPendingAsync(batchSize, cancellationToken)
+            do! interleaving.AfterPendingScanAsync(pending, cancellationToken)
+            let mutable index = 0
+
+            while index < pending.Length do
+                let entry = pending[index]
+                let! currentEntry = journal.TryGetPendingAsync(entry.UsageFactId, cancellationToken)
+
+                match currentEntry with
+                | Some pendingEntry -> do! sender.SendAsync(pendingEntry, cancellationToken)
+                | None -> ()
+
+                index <- index + 1
+        }
+
+/// Repeatedly sends currently Pending immutable journal rows as retryable Service Bus signals without persisting delivery state.
+type OperationsUsageJournalDispatcherService
+    (
+        settings: OperationsWorkerSettings,
+        schema: IOperationsUsageSchemaInitializer,
+        journal: IOperationsUsageJournalStore,
+        logger: ILogger<OperationsUsageJournalDispatcherService>
+    ) =
+
+    /// Keeps each SQL dispatch scan bounded so one retry pass cannot monopolize the worker process.
+    let dispatchBatchSize = 100
+
+    /// Uses the same fixed cadence as worker dependency retry while retaining SQL as the only retry source of truth.
+    let retryDelay = TimeSpan.FromSeconds(5.0)
+    let credential = lazy (DefaultAzureCredential() :> TokenCredential)
+    let mutable cancellation: CancellationTokenSource option = None
+    let mutable dispatchTask: Task option = None
+    let mutable serviceBusClient: ServiceBusClient option = None
+
+    /// Builds the configured sender client from the explicit connection string or managed identity namespace.
+    let createClient () =
+        match settings.ServiceBusConnectionString, settings.ServiceBusFullyQualifiedNamespace with
+        | Some connectionString, _ -> ServiceBusClient(connectionString)
+        | None, Some fullyQualifiedNamespace -> ServiceBusClient(fullyQualifiedNamespace, credential.Value)
+        | None, None -> invalidOp "Azure Service Bus connection string or namespace must be configured."
+
+    /// Creates the retryable delivery signal whose MessageId mirrors, but does not replace, SQL journal identity.
+    let createMessage (entry: UsageFactJournalEntry) =
+        let message = ServiceBusMessage(BinaryData(entry.RawPayload))
+        message.MessageId <- entry.UsageFactId.ToString("D")
+        message.CorrelationId <- entry.CorrelationId
+        message.Subject <- OperationalFactEnvelope.UsageFactSubject
+
+        message.ApplicationProperties[
+            OperationalFactEnvelope.UsageFactMessageTypeProperty
+        ] <- OperationalFactEnvelope.UsageFactMessageType
+
+        message.ApplicationProperties[
+            OperationalFactEnvelope.UsageFactKindProperty
+        ] <- entry.FactKind.ToString()
+
+        message
+
+    /// Adapts one Azure Service Bus sender to the production loop's observable signal boundary.
+    let createSignalSender (sender: ServiceBusSender) =
+        { new IOperationsUsageJournalSignalSender with
+            member _.SendAsync(entry, cancellationToken) = sender.SendMessageAsync(createMessage entry, cancellationToken)
+        }
+
+    /// Uses the inert default outside deterministic tests so dispatch runtime behavior has no test-only pause.
+    let dispatchInterleaving = NoOperationsUsageJournalDispatchInterleaving() :> IOperationsUsageJournalDispatchInterleaving
+
+    /// Repeats bounded scans so a crash, expiry, uncertain send, or terminal broker movement leaves Pending work discoverable.
+    let runAsync (cancellationToken: CancellationToken) =
+        task {
+            while not cancellationToken.IsCancellationRequested do
+                try
+                    do! schema.EnsureCreatedAsync cancellationToken
+                    use client = createClient ()
+                    serviceBusClient <- Some client
+                    use sender = client.CreateSender(settings.TopicName)
+
+                    let mutable scan = true
+
+                    while scan
+                          && not cancellationToken.IsCancellationRequested do
+                        try
+                            let signalSender = createSignalSender sender
+
+                            do!
+                                OperationsUsageJournalDispatcher.dispatchCurrentPendingAsync
+                                    journal
+                                    dispatchBatchSize
+                                    dispatchInterleaving
+                                    signalSender
+                                    cancellationToken
+
+                            do! Task.Delay(retryDelay, cancellationToken)
+                        with
+                        | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
+                        | ex ->
+                            logger.LogWarning(ex, "Operations usage journal dispatch scan failed; Pending SQL rows remain the retry source of truth.")
+                            scan <- false
+                with
+                | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
+                | ex -> logger.LogWarning(ex, "Operations usage journal dispatcher startup failed; Pending SQL rows remain the retry source of truth.")
+
+                serviceBusClient <- None
+
+                if not cancellationToken.IsCancellationRequested then
+                    do! Task.Delay(retryDelay, cancellationToken)
+        }
+
+    interface IHostedService with
+
+        /// Starts journal dispatch independently from broker receive processing so Pending recovery survives a worker restart.
+        member _.StartAsync(cancellationToken: CancellationToken) =
+            if dispatchTask
+               |> Option.exists (fun task -> not task.IsCompleted) then
+                Task.CompletedTask
+            else
+                let source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                cancellation <- Some source
+                dispatchTask <- Some(Task.Run(Func<Task>(fun () -> runAsync source.Token)))
+                Task.CompletedTask
+
+        /// Stops dispatch after cancelling its retry cadence and disposes its short-lived Service Bus client.
+        member _.StopAsync(cancellationToken: CancellationToken) =
+            task {
+                match cancellation with
+                | Some source -> source.Cancel()
+                | None -> ()
+
+                match dispatchTask with
+                | Some task ->
+                    try
+                        do! task.WaitAsync(cancellationToken)
+                    with
+                    | :? OperationCanceledException -> ()
+                    | ex -> logger.LogWarning(ex, "Operations usage journal dispatcher stopped after an unexpected task fault.")
+                | None -> ()
+
+                match cancellation with
+                | Some source -> source.Dispose()
+                | None -> ()
+
+                cancellation <- None
+                dispatchTask <- None
+                serviceBusClient <- None
+            }

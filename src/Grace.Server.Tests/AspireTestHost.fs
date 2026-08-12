@@ -74,7 +74,7 @@ module AspireTestHost =
 
     let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(3.0))
 
-    let private latestOperationsMigrationId = "20260709110000_AddPricingPlanRateAssignment"
+    let private latestOperationsMigrationId = "20260812110000_AddUsageFactJournal"
 
     /// Defines log progress behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private logProgress (message: string) =
@@ -1472,6 +1472,56 @@ SELECT
                 do! waitForResourceHealthyAsync notificationService state.App graceServerResourceName cts.Token
                 do! waitForGraceServerHttpReadyAsync state.Client cts.Token
                 Console.WriteLine("Grace.Server Aspire project resource restart completed.")
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Stops the Operations worker resource so a test can preserve journal state before exercising restart recovery.
+    let stopOperationsWorkerAsync (app: DistributedApplication) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                Console.WriteLine("Stopping Operations worker Aspire project resource...")
+                let commandService = app.Services.GetRequiredService<ResourceCommandService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+
+                let! result = commandService.ExecuteCommandAsync(operationsWorkerResourceName, KnownResourceCommands.StopCommand, cts.Token)
+
+                if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Stop command was canceled."
+                        else "Stop command failed without details."
+
+                    raise (InvalidOperationException($"Operations worker stop failed: {errorMessage}"))
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Starts the Operations worker resource and waits until it is healthy after a test-controlled recovery interruption.
+    let startOperationsWorkerAsync (app: DistributedApplication) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                Console.WriteLine("Starting Operations worker Aspire project resource...")
+                let commandService = app.Services.GetRequiredService<ResourceCommandService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+
+                let! result = commandService.ExecuteCommandAsync(operationsWorkerResourceName, KnownResourceCommands.StartCommand, cts.Token)
+
+                if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Start command was canceled."
+                        else "Start command failed without details."
+
+                    raise (InvalidOperationException($"Operations worker start failed: {errorMessage}"))
+
+                let notificationService = app.Services.GetRequiredService<ResourceNotificationService>()
+                do! waitForResourceHealthyAsync notificationService app operationsWorkerResourceName cts.Token
+                Console.WriteLine("Operations worker Aspire project resource start completed.")
             finally
                 sharedStateLock.Release() |> ignore
         }

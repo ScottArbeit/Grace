@@ -4,7 +4,7 @@
 schema is intentionally narrow:
 
 - `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
-  the exact accepted broker payload in `RawPayload` for replay and audit.
+  the canonical validated payload owned by the journal in `RawPayload` for replay and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
 - `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
   facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
@@ -14,6 +14,22 @@ schema is intentionally narrow:
 
 The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
 `UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
+
+## Usage-Fact Journal
+
+`ops.UsageFactJournal` is the internal Operations source of truth for each supported fact before any Service Bus send.
+Appending an immutable, validated fact commits it as `Pending`; Service Bus then carries only a retryable signal with
+the same `UsageFactId`. A bounded dispatcher rescans pending rows after send uncertainty, expiry, terminal broker
+movement, or restart. Those broker outcomes never change journal state.
+
+For an exact owner, organization, repository, and UTC-month scope, billing completeness remains blocked while a journal
+row is `Pending` or `Rejected`. The worker rereads and compares the journal identity, payload, and scope inside its
+SQL mutation transaction. It atomically writes raw usage, its aggregate, and `Accepted`; duplicate delivery only sees
+the already accepted identity. A caller with a deterministic supported-fact decision can atomically write scoped
+rejection evidence and `Rejected`, which remains blocked until explicit same-payload processing repairs it.
+
+This internal seam does not create a repository-storage producer. #829 owns the first such producer and must append to
+the journal before sending any signal.
 
 ## Hot/Cold Raw Payload Archive
 
@@ -30,7 +46,8 @@ usage-facts/v1/observedYear=<yyyy>/observedMonth=<MM>/ownerId=<owner-guid>/organ
 ```
 
 Each Blob contains one gzip-compressed JSONL record with archive schema version, usage fact identity, Grace scope,
-storage pool, quantity, observed UTC timestamp, and the exact accepted broker payload as base64. SQL stores:
+storage pool, quantity, observed UTC timestamp, and the canonical validated payload owned by the journal as base64.
+SQL stores:
 
 - `ArchiveState`, where `0` is hot, `1` is Blob-verified with hot payload retained, and `2` is archived with hot
   payload cleared.

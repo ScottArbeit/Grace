@@ -157,6 +157,7 @@ type ``Operations skeleton project graph``() =
             [|
                 "Grace.Operations.fsproj"
                 "Grace.Operations.Data/Grace.Operations.Data.fsproj"
+                "Grace.Operations.ProofHost/Grace.Operations.ProofHost.fsproj"
                 "Grace.Operations.Tests/Grace.Operations.Tests.fsproj"
                 "Grace.Operations.Worker/Grace.Operations.Worker.fsproj"
             |]

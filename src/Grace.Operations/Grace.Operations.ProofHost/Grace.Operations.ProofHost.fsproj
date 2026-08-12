@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <OutputType>Exe</OutputType>
+    <Description>Test-only executable that enters Operations usage-fact append through its production data boundary.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+    <OtherFlags>--test:GraphBasedChecking --test:ParallelOptimization --test:ParallelIlxGen</OtherFlags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
+    <ProjectReference Include="..\Grace.Operations.fsproj" />
+    <ProjectReference Include="..\..\Grace.Shared\Grace.Shared.fsproj" />
+    <ProjectReference Include="..\..\Grace.Types\Grace.Types.fsproj" />
+  </ItemGroup>
+</Project>

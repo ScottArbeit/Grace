@@ -2,6 +2,7 @@ namespace Grace.Operations.Data
 
 open Grace.Types.Common
 open Grace.Types.Usage
+open Grace.Shared
 open Microsoft.EntityFrameworkCore
 open Microsoft.Data.SqlClient
 open NodaTime
@@ -181,6 +182,7 @@ module UsageFactRejection =
 type BillingCompletenessResult =
     | Complete
     | BlockedByActiveScopedRejection
+    | BlockedByUnresolvedUsageFactJournal
 
 /// Identifies one UTC minute aggregate row in `ops.UsageAggregateMinute`.
 type UsageAggregateMinuteKey =
@@ -675,6 +677,11 @@ module UsageFactPersistencePlan =
 
                 Ok { RawFact = rawFact; Aggregate = aggregate }
 
+    /// Validates a supported fact and serializes it with the shared options used by the worker parser.
+    let tryCreateCanonical (fact: UsageFact) =
+        let rawPayload = JsonSerializer.SerializeToUtf8Bytes<UsageFact>(fact, Constants.JsonSerializerOptions)
+        tryCreate fact rawPayload
+
 /// Represents the commands available inside one durable operations usage transaction.
 type IOperationsUsageTransaction =
 
@@ -706,6 +713,9 @@ type IOperationsUsageTransaction =
 
     /// Reads active scoped rejection evidence while the caller holds the central scope lock.
     abstract HasActiveScopedUsageFactRejectionAsync: scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task<bool>
+
+    /// Reads exact-scope Pending or Rejected journal rows while the caller holds the central scope lock.
+    abstract HasUnresolvedUsageFactJournalAsync: scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task<bool>
 
 /// Runs operations usage mutations inside one storage transaction boundary.
 type IOperationsUsageTransactionScope =
@@ -965,6 +975,16 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
             task {
                 use command = createCommand OperationsUsageSql.HasActiveScopedUsageFactRejection
                 addBillingCompletenessScopeParameters command scope
+                let! result = command.ExecuteScalarAsync cancellationToken
+                return Convert.ToBoolean result
+            }
+
+        member _.HasUnresolvedUsageFactJournalAsync(scope, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.HasUnresolvedUsageFactJournal
+                addBillingCompletenessScopeParameters command scope
+                addParameter command "@PendingState" SqlDbType.Int 0
+                addParameter command "@RejectedState" SqlDbType.Int 2
                 let! result = command.ExecuteScalarAsync cancellationToken
                 return Convert.ToBoolean result
             }
@@ -1872,7 +1892,12 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
                 task {
                     do! transaction.AcquireBillingCompletenessScopeAsync(validScope, operationCancellationToken)
                     let! blocked = transaction.HasActiveScopedUsageFactRejectionAsync(validScope, operationCancellationToken)
-                    return if blocked then BlockedByActiveScopedRejection else Complete
+                    let! journalBlocked = transaction.HasUnresolvedUsageFactJournalAsync(validScope, operationCancellationToken)
+
+                    return
+                        if blocked then BlockedByActiveScopedRejection
+                        elif journalBlocked then BlockedByUnresolvedUsageFactJournal
+                        else Complete
                 }
 
             transactionScope.ExecuteAsync(operation, cancellationToken)

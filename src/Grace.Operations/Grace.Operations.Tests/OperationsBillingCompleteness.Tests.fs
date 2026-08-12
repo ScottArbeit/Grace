@@ -1,6 +1,7 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Operations.Worker
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Usage
@@ -9,6 +10,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Data
+open System.Text
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
@@ -54,6 +56,8 @@ type private ObservedOperationsUsageTransaction
 
         member _.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken) = inner.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken)
 
+        member _.HasUnresolvedUsageFactJournalAsync(scope, cancellationToken) = inner.HasUnresolvedUsageFactJournalAsync(scope, cancellationToken)
+
 /// Wraps a real SQL transaction scope with deterministic lock-grant callbacks used only by concurrency proofs.
 type private ObservedOperationsUsageTransactionScope
     (
@@ -74,6 +78,69 @@ type private ObservedOperationsUsageTransactionScope
                         operationCancellationToken),
                 cancellationToken
             )
+
+/// Pauses a real ProcessAsync transaction after raw and aggregate SQL writes have been staged, then lets cancellation abort it.
+type private CancellationAfterJournalStageInterleaving() =
+    let staged = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Completes only after the transaction owns staged raw and aggregate mutations.
+    member _.Staged = staged.Task
+
+    /// Releases a non-cancelled test path without retaining any durable state.
+    member _.Release() = release.TrySetResult(()) |> ignore
+
+    interface IOperationsUsageJournalTransactionInterleaving with
+
+        member _.AfterRawAndAggregateStagedAsync(cancellationToken) =
+            task {
+                staged.TrySetResult(()) |> ignore
+                do! release.Task.WaitAsync(cancellationToken)
+            }
+            :> Task
+
+/// Pauses the production dispatcher loop after selection and before its per-row current-state reread.
+type private PauseAfterPendingScanInterleaving() =
+    let selected = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let selectedUsageFactIds = ResizeArray<UsageFactId>()
+
+    /// Completes when the production loop has a stale candidate that it must reread before sending.
+    member _.Selected = selected.Task
+
+    /// Returns the candidates selected before the required production reread.
+    member _.SelectedUsageFactIds = selectedUsageFactIds |> Seq.toList
+
+    /// Allows the production loop to continue to its per-row reread.
+    member _.Release() = release.TrySetResult(()) |> ignore
+
+    interface IOperationsUsageJournalDispatchInterleaving with
+
+        member _.AfterPendingScanAsync(entries, cancellationToken) =
+            task {
+                entries
+                |> List.iter (fun entry -> selectedUsageFactIds.Add(entry.UsageFactId))
+
+                selected.TrySetResult(()) |> ignore
+                do! release.Task.WaitAsync(cancellationToken)
+            }
+            :> Task
+
+/// Records production dispatch send decisions without inserting a broker substitute into the SQL proof.
+type private RecordingOperationsUsageJournalSignalSender() =
+    let sent = ResizeArray<UsageFactJournalEntry>()
+
+    /// Returns immutable identities the production dispatcher decided to signal.
+    member _.SentUsageFactIds =
+        sent
+        |> Seq.map (fun entry -> entry.UsageFactId)
+        |> Seq.toList
+
+    interface IOperationsUsageJournalSignalSender with
+
+        member _.SendAsync(entry, _cancellationToken) =
+            sent.Add(entry)
+            Task.CompletedTask
 
 /// Proves the owner-month completeness coordination boundary against isolated real SQL Server databases.
 [<TestFixture>]
@@ -148,6 +215,19 @@ type OperationsBillingCompletenessTests() =
             observedAt
         )
 
+    /// Builds a valid fact with an explicit immutable quantity for same-identity conflict proofs.
+    let factWithQuantity usageFactId ownerId organizationId repositoryId quantity observedAt =
+        UsageFact.RepositoryStorageBytesMinute(
+            usageFactId,
+            CorrelationId $"billing-completeness-{usageFactId}",
+            ownerId,
+            organizationId,
+            repositoryId,
+            StoragePoolId "billing-completeness-pool",
+            quantity,
+            observedAt
+        )
+
     /// Serializes a UsageFact payload exactly as the production Operations storage boundary receives it.
     let payloadFor usageFact = JsonSerializer.SerializeToUtf8Bytes(usageFact, Constants.JsonSerializerOptions)
 
@@ -185,6 +265,17 @@ type OperationsBillingCompletenessTests() =
             command.CommandText <- commandText
             let! value = command.ExecuteScalarAsync CancellationToken.None
             return Convert.ToInt32 value
+        }
+
+    /// Reads one binary value from the isolated Operations database for canonical-byte persistence assertions.
+    let executeBytesAsync connectionString commandText =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- commandText
+            let! value = command.ExecuteScalarAsync CancellationToken.None
+            return value :?> byte array
         }
 
     /// Reads whether SQL Server reports the named production operation has a waiting application-lock request.
@@ -1363,3 +1454,436 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                     Is.True
                 ))
         )
+
+    /// Proves a durable Pending fact blocks only its exact scope before dispatch and becomes Accepted exactly once after processing.
+    [<Test>]
+    member _.JournalAppendBlocksOnlyItsScopeAndProcessesExactlyOnce() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let rawPayload = payloadFor usageFact
+                let exactScope = scopeFor ownerId organizationId repositoryId observedAt
+                let unrelatedScope = scopeFor ownerId organizationId (Guid.NewGuid()) observedAt
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let! firstAppend = journal.AppendAsync(usageFact, CancellationToken.None)
+                let! secondAppend = journal.AppendAsync(usageFact, CancellationToken.None)
+                let! blocked = completeness.EvaluateBillingCompletenessAsync(exactScope, CancellationToken.None)
+                let! unrelated = completeness.EvaluateBillingCompletenessAsync(unrelatedScope, CancellationToken.None)
+                let! firstProcess = journal.ProcessAsync(usageFact, rawPayload, CancellationToken.None)
+                let! duplicateProcess = journal.ProcessAsync(usageFact, rawPayload, CancellationToken.None)
+                let! completed = completeness.EvaluateBillingCompletenessAsync(exactScope, CancellationToken.None)
+
+                let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                let! aggregateCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND OrganizationId = '{organizationId:D}' AND RepositoryId = '{repositoryId:D}';"
+
+                let! acceptedJournalCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 1;"
+
+                match firstAppend, secondAppend with
+                | Ok AppendedPending, Ok AlreadyPending -> ()
+                | _ -> Assert.Fail($"Unexpected journal append results: first={firstAppend}; second={secondAppend}.")
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(blocked, Is.EqualTo(BlockedByUnresolvedUsageFactJournal))
+                        Assert.That(unrelated, Is.EqualTo(Complete))
+                        Assert.That(firstProcess, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(duplicateProcess, Is.EqualTo(AlreadyAccepted))
+                        Assert.That(completed, Is.EqualTo(Complete))
+                        Assert.That(rawCount, Is.EqualTo(1))
+                        Assert.That(aggregateCount, Is.EqualTo(1))
+                        Assert.That(acceptedJournalCount, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves normal delivery leaves Rejected truth intact and only explicit same-payload replay repairs it.
+    [<Test>]
+    member _.JournalRejectionIsAtomicAndAcceptanceRepairsOnlyMatchingEvidence() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let rawPayload = payloadFor usageFact
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let! appended = journal.AppendAsync(usageFact, CancellationToken.None)
+                let! rejected = journal.RejectAsync(usageFact, rawPayload, "deterministic policy rejection", CancellationToken.None)
+                let! blockedByRejected = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                let! rejectionCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND IsActive = 1;"
+
+                let! rejectedJournalCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 2;"
+
+                let! normalDelivery = journal.ProcessAsync(usageFact, rawPayload, CancellationToken.None)
+                let! rejectedAfterNormalDelivery = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                let! rawCountAfterNormalDelivery =
+                    executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                let! accepted = journal.RepairAsync(usageFact, CancellationToken.None)
+                let! completeAfterRepair = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                let! activeRejectionCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND IsActive = 1;"
+
+                let! acceptedJournalCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 1;"
+
+                match appended with
+                | Ok AppendedPending -> ()
+                | _ -> Assert.Fail($"Unexpected journal append result: {appended}.")
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(rejected, Is.EqualTo(RejectedFromJournal))
+                        Assert.That(blockedByRejected, Is.EqualTo(BlockedByActiveScopedRejection))
+                        Assert.That(rejectionCount, Is.EqualTo(1))
+                        Assert.That(rejectedJournalCount, Is.EqualTo(1))
+                        Assert.That(normalDelivery, Is.EqualTo(UsageFactJournalProcessResult.AlreadyRejected))
+                        Assert.That(rejectedAfterNormalDelivery, Is.EqualTo(BlockedByActiveScopedRejection))
+                        Assert.That(rawCountAfterNormalDelivery, Is.Zero)
+                        Assert.That(accepted, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(completeAfterRepair, Is.EqualTo(Complete))
+                        Assert.That(activeRejectionCount, Is.Zero)
+                        Assert.That(acceptedJournalCount, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves a UsageFactId cannot be rebound to a different immutable payload or exact scope, and processing persists canonical bytes once.
+    [<Test>]
+    member _.JournalConflictsPreserveExistingScopeAndCanonicalProcessingIgnoresBrokerByteVariation() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let usageFactId = Guid.NewGuid()
+                let usageFact = fact usageFactId ownerId organizationId repositoryId observedAt
+                let changedPayload = factWithQuantity usageFactId ownerId organizationId repositoryId 8192L observedAt
+                let changedScope = fact usageFactId ownerId organizationId (Guid.NewGuid()) observedAt
+                let exactScope = scopeFor ownerId organizationId repositoryId observedAt
+                let changedScopeValue = scopeFor ownerId organizationId changedScope.Scope.RepositoryId observedAt
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let! appended = journal.AppendAsync(usageFact, CancellationToken.None)
+
+                let! payloadConflict =
+                    task {
+                        try
+                            let! _ = journal.AppendAsync(changedPayload, CancellationToken.None)
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                    }
+
+                let! scopeConflict =
+                    task {
+                        try
+                            let! _ = journal.AppendAsync(changedScope, CancellationToken.None)
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                    }
+
+                let noncanonicalBrokerBytes = Encoding.UTF8.GetBytes($"  \n{JsonSerializer.Serialize(usageFact, Constants.JsonSerializerOptions)}\n  ")
+                let! processed = journal.ProcessAsync(usageFact, noncanonicalBrokerBytes, CancellationToken.None)
+                let! exactCompleteness = completeness.EvaluateBillingCompletenessAsync(exactScope, CancellationToken.None)
+                let! changedCompleteness = completeness.EvaluateBillingCompletenessAsync(changedScopeValue, CancellationToken.None)
+                let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFactId:D}';"
+
+                let! canonicalRawPayload = executeBytesAsync connectionString $"SELECT RawPayload FROM ops.RawUsageFact WHERE UsageFactId = '{usageFactId:D}';"
+
+                let! journalCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFactId:D}' AND Quantity = 4096 AND RepositoryId = '{repositoryId:D}' AND State = 1;"
+
+                let! aggregateQuantity =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT Quantity FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND OrganizationId = '{organizationId:D}' AND RepositoryId = '{repositoryId:D}';"
+
+                match appended with
+                | Ok AppendedPending -> ()
+                | _ -> Assert.Fail($"Unexpected journal append result: {appended}.")
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(payloadConflict, Is.True)
+                        Assert.That(scopeConflict, Is.True)
+                        Assert.That(processed, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(exactCompleteness, Is.EqualTo(Complete))
+                        Assert.That(changedCompleteness, Is.EqualTo(Complete))
+                        Assert.That(rawCount, Is.EqualTo(1))
+                        Assert.That(Convert.ToBase64String(canonicalRawPayload), Is.EqualTo(Convert.ToBase64String(payloadFor usageFact)))
+                        Assert.That(journalCount, Is.EqualTo(1))
+                        Assert.That(aggregateQuantity, Is.EqualTo(4096)))
+                )
+            })
+
+    /// Proves deterministic SQL failures after staged rejection or raw/aggregate work roll back all journal transition effects.
+    [<Test>]
+    member _.JournalTransactionFailuresLeavePendingTruthAndCompletenessBlocked() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let rejectionFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let processingFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! _ = journal.AppendAsync(rejectionFact, CancellationToken.None)
+
+                do!
+                    executeNonQueryAsync
+                        connectionString
+                        "CREATE TRIGGER ops.ThrowAfterRejectionEvidence ON ops.UsageFactRejection AFTER INSERT AS BEGIN THROW 51000, 'deterministic rejection evidence failure', 1; END;"
+
+                let! rejectionFailed =
+                    task {
+                        try
+                            let! _ = journal.RejectAsync(rejectionFact, payloadFor rejectionFact, "deterministic rejection", CancellationToken.None)
+                            return false
+                        with
+                        | :? SqlException -> return true
+                    }
+
+                do! executeNonQueryAsync connectionString "DROP TRIGGER ops.ThrowAfterRejectionEvidence;"
+                let! _ = journal.AppendAsync(processingFact, CancellationToken.None)
+
+                do!
+                    executeNonQueryAsync
+                        connectionString
+                        "CREATE TRIGGER ops.ThrowAfterAggregate ON ops.UsageAggregateMinute AFTER INSERT AS BEGIN THROW 51001, 'deterministic aggregate failure', 1; END;"
+
+                let! processingFailed =
+                    task {
+                        try
+                            let! _ = journal.ProcessAsync(processingFact, payloadFor processingFact, CancellationToken.None)
+                            return false
+                        with
+                        | :? SqlException -> return true
+                    }
+
+                let! rejectionState =
+                    executeInt32Async connectionString $"SELECT State FROM ops.UsageFactJournal WHERE UsageFactId = '{rejectionFact.UsageFactId:D}';"
+
+                let! processingState =
+                    executeInt32Async connectionString $"SELECT State FROM ops.UsageFactJournal WHERE UsageFactId = '{processingFact.UsageFactId:D}';"
+
+                let! evidenceCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId IN ('{rejectionFact.UsageFactId:D}', '{processingFact.UsageFactId:D}');"
+
+                let! rawCount =
+                    executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{processingFact.UsageFactId:D}';"
+
+                let! aggregateCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}';"
+                let! blocked = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(rejectionFailed, Is.True)
+                        Assert.That(processingFailed, Is.True)
+                        Assert.That(rejectionState, Is.Zero)
+                        Assert.That(processingState, Is.Zero)
+                        Assert.That(evidenceCount, Is.Zero)
+                        Assert.That(rawCount, Is.Zero)
+                        Assert.That(aggregateCount, Is.Zero)
+                        Assert.That(blocked, Is.EqualTo(BlockedByUnresolvedUsageFactJournal)))
+                )
+            })
+
+    /// Proves cancellation after ProcessAsync stages raw and aggregate SQL mutations rolls every journal-side effect back to Pending truth.
+    [<Test>]
+    member _.JournalProcessCancellationAfterStagedRawAndAggregateRollsBackToPendingTruth() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let interleaving = CancellationAfterJournalStageInterleaving()
+
+                let journal = SqlOperationsUsageJournalStore.CreateForTest(connectionString, interleaving :> IOperationsUsageJournalTransactionInterleaving)
+
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! appended = journal.AppendAsync(usageFact, CancellationToken.None)
+                use cancellation = new CancellationTokenSource()
+                let processing = journal.ProcessAsync(usageFact, payloadFor usageFact, cancellation.Token)
+
+                try
+                    do! interleaving.Staged.WaitAsync(TimeSpan.FromSeconds(10.0))
+                    cancellation.Cancel()
+
+                    let! cancelled =
+                        task {
+                            try
+                                let! _ = processing
+                                return false
+                            with
+                            | :? OperationCanceledException -> return true
+                        }
+
+                    let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                    let! aggregateCount =
+                        executeInt32Async
+                            connectionString
+                            $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND OrganizationId = '{organizationId:D}' AND RepositoryId = '{repositoryId:D}';"
+
+                    let! pendingJournalCount =
+                        executeInt32Async
+                            connectionString
+                            $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 0;"
+
+                    let! rejectionEvidenceCount =
+                        executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                    let! completenessAfterCancellation = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                    let appendedPending =
+                        match appended with
+                        | Ok AppendedPending -> true
+                        | _ -> false
+
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(appendedPending, Is.True)
+                            Assert.That(cancelled, Is.True)
+                            Assert.That(rawCount, Is.Zero)
+                            Assert.That(aggregateCount, Is.Zero)
+                            Assert.That(pendingJournalCount, Is.EqualTo(1))
+                            Assert.That(rejectionEvidenceCount, Is.Zero)
+                            Assert.That(completenessAfterCancellation, Is.EqualTo(BlockedByUnresolvedUsageFactJournal)))
+                    )
+                finally
+                    interleaving.Release()
+            })
+
+    /// Proves stale dispatch rereads skip a rejected row and concurrent explicit repairs converge without duplicate aggregate state.
+    [<Test>]
+    member _.JournalStaleDispatchAndConflictingRepairPreserveTerminalTruth() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! _ = journal.AppendAsync(usageFact, CancellationToken.None)
+                let pause = PauseAfterPendingScanInterleaving()
+                let sender = RecordingOperationsUsageJournalSignalSender()
+
+                let dispatch =
+                    OperationsUsageJournalDispatcher.dispatchCurrentPendingAsync
+                        (journal :> IOperationsUsageJournalStore)
+                        10
+                        (pause :> IOperationsUsageJournalDispatchInterleaving)
+                        (sender :> IOperationsUsageJournalSignalSender)
+                        CancellationToken.None
+
+                let! rejected =
+                    task {
+                        try
+                            do! pause.Selected.WaitAsync(TimeSpan.FromSeconds(10.0))
+
+                            let! result = journal.RejectAsync(usageFact, payloadFor usageFact, "deterministic rejection", CancellationToken.None)
+
+                            pause.Release()
+                            return result
+                        finally
+                            pause.Release()
+                    }
+
+                do! dispatch
+                let! pendingAfterRejection = journal.TryGetPendingAsync(usageFact.UsageFactId, CancellationToken.None)
+                let! normal = journal.ProcessAsync(usageFact, payloadFor usageFact, CancellationToken.None)
+                let firstRepair = journal.RepairAsync(usageFact, CancellationToken.None)
+                let secondRepair = journal.RepairAsync(usageFact, CancellationToken.None)
+                let! repairs = Task.WhenAll(firstRepair, secondRepair)
+                let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                let! aggregateQuantity =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT Quantity FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND OrganizationId = '{organizationId:D}' AND RepositoryId = '{repositoryId:D}';"
+
+                let! activeEvidence =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND IsActive = 1;"
+
+                let! completed = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            pause.SelectedUsageFactIds
+                            |> List.contains usageFact.UsageFactId,
+                            Is.True
+                        )
+
+                        Assert.That(rejected, Is.EqualTo(RejectedFromJournal))
+                        Assert.That(pendingAfterRejection, Is.EqualTo(None))
+                        Assert.That(sender.SentUsageFactIds, Is.Empty)
+                        Assert.That(normal, Is.EqualTo(UsageFactJournalProcessResult.AlreadyRejected))
+
+                        Assert.That(
+                            repairs
+                            |> Array.filter ((=) AcceptedFromJournal)
+                            |> Array.length,
+                            Is.EqualTo(1)
+                        )
+
+                        Assert.That(
+                            repairs
+                            |> Array.filter ((=) AlreadyAccepted)
+                            |> Array.length,
+                            Is.EqualTo(1)
+                        )
+
+                        Assert.That(rawCount, Is.EqualTo(1))
+                        Assert.That(aggregateQuantity, Is.EqualTo(4096))
+                        Assert.That(activeEvidence, Is.Zero)
+                        Assert.That(completed, Is.EqualTo(Complete)))
+                )
+            })
