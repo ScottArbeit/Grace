@@ -206,6 +206,32 @@ try {
         }
     }
 
+    Invoke-Case 'rejects a wrong-case predicate kind with the canonical predicate location' {
+        $copy = New-CanonicalCopy 'wrong-case-predicate-kind'
+        Set-TestText $copy (Replace-Once (Get-TestText $copy) '"invocation":{"kind":"one","value":"initial"}' '"invocation":{"kind":"One","value":"initial"}')
+        try { Read-WduLifecycleContract $copy | Out-Null }
+        catch {
+            Assert-True $_.Exception.Message.Contains($copy, [StringComparison]::Ordinal) 'predicate-kind diagnostic includes the canonical path'
+            Assert-True $_.Exception.Message.Contains('row WDU-LC-200.invocation', [StringComparison]::Ordinal) 'predicate-kind diagnostic includes the row and axis'
+            Assert-True $_.Exception.Message.Contains("unknown predicate kind 'One'", [StringComparison]::Ordinal) 'predicate-kind diagnostic names the exact discriminator'
+            return
+        }
+        throw 'Expected a wrong-case predicate-kind failure'
+    }
+
+    Invoke-Case 'rejects a wrong-case ordered applicability axis with the canonical overlap location' {
+        $copy = New-CanonicalCopy 'wrong-case-applicability-axis'
+        Set-TestText $copy (Replace-Once (Get-TestText $copy) '"applicabilityKey": ["invocation"' '"applicabilityKey": ["Invocation"')
+        try { Read-WduLifecycleContract $copy | Out-Null }
+        catch {
+            Assert-True $_.Exception.Message.Contains($copy, [StringComparison]::Ordinal) 'applicability-axis diagnostic includes the canonical path'
+            Assert-True $_.Exception.Message.Contains('machineGrammar.overlap.applicabilityKey', [StringComparison]::Ordinal) 'applicability-axis diagnostic includes the overlap declaration'
+            Assert-True $_.Exception.Message.Contains('predicate axes', [StringComparison]::Ordinal) 'applicability-axis diagnostic names the ordered-axis requirement'
+            return
+        }
+        throw 'Expected a wrong-case applicability-axis failure'
+    }
+
     foreach ($mutation in @(
         @{ Name = 'duplicate applicability'; Old = '"trigger":{"kind":"one","value":"exactSameOperationAdoption"},"marker":{"kind":"one","value":"exact"}'; New = '"trigger":{"kind":"one","value":"missingMarkerFreshAdmission"},"marker":{"kind":"one","value":"missing"}'; Reason = "rows 'WDU-LC-200' and 'WDU-LC-201'" },
         @{ Name = 'duplicate row ID'; Old = '"id":"WDU-LC-201"'; New = '"id":"WDU-LC-200"'; Reason = "duplicate row ID 'WDU-LC-200'" },
