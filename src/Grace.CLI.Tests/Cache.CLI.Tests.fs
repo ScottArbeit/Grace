@@ -9,6 +9,7 @@ open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.IO
@@ -99,7 +100,16 @@ module CacheCliTests =
                 requests.Enqueue(recorded)
                 let statusCode, body = respond recorded
                 let bodyBytes = Encoding.UTF8.GetBytes(body)
-                let headers = $"HTTP/1.1 {statusCode} Test\r\nContent-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n"
+
+                let redirect =
+                    if statusCode >= 300 && statusCode < 400 then
+                        "Location: /cache/redirected\r\n"
+                    else
+                        String.Empty
+
+                let headers =
+                    $"HTTP/1.1 {statusCode} Test\r\n{redirect}Content-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n"
+
                 let headerBytes = Encoding.ASCII.GetBytes(headers)
                 do! stream.WriteAsync(headerBytes, 0, headerBytes.Length)
                 do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length)
@@ -216,6 +226,12 @@ module CacheCliTests =
             CacheCommand.setEnrollmentDependenciesForTests (previous)
             |> ignore
 
+    /// Redirects Spectre.Console to the writer that captures one serialized root-command invocation.
+    let private setAnsiConsoleOutput (writer: TextWriter) =
+        let settings = AnsiConsoleSettings()
+        settings.Out <- AnsiConsoleOutput(writer)
+        AnsiConsole.Console <- AnsiConsole.Create(settings)
+
     /// Invokes a cache command from a fresh non-repository directory and restores console and directory process state.
     let private invokeOutsideRepository arguments =
         let temporaryDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-cli-tests-{Guid.NewGuid():N}")
@@ -229,10 +245,12 @@ module CacheCliTests =
 
             Environment.CurrentDirectory <- temporaryDirectory
             Console.SetOut(output)
+            setAnsiConsoleOutput output
             let exitCode = GraceCommand.main arguments
             exitCode, output.ToString(), Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
         finally
             Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
             Environment.CurrentDirectory <- originalDirectory
 
             if Directory.Exists(temporaryDirectory) then
@@ -763,6 +781,258 @@ module CacheCliTests =
                             Has.Length.EqualTo(1)
                         )
 
+                        use document = JsonDocument.Parse(output)
+
+                        Assert.That(
+                            document
+                                .RootElement
+                                .GetProperty("Error")
+                                .GetString(),
+                            Is.Not.Empty
+                        ))))
+
+    /// Proves stale staged state survives failed credential resolution and is recovered only after one bearer resolves.
+    [<Test>]
+    let ``Linux stale attempt survives failed credentials then recovers into one enrollment request`` () =
+        let validToken = PersonalAccessToken.formatToken "cache-recovery" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withLinuxCacheRoot (fun root ->
+            Assert.That(
+                Grace.Cache.CacheIdentity.createAttempt root
+                |> Result.isOk,
+                Is.True
+            )
+
+            withLoopbackServer
+                (fun request -> if request.Target = "/cache/enroll" then 200, enrolledResponse () else 404, "{}")
+                (fun serverUri requests ->
+                    withEnvironment (credentialEnvironment serverUri (Some "not-a-grace-pat") None None None) (fun () ->
+                        let failedExit, failedOutput, _ = invokeOutsideRepository enrollmentArguments
+                        Assert.That(failedExit, Is.Not.EqualTo(0))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.True)
+                        Assert.That(requests.IsEmpty, Is.True)
+                        use failedDocument = JsonDocument.Parse(failedOutput)
+
+                        Assert.That(
+                            failedDocument
+                                .RootElement
+                                .GetProperty("Error")
+                                .GetString(),
+                            Is.Not.Empty
+                        ))
+
+                    withEnvironment (credentialEnvironment serverUri (Some validToken) None None None) (fun () ->
+                        let recoveredExit, recoveredOutput, _ = invokeOutsideRepository enrollmentArguments
+                        Assert.That(recoveredExit, Is.EqualTo(0))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.True)
+                        Assert.That(requests.ToArray(), Has.Length.EqualTo(1))
+                        use recoveredDocument = JsonDocument.Parse(recoveredOutput)
+
+                        Assert.That(
+                            recoveredDocument
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Enrollment")
+                                .GetString(),
+                            Is.EqualTo("enrolled")
+                        ))))
+
+    /// Proves an enrollment redirect is rejected without issuing a second request or publishing ready state.
+    [<Test>]
+    let ``Linux enrollment redirect sends one POST and returns one safe JSON error`` () =
+        let token = PersonalAccessToken.formatToken "cache-redirect" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withLinuxCacheRoot (fun root ->
+            withLoopbackServer
+                (fun request -> if request.Target = "/cache/enroll" then 307, "{}" else 500, "{}")
+                (fun serverUri requests ->
+                    withEnvironment (credentialEnvironment serverUri (Some token) None None None) (fun () ->
+                        let exitCode, output, _ = invokeOutsideRepository enrollmentArguments
+                        Assert.That(exitCode, Is.Not.EqualTo(0))
+                        Assert.That(requests.ToArray(), Has.Length.EqualTo(1))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+                        Assert.That(output, Does.Not.Contain(token))
+                        use document = JsonDocument.Parse(output)
+
+                        Assert.That(
+                            document
+                                .RootElement
+                                .GetProperty("Error")
+                                .GetString(),
+                            Is.Not.Empty
+                        ))))
+
+    /// Proves raw OIDC discovery failures are reduced to a stable Cache credential error document.
+    [<Test>]
+    let ``Linux unavailable OIDC discovery emits a redacted Cache JSON error`` () =
+        withLinuxCacheRoot (fun root ->
+            withLoopbackServer
+                (fun request ->
+                    if request.Target = "/authenticate/oidc/config" then
+                        500, "raw discovery failure at /private/path"
+                    else
+                        404, "{}")
+                (fun serverUri requests ->
+                    withEnvironment (credentialEnvironment serverUri None None None None) (fun () ->
+                        let exitCode, output, _ = invokeOutsideRepository enrollmentArguments
+                        Assert.That(exitCode, Is.Not.EqualTo(0))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+
+                        Assert.That(
+                            requests.ToArray()
+                            |> Array.exists (fun request -> request.Target = "/cache/enroll"),
+                            Is.False
+                        )
+
+                        Assert.That(output, Does.Not.Contain("raw discovery failure"))
+                        Assert.That(output, Does.Not.Contain("/private/path"))
+                        use document = JsonDocument.Parse(output)
+
+                        Assert.That(
+                            document
+                                .RootElement
+                                .GetProperty("Error")
+                                .GetString(),
+                            Does.Not.Contain("http")
+                        ))))
+
+    /// Proves normal interactive login stores one Linux keyring credential that production Cache enrollment later resolves with only GRACE_SERVER_URI.
+    [<Test>]
+    let ``Linux secure-store interactive login enrolls through production credential resolution`` () =
+        if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS")) then
+            Assert.Ignore("Requires a Linux D-Bus session and libsecret keyring; the focused Docker harness provides both.")
+
+        let mutable authority = String.Empty
+
+        withLinuxCacheRoot (fun root ->
+            withLoopbackServer
+                (fun request ->
+                    match request.Target with
+                    | "/authenticate/oidc/config" ->
+                        200,
+                        $"{{\"ReturnValue\":{{\"Authority\":\"{authority}\",\"Audience\":\"test-audience\",\"CliClientId\":\"test-client\"}},\"EventTime\":\"2026-01-01T00:00:00Z\",\"CorrelationId\":\"test\",\"Properties\":{{}}}}"
+                    | "/oauth/device/code" ->
+                        200,
+                        "{\"device_code\":\"test-device\",\"user_code\":\"test-user\",\"verification_uri\":\"https://login.example.test\",\"expires_in\":60,\"interval\":1}"
+                    | "/oauth/token" ->
+                        200,
+                        "{\"access_token\":\"interactive-bearer\",\"refresh_token\":\"interactive-refresh\",\"expires_in\":3600,\"token_type\":\"Bearer\",\"scope\":\"openid offline_access\"}"
+                    | "/cache/enroll" -> 200, enrolledResponse ()
+                    | _ -> 404, "{}")
+                (fun serverUri requests ->
+                    authority <- serverUri
+
+                    withEnvironment
+                        (credentialEnvironment serverUri None None None None
+                         @ [
+                             Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri
+                             Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "test-audience"
+                             Constants.EnvironmentVariables.GraceAuthOidcCliClientId, Some "test-client"
+                         ])
+                        (fun () ->
+                            let loginExitCode, _, _ =
+                                invokeOutsideRepository [| "authenticate"
+                                                           "login"
+                                                           "--auth"
+                                                           "device" |]
+
+                            Assert.That(loginExitCode, Is.EqualTo(0)))
+
+                    withEnvironment (credentialEnvironment serverUri None None None None) (fun () ->
+                        let enrollExitCode, output, createdGraceDirectory = invokeOutsideRepository enrollmentArguments
+                        Assert.That(enrollExitCode, Is.EqualTo(0))
+                        Assert.That(createdGraceDirectory, Is.False)
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.True)
+                        let recorded = requests.ToArray()
+
+                        Assert.That(
+                            recorded
+                            |> Array.filter (fun request -> request.Target = "/cache/enroll"),
+                            Has.Length.EqualTo(1)
+                        )
+
+                        Assert.That(
+                            (recorded
+                             |> Array.find (fun request -> request.Target = "/cache/enroll"))
+                                .Authorization,
+                            Is.EqualTo(Some "Bearer interactive-bearer")
+                        )
+
+                        use document = JsonDocument.Parse(output)
+
+                        Assert.That(
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Enrollment")
+                                .GetString(),
+                            Is.EqualTo("enrolled")
+                        ))))
+
+    /// Proves an expired normal Linux keyring credential attempts one refresh, then fails before Cache enrollment mutates or posts.
+    [<Test>]
+    let ``Linux secure-store expired interactive credential performs no enrollment request or local mutation`` () =
+        if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS")) then
+            Assert.Ignore("Requires a Linux D-Bus session and libsecret keyring; the focused Docker harness provides both.")
+
+        let mutable authority = String.Empty
+        let mutable tokenRequests = 0
+
+        withLinuxCacheRoot (fun root ->
+            withLoopbackServer
+                (fun request ->
+                    match request.Target with
+                    | "/authenticate/oidc/config" ->
+                        200,
+                        $"{{\"ReturnValue\":{{\"Authority\":\"{authority}\",\"Audience\":\"test-audience\",\"CliClientId\":\"test-client\"}},\"EventTime\":\"2026-01-01T00:00:00Z\",\"CorrelationId\":\"test\",\"Properties\":{{}}}}"
+                    | "/oauth/device/code" ->
+                        200,
+                        "{\"device_code\":\"test-device\",\"user_code\":\"test-user\",\"verification_uri\":\"https://login.example.test\",\"expires_in\":60,\"interval\":1}"
+                    | "/oauth/token" ->
+                        tokenRequests <- tokenRequests + 1
+
+                        if tokenRequests = 1 then
+                            200,
+                            "{\"access_token\":\"expired-interactive-bearer\",\"refresh_token\":\"interactive-refresh\",\"expires_in\":0,\"token_type\":\"Bearer\",\"scope\":\"openid offline_access\"}"
+                        else
+                            500, "{\"error\":\"invalid_grant\",\"error_description\":\"raw refresh detail\"}"
+                    | "/cache/enroll" -> 500, "{}"
+                    | _ -> 404, "{}")
+                (fun serverUri requests ->
+                    authority <- serverUri
+
+                    withEnvironment
+                        (credentialEnvironment serverUri None None None None
+                         @ [
+                             Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri
+                             Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "test-audience"
+                             Constants.EnvironmentVariables.GraceAuthOidcCliClientId, Some "test-client"
+                         ])
+                        (fun () ->
+                            let loginExitCode, _, _ =
+                                invokeOutsideRepository [| "authenticate"
+                                                           "login"
+                                                           "--auth"
+                                                           "device" |]
+
+                            Assert.That(loginExitCode, Is.EqualTo(0)))
+
+                    withEnvironment (credentialEnvironment serverUri None None None None) (fun () ->
+                        let enrollExitCode, output, _ = invokeOutsideRepository enrollmentArguments
+                        Assert.That(enrollExitCode, Is.Not.EqualTo(0))
+                        Assert.That(tokenRequests, Is.EqualTo(2))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+
+                        Assert.That(
+                            requests.ToArray()
+                            |> Array.exists (fun request -> request.Target = "/cache/enroll"),
+                            Is.False
+                        )
+
+                        Assert.That(output, Does.Not.Contain("raw refresh detail"))
                         use document = JsonDocument.Parse(output)
 
                         Assert.That(

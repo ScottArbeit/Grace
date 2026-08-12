@@ -77,8 +77,8 @@ artifact retrieval.
 | [Issue #622](https://github.com/ScottArbeit/Grace/issues/622) and [issue #724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned for Product V1. | Neither is a future implementation container. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | R0 static-contract pruning is complete. | Static cache identity is the current source contract. |
 | [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower R1A and R1B sequence. | Do not resume its mixed scope. |
-| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is the current implementation leaf. | It owns protected local identity and its focused proof. |
-| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) | R1B follows R1A with repository-independent enrollment and status commands. | It is not implemented by this leaf. |
+| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity merged to the integration branch. | It owns protected local identity and its focused proof. |
+| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | R1B repository-independent enrollment and status commands are implemented in the current pull request. | It consumes R1A without changing protected-identity scope. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | R2 registration liveness remains planned. | It follows the R1 sequence. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. `WorkingDirectoryUpdate.run` is not available to this epic until #835 merges to `main` and Epic #597 is refreshed. | Hard sequencing gate for #628 to #630 and #634. |
 | `src/Grace.Types/MaterializationExecutionMode.Types.fs` (`MaterializationExecutionMode`) | Defines `Direct`, `CachePreferred`, and `CacheRequired`. | Existing public execution-mode contract. |

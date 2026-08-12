@@ -5,6 +5,7 @@ open Grace.Shared.Utilities
 open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open System
+open System.Net.Http
 open System.Net.Http.Headers
 open System.Net.Http.Json
 open System.Threading
@@ -22,7 +23,15 @@ type CacheRegistration() =
                 return Error(GraceError.Create "Cache enrollment requires an authenticated bearer credential." correlationId)
             else
                 try
-                    use client = ClientIdentity.getHttpClient correlationId
+                    use handler = new SocketsHttpHandler(AllowAutoRedirect = false)
+
+                    use client =
+                        new HttpClient(handler)
+                        |> ClientIdentity.applyHeaders
+
+                    client.DefaultRequestHeaders.TryAddWithoutValidation(Constants.CorrelationIdHeaderKey, correlationId)
+                    |> ignore
+
                     client.DefaultRequestHeaders.Authorization <- AuthenticationHeaderValue("Bearer", bearer)
                     use content = createJsonContent request
                     let route = "cache/enroll"

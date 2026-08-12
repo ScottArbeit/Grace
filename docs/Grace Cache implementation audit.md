@@ -42,8 +42,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0 static-contract pruning. | Required predecessor completed. |
 | [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886 and #887 R1 sequence. | Do not resume its mixed server, command, and status scope. |
-| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is implemented on the current PR head; focused proof and current-head Linux validation remain required before merge. | Owns only static enrollment state, protected local identity, and their focused proof. |
-| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) | Open R1B follow-on for repository-independent cache enrollment and status commands. | Starts after #886 integrates; owns no R1A implementation detail. |
+| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity merged to the integration branch. | Owns only static enrollment state, protected local identity, and their focused proof. |
+| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | R1B repository-independent enrollment and status commands are implemented in the current pull request. | Consumes R1A without owning protected-identity implementation detail. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
 
@@ -202,9 +202,10 @@ The final Epic #597 release candidate requires all of the following:
 5. Current-head validation and a fresh review complete for every relevant pull request.
 6. The final `epic/597` to `main` pull request receives explicit maintainer approval at that reviewed, validated head.
 
-## R1A validation status
+## R1 validation status
 
-The R1A source, contract, generated-artifact, and focused-proof changes are in PR #888. Its required evidence is
+The R1A source, contract, generated-artifact, and focused-proof changes merged through PR #888. The R1B command and
+output work is implemented in PR #896. Required evidence is
 targeted F# formatting, affected Release builds and tests, OpenAPI/generated freshness, MarkdownLint, `git diff --check`,
 and a passing current-head GitHub `Validate` run that executes the Linux permission and inaccessible-state cases.
 Windows focused identity proof skips those Linux-only cases, so it cannot replace hosted Linux evidence.

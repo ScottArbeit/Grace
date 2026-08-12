@@ -755,14 +755,34 @@ module internal CacheIdentity =
                     | Ok true, Ok false -> Ok(inspectAttempt attempt)
                     | Ok false, Ok true -> Ok(inspectReady ready)
 
-    /// Rejects roots that are not an empty, protected location before a command resolves credentials or stages a key.
-    let validateEnrollmentRoot root =
+    /// Inspects the protected root before enrollment so callers can distinguish ready, stale, missing, and unsafe state.
+    let inspectEnrollmentRoot root =
         match validateRoot root with
         | Error error -> Error error
-        | Ok () ->
-            match inspect root with
-            | Ok CacheIdentityInspection.Missing -> Ok()
+        | Ok () -> inspect root
+
+    /// Removes exactly one stale staged attempt and confirms that no changed state remains before a new enrollment starts.
+    let discardStaleAttempt root =
+        if not (OperatingSystem.IsLinux()) then
+            Error CacheIdentityError.UnsupportedPlatform
+        else
+            try
+                let attempt = child root AttemptDirectoryName
+
+                if Directory.Exists(attempt) then Directory.Delete(attempt, true)
+
+                match inspectEnrollmentRoot root with
+                | Ok CacheIdentityInspection.Missing -> Ok()
+                | _ -> Error CacheIdentityError.StateUnavailable
+            with
             | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Rejects roots that are not empty before legacy callers resolve credentials or stage a key.
+    let validateEnrollmentRoot root =
+        match inspectEnrollmentRoot root with
+        | Ok CacheIdentityInspection.Missing -> Ok()
+        | Ok _ -> Error CacheIdentityError.StateUnavailable
+        | Error error -> Error error
 
     /// Reads the approved ready-state fields after protected inspection has established that the local identity is valid.
     let private tryReadReadyStatus root =
