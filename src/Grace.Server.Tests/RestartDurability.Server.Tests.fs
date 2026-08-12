@@ -139,11 +139,11 @@ module private RestartDurabilityHelpers =
                         )
                     PublicKey = cacheIdentityPublicKey privateKey
                     Endpoint = endpoint
-                    AllowHttpEndpoint = false
+                    AllowHttpEndpoint = true
                     Health = CacheHealthStatus.Healthy
                     SoftwareVersion = "1.0.0"
                     ProtocolVersion = "v1"
-                    PrefetchSupported = false
+                    PrefetchSupported = true
                 }
 
             let! response = Client.PostAsync("/cache/enroll", createJsonContent request)
@@ -488,7 +488,7 @@ type RestartDurabilityServer() =
 
             use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
             let displayName = $"enrollment-transfer-{Guid.NewGuid():N}"
-            let endpoint = $"https://cache-{Guid.NewGuid():N}.example.test"
+            let endpoint = $"http://cache-{Guid.NewGuid():N}.example.test"
             let! request, result = RestartDurabilityHelpers.enrollCacheAsync privateKey repositoryIds[0] displayName endpoint
 
             let registration =
