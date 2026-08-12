@@ -508,6 +508,7 @@ module GraceCommand =
     let private rootHelpSections =
         [
             { Heading = "Getting started"; CommandNames = [ "authenticate"; "connect"; "config" ] }
+            { Heading = "Cache"; CommandNames = [ "cache" ] }
             {
                 Heading = "Day-to-day development"
                 CommandNames =
@@ -881,6 +882,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(Doctor.Build)
+        rootCommand.Subcommands.Add(CacheCommand.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)

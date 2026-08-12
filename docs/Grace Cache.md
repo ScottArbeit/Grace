@@ -75,20 +75,19 @@ artifact retrieval.
 | [Mini-epic #601](https://github.com/ScottArbeit/Grace/issues/601) | Open parent for the replacement runtime and store work. | Hosts the R0, R1, and R2 replacement leaves. |
 | [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selective salvage source only; its behavioral commits are not reused wholesale. |
 | [Issue #622](https://github.com/ScottArbeit/Grace/issues/622) and [issue #724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned for Product V1. | Neither is a future implementation container. |
-| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855), [issue #856](https://github.com/ScottArbeit/Grace/issues/856), and [issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open replacement leaves for R0 contract pruning, R1 static enrollment and status, and R2 registration liveness. | Current implementation sequence under #601. |
+| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855), [issue #856](https://github.com/ScottArbeit/Grace/issues/856), and [issue #857](https://github.com/ScottArbeit/Grace/issues/857) | R0 is complete; R1 provides static enrollment and redacted status; R2 registration liveness remains future work. | Current implementation sequence under #601. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. `WorkingDirectoryUpdate.run` is not available to this epic until #835 merges to `main` and Epic #597 is refreshed. | Hard sequencing gate for #628 to #630 and #634. |
 | `src/Grace.Types/MaterializationExecutionMode.Types.fs` (`MaterializationExecutionMode`) | Defines `Direct`, `CachePreferred`, and `CacheRequired`. | Existing public execution-mode contract. |
 | `src/Grace.Types/MaterializationPlan.Types.fs` (`MaterializationPlan.CacheRequiredAvailability.ErrorCode`) and `src/Grace.Server/Materialization.Server.fs` | Define server-resolved target-root artifacts, cache selection, and `cacheRequiredUnavailable`. | Existing plan and failure seam. |
-| `src/Grace.Actors/CacheRegistration.Actor.fs` (`CacheRegistrationActor`), `src/Grace.Server/CacheRegistration.Server.fs`, and related shared/types files | Current server registration supports enrollment, refresh, revocation, and an older key-rotation surface. | R0 must prune the rotation contract without changing artifact-grant key rollover. |
-| `src/OpenAPI/Cache.Components.OpenAPI.yaml` and `src/OpenAPI/Cache.Paths.OpenAPI.yaml` | Generated input currently exposes `RotationDueAt`, `CacheKeyRotationRequest`, and `/cache/rotate-key`; it separately exposes `/cache/validation-keys`. | R0 propagation inventory and distinct-key rule. |
+| `src/Grace.Actors/CacheRegistration.Actor.fs` (`CacheRegistrationActor`), `src/Grace.Server/CacheRegistration.Server.fs`, and related shared/types files | Current server registration supports enrollment, refresh, revocation, and assignment. | Enrollment is server-created `Unhealthy`; artifact-grant key rollover remains separate. |
+| `src/OpenAPI/Cache.Components.OpenAPI.yaml` and `src/OpenAPI/Cache.Paths.OpenAPI.yaml` | Static enrollment and artifact-grant validation-key contracts remain after R0 removed cache identity rotation inputs and routes. | R1 input propagation and distinct-key rule. |
 | `src/Grace.Server.Security/ArtifactGrantKeys.Server.fs` (`ArtifactGrantKeyRing`) and `src/Grace.Actors/ArtifactGrantSigningKey.Actor.fs` | Grace Server publishes a validation-key set for artifact-grant verification. | Existing artifact-grant validation-key rollover remains in scope. |
 | `src/Grace.Server.Unit.Tests/MaterializationPlan.Server.Tests.fs`, `src/Grace.Types.Tests/MaterializationPlan.Types.Tests.fs`, and `src/Grace.Types.Tests/CacheRegistration.Types.Tests.fs` | Focused seams exist for current plan and registration contracts. | Starting proof seams; later work adds Product V1 cases. |
 | `docs/Grace Cache implementation audit.md` | Product V1 audit records completed server foundations, planned cache-host work, the tracer, and release gates. | Audit companion; it does not replace this specification or the issue tracker. |
-| `C:\Source\Grace\skills\grace\references\specification-profile.md` | Grace specification profile requires explicit surfaces, identity freshness, ordering, and proof. | Current specification profile input; read only, not copied into this worktree. |
+| `skills/grace/references/specification-profile.md` | Grace specification profile requires explicit surfaces, identity freshness, ordering, and proof. | Repository-owned current specification profile. |
 
-The specification profile is supplied from `C:\Source\Grace` for this recovery work. This specification applies that
-profile with the repository instructions, Product V1 quality contract, portable specification contract, current source
-evidence, and the durable owner decision.
+This specification applies the repository-owned profile with the repository instructions, Product V1 quality contract,
+portable specification contract, current source evidence, and the durable owner decision.
 
 ## 4. Quality contract and accepted risk
 
@@ -105,8 +104,8 @@ The accepted deployment and risk boundary is deliberately narrow:
   directory.
 - One static cache service identity lasts until a current administrator revokes it and the host is manually
   re-enrolled.
-- A missed or ambiguous enrollment result does not start automatic reconciliation. It follows the R1 proof gate and,
-  only if that gate passes, allows fresh manual re-enrollment with the stated inactive-orphan risk.
+- A missed or ambiguous enrollment result does not start automatic reconciliation. The R1 proof gate passed: server
+  enrollment is `Unhealthy`, cannot be selected before signed refresh, and a fresh manual enrollment uses a new CacheId.
 - Product V1 does not promise a platform-neutral keystore, high availability, disaster recovery, a defense against a
   hostile local root user, or automatic recovery from every local corruption event.
 
@@ -559,10 +558,10 @@ leaf-level gates with defined stop outcomes, not hidden assumptions in this docu
 
 ### Known gaps and residual risks
 
-- The requested project specification profile is absent at the required starting commit. Its absence is recorded for
-  later repository restoration; this document does not infer missing profile rules.
-- R1 has no current proof that inactive orphan enrollment is unselectable and does not block manual re-enrollment. This
-  is a stop condition before R1 code, not an accepted behavior claim.
+- The repository-owned `skills/grace/references/specification-profile.md` is the applicable project specification
+  profile for this implementation and has been followed.
+- R1 proves that every enrollment is `Unhealthy`, selection excludes it before a signed refresh, and a later manual
+  enrollment receives a fresh CacheId. An ambiguous earlier enrollment is therefore inactive and does not block re-enrollment.
 - R2 still needs exact current server liveness response classes, timestamps, and selection timing on its branch head.
 - Cache host, SQLite/filesystem implementation, artifact route execution, and the local Working Directory Update seam
   do not exist on this epic head. They are planned work, not present behavior.

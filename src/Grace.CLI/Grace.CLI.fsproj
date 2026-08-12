@@ -42,6 +42,7 @@
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
 		<Compile Include="Command\Doctor.CLI.fs" />
+                <Compile Include="Command\Cache.CLI.fs" />
                 
                 <Compile Include="Command\WorkItem.CLI.fs" />
                 <Compile Include="Command\Review.CLI.fs" />
@@ -90,6 +91,7 @@
 		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
+		<ProjectReference Include="..\Grace.Cache\Grace.Cache.fsproj" />
 	</ItemGroup>
   <ItemGroup>
     <PackageReference Update="FSharp.Core" Version="10.1.301" />

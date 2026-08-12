@@ -40,8 +40,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [Mini-epic #601](https://github.com/ScottArbeit/Grace/issues/601) | Open parent for replacement runtime and store work. | Owns the replacement leaf sequence. |
 | [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
-| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Open R0: prune cache service-identity rotation contracts. | Precedes R1. |
-| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Open R1: static enrollment and redacted status. | Starts after R0 and its orphan-enrollment proof gate. |
+| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0: prune cache service-identity rotation contracts. | R1 builds on the revised static contract. |
+| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Implemented R1: static enrollment and redacted status. | The inactive-orphan proof gate passed. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
 
@@ -82,8 +82,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
   PR #706 recorded the server-foundation validation.
 - **Status classification:** `implemented and proven` for the server foundation.
-- **Residual risk:** The current foundation contains a cache service-identity rotation surface. Product V1 does not
-  retain that capability; #855 removes it while preserving the separate artifact-grant validation-key behavior.
+- **Residual risk:** Registration liveness remains R2 work. Artifact-grant validation-key behavior remains separate
+  from the static cache identity.
 
 ### Direct materialization
 
@@ -107,13 +107,15 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R1: static enrollment and redacted status (#856)
 
-- **Status classification:** `planned`.
-- **Required result:** An administrator enrolls one static P-256 identity, atomically commits one ready local
-  configuration, and receives truthful redacted status. Manual recovery is revoke, local reset, and re-enrollment.
-- **Gate:** Before implementation, prove that an inactive server enrollment after an ambiguous result cannot be selected
-  and cannot block fresh manual re-enrollment. Stop for a maintainer decision if the proof fails.
-- **Proof:** Validation-before-effect, definitive rejection, unknown result, crash cleanup, atomic-write failure, key
-  mismatch, redaction, and unsupported-profile cases.
+- **Status classification:** `implemented` with focused local proof; Linux unit-managed owner and mode verification
+  remains the required deployment-host operator check.
+- **Result:** Server enrollment always persists `Unhealthy`. `grace cache enroll` creates a P-256 PKCS#8 key below the
+  protected Linux root, calls the normal authenticated SDK route, and commits one same-parent ready directory only after
+  acceptance. `grace cache status` is a pure local, redacted observation.
+- **Recovery:** Definitive and ambiguous outcomes remove attempt staging; ready commit failure leaves no ready marker.
+  Manual recovery is revoke, local reset, and re-enrollment. No reconciliation, scheduler, listener, or serving claim is added.
+- **Proof:** Cache registration lifecycle coverage proves inactive enrollment and fresh re-enrollment. Cache identity
+  coverage exercises ready-state redaction on Linux and is skipped on this Windows worker.
 
 ### R2: registration liveness (#857)
 

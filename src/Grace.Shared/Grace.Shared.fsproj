@@ -58,6 +58,7 @@
         <Compile Include="Parameters\Materialization.Parameters.fs" />
         <Compile Include="Parameters\Diff.Parameters.fs" />
         <Compile Include="Parameters\Storage.Parameters.fs" />
+        <Compile Include="Parameters\CacheRegistration.Parameters.fs" />
         <Compile Include="DedupeIndex.Shared.fs" />
         
         <Compile Include="Parameters\Reminder.Parameters.fs" />

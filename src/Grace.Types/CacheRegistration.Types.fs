@@ -131,12 +131,10 @@ module CacheRegistration =
             [<Id(8u)>]
             AllowHttpEndpoint: bool
             [<Id(9u)>]
-            Health: CacheHealthStatus
-            [<Id(10u)>]
             SoftwareVersion: string
-            [<Id(11u)>]
+            [<Id(10u)>]
             ProtocolVersion: string
-            [<Id(12u)>]
+            [<Id(11u)>]
             PrefetchSupported: bool
         }
 
@@ -346,9 +344,6 @@ module CacheRegistration =
                 if request.Class <> nameof CacheEnrollmentRequest then
                     errors.Add("Class must be CacheEnrollmentRequest.")
 
-                if not (isDefinedHealth request.Health) then
-                    errors.Add("Health must be Healthy or Unhealthy.")
-
                 if String.IsNullOrWhiteSpace request.DisplayName then
                     errors.Add("DisplayName is required.")
 
@@ -445,7 +440,7 @@ module CacheRegistration =
                     PublicKey = request.PublicKey
                     Endpoint = request.Endpoint.Trim()
                     AllowHttpEndpoint = request.AllowHttpEndpoint
-                    Health = request.Health
+                    Health = CacheHealthStatus.Unhealthy
                     SoftwareVersion = request.SoftwareVersion.Trim()
                     ProtocolVersion = request.ProtocolVersion.Trim()
                     PrefetchSupported = request.PrefetchSupported

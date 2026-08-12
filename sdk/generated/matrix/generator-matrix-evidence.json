@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "1c6ddd83f08b0eb265a304ddcd8e83643ef241b715d472acdb3343061ca53416",
+  "sourceProjectionSha256": "6aba16a1a382dad6a6863382215eb4dfd2a4cf958497259e54f38ee9a3f8af16",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.4",
@@ -68,7 +68,7 @@
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
       "evidence": [
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
@@ -82,7 +82,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 172364."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 172292."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -186,15 +186,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "1d1fef29c435d4a22affe9d97d91a149a85601fc77b2b635a7f4e6464f44f059"
+      "manifestSha256": "48e7dfe3c68ecc89ca9a52acc0b64d170bcf2e246f3dc68680a9fe94b1cc369a"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "6f181491f0c7ef118d15aed027f81707cb34a8e62366b06509990329a686f07f"
+      "manifestSha256": "e69e9bd7ebe7c31768e283ce516a78db7672b661c41182691b405bc7fee9e280"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "a5e96b03855078b84a4fcee3f70cc3c9bd29b1bb623b056fe7174fd701ce427f"
+      "manifestSha256": "1922a2adfe3fe8772db06b3a199e44f0cc57cd249044c0850f6bc1bb7e716b4f"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

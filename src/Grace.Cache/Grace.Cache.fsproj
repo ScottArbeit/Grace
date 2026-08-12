@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="CacheHost.fs" />
     <Compile Include="CacheStore.fs" />
+    <Compile Include="CacheIdentity.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

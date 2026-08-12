@@ -40,6 +40,7 @@
                 <Compile Include="Webhook.SDK.fs" />
                 <Compile Include="Review.SDK.fs" />
                 <Compile Include="Queue.SDK.fs" />
+                <Compile Include="CacheRegistration.SDK.fs" />
                 <Compile Include="ValidationSet.SDK.fs" />
                 <Compile Include="ValidationResult.SDK.fs" />
                 <Compile Include="Artifact.SDK.fs" />

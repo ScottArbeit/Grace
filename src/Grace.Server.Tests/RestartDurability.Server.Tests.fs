@@ -141,7 +141,6 @@ module private RestartDurabilityHelpers =
                     PublicKey = cacheIdentityPublicKey privateKey
                     Endpoint = endpoint
                     AllowHttpEndpoint = true
-                    Health = CacheHealthStatus.Healthy
                     SoftwareVersion = "1.0.0"
                     ProtocolVersion = "v1"
                     PrefetchSupported = true
@@ -543,7 +542,7 @@ type RestartDurabilityServer() =
             Assert.That(reminderAfterRestart.ReminderTime, Is.EqualTo(reminderFireAt))
         }
 
-    /// Verifies valid HTTP enrollment keeps every immutable request field through the Orleans actor call and persists before success.
+    /// Verifies enrollment persists server-owned unhealthy state even when raw JSON retains the removed Health member.
     [<Test>]
     [<Order(3)>]
     member _.CacheEnrollmentTransfersValidatedFieldsThroughTheActorBoundary() =
@@ -577,11 +576,31 @@ type RestartDurabilityServer() =
                     Assert.That(registration.PublicKey, Is.EqualTo(request.PublicKey))
                     Assert.That(registration.Endpoint, Is.EqualTo(request.Endpoint))
                     Assert.That(registration.AllowHttpEndpoint, Is.EqualTo(request.AllowHttpEndpoint))
-                    Assert.That(registration.Health, Is.EqualTo(request.Health))
+                    Assert.That(registration.Health, Is.EqualTo(CacheHealthStatus.Unhealthy))
                     Assert.That(registration.SoftwareVersion, Is.EqualTo(request.SoftwareVersion))
                     Assert.That(registration.ProtocolVersion, Is.EqualTo(request.ProtocolVersion))
                     Assert.That(registration.PrefetchSupported, Is.EqualTo(request.PrefetchSupported)))
             )
+
+            let rawJson = serialize request
+
+            let rawJsonWithHealth =
+                rawJson.Substring(0, rawJson.Length - 1)
+                + ",\"Health\":1}"
+
+            use rawContent = new StringContent(rawJsonWithHealth, Encoding.UTF8, "application/json")
+            let! rawResponse = Client.PostAsync("/cache/enroll", rawContent)
+            let! rawBody = RestartDurabilityHelpers.requireOkAsync rawResponse
+            let rawResult = deserialize<GraceReturnValue<CacheRegistrationResult>> rawBody
+
+            let rawRegistration =
+                match rawResult.ReturnValue.Registration with
+                | Some value -> value
+                | None ->
+                    Assert.Fail("Raw Cache enrollment did not return a persisted registration.")
+                    Unchecked.defaultof<CacheRegistration>
+
+            Assert.That(rawRegistration.Health, Is.EqualTo(CacheHealthStatus.Unhealthy))
         }
 
     /// Verifies a persisted static cache identity rehydrates after server restart for signed refresh and exact repository selection.

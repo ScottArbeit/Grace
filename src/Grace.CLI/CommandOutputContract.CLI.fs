@@ -356,6 +356,32 @@ module CommandOutputContract =
 
     let private maintenanceIgnoreEntriesExample = box {| DirectoryEntries = [| ".git"; ".grace" |]; FileEntries = [| "*.tmp" |] |}
 
+    let private cacheStatusSchema =
+        schemaObject
+            "CacheLocalStatus"
+            [
+                "Class", scalarSchema "string"
+                "Enrollment", scalarSchema "string"
+                "CacheId", scalarSchema "string"
+                "Endpoint", scalarSchema "string"
+                "BoundaryKind", scalarSchema "string"
+                "RepositoryCount", scalarSchema "integer"
+                "Key", scalarSchema "string"
+            ]
+            [| "Class"; "Enrollment"; "Key" |]
+
+    let private cacheStatusExample =
+        box
+            {|
+                Class = "CacheLocalStatus"
+                Enrollment = "enrolled"
+                CacheId = "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                BoundaryKind = "organization"
+                RepositoryCount = 1
+                Key = "available"
+            |}
+
     let private maintenanceScanDifferenceSchema =
         schemaObject
             "MaintenanceScanDifferenceDto"
@@ -604,6 +630,15 @@ module CommandOutputContract =
     /// Builds command-output contract metadata for return value contract for so automation can rely on stable JSON shapes.
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match identity.CommandId, envelopeContract with
+        | "cache.status", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "CacheLocalStatus"
+                "Grace.Cache.CacheLocalStatus"
+                cacheStatusSchema
+                cacheStatusExample
+                [
+                    "Redacted local Cache enrollment observation with no server request."
+                ]
         | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
             supportedReturnValueContract
                 "MaintenanceIgnoreEntriesDto"
@@ -959,6 +994,8 @@ module CommandOutputContract =
 
     let entries =
         [
+            row [ "cache" ] "enroll" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
+            row [ "cache" ] "status" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
