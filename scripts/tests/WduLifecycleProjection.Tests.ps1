@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('All', 'PlanCore', 'PlanNegativeA', 'PlanNegativeB', 'PlanNegativeC', 'PlanMarkers', 'Marker', 'DriftA', 'DriftB', 'DriftC', 'PacketA', 'PacketB')]
+    [ValidateSet('All', 'PlanCore', 'PlanNegativeA', 'PlanNegativeB', 'PlanNegativeC', 'RequiredPacket', 'PlanMarkers', 'Marker', 'DriftA', 'DriftB', 'DriftC', 'PacketA', 'PacketAEmpty', 'PacketB', 'PacketBReadOnly', 'PacketBCommands')]
     [string] $Group = 'All'
 )
 
@@ -140,6 +140,24 @@ try {
             Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } $case.Reason
         }
     }
+
+    }
+
+    if ($Group -in @('All', 'RequiredPacket')) {
+    Invoke-Case 'rejects a renamed required assignment artifact' {
+        $packet = New-Packet 'renamed-required-assignment-artifact'
+        Write-TestText $packet.Canonical (Replace-Once (Get-TestText $packet.Canonical) '"artifact":"issue-872"' '"artifact":"issue-999"')
+        Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } "required artifact 'issue-872'"
+    }
+
+    Invoke-Case 'rejects reordered required assignment artifacts' {
+        $packet = New-Packet 'reordered-required-assignment-artifacts'
+        $reordered = Replace-Once (Get-TestText $packet.Canonical) '"artifact":"issue-870"' '"artifact":"temporary-ordering-artifact"'
+        $reordered = Replace-Once $reordered '"artifact":"issue-871"' '"artifact":"issue-870"'
+        $reordered = Replace-Once $reordered '"artifact":"temporary-ordering-artifact"' '"artifact":"issue-871"'
+        Write-TestText $packet.Canonical $reordered
+        Assert-Fails { New-WduLifecycleProjection -CanonicalPath $packet.Canonical -Artifact 'adr-0011' } "required artifact 'issue-870'"
+    }
     }
 
     if ($Group -in @('All', 'PlanMarkers')) {
@@ -215,6 +233,9 @@ try {
         Assert-Fails { Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath @($packet.Paths + $unexpected) } 'unexpected artifact'
     }
 
+    }
+
+    if ($Group -in @('All', 'PacketAEmpty')) {
     Invoke-Case 'accepts empty content outside the exact projection markers' {
         $packet = New-Packet 'empty outside content'
         foreach ($path in $packet.Paths) {
@@ -230,7 +251,7 @@ try {
 
     }
 
-    if ($Group -in @('All', 'PacketB')) {
+    if ($Group -in @('All', 'PacketB', 'PacketBReadOnly')) {
 
     Invoke-Case 'leaves every input byte unchanged on success and failure' {
         $packet = New-Packet 'read only packet'
@@ -251,6 +272,9 @@ try {
         }
     }
 
+    }
+
+    if ($Group -in @('All', 'PacketB', 'PacketBCommands')) {
     Invoke-Case 'thin commands generate byte-identical stdout and check a complete offline packet' {
         $packet = New-Packet 'thin commands packet'
         $first = Join-Path $packet.Root 'first stdout.bin'

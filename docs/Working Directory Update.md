@@ -1,6 +1,6 @@
 # Working Directory Update
 
-**Status:** Plan-ready; exact lifecycle projection packet validated
+**Status:** Plan-ready; structural and projection proof boundaries declared
 **Quality contract:** Product V1
 **Canonical source:** `docs/Working Directory Update.md`
 **Evidence current through:** 2026-08-12, epic base `ff6305130c6bf18c6db0aa1096a251e64a4041d5`
@@ -64,9 +64,8 @@ in lifecycle evidence.
 ## 4. Normative Branch lifecycle table
 
 This fenced JSON block is the sole normative lifecycle ordering contract. Human prose, ADRs, implementation issues, and
-tests cite `WDU-LC-*` row IDs; they must not restate or reorder the transition sequence. Its `machineGrammar` closes the
-predicate language; consumers such as #882 parse that grammar and must not infer aliases, wildcard behavior, or row
-precedence.
+tests cite `WDU-LC-*` row IDs; they must not restate or reorder the transition sequence. #889 checks its closed
+structural grammar, graph, and canonical digest; consumers must not infer aliases, wildcard behavior, or row precedence.
 
 <!-- grace:wdu-lifecycle-contract:start -->
 ```json
@@ -251,11 +250,11 @@ Each row has one primary implementation owner even when companion issues prove a
 
 ## 6. Proof, propagation, and readiness
 
-Static validation parses the fenced JSON and its closed grammar, rejects unknown or malformed predicates, expands every
-Cartesian cell, rejects overlap, and verifies row, outcome, marker, and cancellation coverage. It also asserts every
-`FinalizationIncomplete` row has a nonzero exit and Doctor guidance. Issue #890 consumes these declarations through one
-exact assignment plan without inventing wildcard or precedence rules. Behavioral proof must use production-reachable persisted facts and
-deterministic seams; source-string assertions, sleeps, and impossible hand-built states are insufficient.
+Issue #889 checks the closed structural grammar, graph, and canonical digest. Issue #890 checks exact generated projections and
+required packet membership without inventing wildcard or precedence rules. Neither tool establishes lifecycle meaning;
+normal review and later runtime proof remain responsible for the behavior of outcomes, marker handling, cancellation,
+and Doctor guidance. Behavioral proof must use production-reachable persisted facts and deterministic seams;
+source-string assertions, sleeps, and impossible hand-built states are insufficient.
 
 <!-- grace:wdu-lifecycle-projection-plan:start -->
 ```json
@@ -287,8 +286,9 @@ The following consumers carry generated projections rather than competing lifecy
 - #846 audits public output, Doctor guidance, row references, and absence of retired paths.
 
 ADR 0011 and active issue bodies remain contextual consumers. The #890 checker validates only their exact
-marker-delimited projections and ignores surrounding Markdown or prose. This document is Plan-ready after the complete
-exported packet validates against the compiled canonical block.
+marker-delimited projections and required packet membership, ignoring surrounding Markdown or prose. The Plan-ready
+boundary is the closed structural proof from #889 plus the exact-projection proof from #890; normal review and later
+runtime proof establish lifecycle meaning.
 
 The bounded Product V1 residual risk remains interruption after working-tree mutation but before SQLite local
 completion. `WDU-LC-002` requires truthful `UpdateIncomplete` and fresh revalidation; Grace does not guess, roll back,

@@ -9,6 +9,17 @@ $script:ProjectionStartMarker = '<!-- grace:wdu-lifecycle-projection:start -->'
 $script:ProjectionEndMarker = '<!-- grace:wdu-lifecycle-projection:end -->'
 $script:PlanSchema = 'grace.wdu.lifecycle-projection-plan/v1'
 $script:ProjectionSchema = 'grace.wdu.lifecycle-projection/v1'
+$script:RequiredArtifactIds = @(
+    'adr-0011',
+    'epic-835',
+    'issue-842',
+    'issue-843',
+    'issue-846',
+    'issue-869',
+    'issue-870',
+    'issue-871',
+    'issue-872'
+)
 
 function Fail-Projection {
     param([string] $Subject, [string] $Reason)
@@ -177,12 +188,17 @@ function Read-WduLifecycleProjectionPlan {
     $coveredRows = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $artifacts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $assignments = [Collections.Generic.List[object]]::new()
+    $assignmentIndex = 0
     foreach ($raw in $rawAssignments) {
         Assert-ExactObjectProperties $raw @('artifact', 'canonical', 'canonicalContentDigest', 'rowIds', 'proof') '$.assignments[]' $resolved
         foreach ($name in @('artifact', 'canonical', 'canonicalContentDigest', 'proof')) {
             Assert-NonBlankString $raw[$name] "$.assignments[].$name" $resolved
         }
         if (-not $artifacts.Add($raw['artifact'])) { Fail-Projection $resolved "$.assignments contains duplicate artifact '$($raw['artifact'])'" }
+        $requiredArtifact = $script:RequiredArtifactIds[$assignmentIndex]
+        if (-not [StringComparer]::Ordinal.Equals($raw['artifact'], $requiredArtifact)) {
+            Fail-Projection $resolved "$.assignments must declare required artifact '$requiredArtifact' at ordinal $($assignmentIndex + 1), not '$($raw['artifact'])'"
+        }
         if (-not (Test-LowercaseSha256 $raw['canonicalContentDigest'])) {
             Fail-Projection $resolved '$.assignments[].canonicalContentDigest must be a lowercase SHA-256 digest'
         }
@@ -203,6 +219,7 @@ function Read-WduLifecycleProjectionPlan {
                 RowIds = [string[]] $rowIds
                 Proof = [string] $raw['proof']
             })
+        $assignmentIndex++
     }
     foreach ($rowId in $Compiled.RowIds) {
         if (-not $coveredRows.Contains($rowId)) { Fail-Projection $resolved "$.assignments does not cover canonical row ID '$rowId'" }
