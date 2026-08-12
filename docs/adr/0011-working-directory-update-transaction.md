@@ -25,16 +25,19 @@ supported: they select an exact root without a Reference and keep the current Br
 
 ## Decision
 
-- Immediately after successful Save or no-Save admission, Branch constructs an immutable `AcceptedBranchPhase` holding
+- Immediately after successful Save or no-Save admission, Branch constructs an opaque, sealed `AcceptedBranchPhase` holding
   the accepted SQLite revision, canonical complete-status fingerprint, and public action token. It holds no status graph,
   alternate path, selected-state reader, or mutable callback.
-- The first private `WorkingDirectoryUpdate.run` input is Branch-only. Its caller provides the unchanged
-  `AcceptedBranchPhase`, typed Branch selection, exact target graph, verified prepared content, and diagnostic
-  correlation.
+- The private `WorkingDirectoryUpdate.run` interface has exactly five inputs. Its Branch caller provides the unchanged
+  sealed `AcceptedBranchPhase`, typed `Reference` or exact-root `DirectoryVersion` selection, exact resolved target graph,
+  immutable prepared content, and diagnostic correlation.
 - The module derives canonical configuration, working/object/SQLite paths, scan input, operation identity, completion
-  facts, marker disposition, and typed Branch finalization facts. It rereads current revision and complete status under
-  the lease, then compares them with the immutable phase. It does not accept an arbitrary path or context bag, old
-  status graph, selected-state reader, finalizer callback, mutation plan, or database handle.
+  facts, marker disposition, and typed Branch finalization facts from the same selection, target, canonical
+  configuration, and persisted operation facts. It rereads current revision and complete status under the lease, then
+  compares them with the immutable phase. It does not accept an arbitrary path or generic context bag, old status graph,
+  selected-state reader, finalizer or finalizer callback, progress observer standing in for correlation, mutation plan,
+  or database handle. Finalization retry reconstructs from the persisted typed operation facts rather than accepting a
+  separately assembled tuple or callback.
 - Branch selection is typed. `Reference` carries the required selected Reference ID. Hash-selected `DirectoryVersion`
   carries no Reference ID, binds the operation to its exact selected root, and retains the current Branch as both
   previous and selected Branch.

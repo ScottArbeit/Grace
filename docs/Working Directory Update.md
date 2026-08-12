@@ -69,7 +69,7 @@ contract, and this document does not describe their runtime shape as accepted.
 | DEC-004 | Reference finalization is repeatable from persisted typed facts. | Previous Branch applies once; the exact selected Branch is already applied; any third Branch rejects. | #871 |
 | DEC-005 | The plan covers the complete tracked topology. | It creates target directories, removes obsolete tracked empty directories, handles file/directory transitions before mutation, and preserves ignored content. | #870 |
 | DEC-006 | The public action token remains attached until mutation begins. | Admission, Save, resolution, preparation, lease wait, object publication, and the final pre-mutation boundary observe it; only post-mutation cancellation is deferred. | #870, #872 |
-| DEC-007 | The first deep module has a minimal Branch seam. | The caller supplies only typed selection, exact target graph, verified prepared content, and diagnostic correlation. | #870 |
+| DEC-007 | The first deep module has one exact Branch seam. | The caller supplies only sealed `AcceptedBranchPhase`, typed selection, exact target graph, immutable prepared content, and diagnostic correlation. | #870 |
 | DEC-008 | Phase proof is split by boundary. | Real filesystem and SQLite tests activate phase and recovery seams; built-command tests cover selector routing and bounded public projection. | #870–#872 |
 | DEC-009 | #841 is superseded as an implementation plan. | #868 corrects this contract; #869, #870, #871, and #872 deliver the sequential Branch work. | #868 |
 
@@ -92,7 +92,7 @@ proof of the graph.
 
 ### Accepted Branch phase
 
-Immediately after successful Save or no-Save admission, Branch constructs one immutable `AcceptedBranchPhase`. It holds
+Immediately after successful Save or no-Save admission, Branch constructs one opaque, sealed `AcceptedBranchPhase`. It holds
 the accepted SQLite revision, canonical fingerprint of the complete current Grace status graph, and the public action
 token for that command invocation. It does not hold or expose a mutable status graph, alternate local paths, or a
 selected-state reader.
@@ -121,26 +121,28 @@ that phase, but cannot alter its revision, fingerprint, or action token.
 
 The `WorkingDirectoryUpdate.run` entry accepts only the following Branch facts:
 
-1. The immutable `AcceptedBranchPhase`.
-2. The typed `Reference` or `DirectoryVersion` selection.
+1. The sealed `AcceptedBranchPhase`.
+2. The typed `Reference` or exact-root `DirectoryVersion` selection.
 3. The exact resolved target graph.
-4. Verified prepared content for that graph.
+4. Immutable prepared content for that graph.
 5. Diagnostic correlation.
 
 This is a narrow phase and interface, not a caller-supplied context bag. From the phase and canonical Branch
 configuration, the module derives the working root, object root, `.grace` directory, SQLite path, ignore-aware scan
-input, local-root scope, operation identity, pending and completion facts, marker disposition, and Branch finalization
-facts. It compares the phase's accepted revision and fingerprint with its own post-lease reread. A caller cannot
-provide alternate paths, a status graph, a selected-state reader, a finalizer, a filesystem writer, a mutation plan, or
-a database handle.
+input, local-root scope, operation identity, pending and completion facts, marker disposition, and typed Branch
+finalization facts from the same selection, target, canonical configuration, and persisted operation facts. It compares
+the phase's accepted revision and fingerprint with its own post-lease reread. A caller cannot provide alternate paths,
+a status graph, a selected-state reader, a finalizer or finalizer callback, a progress observer in place of diagnostic
+correlation, a filesystem writer, a mutation plan, a database handle, or a generic context bag.
 
 The one action token in `AcceptedBranchPhase` is observed before and during admission and Save, during target resolution
 and preparation, while waiting for the lease, during object publication, and immediately before the first
 working-tree mutation. Cancellation is deferred only after mutation begins.
 
-The module exposes `run` and the internal exact-finalization retry used by #871 and #842. It does not expose Watch or
-Connect construction. Any later caller requires its own accepted design and must not widen this Branch input by adding
-an arbitrary context record.
+The module exposes `run` and the internal exact-finalization retry used by #871 and #842. Retry reconstructs the same
+typed Branch finalization behavior from the persisted typed operation facts; it cannot accept a separately assembled
+finalization tuple or callback. The module does not expose Watch or Connect construction. Any later caller requires its
+own accepted design and must not widen this Branch input by adding an arbitrary context record.
 
 ## 7. Branch transaction and marker behavior
 
