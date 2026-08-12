@@ -2661,7 +2661,7 @@ module DoctorCliTests =
                 (findCheckById checks "state.db.schema-version")
                     .GetProperty("Summary")
                     .GetString()
-                |> should contain "schema_version is 9"
+                |> should contain $"schema_version is {LocalStateDb.SchemaVersion}"
 
                 (findCheckById checks "object-cache.index-readable")
                     .GetProperty("Summary")
@@ -3121,7 +3121,7 @@ module DoctorCliTests =
                         |> should equal "Ok"
 
                         checks[ 0 ].GetProperty("Summary").GetString()
-                        |> should contain "schema_version is 9"
+                        |> should contain $"schema_version is {LocalStateDb.SchemaVersion}"
 
                         let trace = readTrace tracePath
                         trace |> should contain repoDbPath
