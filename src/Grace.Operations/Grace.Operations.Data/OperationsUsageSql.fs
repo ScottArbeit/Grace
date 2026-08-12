@@ -16,6 +16,10 @@ module OperationsUsageSql =
     [<Literal>]
     let RawUsageFactTable = "ops.RawUsageFact"
 
+    /// Names the operator-visible rejections that block a complete owner repository month only when their scope is known.
+    [<Literal>]
+    let UsageFactRejectionTable = "ops.UsageFactRejection"
+
     /// Names the minute aggregate table without schema qualification for EF migrations.
     [<Literal>]
     let UsageAggregateMinuteTableName = "UsageAggregateMinute"
@@ -67,6 +71,144 @@ module OperationsUsageSql =
     /// Names the filtered expiry index used by periodic temporary-hot cleanup.
     [<Literal>]
     let TemporaryHotCleanupExpiryIndexName = "IX_ops_RawUsageFact_RehydrationExpiresAtUtc"
+
+    /// Acquires the transaction-owned database application lock identified solely by `BillingCompletenessScope.databaseLockIdentity`.
+    [<Literal>]
+    let AcquireBillingCompletenessScopeLock =
+        """
+DECLARE @LockResult int;
+EXEC @LockResult = sys.sp_getapplock
+    @Resource = @BillingCompletenessLockResource,
+    @LockMode = 'Exclusive',
+    @LockOwner = 'Transaction',
+    @LockTimeout = @BillingCompletenessLockTimeoutMilliseconds;
+
+IF @LockResult < 0
+BEGIN
+    THROW 57220, 'Could not acquire the Operations billing completeness coordination lock.', 1;
+END;
+"""
+
+    /// Inserts a scoped rejection once or returns the first active canonical blocker for the same fact and scope.
+    [<Literal>]
+    let RecordScopedUsageFactRejection =
+        """
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK)
+    WHERE UsageFactId = @UsageFactId
+      AND OwnerId = @OwnerId
+      AND OrganizationId = @OrganizationId
+      AND RepositoryId = @RepositoryId
+      AND MonthStartUtc = @MonthStartUtc
+      AND IsActive = 1
+)
+BEGIN
+    INSERT INTO ops.UsageFactRejection
+    (
+        RejectionId,
+        UsageFactId,
+        OwnerId,
+        OrganizationId,
+        RepositoryId,
+        MonthStartUtc,
+        Reason,
+        IsActive
+    )
+    VALUES
+    (
+        @RejectionId,
+        @UsageFactId,
+        @OwnerId,
+        @OrganizationId,
+        @RepositoryId,
+        @MonthStartUtc,
+        @Reason,
+        1
+    );
+END;
+
+SELECT TOP (1)
+    RejectionId,
+    UsageFactId,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    MonthStartUtc,
+    Reason,
+    IsActive
+FROM ops.UsageFactRejection
+WHERE UsageFactId = @UsageFactId
+  AND OwnerId = @OwnerId
+  AND OrganizationId = @OrganizationId
+  AND RepositoryId = @RepositoryId
+  AND MonthStartUtc = @MonthStartUtc
+  AND IsActive = 1
+ORDER BY CreatedAtUtc ASC, RejectionId ASC;
+"""
+
+    /// Persists a rejection with insufficient scope as visible operator evidence without allowing it to block an invented scope.
+    [<Literal>]
+    let RecordUnscopedUsageFactRejection =
+        """
+INSERT INTO ops.UsageFactRejection
+(
+    RejectionId,
+    UsageFactId,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    MonthStartUtc,
+    Reason,
+    IsActive
+)
+VALUES
+(
+    @RejectionId,
+    @UsageFactId,
+    @OwnerId,
+    @OrganizationId,
+    @RepositoryId,
+    @MonthStartUtc,
+    @Reason,
+    1
+);
+"""
+
+    /// Resolves every active scoped blocker for the accepted usage fact while the owner-month lock remains held.
+    [<Literal>]
+    let ResolveScopedUsageFactRejection =
+        """
+UPDATE ops.UsageFactRejection
+SET IsActive = 0,
+    ResolvedAtUtc = SYSUTCDATETIME()
+WHERE UsageFactId = @UsageFactId
+  AND OwnerId = @OwnerId
+  AND OrganizationId = @OrganizationId
+  AND RepositoryId = @RepositoryId
+  AND MonthStartUtc = @MonthStartUtc
+  AND IsActive = 1;
+"""
+
+    /// Reads whether committed scoped rejection evidence blocks one owner repository month after its lock is held.
+    [<Literal>]
+    let HasActiveScopedUsageFactRejection =
+        """
+SELECT CASE WHEN EXISTS
+(
+    SELECT 1
+    FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK)
+    WHERE OwnerId = @OwnerId
+      AND OrganizationId = @OrganizationId
+      AND RepositoryId = @RepositoryId
+      AND MonthStartUtc = @MonthStartUtc
+      AND IsActive = 1
+)
+THEN CAST(1 AS bit)
+ELSE CAST(0 AS bit)
+END;
+"""
 
     /// Creates the configured operations database when SQL Server does not already contain it.
     [<Literal>]

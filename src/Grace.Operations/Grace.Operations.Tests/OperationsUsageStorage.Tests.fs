@@ -67,11 +67,21 @@ module OperationsUsageStorageTestData =
     let payloadFor fact = JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
 
 /// Stores transaction state for the operations usage test double.
-type private InMemoryOperationsUsageState = { RawFacts: Dictionary<UsageFactId, RawUsageFact>; Aggregates: Dictionary<UsageAggregateMinuteKey, int64> }
+type private InMemoryOperationsUsageState =
+    {
+        RawFacts: Dictionary<UsageFactId, RawUsageFact>
+        Aggregates: Dictionary<UsageAggregateMinuteKey, int64>
+        Rejections: Dictionary<Guid, UsageFactRejection>
+    }
 
 /// Provides a rollback-capable transaction scope for proving data-layer ordering without SQL Server.
 type private InMemoryOperationsUsageTransactionScope() =
-    let state = { RawFacts = Dictionary<UsageFactId, RawUsageFact>(); Aggregates = Dictionary<UsageAggregateMinuteKey, int64>() }
+    let state =
+        {
+            RawFacts = Dictionary<UsageFactId, RawUsageFact>()
+            Aggregates = Dictionary<UsageAggregateMinuteKey, int64>()
+            Rejections = Dictionary<Guid, UsageFactRejection>()
+        }
 
     let mutable failNextAggregateUpdate = false
 
@@ -97,6 +107,12 @@ type private InMemoryOperationsUsageTransactionScope() =
     /// Forces the next aggregate update to fail after the raw insert has been staged.
     member _.FailNextAggregateUpdate() = failNextAggregateUpdate <- true
 
+    /// Returns the active blocker count for one complete scope.
+    member _.ActiveRejectionCount(scope: BillingCompletenessScope) =
+        state.Rejections.Values
+        |> Seq.filter (fun rejection -> rejection.IsActive && rejection.Scope = Some scope)
+        |> Seq.length
+
     interface IOperationsUsageTransactionScope with
 
         member _.ExecuteAsync(operation, cancellationToken) =
@@ -105,9 +121,14 @@ type private InMemoryOperationsUsageTransactionScope() =
 
                 let rawFacts = Dictionary<UsageFactId, RawUsageFact>(state.RawFacts)
                 let aggregates = Dictionary<UsageAggregateMinuteKey, int64>(state.Aggregates)
+                let rejections = Dictionary<Guid, UsageFactRejection>(state.Rejections)
 
                 let transaction =
                     { new IOperationsUsageTransaction with
+                        member _.AcquireBillingCompletenessScopeAsync(_scope, lockCancellationToken) =
+                            lockCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
+
                         member _.TryInsertRawUsageFactAsync(rawFact, insertCancellationToken) =
                             insertCancellationToken.ThrowIfCancellationRequested()
 
@@ -140,12 +161,53 @@ type private InMemoryOperationsUsageTransactionScope() =
 
                                 aggregates[aggregate.Key] <- current + aggregate.Quantity
                                 Task.CompletedTask
+
+                        member _.RecordScopedUsageFactRejectionAsync(rejection, rejectionCancellationToken) =
+                            rejectionCancellationToken.ThrowIfCancellationRequested()
+
+                            let canonical =
+                                rejections.Values
+                                |> Seq.tryFind (fun existing ->
+                                    existing.IsActive
+                                    && existing.UsageFactId = rejection.UsageFactId
+                                    && existing.Scope = rejection.Scope)
+                                |> Option.defaultWith (fun () ->
+                                    rejections.Add(rejection.RejectionId, rejection)
+                                    rejection)
+
+                            Task.FromResult canonical
+
+                        member _.RecordUnscopedUsageFactRejectionAsync(rejection, rejectionCancellationToken) =
+                            rejectionCancellationToken.ThrowIfCancellationRequested()
+                            rejections.Add(rejection.RejectionId, rejection)
+                            Task.CompletedTask
+
+                        member _.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, rejectionCancellationToken) =
+                            rejectionCancellationToken.ThrowIfCancellationRequested()
+
+                            rejections
+                            |> Seq.filter (fun pair ->
+                                pair.Value.IsActive
+                                && pair.Value.UsageFactId = Some usageFactId
+                                && pair.Value.Scope = Some scope)
+                            |> Seq.toList
+                            |> List.iter (fun pair -> rejections[pair.Key] <- { pair.Value with IsActive = false })
+
+                            Task.CompletedTask
+
+                        member _.HasActiveScopedUsageFactRejectionAsync(scope, rejectionCancellationToken) =
+                            rejectionCancellationToken.ThrowIfCancellationRequested()
+
+                            rejections.Values
+                            |> Seq.exists (fun rejection -> rejection.IsActive && rejection.Scope = Some scope)
+                            |> Task.FromResult
                     }
 
                 let! result = operation transaction cancellationToken
 
                 replaceDictionary state.RawFacts rawFacts
                 replaceDictionary state.Aggregates aggregates
+                replaceDictionary state.Rejections rejections
 
                 return result
             }

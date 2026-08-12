@@ -34,6 +34,138 @@ type RawUsageFact =
         ObservedAt: Instant
     }
 
+/// Identifies the exact owner repository and UTC calendar month whose usage completeness is coordinated together.
+type BillingCompletenessScope = { OwnerId: OwnerId; OrganizationId: OrganizationId; RepositoryId: RepositoryId; MonthStart: Instant }
+
+/// Carries whatever scope identifiers a rejected message supplied without allowing missing identifiers to imply a billing scope.
+type ReportedUsageFactScope = { OwnerId: OwnerId option; OrganizationId: OrganizationId option; RepositoryId: RepositoryId option; ObservedAt: Instant option }
+
+/// Defines the one database lock identity used by every Operations completeness-changing or completeness-reading action.
+[<RequireQualifiedAccess>]
+module BillingCompletenessScope =
+
+    /// Returns the UTC start of the calendar month containing an instant.
+    let private monthStart (instant: Instant) =
+        let utc = instant.InUtc()
+
+        LocalDate(utc.Year, utc.Month, 1)
+            .AtStartOfDayInZone(DateTimeZone.Utc)
+            .ToInstant()
+
+    /// Returns a reported observation's UTC month start without manufacturing missing tuple identifiers.
+    let monthStartForObservedAt observedAt = monthStart observedAt
+
+    /// Validates a complete repository scope and derives its half-open UTC calendar-month boundary from an observed instant.
+    let tryCreate ownerId organizationId repositoryId observedAt =
+        let errors = ResizeArray<string>()
+
+        if ownerId = OwnerId.Empty then
+            errors.Add("OwnerId is required for billing completeness coordination.")
+
+        if organizationId = OrganizationId.Empty then
+            errors.Add("OrganizationId is required for billing completeness coordination.")
+
+        if repositoryId = RepositoryId.Empty then
+            errors.Add("RepositoryId is required for billing completeness coordination.")
+
+        if errors.Count = 0 then
+            Ok { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; MonthStart = monthStart observedAt }
+        else
+            Error(List.ofSeq errors)
+
+    /// Returns the exclusive UTC start of the month after this scope's month.
+    let nextMonthStart (scope: BillingCompletenessScope) =
+        scope
+            .MonthStart
+            .InUtc()
+            .LocalDateTime.Date.PlusMonths(1)
+            .AtStartOfDayInZone(DateTimeZone.Utc)
+            .ToInstant()
+
+    /// Validates a scope supplied to a stable coordination boundary without normalizing an incorrect month silently.
+    let validate (scope: BillingCompletenessScope) =
+        match tryCreate scope.OwnerId scope.OrganizationId scope.RepositoryId scope.MonthStart with
+        | Error errors -> Error errors
+        | Ok expected when expected.MonthStart = scope.MonthStart -> Ok scope
+        | Ok _ -> Error [ "MonthStart must be the UTC start of its calendar month." ]
+
+    /// Returns the sole SQL application-lock resource name for this owner-repository-month tuple.
+    let databaseLockIdentity (scope: BillingCompletenessScope) =
+        let month = scope.MonthStart.InUtc()
+        let year = month.Year.ToString("0000", Globalization.CultureInfo.InvariantCulture)
+        let monthNumber = month.Month.ToString("00", Globalization.CultureInfo.InvariantCulture)
+        let monthIdentity = $"{year}-{monthNumber}"
+        $"Grace.Operations.BillingCompleteness/{scope.OwnerId:D}/{scope.OrganizationId:D}/{scope.RepositoryId:D}/{monthIdentity}"
+
+/// Describes an active or repaired rejection retained for operator diagnosis when a usage fact could not be accepted.
+type UsageFactRejection =
+    {
+        RejectionId: Guid
+        UsageFactId: UsageFactId option
+        Scope: BillingCompletenessScope option
+        ReportedScope: ReportedUsageFactScope option
+        Reason: string
+        IsActive: bool
+    }
+
+/// Validates rejection evidence before it reaches Operations persistence or becomes a completeness blocker.
+[<RequireQualifiedAccess>]
+module UsageFactRejection =
+
+    /// Validates that active scoped rejection evidence has a stable fact identity and that unscoped evidence cannot imply a scope.
+    let validate (rejection: UsageFactRejection) =
+        let errors = ResizeArray<string>()
+
+        if rejection.RejectionId = Guid.Empty then
+            errors.Add("RejectionId is required.")
+
+        match rejection.UsageFactId with
+        | Some usageFactId when usageFactId = UsageFactId.Empty -> errors.Add("UsageFactId must not be empty when supplied.")
+        | _ -> ()
+
+        match rejection.ReportedScope with
+        | Some reportedScope ->
+            [
+                "ReportedScope.OwnerId", reportedScope.OwnerId
+                "ReportedScope.OrganizationId", reportedScope.OrganizationId
+                "ReportedScope.RepositoryId", reportedScope.RepositoryId
+            ]
+            |> List.iter (fun (name, identifier) ->
+                match identifier with
+                | Some value when value = Guid.Empty -> errors.Add($"{name} must not be empty when supplied.")
+                | _ -> ())
+
+            match rejection.Scope, reportedScope.OwnerId, reportedScope.OrganizationId, reportedScope.RepositoryId, reportedScope.ObservedAt with
+            | Some _, _, _, _, _ -> errors.Add("A scoped rejection does not also accept a reported partial scope.")
+            | None, Some _, Some _, Some _, Some _ -> errors.Add("A complete reported scope must be recorded as a scoped rejection.")
+            | _ -> ()
+        | None -> ()
+
+        if String.IsNullOrWhiteSpace rejection.Reason then
+            errors.Add("Rejection reason is required.")
+
+        if not rejection.IsActive then
+            errors.Add("Recorded usage rejections must be active; repair occurs through accepted or replayed usage.")
+
+        if rejection.Reason.Length > OperationsUsageSql.ArchiveFailureReasonMaxLength then
+            errors.Add($"Rejection reason must be {OperationsUsageSql.ArchiveFailureReasonMaxLength} characters or fewer.")
+
+        match rejection.Scope, rejection.UsageFactId with
+        | Some _, None -> errors.Add("A scoped rejection requires a UsageFactId.")
+        | Some scope, Some _ ->
+            match BillingCompletenessScope.tryCreate scope.OwnerId scope.OrganizationId scope.RepositoryId scope.MonthStart with
+            | Ok validatedScope when validatedScope.MonthStart = scope.MonthStart -> ()
+            | Ok _ -> errors.Add("Scoped rejection MonthStart must be a UTC month boundary.")
+            | Error scopeErrors -> scopeErrors |> List.iter errors.Add
+        | None, _ -> ()
+
+        if errors.Count = 0 then Ok rejection else Error(List.ofSeq errors)
+
+/// Reports whether the currently committed evidence permits a caller to regard one scope as complete.
+type BillingCompletenessResult =
+    | Complete
+    | BlockedByActiveScopedRejection
+
 /// Identifies one UTC minute aggregate row in `ops.UsageAggregateMinute`.
 type UsageAggregateMinuteKey =
     {
@@ -530,6 +662,10 @@ module UsageFactPersistencePlan =
 /// Represents the commands available inside one durable operations usage transaction.
 type IOperationsUsageTransaction =
 
+    /// Acquires the central database resource that serializes all completeness actions for one owner repository month.
+    abstract AcquireBillingCompletenessScopeAsync: scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task
+
+
     /// Attempts to insert the raw fact, returning `false` when `UsageFactId` already exists.
     abstract TryInsertRawUsageFactAsync: rawFact: RawUsageFact * cancellationToken: CancellationToken -> Task<bool>
 
@@ -539,6 +675,18 @@ type IOperationsUsageTransaction =
 
     /// Adds the accepted raw fact quantity to the derived minute aggregate.
     abstract AddToUsageAggregateMinuteAsync: aggregate: UsageAggregateMinute * cancellationToken: CancellationToken -> Task
+
+    /// Records one scoped rejection or returns the first active canonical rejection for the same fact and scope.
+    abstract RecordScopedUsageFactRejectionAsync: rejection: UsageFactRejection * cancellationToken: CancellationToken -> Task<UsageFactRejection>
+
+    /// Persists an incompletely scoped rejection for operator repair without giving it any completeness scope.
+    abstract RecordUnscopedUsageFactRejectionAsync: rejection: UsageFactRejection * cancellationToken: CancellationToken -> Task
+
+    /// Resolves the active scoped rejection for an accepted or replayed usage fact without releasing the scope lock.
+    abstract ResolveScopedUsageFactRejectionAsync: usageFactId: UsageFactId * scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task
+
+    /// Reads active scoped rejection evidence after the central scope lock has been acquired.
+    abstract HasActiveScopedUsageFactRejectionAsync: scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task<bool>
 
 /// Runs operations usage mutations inside one storage transaction boundary.
 type IOperationsUsageTransactionScope =
@@ -574,6 +722,16 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
 
     /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
     let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
+
+    /// Converts a UTC SQL timestamp into the instant carried by Operations data contracts.
+    let toInstant (dateTime: DateTime) =
+        let utc =
+            if dateTime.Kind = DateTimeKind.Utc then
+                dateTime
+            else
+                DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)
+
+        Instant.FromDateTimeUtc utc
 
     /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
     let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
@@ -620,7 +778,55 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
         addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
 
+    /// Adds the exact owner-repository-month parameters derived only by the central scope contract.
+    let addBillingCompletenessScopeParameters (command: SqlCommand) (scope: BillingCompletenessScope) =
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier scope.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier scope.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier scope.RepositoryId
+        addParameter command "@MonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime scope.MonthStart)
+
+    /// Acquires the one transaction-owned SQL application lock for a validated completeness scope.
+    let acquireBillingCompletenessScopeAsync (scope: BillingCompletenessScope) cancellationToken =
+        task {
+            match BillingCompletenessScope.validate scope with
+            | Error errors -> invalidArg (nameof scope) (String.Join("; ", errors))
+            | Ok _ -> ()
+
+            use command = createCommand OperationsUsageSql.AcquireBillingCompletenessScopeLock
+
+            addStringParameter command "@BillingCompletenessLockResource" 255 (BillingCompletenessScope.databaseLockIdentity scope)
+
+            addParameter command "@BillingCompletenessLockTimeoutMilliseconds" SqlDbType.Int 30000
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
+    /// Adds the scoped rejection parameters shared by canonical record, repair, and completeness reads.
+    let addScopedUsageFactRejectionParameters (command: SqlCommand) usageFactId (scope: BillingCompletenessScope) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
+        addBillingCompletenessScopeParameters command scope
+
+    /// Reads the canonical rejection returned by the record command.
+    let readUsageFactRejection (reader: SqlDataReader) =
+        {
+            RejectionId = reader.GetGuid(reader.GetOrdinal("RejectionId"))
+            UsageFactId = Some(reader.GetGuid(reader.GetOrdinal("UsageFactId")))
+            Scope =
+                Some
+                    {
+                        OwnerId = reader.GetGuid(reader.GetOrdinal("OwnerId"))
+                        OrganizationId = reader.GetGuid(reader.GetOrdinal("OrganizationId"))
+                        RepositoryId = reader.GetGuid(reader.GetOrdinal("RepositoryId"))
+                        MonthStart = toInstant (reader.GetDateTime(reader.GetOrdinal("MonthStartUtc")))
+                    }
+            ReportedScope = None
+            Reason = reader.GetString(reader.GetOrdinal("Reason"))
+            IsActive = reader.GetBoolean(reader.GetOrdinal("IsActive"))
+        }
+
     interface IOperationsUsageTransaction with
+
+        member _.AcquireBillingCompletenessScopeAsync(scope, cancellationToken) = acquireBillingCompletenessScopeAsync scope cancellationToken
 
         member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) =
             task {
@@ -645,6 +851,101 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
                 addUsageAggregateMinuteParameters command aggregate
                 let! _ = command.ExecuteNonQueryAsync cancellationToken
                 return ()
+            }
+
+        member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) =
+            task {
+                let usageFactId =
+                    rejection.UsageFactId
+                    |> Option.defaultWith (fun () -> invalidArg (nameof rejection) "Scoped rejection UsageFactId is required.")
+
+                let scope =
+                    rejection.Scope
+                    |> Option.defaultWith (fun () -> invalidArg (nameof rejection) "Scoped rejection scope is required.")
+
+                use command = createCommand OperationsUsageSql.RecordScopedUsageFactRejection
+                addParameter command "@RejectionId" SqlDbType.UniqueIdentifier rejection.RejectionId
+                addScopedUsageFactRejectionParameters command usageFactId scope
+                addStringParameter command "@Reason" OperationsUsageSql.ArchiveFailureReasonMaxLength rejection.Reason
+                use! reader = command.ExecuteReaderAsync cancellationToken
+                let! hasRow = reader.ReadAsync cancellationToken
+
+                if not hasRow then
+                    invalidOp "Operations SQL did not return the canonical scoped usage rejection."
+
+                return readUsageFactRejection reader
+            }
+
+        member _.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.RecordUnscopedUsageFactRejection
+                addParameter command "@RejectionId" SqlDbType.UniqueIdentifier rejection.RejectionId
+
+                addParameter
+                    command
+                    "@UsageFactId"
+                    SqlDbType.UniqueIdentifier
+                    (rejection.UsageFactId
+                     |> Option.map box
+                     |> Option.defaultValue DBNull.Value)
+
+                let reportedScope = rejection.ReportedScope
+
+                let addOptionalIdentifier name value =
+                    addParameter
+                        command
+                        name
+                        SqlDbType.UniqueIdentifier
+                        (value
+                         |> Option.map box
+                         |> Option.defaultValue DBNull.Value)
+
+                addOptionalIdentifier
+                    "@OwnerId"
+                    (reportedScope
+                     |> Option.bind (fun value -> value.OwnerId))
+
+                addOptionalIdentifier
+                    "@OrganizationId"
+                    (reportedScope
+                     |> Option.bind (fun value -> value.OrganizationId))
+
+                addOptionalIdentifier
+                    "@RepositoryId"
+                    (reportedScope
+                     |> Option.bind (fun value -> value.RepositoryId))
+
+                addParameter
+                    command
+                    "@MonthStartUtc"
+                    SqlDbType.DateTime2
+                    (reportedScope
+                     |> Option.bind (fun value -> value.ObservedAt)
+                     |> Option.map (
+                         BillingCompletenessScope.monthStartForObservedAt
+                         >> fun value -> box (value.ToDateTimeUtc())
+                     )
+                     |> Option.defaultValue DBNull.Value)
+
+                addStringParameter command "@Reason" OperationsUsageSql.ArchiveFailureReasonMaxLength rejection.Reason
+                let! _ = command.ExecuteNonQueryAsync cancellationToken
+                return ()
+            }
+
+        member _.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.ResolveScopedUsageFactRejection
+                addScopedUsageFactRejectionParameters command usageFactId scope
+                let! _ = command.ExecuteNonQueryAsync cancellationToken
+                return ()
+            }
+
+        member _.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.HasActiveScopedUsageFactRejection
+                addBillingCompletenessScopeParameters command scope
+                let! value = command.ExecuteScalarAsync cancellationToken
+                return Convert.ToBoolean value
             }
 
 /// Runs operations usage mutations inside a concrete Azure SQL transaction boundary.
@@ -1449,6 +1750,16 @@ type OperationsUsageSchemaInitializationBarrier(schema: IOperationsUsageSchemaIn
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
+    /// Acquires the shared owner-month lock before running a completeness-changing usage mutation.
+    let acquireScopeAsync (transaction: IOperationsUsageTransaction) (rawFact: RawUsageFact) cancellationToken =
+        task {
+            match BillingCompletenessScope.tryCreate rawFact.OwnerId rawFact.OrganizationId rawFact.RepositoryId rawFact.ObservedAt with
+            | Error errors -> return invalidOp (String.Join("; ", errors))
+            | Ok scope ->
+                do! transaction.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
+                return scope
+        }
+
     /// Stores a usage fact exactly once by durable `UsageFactId` and projects aggregates only for newly accepted facts.
     member _.StoreUsageFactAsync(fact: UsageFact, rawPayload: byte array, cancellationToken: CancellationToken) =
         task {
@@ -1457,6 +1768,8 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
             | Ok plan ->
                 let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
                     task {
+                        let! scope = acquireScopeAsync transaction plan.RawFact operationCancellationToken
+                        do! transaction.ResolveScopedUsageFactRejectionAsync(plan.RawFact.UsageFactId, scope, operationCancellationToken)
                         let! accepted = transaction.TryInsertRawUsageFactAsync(plan.RawFact, operationCancellationToken)
 
                         if accepted then
@@ -1482,6 +1795,8 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
                 | Ok plan ->
                     let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
                         task {
+                            let! scope = acquireScopeAsync transaction plan.RawFact operationCancellationToken
+                            do! transaction.ResolveScopedUsageFactRejectionAsync(plan.RawFact.UsageFactId, scope, operationCancellationToken)
                             let! accepted = transaction.TryInsertReplayedArchivedUsageFactAsync(plan.RawFact, pointer, operationCancellationToken)
 
                             if accepted then
@@ -1494,4 +1809,39 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
                     let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
                     return Ok result
+        }
+
+    /// Records a rejected fact through the same scope lock when its tuple is known, otherwise preserves it without scope.
+    member _.RecordUsageFactRejectionAsync(rejection: UsageFactRejection, cancellationToken: CancellationToken) =
+        task {
+            match UsageFactRejection.validate rejection with
+            | Error errors -> return Error errors
+            | Ok validRejection ->
+                let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
+                    task {
+                        match validRejection.Scope with
+                        | Some scope ->
+                            do! transaction.AcquireBillingCompletenessScopeAsync(scope, operationCancellationToken)
+                            let! canonical = transaction.RecordScopedUsageFactRejectionAsync(validRejection, operationCancellationToken)
+                            return Some canonical
+                        | None ->
+                            do! transaction.RecordUnscopedUsageFactRejectionAsync(validRejection, operationCancellationToken)
+                            return None
+                    }
+
+                let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
+                return Ok result
+        }
+
+    /// Evaluates active scoped rejection evidence while holding the same database lock as accepted usage and replay.
+    member _.EvaluateBillingCompletenessAsync(scope: BillingCompletenessScope, cancellationToken: CancellationToken) =
+        task {
+            let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
+                task {
+                    do! transaction.AcquireBillingCompletenessScopeAsync(scope, operationCancellationToken)
+                    let! hasBlocker = transaction.HasActiveScopedUsageFactRejectionAsync(scope, operationCancellationToken)
+                    return if hasBlocker then BlockedByActiveScopedRejection else Complete
+                }
+
+            return! transactionScope.ExecuteAsync(operation, cancellationToken)
         }

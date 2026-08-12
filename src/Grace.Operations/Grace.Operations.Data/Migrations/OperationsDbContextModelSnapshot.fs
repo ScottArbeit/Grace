@@ -175,6 +175,90 @@ type OperationsDbContextModelSnapshot() =
             .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
         |> ignore
 
+        let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()
+
+        rejection.ToTable("UsageFactRejection", "ops")
+        |> ignore
+
+        rejection
+            .HasKey([| "RejectionId" |])
+            .HasName("PK_ops_UsageFactRejection")
+        |> ignore
+
+        rejection
+            .Property<Guid>("RejectionId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        for name in
+            [
+                "UsageFactId"
+                "OwnerId"
+                "OrganizationId"
+                "RepositoryId"
+            ] do
+            rejection
+                .Property<Nullable<Guid>>(name)
+                .HasColumnType("uniqueidentifier")
+            |> ignore
+
+        rejection
+            .Property<Nullable<DateTime>>("MonthStartUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rejection
+            .Property<string>("Reason")
+            .HasMaxLength(400)
+            .IsRequired()
+        |> ignore
+
+        rejection.Property<bool>("IsActive").IsRequired()
+        |> ignore
+
+        rejection
+            .Property<Nullable<DateTime>>("ResolvedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rejection
+            .Property<DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        rejection
+            .HasIndex(
+                [|
+                    "UsageFactId"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "MonthStartUtc"
+                |]
+            )
+            .HasDatabaseName("UX_ops_UsageFactRejection_ActiveScopedFact")
+            .IsUnique()
+            .HasFilter(
+                "[IsActive] = 1 AND [UsageFactId] IS NOT NULL AND [OwnerId] IS NOT NULL AND [OrganizationId] IS NOT NULL AND [RepositoryId] IS NOT NULL AND [MonthStartUtc] IS NOT NULL"
+            )
+        |> ignore
+
+        rejection
+            .HasIndex(
+                [|
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "MonthStartUtc"
+                    "IsActive"
+                |]
+            )
+            .HasDatabaseName("IX_ops_UsageFactRejection_ActiveScope")
+        |> ignore
+
         let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()
 
         aggregate.ToTable("UsageAggregateMinute", "ops")
