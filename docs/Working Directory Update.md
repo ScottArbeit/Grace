@@ -1,6 +1,6 @@
 # Working Directory Update
 
-**Status:** Design-ready; implementation projections pending
+**Status:** Plan-ready; exact lifecycle projection packet validated
 **Quality contract:** Product V1
 **Canonical source:** `docs/Working Directory Update.md`
 **Evidence current through:** 2026-08-12, epic base `ff6305130c6bf18c6db0aa1096a251e64a4041d5`
@@ -253,11 +253,30 @@ Each row has one primary implementation owner even when companion issues prove a
 
 Static validation parses the fenced JSON and its closed grammar, rejects unknown or malformed predicates, expands every
 Cartesian cell, rejects overlap, and verifies row, outcome, marker, and cancellation coverage. It also asserts every
-`FinalizationIncomplete` row has a nonzero exit and Doctor guidance. Issue #882 must consume these declarations without
-inventing wildcard or precedence rules. Behavioral proof must use production-reachable persisted facts and
+`FinalizationIncomplete` row has a nonzero exit and Doctor guidance. Issue #890 consumes these declarations through one
+exact assignment plan without inventing wildcard or precedence rules. Behavioral proof must use production-reachable persisted facts and
 deterministic seams; source-string assertions, sleeps, and impossible hand-built states are insufficient.
 
-The following consumers remain pending projections rather than competing authorities:
+<!-- grace:wdu-lifecycle-projection-plan:start -->
+```json
+{
+  "schema": "grace.wdu.lifecycle-projection-plan/v1",
+  "assignments": [
+    {"artifact":"adr-0011","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-023","WDU-LC-025","WDU-LC-026","WDU-LC-030","WDU-LC-033","WDU-LC-035","WDU-LC-036","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"],"proof":"Record the lasting Branch transaction lifecycle and reference canonical rows without copying their order."},
+    {"artifact":"epic-835","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-030","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"],"proof":"Keep the epic dependency and requirement packet aligned with the sole canonical lifecycle."},
+    {"artifact":"issue-842","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109","WDU-LC-115","WDU-LC-116","WDU-LC-110","WDU-LC-111","WDU-LC-112","WDU-LC-113","WDU-LC-114","WDU-LC-120","WDU-LC-121","WDU-LC-122","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-141","WDU-LC-142","WDU-LC-143","WDU-LC-003"],"proof":"Prove Branch-only Doctor retry, refusal, cancellation boundaries, terminal replay, and no working-file mutation."},
+    {"artifact":"issue-843","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-101","WDU-LC-103"],"proof":"Consume the completed Branch lifecycle while deferring the first real Watch producer and retry proof to this issue."},
+    {"artifact":"issue-846","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-030","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"],"proof":"Audit the completed 17/9 packet, public outcomes, Doctor guidance, and removal of competing lifecycle paths."},
+    {"artifact":"issue-869","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-100"],"proof":"Persist typed selection and marker facts that select canonical admission, refusal, cleanup, and retry rows."},
+    {"artifact":"issue-870","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-026","WDU-LC-027","WDU-LC-036","WDU-LC-037","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-115","WDU-LC-116","WDU-LC-140","WDU-LC-141","WDU-LC-142","WDU-LC-143","WDU-LC-003"],"proof":"Implement exact-root DirectoryVersion switching with fresh planning, mutation boundaries, retry, and current-Branch retention."},
+    {"artifact":"issue-871","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-020","WDU-LC-021","WDU-LC-022","WDU-LC-023","WDU-LC-024","WDU-LC-025","WDU-LC-030","WDU-LC-031","WDU-LC-032","WDU-LC-033","WDU-LC-034","WDU-LC-035","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109","WDU-LC-110","WDU-LC-111","WDU-LC-112","WDU-LC-113","WDU-LC-114","WDU-LC-120","WDU-LC-121","WDU-LC-122","WDU-LC-123","WDU-LC-130","WDU-LC-003"],"proof":"Implement repeatable Reference previous, selected, and third-state finalization with truthful retry outcomes."},
+    {"artifact":"issue-872","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-003"],"proof":"Prove Save and no-Save admission preserve one sealed baseline and action token through the final pre-mutation reread."}
+  ]
+}
+```
+<!-- grace:wdu-lifecycle-projection-plan:end -->
+
+The following consumers carry generated projections rather than competing lifecycle sequences:
 
 - #869 persists selection and marker predicates.
 - #870 proves initial-run and cancellation rows.
@@ -267,9 +286,9 @@ The following consumers remain pending projections rather than competing authori
 - #843–#845 later consume the transaction contract for Watch and Connect.
 - #846 audits public output, Doctor guidance, row references, and absence of retired paths.
 
-ADR 0011 and active issue bodies remain contextual consumers until their #882 projections cite row IDs. They must not be
-treated as lifecycle ordering authority. This document returns to Plan-ready only after those projections validate
-against the machine-readable block.
+ADR 0011 and active issue bodies remain contextual consumers. The #890 checker validates only their exact
+marker-delimited projections and ignores surrounding Markdown or prose. This document is Plan-ready after the complete
+exported packet validates against the compiled canonical block.
 
 The bounded Product V1 residual risk remains interruption after working-tree mutation but before SQLite local
 completion. `WDU-LC-002` requires truthful `UpdateIncomplete` and fresh revalidation; Grace does not guess, roll back,
