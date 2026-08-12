@@ -16,9 +16,18 @@ $script:RequiredArtifactIds = @(
     'issue-843',
     'issue-846',
     'issue-869',
-    'issue-870',
+    'issue-898',
+    'issue-899',
+    'issue-900',
+    'issue-901',
     'issue-871',
     'issue-872'
+)
+$script:RequiredNonLifecycleArtifacts = @(
+    [pscustomobject]@{
+        Artifact = 'issue-897'
+        Reason = 'The supersession correction owns packet alignment and publication preparation, not a lifecycle-row delivery; the checker exports lifecycle consumers only.'
+    }
 )
 
 function Fail-Projection {
@@ -173,16 +182,36 @@ function Read-WduLifecycleProjectionPlan {
     $text = Normalize-LineEndings ([IO.File]::ReadAllText($resolved))
     $marked = Get-SingleMarkedBlock $text $script:PlanStartMarker $script:PlanEndMarker $resolved
     $plan = ConvertFrom-ExactJsonObject $marked.Content $resolved
-    Assert-ExactObjectProperties $plan @('schema', 'assignments') '$' $resolved
+    Assert-ExactObjectProperties $plan @('schema', 'nonLifecycleArtifacts', 'assignments') '$' $resolved
     Assert-NonBlankString $plan['schema'] '$.schema' $resolved
     if (-not [StringComparer]::Ordinal.Equals($plan['schema'], $script:PlanSchema)) {
         Fail-Projection $resolved "$.schema must equal '$script:PlanSchema'"
+    }
+    if ($plan['nonLifecycleArtifacts'] -is [string] -or $plan['nonLifecycleArtifacts'] -is [System.Collections.IDictionary] -or $plan['nonLifecycleArtifacts'] -isnot [System.Collections.IEnumerable]) {
+        Fail-Projection $resolved '$.nonLifecycleArtifacts must be a JSON array'
+    }
+    $rawNonLifecycleArtifacts = @($plan['nonLifecycleArtifacts'])
+    if ($rawNonLifecycleArtifacts.Count -ne $script:RequiredNonLifecycleArtifacts.Count) {
+        Fail-Projection $resolved '$.nonLifecycleArtifacts must contain the complete declared non-lifecycle packet'
+    }
+    for ($nonLifecycleIndex = 0; $nonLifecycleIndex -lt $rawNonLifecycleArtifacts.Count; $nonLifecycleIndex++) {
+        $rawNonLifecycle = $rawNonLifecycleArtifacts[$nonLifecycleIndex]
+        Assert-ExactObjectProperties $rawNonLifecycle @('artifact', 'reason') '$.nonLifecycleArtifacts[]' $resolved
+        Assert-NonBlankString $rawNonLifecycle['artifact'] '$.nonLifecycleArtifacts[].artifact' $resolved
+        Assert-NonBlankString $rawNonLifecycle['reason'] '$.nonLifecycleArtifacts[].reason' $resolved
+        $requiredNonLifecycle = $script:RequiredNonLifecycleArtifacts[$nonLifecycleIndex]
+        if (-not [StringComparer]::Ordinal.Equals($rawNonLifecycle['artifact'], $requiredNonLifecycle.Artifact)) {
+            Fail-Projection $resolved "$.nonLifecycleArtifacts must declare excluded artifact '$($requiredNonLifecycle.Artifact)' at ordinal $($nonLifecycleIndex + 1), not '$($rawNonLifecycle['artifact'])'"
+        }
+        if (-not [StringComparer]::Ordinal.Equals($rawNonLifecycle['reason'], $requiredNonLifecycle.Reason)) {
+            Fail-Projection $resolved "$.nonLifecycleArtifacts has a stale reason for excluded artifact '$($requiredNonLifecycle.Artifact)'"
+        }
     }
     if ($plan['assignments'] -is [string] -or $plan['assignments'] -is [System.Collections.IDictionary] -or $plan['assignments'] -isnot [System.Collections.IEnumerable]) {
         Fail-Projection $resolved '$.assignments must be a JSON array'
     }
     $rawAssignments = @($plan['assignments'])
-    if ($rawAssignments.Count -ne 9) { Fail-Projection $resolved '$.assignments must contain the complete nine-artifact packet' }
+    if ($rawAssignments.Count -ne $script:RequiredArtifactIds.Count) { Fail-Projection $resolved "$.assignments must contain the complete $($script:RequiredArtifactIds.Count)-artifact packet" }
     $knownRows = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($rowId in $Compiled.RowIds) { $null = $knownRows.Add($rowId) }
     $coveredRows = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

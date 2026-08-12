@@ -26,8 +26,10 @@ justify three local-integrity implementations.
 
 ## Decision
 
-- The internal module exposes one generic `run` operation and one `retryFinalization` operation. Caller-specific
-  constructors create private normalized requests.
+- The internal module exposes one exact five-input Branch `run` operation—sealed accepted phase, typed selection,
+  exact target graph, immutable prepared content, and diagnostic correlation—and one persisted-facts-only
+  `retryFinalization` operation. Callers cannot supply alternate paths, status graphs, readers, writers, finalizers,
+  or generic request bags.
 - Target identity contains repository, branch, root DirectoryVersion, SHA-256, and BLAKE3. Caller operation identity is
   separate and deterministic. Each execution attempt receives a separate random marker token.
 - Prepared-content adapters expose exact immutable manifests and readable uncompressed bytes. They never provide
@@ -53,6 +55,23 @@ justify three local-integrity implementations.
 - Connect keeps its zip download. It stages and validates the zip before lease acquisition, performs no network reads
   under the lease, verifies objects before populating the working directory, and limits `--force` to conflicting target
   paths.
+
+## Serial delivery and proof boundary
+
+The active exact-root packet is serial. #898 owns the finite collision-safe topology planner; #899 owns the real
+five-input transaction through verified pending SQLite completion; #900 owns DirectoryVersion terminalization and
+filesystem-free retry; and #901 owns hash-selected Branch wiring. Closed #870 and PR #895 are historical evidence,
+not active delivery, dependency, or projection artifacts.
+
+Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
+legacy materialization, or WDU leases. Only the WDU transaction holds its local lease for fresh reread, mutation,
+SQLite completion, and terminal outcome. Markers and sidecars are evidence, not leases.
+
+SQLite terminal completion is decisive durable truth. Marker and sidecar evidence cannot manufacture, downgrade, or
+replace it. For DirectoryVersion retry, fresh evidence selects exact-marker cleanup when an exact marker exists or
+terminal SQLite recording when it is missing; cancellation is observed immediately before that selected first write
+only. After it begins, durable evidence determines the result. Direct production-runtime proof uses the five-input
+operation and persisted retry entry with real filesystem and SQLite facts.
 
 The complete requirements, state model, propagation map, and proof contract are in
 [Working Directory Update](../Working%20Directory%20Update.md).
