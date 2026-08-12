@@ -23,7 +23,7 @@ module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let SchemaVersion = "10"
+    let SchemaVersion = "11"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -45,6 +45,7 @@ module LocalStateDb =
     /// Carries the bounded caller facts that distinguish one pending finalization from another.
     type internal WorkingDirectoryUpdateCompletionDetails =
         | BranchFinalization of previousBranchId: BranchId * selectedReferenceId: ReferenceId
+        | BranchDirectoryVersionFinalization of previousBranchId: BranchId
         | WatchFinalization of eventCursor: string
         | ConnectCompletion of initialCursor: string * localRootScope: WorkingDirectoryUpdate.LocalRootScope
 
@@ -54,7 +55,7 @@ module LocalStateDb =
             target: WorkingDirectoryUpdate.Target *
             operation: WorkingDirectoryUpdate.Operation *
             previousBranchId: BranchId *
-            selectedReferenceId: ReferenceId
+            selection: WorkingDirectoryUpdate.BranchSelection
         | PendingWatchFinalization of target: WorkingDirectoryUpdate.Target * operation: WorkingDirectoryUpdate.Operation * eventCursor: string
 
     [<Literal>]
@@ -255,7 +256,7 @@ module LocalStateDb =
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
             "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE TABLE IF NOT EXISTS remote_reference_boundaries (repository_id TEXT NOT NULL, branch_id TEXT NOT NULL, root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, root_directory_blake3_hash TEXT NOT NULL, event_cursor TEXT NOT NULL, PRIMARY KEY (repository_id, branch_id));"
-            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, target_repository_id TEXT NOT NULL, target_branch_id TEXT NOT NULL, target_root_directory_version_id TEXT NOT NULL, target_root_directory_sha256_hash TEXT NOT NULL, target_root_directory_blake3_hash TEXT NOT NULL, branch_previous_branch_id TEXT NULL, branch_selected_reference_id TEXT NULL, watch_event_cursor TEXT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL, CHECK ((caller_kind = 'Branch' AND branch_previous_branch_id IS NOT NULL AND branch_selected_reference_id IS NOT NULL AND watch_event_cursor IS NULL) OR (caller_kind = 'Watch' AND branch_previous_branch_id IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NOT NULL) OR (caller_kind = 'Connect' AND branch_previous_branch_id IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NULL)));"
+            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, target_repository_id TEXT NOT NULL, target_branch_id TEXT NOT NULL, target_root_directory_version_id TEXT NOT NULL, target_root_directory_sha256_hash TEXT NOT NULL, target_root_directory_blake3_hash TEXT NOT NULL, branch_previous_branch_id TEXT NULL, branch_selection_kind TEXT NULL CHECK (branch_selection_kind IN ('Reference', 'DirectoryVersion')), branch_selected_reference_id TEXT NULL, watch_event_cursor TEXT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL, CHECK ((caller_kind = 'Branch' AND branch_previous_branch_id IS NOT NULL AND ((branch_selection_kind = 'Reference' AND branch_selected_reference_id IS NOT NULL) OR (branch_selection_kind = 'DirectoryVersion' AND branch_selected_reference_id IS NULL)) AND watch_event_cursor IS NULL) OR (caller_kind = 'Watch' AND branch_previous_branch_id IS NULL AND branch_selection_kind IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NOT NULL) OR (caller_kind = 'Connect' AND branch_previous_branch_id IS NULL AND branch_selection_kind IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NULL)));"
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_pending ON working_directory_update_completions(finalization_state) WHERE finalization_state = 'Pending';"
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_terminal_caller ON working_directory_update_completions(caller_kind) WHERE finalization_state = 'Terminal';"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
@@ -1543,6 +1544,8 @@ module LocalStateDb =
         && columnExists connection "status_files" "blake3_hash"
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
+        && columnExists connection "working_directory_update_completions" "branch_selection_kind"
+        && columnExists connection "working_directory_update_completions" "branch_selected_reference_id"
         && tableExists connection "watch_journal"
         && tableExists connection "watch_lifecycle_events"
         && hasRequiredWatchJournalShape connection
@@ -3112,10 +3115,20 @@ module LocalStateDb =
         let operationMatches expectedOperation = WorkingDirectoryUpdate.Operation.value expectedOperation = WorkingDirectoryUpdate.Operation.value operation
 
         match WorkingDirectoryUpdate.Operation.callerKind operation, completionDetails with
+        | WorkingDirectoryUpdate.CallerKind.Branch, BranchDirectoryVersionFinalization previousBranchId when
+            WorkingDirectoryUpdate.Target.branchId target
+            <> previousBranchId
+            ->
+            invalidArg (nameof completionDetails) "DirectoryVersion Branch completion must retain the current Branch."
         | WorkingDirectoryUpdate.CallerKind.Branch, BranchFinalization (previousBranchId, selectedReferenceId) ->
             match WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target with
             | Ok expectedOperation when operationMatches expectedOperation -> ()
-            | _ -> invalidArg (nameof completionDetails) "Branch completion details must exactly match its target, previous branch, and selected Reference."
+            | _ -> invalidArg (nameof completionDetails) "Branch completion details must exactly match its target, previous branch, and typed selector."
+        | WorkingDirectoryUpdate.CallerKind.Branch, BranchDirectoryVersionFinalization previousBranchId ->
+            match WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion target
+                with
+            | Ok expectedOperation when operationMatches expectedOperation -> ()
+            | _ -> invalidArg (nameof completionDetails) "Branch completion details must exactly match its target, previous branch, and typed selector."
         | WorkingDirectoryUpdate.CallerKind.Watch, WatchFinalization eventCursor ->
             match
                 WorkingDirectoryUpdate.Operation.watchReplay
@@ -3354,12 +3367,14 @@ module LocalStateDb =
 
                                 let targetCanonical = WorkingDirectoryUpdate.Target.canonical target
 
-                                let branchPreviousBranchId, branchSelectedReferenceId, watchEventCursor =
+                                let branchPreviousBranchId, branchSelectionKind, branchSelectedReferenceId, watchEventCursor =
                                     match completionDetails with
                                     | BranchFinalization (previousBranchId, selectedReferenceId) ->
-                                        Some(previousBranchId.ToString()), Some(selectedReferenceId.ToString()), None
-                                    | WatchFinalization eventCursor -> None, None, Some eventCursor
-                                    | ConnectCompletion _ -> None, None, None
+                                        Some(previousBranchId.ToString()), Some "Reference", Some(selectedReferenceId.ToString()), None
+                                    | BranchDirectoryVersionFinalization previousBranchId ->
+                                        Some(previousBranchId.ToString()), Some "DirectoryVersion", None, None
+                                    | WatchFinalization eventCursor -> None, None, None, Some eventCursor
+                                    | ConnectCompletion _ -> None, None, None, None
 
                                 let nullableText value =
                                     value
@@ -3409,6 +3424,7 @@ module LocalStateDb =
                                             parameters.AddWithValue("$event_cursor", cursor)
                                             |> ignore)
                                 | BranchFinalization _
+                                | BranchDirectoryVersionFinalization _
                                 | WatchFinalization _ -> ()
 
                                 if operationCallerKind = WorkingDirectoryUpdate.CallerKind.Connect then
@@ -3422,7 +3438,7 @@ module LocalStateDb =
                                 use completionCommand = connection.CreateCommand()
 
                                 completionCommand.CommandText <-
-                                    "INSERT INTO working_directory_update_completions (operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selected_reference_id, watch_event_cursor, finalization_state, completed_at_unix_ticks) VALUES ($operation_value, $caller_kind, $target_canonical, $target_repository_id, $target_branch_id, $target_root_directory_version_id, $target_root_directory_sha256_hash, $target_root_directory_blake3_hash, $branch_previous_branch_id, $branch_selected_reference_id, $watch_event_cursor, $finalization_state, $completed_at) ON CONFLICT(operation_value) DO UPDATE SET completed_at_unix_ticks = excluded.completed_at_unix_ticks WHERE working_directory_update_completions.caller_kind = excluded.caller_kind AND working_directory_update_completions.target_canonical = excluded.target_canonical AND working_directory_update_completions.target_repository_id = excluded.target_repository_id AND working_directory_update_completions.target_branch_id = excluded.target_branch_id AND working_directory_update_completions.target_root_directory_version_id = excluded.target_root_directory_version_id AND working_directory_update_completions.target_root_directory_sha256_hash = excluded.target_root_directory_sha256_hash AND working_directory_update_completions.target_root_directory_blake3_hash = excluded.target_root_directory_blake3_hash AND working_directory_update_completions.branch_previous_branch_id IS excluded.branch_previous_branch_id AND working_directory_update_completions.branch_selected_reference_id IS excluded.branch_selected_reference_id AND working_directory_update_completions.watch_event_cursor IS excluded.watch_event_cursor AND working_directory_update_completions.finalization_state = excluded.finalization_state;"
+                                    "INSERT INTO working_directory_update_completions (operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selection_kind, branch_selected_reference_id, watch_event_cursor, finalization_state, completed_at_unix_ticks) VALUES ($operation_value, $caller_kind, $target_canonical, $target_repository_id, $target_branch_id, $target_root_directory_version_id, $target_root_directory_sha256_hash, $target_root_directory_blake3_hash, $branch_previous_branch_id, $branch_selection_kind, $branch_selected_reference_id, $watch_event_cursor, $finalization_state, $completed_at) ON CONFLICT(operation_value) DO UPDATE SET completed_at_unix_ticks = excluded.completed_at_unix_ticks WHERE working_directory_update_completions.caller_kind = excluded.caller_kind AND working_directory_update_completions.target_canonical = excluded.target_canonical AND working_directory_update_completions.target_repository_id = excluded.target_repository_id AND working_directory_update_completions.target_branch_id = excluded.target_branch_id AND working_directory_update_completions.target_root_directory_version_id = excluded.target_root_directory_version_id AND working_directory_update_completions.target_root_directory_sha256_hash = excluded.target_root_directory_sha256_hash AND working_directory_update_completions.target_root_directory_blake3_hash = excluded.target_root_directory_blake3_hash AND working_directory_update_completions.branch_previous_branch_id IS excluded.branch_previous_branch_id AND working_directory_update_completions.branch_selection_kind IS excluded.branch_selection_kind AND working_directory_update_completions.branch_selected_reference_id IS excluded.branch_selected_reference_id AND working_directory_update_completions.watch_event_cursor IS excluded.watch_event_cursor AND working_directory_update_completions.finalization_state = excluded.finalization_state;"
 
                                 completionCommand.Parameters.AddWithValue("$operation_value", operationValue)
                                 |> ignore
@@ -3457,6 +3473,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 completionCommand.Parameters.AddWithValue("$branch_previous_branch_id", nullableText branchPreviousBranchId)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$branch_selection_kind", nullableText branchSelectionKind)
                                 |> ignore
 
                                 completionCommand.Parameters.AddWithValue("$branch_selected_reference_id", nullableText branchSelectedReferenceId)
@@ -3863,7 +3882,7 @@ module LocalStateDb =
             use command = connection.CreateCommand()
 
             command.CommandText <-
-                "SELECT operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selected_reference_id, watch_event_cursor FROM working_directory_update_completions WHERE finalization_state = 'Pending' LIMIT 1;"
+                "SELECT operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selection_kind, branch_selected_reference_id, watch_event_cursor FROM working_directory_update_completions WHERE finalization_state = 'Pending' LIMIT 1;"
 
             use reader = command.ExecuteReader()
 
@@ -3901,13 +3920,21 @@ module LocalStateDb =
                     match callerKind with
                     | "Branch" ->
                         let previousBranchId = requiredGuid 8 "branch_previous_branch_id"
-                        let selectedReferenceId = requiredGuid 9 "branch_selected_reference_id"
 
-                        match WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target with
-                        | Ok operation -> operation, PendingBranchFinalization(target, operation, previousBranchId, selectedReferenceId)
+                        let selection =
+                            match requiredText 9 "branch_selection_kind" with
+                            | "Reference" ->
+                                requiredGuid 10 "branch_selected_reference_id"
+                                |> WorkingDirectoryUpdate.BranchSelection.Reference
+                            | "DirectoryVersion" when reader.IsDBNull(10) -> WorkingDirectoryUpdate.BranchSelection.DirectoryVersion
+                            | "DirectoryVersion" -> invalidOp "DirectoryVersion Branch finalization must not persist a Reference id."
+                            | value -> invalidOp $"Pending Branch finalization has invalid selector kind '{value}'."
+
+                        match WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId selection target with
+                        | Ok operation -> operation, PendingBranchFinalization(target, operation, previousBranchId, selection)
                         | Error error -> invalidOp $"Pending Branch finalization is invalid: {error}"
                     | "Watch" ->
-                        let eventCursor = requiredText 10 "watch_event_cursor"
+                        let eventCursor = requiredText 11 "watch_event_cursor"
 
                         match
                             WorkingDirectoryUpdate.Operation.watchReplay

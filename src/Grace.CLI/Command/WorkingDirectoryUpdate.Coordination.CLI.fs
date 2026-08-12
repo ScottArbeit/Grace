@@ -29,11 +29,22 @@ module internal WorkingDirectoryUpdateCoordination =
         interface IDisposable with
             member _.Dispose() = stream.Dispose()
 
-    /// Names the only marker inspection outcomes callers may use before planning a fresh update.
+    /// Names every persisted marker disposition that decides whether an update may plan, adopt, or must preserve evidence.
     type MarkerInspection =
         | Missing
-        | Adopt
-        | RequiresDoctor
+        | ExactMatch
+        | DifferentOperation
+        | MalformedOrUnsupported
+        | Unreadable
+
+    /// Names the exact cleanup result so callers never mistake foreign or damaged evidence for successful removal.
+    type MarkerCleanup =
+        | NoMarker
+        | ExactMatchCleaned
+        | DifferentOperationEvidence
+        | MalformedOrUnsupportedEvidence
+        | UnreadableEvidence
+        | ExactCleanupFailed
 
     /// Holds one versioned marker record written only while its scope lease is held.
     type internal MarkerDocument =
@@ -343,11 +354,11 @@ module internal WorkingDirectoryUpdateCoordination =
                 File.WriteAllText(Scope.markerPath scope, serialized)
             }
 
-        /// Classifies a marker as adoptable only when its complete target, caller kind, and operation exactly match the retry.
+        /// Classifies every marker state so a caller can adopt only exact evidence and preserve all Doctor-required evidence.
         let inspect scope expectedTarget operation =
             task {
                 if not (WorkingDirectoryUpdate.Operation.matchesTarget expectedTarget operation) then
-                    return RequiresDoctor
+                    return DifferentOperation
                 else
                     let path = Scope.markerPath scope
 
@@ -364,34 +375,42 @@ module internal WorkingDirectoryUpdateCoordination =
                                 && marker.CallerKind = (WorkingDirectoryUpdate.Operation.callerKind operation
                                                         |> callerKindText)
                                 ->
-                                return Adopt
-                            | Ok _ -> return RequiresDoctor
-                            | Error _ -> return RequiresDoctor
+                                return ExactMatch
+                            | Ok _ -> return DifferentOperation
+                            | Error _ -> return MalformedOrUnsupported
                         with
                         | :? IOException
-                        | :? UnauthorizedAccessException -> return RequiresDoctor
+                        | :? UnauthorizedAccessException -> return Unreadable
             }
 
-        /// Removes a marker only after its currently persisted token exactly matches this attempt token.
-        let tryRemoveOwned scope attemptToken =
+        /// Removes a marker with an injected deletion action so portable focused proofs can force the exact cleanup-failure boundary.
+        let tryRemoveOwnedWithDelete scope attemptToken deleteMarker =
             task {
                 let path = Scope.markerPath scope
 
                 if not (File.Exists(path)) then
-                    return false
+                    return NoMarker
                 else
                     try
                         let content = File.ReadAllText(path)
 
                         match tryReadMarkerDocument scope content with
                         | Ok marker when marker.AttemptToken = WorkingDirectoryUpdate.AttemptToken.value attemptToken ->
-                            File.Delete(path)
-                            return true
-                        | _ -> return false
+                            try
+                                deleteMarker path
+                                return ExactMatchCleaned
+                            with
+                            | :? IOException
+                            | :? UnauthorizedAccessException -> return ExactCleanupFailed
+                        | Ok _ -> return DifferentOperationEvidence
+                        | Error _ -> return MalformedOrUnsupportedEvidence
                     with
                     | :? IOException
-                    | :? UnauthorizedAccessException -> return false
+                    | :? UnauthorizedAccessException -> return UnreadableEvidence
             }
+
+        /// Removes a marker only after its currently persisted token exactly matches this attempt and reports every refusal distinctly.
+        let tryRemoveOwned scope attemptToken = tryRemoveOwnedWithDelete scope attemptToken File.Delete
 
     /// Supplies derived sidecar creation without changing or deleting marker evidence.
     module Sidecar =

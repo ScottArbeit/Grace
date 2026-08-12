@@ -114,8 +114,64 @@ module WorkingDirectoryUpdateContractsTests =
         |> Result.isError
         |> should equal true
 
+    /// Proves a hash-selected Branch operation keeps its exact target identity without inventing a Reference identity.
+    [<Test>]
+    let ``DirectoryVersion Branch selection binds identity to its exact target`` () =
+        let selectedTarget = selectedTarget ()
+        let previousBranchId = branchId
+
+        let selectedTargetOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion selectedTarget
+            |> required
+
+        let differentTarget =
+            target
+                repositoryId
+                branchId
+                (Guid.Parse("e71c392d-16a8-4ec1-a759-9f1b56fe5363"))
+                (Sha256Hash "50786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9")
+                (Blake3Hash "ec938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836")
+
+        let differentTargetOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion differentTarget
+            |> required
+
+        let referenceOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId (Guid.Parse("d9622ad2-552d-4ab1-996e-2d756af82047")) selectedTarget
+            |> required
+
+        WorkingDirectoryUpdate.Operation.matchesTarget selectedTarget selectedTargetOperation
+        |> should equal true
+
+        WorkingDirectoryUpdate.Operation.matchesTarget differentTarget selectedTargetOperation
+        |> should equal false
+
+        WorkingDirectoryUpdate.Operation.value selectedTargetOperation
+        |> should not' (equal (WorkingDirectoryUpdate.Operation.value differentTargetOperation))
+
+        WorkingDirectoryUpdate.Operation.value selectedTargetOperation
+        |> should not' (equal (WorkingDirectoryUpdate.Operation.value referenceOperation))
+
         WorkingDirectoryUpdate.Operation.branchSwitch Guid.Empty (Guid.NewGuid()) selectedTarget
         |> Result.isError
+        |> should equal true
+
+    /// Proves DirectoryVersion selection retains the current Branch while Reference selection may transition Branches.
+    [<Test>]
+    let ``DirectoryVersion Branch selection rejects a target from another Branch`` () =
+        let selectedTarget = selectedTarget ()
+
+        let otherBranchTarget = target repositoryId (Guid.Parse("c9e1d511-13b0-4a65-b2f2-0f3e0c0cd690")) rootDirectoryVersionId sha256Hash blake3Hash
+
+        WorkingDirectoryUpdate.Operation.branchSwitchWithSelection branchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion otherBranchTarget
+        |> function
+            | Error message ->
+                message
+                |> should equal "DirectoryVersion Branch selection must retain the current Branch."
+            | Ok _ -> failwith "Expected DirectoryVersion selection to reject a target from another Branch."
+
+        WorkingDirectoryUpdate.Operation.branchSwitch branchId (Guid.Parse("d9622ad2-552d-4ab1-996e-2d756af82047")) otherBranchTarget
+        |> Result.isOk
         |> should equal true
 
         WorkingDirectoryUpdate.Target.create
@@ -164,7 +220,7 @@ module WorkingDirectoryUpdateContractsTests =
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
 
         branchValue
-        |> should equal "sha256:e08980617e39f55a9fd1272b848b88b871bca0b11680ff4b99c5d8209518f1c2"
+        |> should equal "sha256:8c706ec29cafceeb72203b736ac4bf16112413af8a48bddf2a112d287ad520e8"
 
         connectValue |> should equal expectedConnectValue
 

@@ -33,6 +33,11 @@ module internal WorkingDirectoryUpdateContracts =
     /// Represents the path-derived Connect scope that separates local working roots.
     type LocalRootScope = private LocalRootScope of string
 
+    /// States whether a Branch update may publish a selected Reference or must preserve the current branch identity.
+    type BranchSelection =
+        | Reference of ReferenceId
+        | DirectoryVersion
+
     /// Represents one deterministic caller-specific logical update identity.
     type Operation = private Operation of callerKind: CallerKind * target: Target option * repositoryId: RepositoryId * branchId: BranchId * value: string
 
@@ -287,25 +292,43 @@ module internal WorkingDirectoryUpdateContracts =
 
                 create Watch None repositoryId branchId canonical
 
-        /// Creates the Branch identity from branch transition, Reference, and selected target facts.
-        let branchSwitch previousBranchId selectedReferenceId target =
-            match requireId "PreviousBranchId" previousBranchId, requireId "SelectedReferenceId" selectedReferenceId with
-            | Ok previousBranchId, Ok selectedReferenceId ->
+        /// Creates the Branch identity from an exact transition Reference or an exact hash-selected target root.
+        let branchSwitchWithSelection previousBranchId selection target =
+            match requireId "PreviousBranchId" previousBranchId with
+            | Ok previousBranchId ->
                 let repositoryId = Target.repositoryId target
                 let branchId = Target.branchId target
 
-                let canonical =
-                    "grace.working-directory-update.operation.v1\n"
-                    + canonicalField "caller" "branch"
-                    + canonicalField "repository" (guidText repositoryId)
-                    + canonicalField "previous-branch" (guidText previousBranchId)
-                    + canonicalField "selected-branch" (guidText branchId)
-                    + canonicalField "selected-reference" (guidText selectedReferenceId)
-                    + canonicalField "target" (Target.canonical target)
+                let selectionCanonical =
+                    match selection with
+                    | Reference selectedReferenceId ->
+                        match requireId "SelectedReferenceId" selectedReferenceId with
+                        | Ok selectedReferenceId ->
+                            Ok(
+                                canonicalField "branch-selection" "reference"
+                                + canonicalField "selected-reference" (guidText selectedReferenceId)
+                            )
+                        | Error error -> Error error
+                    | DirectoryVersion when branchId = previousBranchId -> Ok(canonicalField "branch-selection" "directory-version")
+                    | DirectoryVersion -> Error "DirectoryVersion Branch selection must retain the current Branch."
 
-                create Branch (Some target) repositoryId branchId canonical
-            | Error error, _ -> Error error
-            | _, Error error -> Error error
+                match selectionCanonical with
+                | Error error -> Error error
+                | Ok selectionCanonical ->
+                    let canonical =
+                        "grace.working-directory-update.operation.v1\n"
+                        + canonicalField "caller" "branch"
+                        + canonicalField "repository" (guidText repositoryId)
+                        + canonicalField "previous-branch" (guidText previousBranchId)
+                        + canonicalField "selected-branch" (guidText branchId)
+                        + selectionCanonical
+                        + canonicalField "target" (Target.canonical target)
+
+                    create Branch (Some target) repositoryId branchId canonical
+            | Error error -> Error error
+
+        /// Retains the existing private Reference-selected construction shorthand while callers migrate to typed selection.
+        let branchSwitch previousBranchId selectedReferenceId target = branchSwitchWithSelection previousBranchId (Reference selectedReferenceId) target
 
         /// Creates the Connect identity from target, initial cursor, and local-root scope.
         let connectBootstrap target initialCursor localRootScope =
