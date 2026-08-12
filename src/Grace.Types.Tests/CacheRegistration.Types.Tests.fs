@@ -53,7 +53,8 @@ type CacheRegistrationLifecycleTests() =
         { state with
             Registrations =
                 state.Registrations
-                |> Array.map (fun registration -> { registration with Health = CacheHealthStatus.Healthy })
+                |> Array.map (fun registration ->
+                    { registration with Health = CacheHealthStatus.Healthy; EnrolledAt = now.Minus(Duration.FromHours 1); LastRefreshedAt = now })
         }
 
     [<Test>]
@@ -83,6 +84,41 @@ type CacheRegistrationLifecycleTests() =
         let eligible = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) now
 
         Assert.That(eligible, Is.Empty)
+
+    /// Verifies the one initial Unhealthy-to-Healthy publication bypasses the ordinary interval exactly once.
+    [<Test>]
+    member _.``first healthy refresh publishes an enrolled unhealthy cache then ordinary throttling resumes``() =
+        let state, _ = enrolled ()
+
+        let firstHealthy =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "1.0.1"
+                ProtocolVersion = "v1"
+                PrefetchSupported = false
+                ObservedAt = now.Plus(Duration.FromMinutes 1L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let publishedAt = now.Plus(Duration.FromMinutes 1L)
+        let published, publishedResult = Lifecycle.refresh state firstHealthy publishedAt
+        let registration = published.Registrations[0]
+
+        Assert.That(publishedResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(registration.Health, Is.EqualTo CacheHealthStatus.Healthy)
+        Assert.That(registration.LastRefreshedAt, Is.EqualTo publishedAt)
+
+        let selected = Lifecycle.selectEligible published (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) publishedAt
+        Assert.That(selected, Has.Length.EqualTo 1)
+
+        let tooEarly = { firstHealthy with ObservedAt = now.Plus(Duration.FromMinutes 2L); SoftwareVersion = "1.0.2" }
+
+        let throttled, throttledResult = Lifecycle.refresh published tooEarly (now.Plus(Duration.FromMinutes 2L))
+        Assert.That(throttledResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(throttled, Is.EqualTo published)
 
     /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
     [<Test>]

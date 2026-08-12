@@ -9,13 +9,44 @@ open System.Text.Json
 [<CLIMutable>]
 type internal CacheIdentityPublicKey = { PublicKeyX: string; PublicKeyY: string }
 
+/// Identifies one exact repository assignment retained in the private ready configuration.
+[<CLIMutable>]
+type internal CacheAcceptedRepositoryScope = { OrganizationId: Guid; RepositoryId: Guid }
+
 /// Represents the server-accepted facts persisted with one local static cache identity.
 [<CLIMutable>]
-type internal CacheAcceptedRegistration = { CacheId: Guid; Endpoint: string; PublicKey: CacheIdentityPublicKey }
+type internal CacheAcceptedRegistration =
+    {
+        CacheId: Guid
+        DisplayName: string
+        BoundaryKind: string
+        OwnerId: Guid
+        OrganizationId: Guid option
+        RepositoryScopes: CacheAcceptedRepositoryScope array
+        Endpoint: string
+        ProtocolVersion: string
+        PublicKey: CacheIdentityPublicKey
+    }
 
-/// Represents the private on-disk registration payload that binds accepted server facts to the staged key fingerprint.
-[<CLIMutable>]
-type private CacheReadyRegistration = { Configuration: CacheAcceptedRegistration; PublicKeyFingerprint: string }
+/// Stores one repository assignment through ordinary mutable properties so System.Text.Json has a stable private-file shape.
+type private CacheReadyRepositoryScope() =
+    member val OrganizationId = Guid.Empty with get, set
+    member val RepositoryId = Guid.Empty with get, set
+
+/// Stores all ready-registration facts through ordinary mutable properties so private F# records are never serialized as empty objects.
+type private CacheReadyRegistration() =
+    member val CacheId = Guid.Empty with get, set
+    member val DisplayName = String.Empty with get, set
+    member val BoundaryKind = String.Empty with get, set
+    member val OwnerId = Guid.Empty with get, set
+    member val HasOrganizationId = false with get, set
+    member val OrganizationId = Guid.Empty with get, set
+    member val RepositoryScopes: CacheReadyRepositoryScope array = Array.empty with get, set
+    member val Endpoint = String.Empty with get, set
+    member val ProtocolVersion = String.Empty with get, set
+    member val PublicKeyX = String.Empty with get, set
+    member val PublicKeyY = String.Empty with get, set
+    member val PublicKeyFingerprint = String.Empty with get, set
 
 /// Represents the opaque local identity state available to Cache runtime callers.
 [<RequireQualifiedAccess>]
@@ -168,6 +199,173 @@ module internal CacheIdentity =
             | Some x, Some y -> Some(fingerprint x y)
             | _ -> None
 
+    /// Verifies the complete accepted registration facts required to bind ready state to one exact server enrollment.
+    let private hasCompleteAcceptedRegistration configuration =
+        let hasValidRepositoryScopes (repositoryScopes: CacheAcceptedRepositoryScope array) =
+            if isNull repositoryScopes
+               || repositoryScopes.Length = 0 then
+                false
+            else
+                let allScopesAreComplete =
+                    repositoryScopes
+                    |> Array.forall (fun scope ->
+                        not (isNull (box scope))
+                        && scope.OrganizationId <> Guid.Empty
+                        && scope.RepositoryId <> Guid.Empty)
+
+                let hasNoDuplicateRepositories =
+                    repositoryScopes
+                    |> Array.map (fun scope -> scope.RepositoryId)
+                    |> Array.distinct
+                    |> Array.length
+                    |> fun distinctCount -> distinctCount = repositoryScopes.Length
+
+                allScopesAreComplete && hasNoDuplicateRepositories
+
+        not (isNull (box configuration))
+        && not (String.IsNullOrWhiteSpace configuration.DisplayName)
+        && configuration.OwnerId <> Guid.Empty
+        && not (String.IsNullOrWhiteSpace configuration.ProtocolVersion)
+        && hasValidRepositoryScopes configuration.RepositoryScopes
+        && (match configuration.BoundaryKind, configuration.OrganizationId with
+            | "Owner", None -> true
+            | "Organization", Some organizationId when organizationId <> Guid.Empty -> true
+            | _ -> false)
+
+    /// Copies one complete accepted registration into the explicit private-file representation.
+    let private toReadyRegistration configuration expectedFingerprint =
+        let registration = CacheReadyRegistration()
+        registration.CacheId <- configuration.CacheId
+        registration.DisplayName <- configuration.DisplayName
+        registration.BoundaryKind <- configuration.BoundaryKind
+        registration.OwnerId <- configuration.OwnerId
+
+        match configuration.OrganizationId with
+        | Some organizationId ->
+            registration.HasOrganizationId <- true
+            registration.OrganizationId <- organizationId
+        | None -> ()
+
+        registration.RepositoryScopes <-
+            configuration.RepositoryScopes
+            |> Array.map (fun scope ->
+                let persistedScope = CacheReadyRepositoryScope()
+                persistedScope.OrganizationId <- scope.OrganizationId
+                persistedScope.RepositoryId <- scope.RepositoryId
+                persistedScope)
+
+        registration.Endpoint <- configuration.Endpoint
+        registration.ProtocolVersion <- configuration.ProtocolVersion
+        registration.PublicKeyX <- configuration.PublicKey.PublicKeyX
+        registration.PublicKeyY <- configuration.PublicKey.PublicKeyY
+        registration.PublicKeyFingerprint <- expectedFingerprint
+        registration
+
+    /// Returns the fingerprint only when every private-file field has the required stable registration shape.
+    let private tryReadyRegistrationFingerprint (registration: CacheReadyRegistration) =
+        let hasValidRepositoryScopes (repositoryScopes: CacheReadyRepositoryScope array) =
+            if isNull repositoryScopes
+               || repositoryScopes.Length = 0 then
+                false
+            else
+                let allScopesAreComplete =
+                    repositoryScopes
+                    |> Array.forall (fun scope ->
+                        not (obj.ReferenceEquals(scope, null))
+                        && scope.OrganizationId <> Guid.Empty
+                        && scope.RepositoryId <> Guid.Empty)
+
+                let hasNoDuplicateRepositories =
+                    repositoryScopes
+                    |> Array.map (fun scope -> scope.RepositoryId)
+                    |> Array.distinct
+                    |> Array.length
+                    |> fun distinctCount -> distinctCount = repositoryScopes.Length
+
+                allScopesAreComplete && hasNoDuplicateRepositories
+
+        let hasValidBoundary (readyRegistration: CacheReadyRegistration) =
+            match readyRegistration.BoundaryKind, readyRegistration.HasOrganizationId, readyRegistration.OrganizationId with
+            | "Owner", false, organizationId when organizationId = Guid.Empty -> true
+            | "Organization", true, organizationId when organizationId <> Guid.Empty -> true
+            | _ -> false
+
+        if
+            obj.ReferenceEquals(registration, null)
+            || registration.CacheId = Guid.Empty
+            || String.IsNullOrWhiteSpace registration.DisplayName
+            || registration.OwnerId = Guid.Empty
+            || String.IsNullOrWhiteSpace registration.Endpoint
+            || String.IsNullOrWhiteSpace registration.ProtocolVersion
+            || not (hasValidBoundary registration)
+            || not (hasValidRepositoryScopes registration.RepositoryScopes)
+            || not
+                (
+                    Uri.TryCreate(registration.Endpoint, UriKind.Absolute)
+                    |> fst
+                )
+        then
+            None
+        else
+            match tryCanonicalCoordinate registration.PublicKeyX, tryCanonicalCoordinate registration.PublicKeyY with
+            | Some x, Some y ->
+                let expectedFingerprint = fingerprint x y
+
+                if String.Equals(registration.PublicKeyFingerprint, expectedFingerprint, StringComparison.Ordinal) then
+                    Some expectedFingerprint
+                else
+                    None
+            | _ -> None
+
+    /// Checks a deserialize result preserves all accepted fields before publication can expose the ready directory.
+    let private matchesAcceptedRegistration (configuration: CacheAcceptedRegistration) expectedFingerprint (registration: CacheReadyRegistration) =
+        let sameRepositoryScopes =
+            not (isNull configuration.RepositoryScopes)
+            && not (isNull registration.RepositoryScopes)
+            && configuration.RepositoryScopes.Length = registration.RepositoryScopes.Length
+            && Array.forall2
+                (fun (expected: CacheAcceptedRepositoryScope) (actual: CacheReadyRepositoryScope) ->
+                    not (obj.ReferenceEquals(actual, null))
+                    && expected.OrganizationId = actual.OrganizationId
+                    && expected.RepositoryId = actual.RepositoryId)
+                configuration.RepositoryScopes
+                registration.RepositoryScopes
+
+        registration.CacheId = configuration.CacheId
+        && String.Equals(registration.DisplayName, configuration.DisplayName, StringComparison.Ordinal)
+        && String.Equals(registration.BoundaryKind, configuration.BoundaryKind, StringComparison.Ordinal)
+        && registration.OwnerId = configuration.OwnerId
+        && (match configuration.OrganizationId with
+            | Some organizationId ->
+                registration.HasOrganizationId
+                && registration.OrganizationId = organizationId
+            | None ->
+                not registration.HasOrganizationId
+                && registration.OrganizationId = Guid.Empty)
+        && sameRepositoryScopes
+        && String.Equals(registration.Endpoint, configuration.Endpoint, StringComparison.Ordinal)
+        && String.Equals(registration.ProtocolVersion, configuration.ProtocolVersion, StringComparison.Ordinal)
+        && String.Equals(registration.PublicKeyX, configuration.PublicKey.PublicKeyX, StringComparison.Ordinal)
+        && String.Equals(registration.PublicKeyY, configuration.PublicKey.PublicKeyY, StringComparison.Ordinal)
+        && String.Equals(registration.PublicKeyFingerprint, expectedFingerprint, StringComparison.Ordinal)
+
+    /// Serializes and rehydrates the production private-file shape before allowing the ready directory to be published.
+    let private trySerializeReadyRegistration configuration expectedFingerprint =
+        try
+            let persisted = toReadyRegistration configuration expectedFingerprint
+            let bytes = JsonSerializer.SerializeToUtf8Bytes persisted
+            let roundTripped = JsonSerializer.Deserialize<CacheReadyRegistration> bytes
+
+            match tryReadyRegistrationFingerprint roundTripped with
+            | Some actualFingerprint when
+                String.Equals(actualFingerprint, expectedFingerprint, StringComparison.Ordinal)
+                && matchesAcceptedRegistration configuration expectedFingerprint roundTripped
+                ->
+                Some bytes
+            | _ -> None
+        with
+        | _ -> None
+
     /// Imports exactly one complete P-256 PKCS#8 private key and returns its fixed-width public coordinates.
     let private tryImportP256 (privateBytes: byte array) =
         if isNull privateBytes || privateBytes.Length = 0 then
@@ -258,6 +456,7 @@ module internal CacheIdentity =
         match validateRoot root, tryExpectedFingerprint configuration with
         | Error error, _ -> Error error
         | _, None -> Error CacheIdentityError.StateUnavailable
+        | _, Some _ when not (hasCompleteAcceptedRegistration configuration) -> Error CacheIdentityError.StateUnavailable
         | Ok (), Some expectedFingerprint ->
             let attempt = child root AttemptDirectoryName
             let ready = child root ReadyDirectoryName
@@ -277,23 +476,23 @@ module internal CacheIdentity =
 
                         match tryImportP256 privateBytes with
                         | Some (x, y) when fingerprint x y = expectedFingerprint ->
-                            let registrationBytes =
-                                JsonSerializer.SerializeToUtf8Bytes({ Configuration = configuration; PublicKeyFingerprint = expectedFingerprint })
+                            match trySerializeReadyRegistration configuration expectedFingerprint with
+                            | None -> Error CacheIdentityError.StateUnavailable
+                            | Some registrationBytes ->
+                                match writePrivateFile registrationPath registrationBytes with
+                                | Error error -> Error error
+                                | Ok () ->
+                                    match inspectMode root directoryMode,
+                                          inspectMode attempt directoryMode,
+                                          inspectMode identityPath fileMode,
+                                          inspectMode registrationPath fileMode
+                                        with
+                                    | Ok (), Ok (), Ok (), Ok () ->
+                                        Directory.Move(attempt, ready)
 
-                            match writePrivateFile registrationPath registrationBytes with
-                            | Error error -> Error error
-                            | Ok () ->
-                                match inspectMode root directoryMode,
-                                      inspectMode attempt directoryMode,
-                                      inspectMode identityPath fileMode,
-                                      inspectMode registrationPath fileMode
-                                    with
-                                | Ok (), Ok (), Ok (), Ok () ->
-                                    Directory.Move(attempt, ready)
-
-                                    inspectMode ready directoryMode
-                                    |> Result.mapError (fun _ -> CacheIdentityError.StateUnavailable)
-                                | _ -> Error CacheIdentityError.StateUnavailable
+                                        inspectMode ready directoryMode
+                                        |> Result.mapError (fun _ -> CacheIdentityError.StateUnavailable)
+                                    | _ -> Error CacheIdentityError.StateUnavailable
                         | _ -> Error CacheIdentityError.StateUnavailable
                     | _ -> Error CacheIdentityError.StateUnavailable
                 with
@@ -315,11 +514,7 @@ module internal CacheIdentity =
             try
                 let registration = JsonSerializer.Deserialize<CacheReadyRegistration>(File.ReadAllBytes(registrationPath))
 
-                match if isNull (box registration) then
-                          None
-                      else
-                          tryExpectedFingerprint registration.Configuration
-                    with
+                match tryReadyRegistrationFingerprint registration with
                 | None -> CacheIdentityInspection.Invalid
                 | Some expectedFingerprint ->
                     match File.ReadAllBytes(identityPath) |> tryImportP256 with

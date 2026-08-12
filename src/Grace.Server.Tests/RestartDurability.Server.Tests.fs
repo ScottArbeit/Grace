@@ -407,10 +407,8 @@ module private RestartDurabilityHelpers =
         }
 
     /// Sends a canonical static-key refresh request after restart and returns the lifecycle result from the rehydrated actor.
-    let refreshCacheAsync (privateKey: ECDsa) (cacheId: Guid) (endpoint: string) =
+    let refreshCacheAsync (privateKey: ECDsa) (cacheId: Guid) (endpoint: string) (observedAt: Instant) =
         task {
-            let observedAt = getCurrentInstant ()
-
             let unsignedRequest =
                 {
                     Class = nameof CacheRegistrationRefreshRequest
@@ -638,8 +636,8 @@ type RestartDurabilityServer() =
             let afterRestartError = deserialize<GraceError> afterRestartBody
             Assert.That(afterRestartError.Error, Does.Contain("No eligible Cache registration is currently available."))
 
-            let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint
-            Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue))
+            let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint (getCurrentInstant ())
+            Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.Refreshed))
 
             let rehydratedRegistration =
                 match refreshed.Registration with
@@ -658,6 +656,9 @@ type RestartDurabilityServer() =
                 Is.EqualTo(Guid.Parse selectedRepositoryId)
             )
 
+            let! selectedStatus, selectedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(selectedStatus, Is.EqualTo(HttpStatusCode.OK), selectedBody)
+
             let! unrelatedRepositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-cache-unrelated"
             let! unrelatedStatus, unrelatedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync unrelatedRepositoryId
 
@@ -665,4 +666,20 @@ type RestartDurabilityServer() =
 
             let unrelatedError = deserialize<GraceError> (unrelatedBody)
             Assert.That(unrelatedError.Error, Does.Contain("No eligible Cache registration is currently available."))
+
+            let secondObservedAt = rehydratedRegistration.LastRefreshedAt.Plus(Duration.FromMilliseconds 1L)
+
+            Assert.That(
+                secondObservedAt < rehydratedRegistration.RefreshAfter,
+                Is.True,
+                $"First refresh must establish a future throttle boundary. EnrolledAt={rehydratedRegistration.EnrolledAt}; LastRefreshedAt={rehydratedRegistration.LastRefreshedAt}; RefreshAfter={rehydratedRegistration.RefreshAfter}."
+            )
+
+            let! throttled = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint secondObservedAt
+
+            Assert.That(
+                throttled.Status,
+                Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue),
+                $"Immediate second refresh must remain throttled. EnrolledAt={rehydratedRegistration.EnrolledAt}; LastRefreshedAt={rehydratedRegistration.LastRefreshedAt}; RefreshAfter={rehydratedRegistration.RefreshAfter}; ObservedAt={secondObservedAt}."
+            )
         }

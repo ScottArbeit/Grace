@@ -84,8 +84,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
   PR #706 recorded the server-foundation validation.
 - **Status classification:** `implemented and proven` for the server foundation.
-- **Residual risk:** The current foundation contains a cache service-identity rotation surface. Product V1 does not
-  retain that capability; #855 removes it while preserving the separate artifact-grant validation-key behavior.
+- **Residual risk:** The static server foundation still requires the separate R1A identity and R2 liveness leaves before
+  a cache can safely participate in the later runtime path. Artifact-grant validation-key rollover remains separate.
 
 ### Direct materialization
 
@@ -100,12 +100,11 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R0: static contract pruning (#855)
 
-- **Status classification:** `planned`.
-- **Required result:** Remove cache service-identity rotation and candidate surfaces from types, actor state/events,
-  routes, CLI settings and status, local configuration, OpenAPI, generated SDKs, docs, fixtures, serializers, AOT
-  roots, and command catalogs. Do not remove artifact-grant validation-key rollover.
-- **Proof:** Inventory and generated-contract freshness show no active cache identity rotation surface remains; focused
-  grant-key validation proof remains green.
+- **Status classification:** `implemented and proven`.
+- **Recorded result:** #855 removed cache service-identity rotation and candidate surfaces while retaining the separate
+  artifact-grant validation-key rollover behavior.
+- **Recorded proof:** #855 records its inventory, generated-contract freshness, and focused grant-key validation proof;
+  the current source has no active cache service-identity rotation surface.
 
 ### R1A: static enrollment identity foundation (#886)
 
