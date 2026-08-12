@@ -207,7 +207,11 @@ try {
 
     Invoke-Case 'historical supersession sentence remains valid evidence' {
         $packet = New-Packet 'fixed-retry-cutoff'
-        Add-OutsideProjection $packet.Adr 'Historical supersession evidence: cleanup-before-publication and publication-before-cleanup orders are superseded by the canonical projection.'
+        Add-OutsideProjection $packet.Adr @'
+<!-- grace:wdu-lifecycle-historical-evidence:start -->
+Historical supersession reference: [WDU lifecycle supersession](https://github.com/ScottArbeit/Grace/issues/873).
+<!-- grace:wdu-lifecycle-historical-evidence:end -->
+'@
         $null = Invoke-Validator $packet
     }
 
@@ -228,7 +232,7 @@ try {
         $packet = New-Packet 'refusal-publication'
         Replace-Text $packet.Canonical '"requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged"' `
             '"requiredActions":["attemptPublishSelectedBranch"],"workingFiles":"unchanged"'
-        Assert-ValidatorFails $packet 'refusal or evidence-preservation row cannot'
+        Assert-ValidatorFails $packet 'refusal or evidence-preservation row cannot|Branch publication is only legal'
     }
 
     Invoke-Case 'unknown durable action fails with row diagnostic' {
@@ -325,9 +329,75 @@ try {
             & $validatorPath -CanonicalPath $packet.Canonical -ProjectionPath $packet.Adr -RenderOutputPath $packet.Adr
             throw 'Expected input intersection failure.'
         } catch {
-            Assert-True ($_.Exception.Message -match 'render output must not overwrite an input artifact') 'input intersection diagnostic'
+            Assert-True ($_.Exception.Message -match 'render output directory must not already exist|render output must not overwrite an input artifact') 'input intersection diagnostic'
         }
         Assert-True ((Get-FileDigest $packet.Adr) -eq $before) 'input bytes changed before preflight failure'
+    }
+
+    Invoke-Case 'closed semantic relation rejects coordinated publication mutation on WDU-LC-100' {
+        $packet = New-Packet 'semantic-publication-mutation'
+        Replace-Text $packet.Canonical '"requiredActions":["retainEvidence","retainPending"],"workingFiles":"unchanged"' `
+            '"requiredActions":["attemptPublishSelectedBranch","retainEvidence","retainPending"],"workingFiles":"unchanged"'
+        Assert-ValidatorFails $packet 'Branch publication is only legal'
+    }
+
+    Invoke-Case 'closed semantic relation rejects terminal recording before proof' {
+        $packet = New-Packet 'semantic-terminal-before-proof'
+        Replace-Text $packet.Canonical '"requiredActions":["proveSelectedBranch","recordTerminal"]' `
+            '"requiredActions":["recordTerminal","proveSelectedBranch"]'
+        Assert-ValidatorFails $packet 'terminal recording requires prior durable identity proof'
+    }
+
+    Invoke-Case 'unknown canonical root and nested projection fields fail' {
+        $packet = New-Packet 'unknown-fields'
+        Replace-Text $packet.Canonical '"schema": "grace.wdu.branch-lifecycle/v1"' `
+            '"schema": "grace.wdu.branch-lifecycle/v1", "unexpectedRoot": true'
+        Assert-ValidatorFails $packet 'malformed predicate properties'
+        $packet = New-Packet 'unknown-projection-field'
+        Replace-Text (Join-Path $packet.Issues 'issue-843.md') '"schema": "grace.wdu.lifecycle-projection/v1"' `
+            '"schema": "grace.wdu.lifecycle-projection/v1", "unexpectedNested": true'
+        Assert-ValidatorFails $packet 'malformed predicate properties'
+    }
+
+    Invoke-Case 'copied selected-Reference lifecycle sequence and active history prose fail' {
+        $packet = New-Packet 'copied-selected-sequence'
+        Add-OutsideProjection $packet.Adr 'For an already selected Reference, prove selected Branch, record terminal completion, then continue.'
+        Assert-ValidatorFails $packet 'competing lifecycle source outside its projection'
+        $packet = New-Packet 'active-history-prose'
+        Add-OutsideProjection $packet.Adr @'
+<!-- grace:wdu-lifecycle-historical-evidence:start -->
+Historical supersession reference: publish before cleanup.
+<!-- grace:wdu-lifecycle-historical-evidence:end -->
+'@
+        Assert-ValidatorFails $packet 'historical evidence is not a stable supersession reference'
+    }
+
+    Invoke-Case 'staging write failure preserves inputs and prior output packet' {
+        $packet = New-Packet 'staging-failure'
+        $inputs = @($packet.Canonical, $packet.Adr) + @(Get-ChildItem $packet.Issues -File | Select-Object -ExpandProperty FullName)
+        $before = @{}; foreach ($path in $inputs) { $before[$path] = Get-FileDigest $path }
+        $output = Join-Path $packet.Root 'failed output'
+        $env:GRACE_WDU_RENDER_FAIL_AFTER_STAGING_WRITE = '1'
+        try { & $validatorPath -CanonicalPath $packet.Canonical -ProjectionPath $packet.Adr -OfflineIssueBodyPath (Get-ChildItem $packet.Issues -File).FullName -RenderOutputPath $output; throw 'expected failure' } catch { }
+        finally { Remove-Item Env:GRACE_WDU_RENDER_FAIL_AFTER_STAGING_WRITE -ErrorAction SilentlyContinue }
+        Assert-True (-not (Test-Path -LiteralPath $output)) 'failed staging published a partial output packet'
+        foreach ($path in $inputs) { Assert-True ((Get-FileDigest $path) -eq $before[$path]) "input changed $path" }
+    }
+
+    Invoke-Case 'Windows junction alias render root is rejected without changing inputs' {
+        if (-not $IsWindows) { return }
+        $packet = New-Packet 'junction-alias'
+        $inputs = @(Get-ChildItem $packet.Issues -File | Select-Object -ExpandProperty FullName)
+        $before = @{}; foreach ($path in $inputs) { $before[$path] = Get-FileDigest $path }
+        $alias = Join-Path $packet.Root 'render-root-alias'
+        New-Item -ItemType Junction -Path $alias -Target $packet.Issues | Out-Null
+        try {
+            & $validatorPath -CanonicalPath $packet.Canonical -ProjectionPath $packet.Adr -OfflineIssueBodyPath $inputs -RenderOutputPath $alias
+            throw 'Expected junction render-root rejection.'
+        } catch {
+            Assert-True ($_.Exception.Message -match 'render output directory must not already exist|overwrite an input artifact') 'junction alias diagnostic'
+        }
+        foreach ($path in $inputs) { Assert-True ((Get-FileDigest $path) -eq $before[$path]) "junction alias changed $path" }
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }

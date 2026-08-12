@@ -6,8 +6,10 @@
 Validates the canonical Working Directory Update lifecycle and its marker-delimited projections.
 
 .DESCRIPTION
-Runs offline and read-only by default. Pass RenderOutputPath to write corrected projection markers to a separate output
-path; input artifacts are never rewritten.
+ Runs offline and read-only by default. Pass RenderOutputPath to write corrected projection markers to a new, separate
+ output directory; input artifacts are never rewritten. Rendering completes a private staging packet before a single
+ directory publication. The destination must not exist, so a staging or publication failure leaves every input and any
+ prior output packet intact rather than attempting a portable in-place replacement transaction.
 
 .EXAMPLE
 pwsh ./scripts/validate-wdu-lifecycle-contract.ps1 -CanonicalPath './docs/Working Directory Update.md' `
@@ -35,6 +37,8 @@ $script:ProjectionPlanStart = '<!-- grace:wdu-lifecycle-projection-plan:start --
 $script:ProjectionPlanEnd = '<!-- grace:wdu-lifecycle-projection-plan:end -->'
 $script:ProjectionStart = '<!-- grace:wdu-lifecycle-projection:start -->'
 $script:ProjectionEnd = '<!-- grace:wdu-lifecycle-projection:end -->'
+$script:HistoricalEvidenceStart = '<!-- grace:wdu-lifecycle-historical-evidence:start -->'
+$script:HistoricalEvidenceEnd = '<!-- grace:wdu-lifecycle-historical-evidence:end -->'
 
 function Fail-Contract([string] $artifact, [string] $reason) {
     throw "WDU lifecycle validation failed [$artifact]: $reason"
@@ -73,13 +77,36 @@ function Get-FencedJsonPayload([string] $text, [string] $artifact, [string] $sch
     $matches = [regex]::Matches($text, '(?s)```json\s*(\{.*?\})\s*```')
     $matching = @()
     foreach ($match in $matches) {
-        try { $value = $match.Groups[1].Value | ConvertFrom-Json -Depth 100 } catch { continue }
+        try {
+            Assert-NoDuplicateJsonProperties $match.Groups[1].Value $artifact
+            $value = $match.Groups[1].Value | ConvertFrom-Json -Depth 100
+        } catch { continue }
         if ($null -ne $value.PSObject.Properties['schema'] -and $value.schema -eq $schema) {
             $matching += [pscustomobject]@{ Json = $match.Groups[1].Value; Value = $value }
         }
     }
     if ($matching.Count -ne 1) { Fail-Contract $artifact "expected exactly one '$schema' JSON block" }
     return $matching[0]
+}
+
+function Assert-NoDuplicateJsonProperties([string] $json, [string] $artifact) {
+    try { $document = [System.Text.Json.JsonDocument]::Parse($json) } catch { Fail-Contract $artifact 'invalid JSON payload' }
+    try {
+        $visit = $null
+        $visit = {
+            param($element, [string] $location)
+            if ($element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+                $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+                foreach ($property in $element.EnumerateObject()) {
+                    if (-not $names.Add($property.Name)) { Fail-Contract $artifact "duplicate-equivalent JSON property '$location/$($property.Name)'" }
+                    & $visit $property.Value "$location/$($property.Name)"
+                }
+            } elseif ($element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+                $index = 0; foreach ($item in $element.EnumerateArray()) { & $visit $item "$location[$index]"; $index++ }
+            }
+        }
+        & $visit $document.RootElement '$'
+    } finally { $document.Dispose() }
 }
 
 function ConvertFrom-FencedJson([string] $text, [string] $artifact, [string] $schema) {
@@ -100,6 +127,38 @@ function Assert-ExactProperties($value, [string[]] $names, [string] $artifact) {
     $actual = Get-PropertyNames $value
     if (Compare-Object ($names | Sort-Object) $actual) {
         Fail-Contract $artifact "malformed predicate properties: $($actual -join ', ')"
+    }
+}
+
+function Assert-AllowedProperties($value, [string[]] $names, [string] $artifact) {
+    $unknown = @(Get-PropertyNames $value | Where-Object { $_ -notin $names })
+    if ($unknown.Count -ne 0) { Fail-Contract $artifact "unknown JSON property '$($unknown[0])'" }
+}
+
+function Assert-String($value, [string] $property, [string] $artifact) {
+    if ($null -eq $value.PSObject.Properties[$property] -or $value.$property -isnot [string]) {
+        Fail-Contract $artifact "'$property' must be a string"
+    }
+}
+
+function Assert-Boolean($value, [string] $property, [string] $artifact) {
+    if ($null -eq $value.PSObject.Properties[$property] -or $value.$property -isnot [bool]) {
+        Fail-Contract $artifact "'$property' must be a Boolean"
+    }
+}
+
+function Assert-OptionalBoolean($value, [string] $property, [string] $artifact) {
+    if ($null -ne $value.$property -and $value.$property -isnot [bool]) { Fail-Contract $artifact "'$property' must be a Boolean or null" }
+}
+
+function Assert-OptionalString($value, [string] $property, [string] $artifact) {
+    if ($null -ne $value.$property -and $value.$property -isnot [string]) { Fail-Contract $artifact "'$property' must be a string or null" }
+}
+
+function Assert-Array($value, [string] $property, [string] $artifact) {
+    if ($null -eq $value.PSObject.Properties[$property] -or $value.$property -is [string] -or
+        $value.$property -isnot [System.Collections.IEnumerable]) {
+        Fail-Contract $artifact "'$property' must be an array"
     }
 }
 
@@ -151,7 +210,11 @@ function Expand-Predicate($grammar, [string] $axis, $expression, [string] $rowId
 }
 
 function Test-LifecycleContract($contract, [string] $artifact) {
+    Assert-ExactProperties $contract @('boundaries', 'doctorCommand', 'machineGrammar', 'order',
+        'retryAdmission', 'rows', 'schema') $artifact
     if ($contract.schema -ne 'grace.wdu.branch-lifecycle/v1') { Fail-Contract $artifact 'unexpected lifecycle schema' }
+    Assert-String $contract 'schema' $artifact
+    Assert-Array $contract 'rows' $artifact
     $grammar = $contract.machineGrammar
     if ($null -eq $grammar) { Fail-Contract $artifact 'machineGrammar is missing' }
     $axes = @('invocation', 'trigger', 'marker', 'selectionState')
@@ -268,6 +331,20 @@ function Test-LifecycleContract($contract, [string] $artifact) {
         UpdateIncomplete = 'noCompletion'
     }
     foreach ($row in $rows) {
+        Assert-AllowedProperties $row @('branchIdentity', 'doctorGuidance', 'durableResult', 'exitClass',
+            'firstApplicableRetryWrite', 'id', 'match', 'outcome', 'requiredActions', 'resultingMarker',
+            'workingFiles', 'nextRows') $row.id
+        Assert-String $row 'id' $artifact
+        Assert-String $row 'firstApplicableRetryWrite' $row.id
+        Assert-Array $row 'requiredActions' $row.id
+        Assert-OptionalString $row 'workingFiles' $row.id
+        Assert-OptionalString $row 'branchIdentity' $row.id
+        Assert-OptionalString $row 'durableResult' $row.id
+        Assert-OptionalString $row 'exitClass' $row.id
+        Assert-OptionalBoolean $row 'doctorGuidance' $row.id
+        if ($null -ne $row.PSObject.Properties['resultingMarker']) { Assert-OptionalString $row 'resultingMarker' $row.id }
+        if ($null -ne $row.PSObject.Properties['outcome']) { Assert-OptionalString $row 'outcome' $row.id }
+        if ($null -ne $row.PSObject.Properties['nextRows']) { Assert-Array $row 'nextRows' $row.id }
         Assert-ExactProperties $row.match $axes "$($row.id)/match"
         $expanded = @{}
         foreach ($axis in $axes) { $expanded[$axis] = @(Expand-Predicate $grammar $axis $row.match.$axis $row.id) }
@@ -316,6 +393,37 @@ function Test-LifecycleContract($contract, [string] $artifact) {
                     Fail-Contract $row.id "unknown next row '$nextId'"
                 }
             }
+        }
+    }
+
+    # The canonical table has a closed mutation relation. These are structural rules over each normalized row rather
+    # than a duplicate action table: publication may only establish a previously selected Reference, and recording is
+    # always preceded by the proof appropriate to the selected durable identity.
+    foreach ($row in $rows) {
+        $actions = @($row.requiredActions)
+        $invocations = @(Expand-Predicate $grammar invocation $row.match.invocation $row.id)
+        $markers = @(Expand-Predicate $grammar marker $row.match.marker $row.id)
+        $selections = @(Expand-Predicate $grammar selectionState $row.match.selectionState $row.id)
+        $publicationActions = @($actions | Where-Object { $_ -in @('publishSelectedBranch', 'attemptPublishSelectedBranch') })
+        if ($publicationActions.Count -gt 0 -and ($selections -notcontains 'referencePrevious' -or
+                @($markers | Where-Object { $_ -in @('differentOperation', 'malformed', 'unsupported', 'unreadable', 'exactCleanupFailed') }).Count -gt 0)) {
+            Fail-Contract $row.id 'Branch publication is only legal for missing-marker Reference previous-Branch finalization'
+        }
+        if ($publicationActions.Count -gt 1) { Fail-Contract $row.id 'row contains more than one Branch publication action' }
+        $terminalActions = @($actions | Where-Object { $_ -in @('recordTerminal', 'attemptTerminalRecording') })
+        if ($terminalActions.Count -gt 1) { Fail-Contract $row.id 'row contains more than one terminal recording action' }
+        if ($terminalActions.Count -eq 1) {
+            $requiredProof = if ($selections -contains 'referencePrevious') { 'provePublication' } elseif (
+                $selections -contains 'referenceSelected') { 'proveSelectedBranch' } elseif (
+                $selections -contains 'directoryVersion') { 'proveCurrentBranchUnchanged' } else { $null }
+            if ($null -eq $requiredProof -or [array]::IndexOf($actions, $requiredProof) -lt 0 -or
+                [array]::IndexOf($actions, $requiredProof) -gt [array]::IndexOf($actions, $terminalActions[0])) {
+                Fail-Contract $row.id 'terminal recording requires prior durable identity proof'
+            }
+        }
+        if ($row.firstApplicableRetryWrite -eq 'terminalRecording' -and $selections -notcontains 'referenceSelected' -and
+            $selections -notcontains 'directoryVersion') {
+            Fail-Contract $row.id 'terminal recording cutoff requires selected Reference or DirectoryVersion'
         }
     }
 
@@ -425,6 +533,8 @@ function Get-ProjectionPlan([string] $canonicalText, [string] $canonicalArtifact
     $block = Get-SingleMarkedBlock $canonicalText $script:ProjectionPlanStart $script:ProjectionPlanEnd $canonicalArtifact
     $plan = ConvertFrom-FencedJson $block.Content $canonicalArtifact 'grace.wdu.lifecycle-projection-plan/v1'
     Assert-ExactProperties $plan @('assignments', 'canonicalApplicabilityKeyCount', 'canonicalContentDigest', 'canonicalRowCount', 'schema') $canonicalArtifact
+    Assert-String $plan 'schema' $canonicalArtifact
+    Assert-Array $plan 'assignments' $canonicalArtifact
     if ($plan.canonicalContentDigest -notmatch '^[a-f0-9]{64}$') { Fail-Contract $canonicalArtifact 'projection plan digest is missing or malformed' }
     if ($plan.canonicalContentDigest -ne $canonicalContentDigest) { Fail-Contract $canonicalArtifact 'projection plan digest does not match canonical lifecycle content' }
     $duplicates = @($plan.assignments | Group-Object artifact | Where-Object Count -ne 1)
@@ -448,6 +558,9 @@ function Get-Projection([string] $text, [string] $artifact, [bool] $strict) {
             if ($null -eq $projection.PSObject.Properties[$required]) { Fail-Contract $artifact "renderable projection is missing '$required'" }
         }
     }
+    foreach ($name in @('artifact', 'canonical', 'proof', 'schema')) { Assert-String $projection $name $artifact }
+    Assert-Array $projection 'rowIds' $artifact
+    if ($strict) { Assert-String $projection 'canonicalContentDigest' $artifact }
     return [pscustomobject]@{ Block = $block; Value = $projection }
 }
 
@@ -481,33 +594,61 @@ function Test-Projection($projection, $assignment, [string[]] $canonicalRowIds, 
 function Test-NoCompetingProjection([string] $text, $block, [string] $path) {
     $outside = $text.Remove($block.Start, $block.EndAfter - $block.Start)
     if ($outside -match 'grace\.wdu\.branch-lifecycle/v1') { Fail-Contract $path 'contains a second normative lifecycle table' }
+    $historyStarts = [regex]::Matches($outside, [regex]::Escape($script:HistoricalEvidenceStart))
+    $historyEnds = [regex]::Matches($outside, [regex]::Escape($script:HistoricalEvidenceEnd))
+    if ($historyStarts.Count -ne $historyEnds.Count -or $historyStarts.Count -gt 1) {
+        Fail-Contract $path 'historical evidence markers are unmatched or repeated'
+    }
+    if ($historyStarts.Count -eq 1) {
+        $historyStart = $historyStarts[0].Index + $historyStarts[0].Length
+        $historyEnd = $historyEnds[0].Index
+        if ($historyEnd -le $historyStart) { Fail-Contract $path 'historical evidence markers are reversed' }
+        $history = $outside.Substring($historyStart, $historyEnd - $historyStart).Trim()
+        # History deliberately carries only a stable supersession reference, never operational prose.
+        if ($history -notmatch '^Historical supersession reference: \[[^\]]+\]\([^\)]+\)\.$') {
+            Fail-Contract $path 'historical evidence is not a stable supersession reference'
+        }
+        $outside = $outside.Remove($historyEnds[0].Index, $historyEnds[0].Length).Remove($historyStarts[0].Index, $historyStarts[0].Length)
+        $outside = $outside.Remove($historyStarts[0].Index, $historyEnd - $historyStart)
+    }
     $paragraphs = @($outside -split '(?:\r?\n){2,}')
     foreach ($paragraph in $paragraphs) {
-        $historicalSupersession = $paragraph -match '(?is)\b(?:historical|supersed(?:e|ed|ing|es))\b' -and
-            $paragraph -match '(?is)\bcleanup-before-publication and publication-before-cleanup orders\b'
         $reversed = $paragraph -match '(?is)\b(?:publish|publication)\b.{0,60}(?:\bbefore\b|\bthen\b|\bafter\b|-[ ]?before-)\s*.{0,60}\b(?:clean|cleanup)\b'
         $copiedSequence = $paragraph -match '(?is)\b(?:clean|cleanup)\b.{0,160}\b(?:publish|publication)\b.{0,160}\bprove\b.{0,160}\bterminal\b'
-        if (($reversed -or $copiedSequence) -and -not $historicalSupersession) {
+        $selectedReferenceSequence = $paragraph -match '(?is)\b(?:prove|proof)\b.{0,120}\bselected\b.{0,120}\b(?:record|terminal)\b'
+        if ($reversed -or $copiedSequence -or $selectedReferenceSequence) {
             Fail-Contract $path 'contains competing lifecycle source outside its projection'
         }
     }
 }
 
-function Get-RenderOutputPath([string] $sourcePath, [string] $outputRoot, [bool] $multiple) {
-    if ($multiple -or (Test-Path -LiteralPath $outputRoot -PathType Container)) {
-        return [IO.Path]::GetFullPath((Join-Path $outputRoot ([IO.Path]::GetFileName($sourcePath))))
-    } else {
-        return [IO.Path]::GetFullPath($outputRoot)
+function Get-FilesystemIdentity([string] $path, [string] $artifact) {
+    $full = [IO.Path]::GetFullPath($path)
+    $parts = [Collections.Generic.Stack[string]]::new()
+    $cursor = $full
+    while (-not (Test-Path -LiteralPath $cursor)) {
+        $leaf = Split-Path -Leaf $cursor
+        if (-not $leaf) { Fail-Contract $artifact "cannot establish filesystem identity for '$full'" }
+        $parts.Push($leaf); $cursor = Split-Path -Parent $cursor
     }
+    $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        try { $item = $item.ResolveLinkTarget($true) } catch { Fail-Contract $artifact "cannot prove reparse-point safety for '$cursor'" }
+        if ($null -eq $item) { Fail-Contract $artifact "cannot prove reparse-point safety for '$cursor'" }
+    }
+    $resolved = $item.FullName
+    while ($parts.Count -gt 0) { $resolved = Join-Path $resolved $parts.Pop() }
+    return [IO.Path]::GetFullPath($resolved)
 }
 
 function Test-RenderPreflight($jobs) {
     $inputs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $destinations = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($job in $jobs) { [void]$inputs.Add([IO.Path]::GetFullPath($job.Source)) }
+    foreach ($job in $jobs) { [void]$inputs.Add((Get-FilesystemIdentity $job.Source $job.Source)) }
     foreach ($job in $jobs) {
-        if (-not $destinations.Add($job.Output)) { Fail-Contract $job.Source "duplicate render destination '$($job.Output)'" }
-        if ($inputs.Contains($job.Output)) { Fail-Contract $job.Source 'render output must not overwrite an input artifact' }
+        $identity = Get-FilesystemIdentity $job.Output $job.Source
+        if (-not $destinations.Add($identity)) { Fail-Contract $job.Source "duplicate render destination '$identity'" }
+        if ($inputs.Contains($identity)) { Fail-Contract $job.Source 'render output must not overwrite an input artifact' }
     }
 }
 
@@ -533,8 +674,11 @@ $requiredArtifacts = @('adr-0011', 'epic-835', 'issue-842', 'issue-843', 'issue-
 if (Compare-Object $requiredArtifacts @($plan.assignments.artifact)) {
     Fail-Contract $canonical.Path 'projection plan does not contain the exact required artifact set'
 }
-foreach ($assignment in $plan.assignments) {
-    Assert-ExactProperties $assignment @('artifact', 'proof', 'rowIds') "$($assignment.artifact) assignment"
+    foreach ($assignment in $plan.assignments) {
+        Assert-ExactProperties $assignment @('artifact', 'proof', 'rowIds') "$($assignment.artifact) assignment"
+        Assert-String $assignment 'artifact' $canonical.Path
+        Assert-String $assignment 'proof' $canonical.Path
+        Assert-Array $assignment 'rowIds' $canonical.Path
     if (-not $assignment.proof) { Fail-Contract $assignment.artifact 'projection proof responsibility is empty' }
     if (@($assignment.rowIds).Count -eq 0) { Fail-Contract $assignment.artifact 'projection row assignment is empty' }
     $unknown = @($assignment.rowIds | Where-Object { $_ -notin $validated.RowIds })
@@ -591,12 +735,20 @@ if ($inputs.Count -gt 0) {
 }
 
 if ($PSCmdlet.ParameterSetName -eq 'Render') {
-    $multiple = $renderJobs.Count -gt 1
-    foreach ($job in $renderJobs) { $job | Add-Member -NotePropertyName Output -NotePropertyValue (Get-RenderOutputPath $job.Source $RenderOutputPath $multiple) }
+    $outputRoot = [IO.Path]::GetFullPath($RenderOutputPath)
+    if (Test-Path -LiteralPath $outputRoot) { Fail-Contract $outputRoot 'render output directory must not already exist; prior packet is preserved' }
+    $parent = Split-Path -Parent $outputRoot
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { Fail-Contract $outputRoot 'render output parent directory must already exist' }
+    $staging = Join-Path $parent ".grace-wdu-staging-$([Guid]::NewGuid().ToString('N'))"
+    foreach ($job in $renderJobs) { $job | Add-Member -NotePropertyName Output -NotePropertyValue (Join-Path $staging ([IO.Path]::GetFileName($job.Source))) }
     Test-RenderPreflight $renderJobs
-    foreach ($job in $renderJobs) {
-        $output = Write-RenderedProjection $job
-        Write-Output "rendered: $output"
+    try {
+        foreach ($job in $renderJobs) { $null = Write-RenderedProjection $job }
+        if ($env:GRACE_WDU_RENDER_FAIL_AFTER_STAGING_WRITE -eq '1') { throw 'injected staging publication failure' }
+        Move-Item -LiteralPath $staging -Destination $outputRoot -ErrorAction Stop
+        Get-ChildItem -LiteralPath $outputRoot -File | Sort-Object Name | ForEach-Object { Write-Output "rendered: $($_.FullName)" }
+    } finally {
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
 }
 
