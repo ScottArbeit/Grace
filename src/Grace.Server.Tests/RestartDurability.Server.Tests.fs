@@ -7,8 +7,8 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types
-open Grace.Types.Common
 open Grace.Types.CacheRegistration
+open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
 open Grace.Types.UploadSession
@@ -406,6 +406,41 @@ module private RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Sends a canonical static-key refresh request after restart and returns the lifecycle result from the rehydrated actor.
+    let refreshCacheAsync (privateKey: ECDsa) (cacheId: Guid) (endpoint: string) =
+        task {
+            let observedAt = getCurrentInstant ()
+
+            let unsignedRequest =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.0.1"
+                    ProtocolVersion = "v1"
+                    PrefetchSupported = false
+                    ObservedAt = observedAt
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let request =
+                { unsignedRequest with
+                    Proof =
+                        CacheRegistrationProof.createProof
+                            privateKey
+                            cacheId
+                            CacheRegistrationProof.RefreshOperation
+                            (CacheRegistrationProof.refreshRequestDigest unsignedRequest)
+                            observedAt
+                }
+
+            let! response = Client.PostAsync("/cache/refresh", createJsonContent request)
+            let! body = requireOkAsync response
+            let result = deserialize<GraceReturnValue<CacheRegistrationResult>> body
+            return result.ReturnValue
+        }
+
 /// Covers restart durability server scenarios.
 [<NonParallelizable>]
 type RestartDurabilityServer() =
@@ -516,4 +551,68 @@ type RestartDurabilityServer() =
                     Assert.That(registration.ProtocolVersion, Is.EqualTo(request.ProtocolVersion))
                     Assert.That(registration.PrefetchSupported, Is.EqualTo(request.PrefetchSupported)))
             )
+        }
+
+    /// Verifies a persisted static cache identity rehydrates after server restart for signed refresh and exact repository selection.
+    [<Test>]
+    [<Order(4)>]
+    member _.StaticCacheRegistrationRehydratesForSignedRefreshAndExactRepositorySelection() =
+        task {
+            use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let selectedRepositoryId = repositoryIds[0]
+            let unrelatedRepositoryId = repositoryIds[1]
+            let displayName = $"restart-cache-{Guid.NewGuid():N}"
+            let endpoint = $"http://restart-cache-{Guid.NewGuid():N}.example.test"
+
+            let! _, enrolled = RestartDurabilityHelpers.enrollCacheAsync privateKey selectedRepositoryId displayName endpoint
+            Assert.That(enrolled.Status, Is.EqualTo(CacheRegistrationRefreshStatus.Enrolled))
+
+            let cacheId =
+                match enrolled.Registration with
+                | Some registration ->
+                    Assert.That(registration.PublicKey, Is.EqualTo(RestartDurabilityHelpers.cacheIdentityPublicKey privateKey))
+                    registration.CacheId
+                | None ->
+                    Assert.Fail("Cache enrollment did not return the persisted registration.")
+                    Guid.Empty
+
+            do! RestartDurabilityHelpers.restartGraceServerAsync ()
+
+            let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint
+            Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue))
+
+            let rehydratedRegistration =
+                match refreshed.Registration with
+                | Some registration -> registration
+                | None ->
+                    Assert.Fail("Signed refresh after restart did not return the rehydrated registration.")
+                    Unchecked.defaultof<CacheRegistration>
+
+            Assert.That(rehydratedRegistration.CacheId, Is.EqualTo(cacheId))
+            Assert.That(rehydratedRegistration.PublicKey, Is.EqualTo(RestartDurabilityHelpers.cacheIdentityPublicKey privateKey))
+            Assert.That(rehydratedRegistration.RepositoryScopes, Has.Length.EqualTo(1))
+
+            Assert.That(
+                rehydratedRegistration.RepositoryScopes[0]
+                    .RepositoryId,
+                Is.EqualTo(Guid.Parse selectedRepositoryId)
+            )
+
+            let rehydratedState = { Class = nameof CacheRegistrationState; Registrations = [| rehydratedRegistration |] }
+
+            let selected =
+                Lifecycle.selectEligible
+                    rehydratedState
+                    (CacheRegistrationSelectionQuery.Create(Some(Guid.Parse selectedRepositoryId), false))
+                    (getCurrentInstant ())
+
+            let unrelated =
+                Lifecycle.selectEligible
+                    rehydratedState
+                    (CacheRegistrationSelectionQuery.Create(Some(Guid.Parse unrelatedRepositoryId), false))
+                    (getCurrentInstant ())
+
+            Assert.That(selected, Has.Length.EqualTo(1))
+            Assert.That(selected[0].CacheId, Is.EqualTo(cacheId))
+            Assert.That(unrelated, Is.Empty)
         }
