@@ -64,6 +64,7 @@ module Services =
             RootDirectory: string
             GraceDirectory: string
             GraceStatusFile: string
+            ObjectDirectory: string
             GraceFileIgnoreEntries: string array
             GraceDirectoryIgnoreEntries: string array
         }
@@ -95,6 +96,7 @@ module Services =
             RootDirectory = Path.GetFullPath(configuration.RootDirectory)
             GraceDirectory = Path.GetFullPath(configuration.GraceDirectory)
             GraceStatusFile = Path.GetFullPath(configuration.GraceStatusFile)
+            ObjectDirectory = Path.GetFullPath(configuration.ObjectDirectory)
             GraceFileIgnoreEntries = Array.copy configuration.GraceFileIgnoreEntries
             GraceDirectoryIgnoreEntries = Array.copy configuration.GraceDirectoryIgnoreEntries
         }
@@ -123,6 +125,7 @@ module Services =
         && samePath actual.RootDirectory expected.RootDirectory
         && samePath actual.GraceDirectory expected.GraceDirectory
         && samePath actual.GraceStatusFile expected.GraceStatusFile
+        && samePath actual.ObjectDirectory expected.ObjectDirectory
         && actual.GraceFileIgnoreEntries.Length = expected.GraceFileIgnoreEntries.Length
         && Array.forall2 (=) actual.GraceFileIgnoreEntries expected.GraceFileIgnoreEntries
         && actual.GraceDirectoryIgnoreEntries.Length = expected.GraceDirectoryIgnoreEntries.Length

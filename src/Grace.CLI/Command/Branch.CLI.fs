@@ -48,6 +48,32 @@ open System.CommandLine.Completions
 /// Groups the branch command parser, handlers, and output helpers.
 module Branch =
 
+    /// Supplies verified object-cache streams for the exact files declared by one selected Branch root.
+    type private BranchObjectCachePreparedReader(objectRoot: string, files: LocalFileVersion array) =
+        let filesByPath = Dictionary<string, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
+
+        do
+            files
+            |> Array.iter (fun file -> filesByPath[string file.RelativePath] <- file)
+
+        interface WorkingDirectoryUpdateContracts.IPreparedContentReader with
+            /// Lists only the selected root's canonical file paths for pre-lease byte validation.
+            member _.FilePaths = filesByPath.Keys :> seq<string>
+
+            /// Opens the verified object-cache source for one selected target file.
+            member _.OpenReadAsync(relativePath: RelativePath, cancellationToken: CancellationToken) =
+                cancellationToken.ThrowIfCancellationRequested()
+
+                match filesByPath.TryGetValue(string relativePath) with
+                | true, file ->
+                    let objectFileName = getLocalObjectCacheFileName file.RelativePath file.Sha256Hash file.Blake3Hash
+                    let objectPath = Path.Combine(objectRoot, string file.RelativePath, objectFileName)
+                    Task.FromResult<Stream>(File.Open(objectPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                | false, _ -> Task.FromException<Stream>(FileNotFoundException($"No selected object-cache file exists for '{relativePath}'."))
+
+            /// Does not own the cache files, so disposing the reader has no filesystem side effect.
+            member _.Dispose() = ()
+
     /// Derives the retry-stable child Rebase identity owned by one caller-selected Promotion identity.
     let internal buildPromotionRebaseReferenceId (promotionReferenceId: ReferenceId) =
         let seed = $"grace.branch.promote-rebase-reference.v1|{promotionReferenceId:N}"
@@ -3788,7 +3814,7 @@ module Branch =
                         }
 
                     /// 8. Update object cache and working directory.
-                    let updateWorkingDirectory
+                    let updateLegacyWorkingDirectory
                         (t: ProgressTask)
                         (showOutput,
                          parseResult: ParseResult,
@@ -3917,6 +3943,246 @@ module Branch =
                                 return Error(GraceError.Create $"{error}" (parseResult |> getCorrelationId))
                         }
 
+                    /// Routes every supported switch selector through the verified Branch transaction after remote preparation completes.
+                    let updateWorkingDirectory
+                        (t: ProgressTask)
+                        (showOutput,
+                         parseResult: ParseResult,
+                         parameters: SwitchParameters,
+                         currentBranch: BranchDto,
+                         newBranch: BranchDto,
+                         directoryIds: IEnumerable<DirectoryVersionId>)
+                        =
+                        task {
+                            t |> startProgressTask showOutput
+
+                            let missingDirectoryIds =
+                                directoryIds
+                                    .Where(fun directoryId ->
+                                        not
+                                        <| directoryIdsInNewGraceStatus.Contains(directoryId))
+                                    .ToList()
+
+                            match! getMissingDirectoryVersionsWithClosure missingDirectoryIds with
+                            | Error error -> return Error error
+                            | Ok newDirectoryVersionDtos ->
+                                let targetStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersionDtos
+
+                                let getDownloadUriParameters =
+                                    Storage.GetDownloadUriParameters(
+                                        OwnerId = graceIds.OwnerIdString,
+                                        OwnerName = graceIds.OwnerName,
+                                        OrganizationId = graceIds.OrganizationIdString,
+                                        OrganizationName = graceIds.OrganizationName,
+                                        RepositoryId = graceIds.RepositoryIdString,
+                                        RepositoryName = graceIds.RepositoryName,
+                                        CorrelationId = graceIds.CorrelationId
+                                    )
+
+                                let mutable preparationFailure: string option = None
+
+                                for directoryVersionDto in newDirectoryVersionDtos do
+                                    if preparationFailure.IsNone then
+                                        match!
+                                            downloadFileVersionsFromObjectStorage
+                                                getDownloadUriParameters
+                                                directoryVersionDto.DirectoryVersion.Files
+                                                (getCorrelationId parseResult)
+                                            with
+                                        | Ok _ -> ()
+                                        | Error error -> preparationFailure <- Some error
+
+                                match preparationFailure with
+                                | Some error -> return Error(GraceError.Create error (getCorrelationId parseResult))
+                                | None ->
+                                    try
+                                        let configuration = Current()
+                                        let configurationSnapshot = captureOperationalConfigurationSnapshot "switch" configuration
+
+                                        let scanInput: Grace.CLI.Services.WorkingTreeScanInput =
+                                            {
+                                                RootDirectory = configuration.RootDirectory
+                                                GraceDirectory = configuration.GraceDirectory
+                                                GraceStatusFile = configuration.GraceStatusFile
+                                                DirectoryIgnoreEntries = Array.copy configuration.GraceDirectoryIgnoreEntries
+                                                FileIgnoreEntries = Array.copy configuration.GraceFileIgnoreEntries
+                                            }
+
+                                        let canonicalConfiguration = serialize configurationSnapshot
+
+                                        let acceptedConfiguration =
+                                            WorkingDirectoryUpdate.AcceptedConfiguration.create canonicalConfiguration scanInput
+                                            |> Result.defaultWith invalidOp
+
+                                        let localRootScope =
+                                            WorkingDirectoryUpdateContracts.LocalRootScope.create configuration.RootDirectory
+                                            |> Result.defaultWith invalidOp
+
+                                        let target =
+                                            WorkingDirectoryUpdateContracts.Target.create
+                                                newBranch.RepositoryId
+                                                newBranch.BranchId
+                                                targetStatus.RootDirectoryId
+                                                targetStatus.RootDirectorySha256Hash
+                                                targetStatus.RootDirectoryBlake3Hash
+                                            |> Result.defaultWith invalidOp
+
+                                        let branchSelection =
+                                            if
+                                                not (String.IsNullOrWhiteSpace switchParameters.Sha256Hash)
+                                                || not (String.IsNullOrWhiteSpace switchParameters.Blake3Hash)
+                                            then
+                                                WorkingDirectoryUpdateContracts.DirectoryVersion
+                                            else
+                                                let referenceId =
+                                                    if not (String.IsNullOrWhiteSpace switchParameters.ReferenceId) then
+                                                        Guid.Parse(switchParameters.ReferenceId)
+                                                    else
+                                                        newBranch.LatestReference.ReferenceId
+
+                                                if referenceId = Guid.Empty then
+                                                    invalidOp "Grace switch requires an exact Reference for a branch-selected update."
+
+                                                WorkingDirectoryUpdateContracts.Reference referenceId
+
+                                        let operation =
+                                            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection currentBranch.BranchId branchSelection target
+                                            |> Result.defaultWith invalidOp
+
+                                        let manifestEntries =
+                                            targetStatus.Index.Values
+                                            |> Seq.collect (fun directory ->
+                                                seq {
+                                                    if directory.RelativePath
+                                                       <> Grace.Shared.Constants.RootDirectoryPath then
+                                                        yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory directory.RelativePath
+
+                                                    for file in directory.Files do
+                                                        yield
+                                                            WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                file.RelativePath,
+                                                                file.Sha256Hash,
+                                                                file.Blake3Hash
+                                                            )
+                                                })
+                                            |> Seq.toArray
+
+                                        let manifest =
+                                            WorkingDirectoryUpdateContracts.PreparedManifest.create manifestEntries
+                                            |> Result.defaultWith invalidOp
+
+                                        let selectedFiles =
+                                            targetStatus.Index.Values
+                                            |> Seq.collect (fun directory -> directory.Files)
+                                            |> Seq.toArray
+
+                                        let! preparedContent =
+                                            WorkingDirectoryUpdateContracts.PreparedContent.create
+                                                manifest
+                                                (new BranchObjectCachePreparedReader(configuration.ObjectDirectory, selectedFiles))
+                                                CancellationToken.None
+
+                                        let preparedContent = preparedContent |> Result.defaultWith invalidOp
+                                        let! acceptedRevision = Grace.CLI.LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+
+                                        let acceptedSelection =
+                                            WorkingDirectoryUpdate.AcceptedSelection.create target localRootScope acceptedConfiguration acceptedRevision
+                                            |> Result.defaultWith invalidOp
+
+                                        let applicationFacts =
+                                            WorkingDirectoryUpdate.BranchContext.create
+                                                target
+                                                configuration.RootDirectory
+                                                configuration.ObjectDirectory
+                                                configuration.GraceStatusFile
+                                                previousGraceStatus
+                                                targetStatus
+                                                (targetStatus.Index.Values |> Seq.toArray)
+                                            |> Result.defaultWith invalidOp
+
+                                        let selectedStateReader =
+                                            { new WorkingDirectoryUpdate.ISelectedStateReader with
+                                                /// Revalidates the canonical local configuration and status revision after the update lease is held.
+                                                member _.ReadAsync(cancellationToken: CancellationToken) =
+                                                    task {
+                                                        cancellationToken.ThrowIfCancellationRequested()
+                                                        requireOperationalConfigurationSnapshotCurrent "switch" (Current()) configurationSnapshot
+                                                        let! revision = Grace.CLI.LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+
+                                                        return
+                                                            WorkingDirectoryUpdate.AcceptedSelection.create target localRootScope acceptedConfiguration revision
+                                                            |> Result.defaultWith invalidOp
+                                                    }
+                                            }
+
+                                        let finalizer =
+                                            { new WorkingDirectoryUpdate.IIdempotentFinalizer with
+                                                /// Publishes Branch identity only after the engine has committed the verified local root.
+                                                member _.FinalizeAsync(finalization, cancellationToken: CancellationToken) =
+                                                    task {
+                                                        cancellationToken.ThrowIfCancellationRequested()
+                                                        requireOperationalConfigurationSnapshotCurrent "switch" (Current()) configurationSnapshot
+
+                                                        match finalization with
+                                                        | WorkingDirectoryUpdate.BranchFinalization (previousBranchId,
+                                                                                                     WorkingDirectoryUpdateContracts.Reference _) ->
+                                                            let currentConfiguration = Current()
+
+                                                            if currentConfiguration.BranchId <> previousBranchId then
+                                                                invalidOp "Grace switch refused to publish a Branch identity that changed before finalization."
+
+                                                            currentConfiguration.BranchId <- newBranch.BranchId
+                                                            currentConfiguration.BranchName <- newBranch.BranchName
+                                                            updateConfiguration currentConfiguration
+                                                        | WorkingDirectoryUpdate.BranchFinalization (previousBranchId,
+                                                                                                     WorkingDirectoryUpdateContracts.DirectoryVersion) ->
+                                                            if Current().BranchId <> previousBranchId then
+                                                                invalidOp
+                                                                    "Grace switch refused a hash-selected update because the current Branch changed before finalization."
+                                                        | _ -> invalidOp "Grace switch received non-Branch finalization facts."
+                                                    }
+                                            }
+
+                                        let request =
+                                            WorkingDirectoryUpdate.Request.branchSwitch
+                                                acceptedSelection
+                                                applicationFacts
+                                                operation
+                                                preparedContent
+                                                (getCorrelationId parseResult)
+                                                selectedStateReader
+                                                currentBranch.BranchId
+                                                branchSelection
+                                                finalizer
+                                                None
+                                            |> Result.defaultWith invalidOp
+
+                                        let! outcome = WorkingDirectoryUpdate.run request CancellationToken.None
+
+                                        match outcome with
+                                        | WorkingDirectoryUpdateContracts.Updated _
+                                        | WorkingDirectoryUpdateContracts.Unchanged _ ->
+                                            newGraceStatus <- targetStatus
+                                            rootDirectoryId <- targetStatus.RootDirectoryId
+                                            rootDirectorySha256Hash <- targetStatus.RootDirectorySha256Hash
+                                            directoryIdsInNewGraceStatus <- targetStatus.Index.Keys.ToHashSet()
+                                            t |> setProgressTaskValue showOutput 100.0
+                                            return Ok(showOutput, parseResult, parameters, newBranch, "Working Directory Update completed.")
+                                        | WorkingDirectoryUpdateContracts.Rejected failure
+                                        | WorkingDirectoryUpdateContracts.UpdateIncomplete failure ->
+                                            return
+                                                Error(GraceError.Create (WorkingDirectoryUpdateContracts.Failure.value failure) (getCorrelationId parseResult))
+                                        | WorkingDirectoryUpdateContracts.FinalizationIncomplete (_, failure) ->
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        $"Working-directory bytes were updated, but Branch finalization is incomplete: {WorkingDirectoryUpdateContracts.Failure.value failure}. Run `grace doctor --repair-local-state`."
+                                                        (getCorrelationId parseResult)
+                                                )
+                                    with
+                                    | ex -> return Error(GraceError.Create ex.Message (getCorrelationId parseResult))
+                        }
+
                     /// Coordinates generate result behavior for this CLI command path.
                     let generateResult (progressTasks: ProgressTask array) =
                         task {
@@ -4018,47 +4284,19 @@ module Branch =
         /// Runs the asynchronous switch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let updateMarkerFileName = updateInProgressFileName ()
-                let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
-                let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
-
                 if parseResult |> verbose then printParseResult parseResult
 
                 let preflightOperations =
                     {
-                        UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
+                        UpdateMarkerExists = fun () -> false
                         InspectWatchStatus = inspectGraceWatchStatus
                         ReadPendingJournalSummary =
                             fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
                     }
 
-                let! switchResult =
-                    runBranchSwitchWorkflowWithLease preflightOperations (getCorrelationId parseResult) switchLeaseFileName switchLeaseText (fun () ->
-                        task {
-                            let switchParameters = SwitchParameters()
+                let! preflightResult = runBranchSwitchWatchCleanPreflight preflightOperations (getCorrelationId parseResult)
 
-                            let toBranchId = parseResult.GetValue(Options.toBranchId)
-                            if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
-
-                            let toBranchName = parseResult.GetValue(Options.toBranchName)
-                            switchParameters.ToBranchName <- toBranchName
-
-                            let referenceId = parseResult.GetValue(Options.referenceId)
-
-                            if referenceId <> Guid.Empty then
-                                switchParameters.ReferenceId <- $"{referenceId}"
-
-                            let sha256Hash = getSha256HashPrefix parseResult
-                            switchParameters.Sha256Hash <- sha256Hash
-
-                            let blake3Hash = getBlake3HashPrefix parseResult
-                            switchParameters.Blake3Hash <- blake3Hash
-
-                            let! result = switchHandler parseResult switchParameters
-                            return result
-                        })
-
-                match switchResult with
+                match preflightResult with
                 | Error error ->
                     if parseResult |> verbose then
                         AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
@@ -4066,7 +4304,23 @@ module Branch =
                         AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
 
                     return -1
-                | Ok result -> return result
+                | Ok () ->
+                    let switchParameters = SwitchParameters()
+
+                    let toBranchId = parseResult.GetValue(Options.toBranchId)
+                    if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+
+                    let toBranchName = parseResult.GetValue(Options.toBranchName)
+                    switchParameters.ToBranchName <- toBranchName
+
+                    let referenceId = parseResult.GetValue(Options.referenceId)
+
+                    if referenceId <> Guid.Empty then
+                        switchParameters.ReferenceId <- $"{referenceId}"
+
+                    switchParameters.Sha256Hash <- getSha256HashPrefix parseResult
+                    switchParameters.Blake3Hash <- getBlake3HashPrefix parseResult
+                    return! switchHandler parseResult switchParameters
             }
 
     /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.

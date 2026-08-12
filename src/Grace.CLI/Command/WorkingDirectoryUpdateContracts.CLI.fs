@@ -596,3 +596,6 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update failure reason must not be empty."
             else
                 Ok(Failure reason)
+
+        /// Returns the classified terminal reason for caller-owned human and machine output projection.
+        let value (Failure reason) = reason
