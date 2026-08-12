@@ -401,6 +401,32 @@ module internal WorkingDirectoryUpdateCoordination =
                     | :? UnauthorizedAccessException -> return false
             }
 
+        /// Removes only persisted evidence that exactly identifies the already-completed operation.
+        let tryRemoveMatchingCompletion scope expectedTarget operation =
+            task {
+                let path = Scope.markerPath scope
+
+                if not (File.Exists(path)) then
+                    return false
+                else
+                    try
+                        let content = File.ReadAllText(path)
+
+                        match tryReadMarkerDocument scope content with
+                        | Ok marker when
+                            marker.OperationId = WorkingDirectoryUpdate.Operation.value operation
+                            && marker.Target = WorkingDirectoryUpdate.Target.canonical expectedTarget
+                            && marker.CallerKind = (WorkingDirectoryUpdate.Operation.callerKind operation
+                                                    |> callerKindText)
+                            ->
+                            File.Delete(path)
+                            return true
+                        | _ -> return false
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return false
+            }
+
     /// Supplies derived sidecar creation without changing or deleting marker evidence.
     module Sidecar =
         /// Writes the completed operation identity as derived local notification evidence for the held scope.

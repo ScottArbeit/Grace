@@ -158,28 +158,170 @@ module WorkingDirectoryUpdateEngineTests =
                     | :? IOException -> ()
         }
 
-    /// Computes the actual dual hash declaration used by prepared-content validation.
-    let private hashes (bytes: byte array) =
+    /// Computes the actual dual hash declaration for one prepared manifest path.
+    let private hashesAt (relativePath: string) (bytes: byte array) =
         task {
             use stream = new MemoryStream(bytes, writable = false)
-            return! computeHashesForFile stream (RelativePath "file.txt")
+            return! computeHashesForFile stream (RelativePath relativePath)
         }
 
-    /// Creates a full selected root and matching status that bind one test update transaction.
+    /// Computes the actual dual hash declaration used by the root fixture file.
+    let private hashes (bytes: byte array) = hashesAt "file.txt" bytes
+
+    /// Creates a complete canonical selected root with a root file, nested file, and empty directory.
     let private targetAndStatus () =
-        let target =
-            WorkingDirectoryUpdateContracts.Target.create (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid()) (String.replicate 64 "a") (String.replicate 64 "b")
+        task {
+            let bytes = [| 1uy; 2uy; 3uy |]
+            let nestedBytes = [| 4uy; 5uy; 6uy |]
+            let! fileSha256Hash, fileBlake3Hash = hashes bytes
+            let! nestedFileSha256Hash, nestedFileBlake3Hash = hashesAt "nested/child.txt" nestedBytes
+            let rootDirectoryId = Guid.NewGuid()
+            let nestedDirectoryId = Guid.NewGuid()
+            let emptyDirectoryId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+
+            let file =
+                LocalFileVersion.CreateWithHashes
+                    (RelativePath "file.txt")
+                    fileSha256Hash
+                    fileBlake3Hash
+                    false
+                    (int64 bytes.Length)
+                    (getCurrentInstant ())
+                    true
+                    DateTime.UtcNow
+
+            let nestedFile =
+                LocalFileVersion.CreateWithHashes
+                    (RelativePath "nested/child.txt")
+                    nestedFileSha256Hash
+                    nestedFileBlake3Hash
+                    false
+                    (int64 nestedBytes.Length)
+                    (getCurrentInstant ())
+                    true
+                    DateTime.UtcNow
+
+            let nestedEntries =
+                [|
+                    Grace.Shared.Services.DirectoryVersionPreimageEntry.File nestedFile.RelativePath nestedFile.Size nestedFile.Blake3Hash nestedFile.Sha256Hash
+                |]
+
+            let nestedSha256Hash = Grace.Shared.Services.computeSha256ForDirectoryEntries (RelativePath "nested") nestedEntries
+            let nestedBlake3Hash = Grace.Shared.Services.computeBlake3ForDirectory (RelativePath "nested") nestedEntries
+            let emptyEntries = [||]
+            let emptySha256Hash = Grace.Shared.Services.computeSha256ForDirectoryEntries (RelativePath "empty") emptyEntries
+            let emptyBlake3Hash = Grace.Shared.Services.computeBlake3ForDirectory (RelativePath "empty") emptyEntries
+
+            let nestedMetadata =
+                LocalDirectoryVersion.CreateWithHashes
+                    nestedDirectoryId
+                    Guid.Empty
+                    Guid.Empty
+                    repositoryId
+                    (RelativePath "nested")
+                    nestedSha256Hash
+                    nestedBlake3Hash
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| nestedFile |]))
+                    nestedFile.Size
+                    DateTime.UtcNow
+
+            let emptyMetadata =
+                LocalDirectoryVersion.CreateWithHashes
+                    emptyDirectoryId
+                    Guid.Empty
+                    Guid.Empty
+                    repositoryId
+                    (RelativePath "empty")
+                    emptySha256Hash
+                    emptyBlake3Hash
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>())
+                    0L
+                    DateTime.UtcNow
+
+            let rootEntries =
+                [|
+                    Grace.Shared.Services.DirectoryVersionPreimageEntry.Directory
+                        emptyMetadata.RelativePath
+                        emptyMetadata.Size
+                        emptyMetadata.Blake3Hash
+                        emptyMetadata.Sha256Hash
+                    Grace.Shared.Services.DirectoryVersionPreimageEntry.Directory
+                        nestedMetadata.RelativePath
+                        nestedMetadata.Size
+                        nestedMetadata.Blake3Hash
+                        nestedMetadata.Sha256Hash
+                    Grace.Shared.Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+                |]
+
+            let rootSha256Hash = Grace.Shared.Services.computeSha256ForDirectoryEntries RootDirectoryPath rootEntries
+            let rootBlake3Hash = Grace.Shared.Services.computeBlake3ForDirectory RootDirectoryPath rootEntries
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create repositoryId (Guid.NewGuid()) rootDirectoryId rootSha256Hash rootBlake3Hash
+                |> required
+
+            let rootMetadata =
+                LocalDirectoryVersion.CreateWithHashes
+                    rootDirectoryId
+                    Guid.Empty
+                    Guid.Empty
+                    repositoryId
+                    RootDirectoryPath
+                    rootSha256Hash
+                    rootBlake3Hash
+                    (List<DirectoryVersionId>(
+                        [|
+                            nestedDirectoryId
+                            emptyDirectoryId
+                        |]
+                    ))
+                    (List<LocalFileVersion>([| file |]))
+                    file.Size
+                    DateTime.UtcNow
+
+            let index = GraceIndex()
+
+            index.TryAdd(rootMetadata.DirectoryVersionId, rootMetadata)
+            |> ignore
+
+            index.TryAdd(nestedMetadata.DirectoryVersionId, nestedMetadata)
+            |> ignore
+
+            index.TryAdd(emptyMetadata.DirectoryVersionId, emptyMetadata)
+            |> ignore
+
+            let status =
+                { GraceStatus.Default with
+                    Index = index
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = rootSha256Hash
+                    RootDirectoryBlake3Hash = rootBlake3Hash
+                }
+
+            LocalStateDb.validateCompleteStatusTree status
             |> required
 
-        let rootMetadata =
+            return target, status, rootMetadata
+        }
+
+    /// Creates the complete empty root baseline required by the read-only pre-mutation scanner.
+    let private emptyPriorStatus (targetStatus: GraceStatus) (targetRoot: LocalDirectoryVersion) =
+        let emptyEntries = [||]
+        let emptySha256Hash = Grace.Shared.Services.computeSha256ForDirectoryEntries RootDirectoryPath emptyEntries
+        let emptyBlake3Hash = Grace.Shared.Services.computeBlake3ForDirectory RootDirectoryPath emptyEntries
+
+        let root =
             LocalDirectoryVersion.CreateWithHashes
-                (WorkingDirectoryUpdateContracts.Target.rootDirectoryVersionId target)
-                Guid.Empty
-                Guid.Empty
-                (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                targetRoot.DirectoryVersionId
+                targetRoot.OwnerId
+                targetRoot.OrganizationId
+                targetRoot.RepositoryId
                 RootDirectoryPath
-                (WorkingDirectoryUpdateContracts.Target.sha256Hash target)
-                (WorkingDirectoryUpdateContracts.Target.blake3Hash target)
+                emptySha256Hash
+                emptyBlake3Hash
                 (List<DirectoryVersionId>())
                 (List<LocalFileVersion>())
                 0L
@@ -187,34 +329,61 @@ module WorkingDirectoryUpdateEngineTests =
 
         let index = GraceIndex()
 
-        index.TryAdd(rootMetadata.DirectoryVersionId, rootMetadata)
+        index.TryAdd(root.DirectoryVersionId, root)
         |> ignore
 
-        let status =
-            { GraceStatus.Default with
-                Index = index
-                RootDirectoryId = WorkingDirectoryUpdateContracts.Target.rootDirectoryVersionId target
-                RootDirectorySha256Hash = WorkingDirectoryUpdateContracts.Target.sha256Hash target
-                RootDirectoryBlake3Hash = WorkingDirectoryUpdateContracts.Target.blake3Hash target
-            }
+        { targetStatus with Index = index; RootDirectorySha256Hash = emptySha256Hash; RootDirectoryBlake3Hash = emptyBlake3Hash }
 
-        target, status, rootMetadata
-
-    /// Creates verified prepared bytes for either an empty target or one test file.
-    let private preparedContent bytes =
+    /// Creates verified prepared bytes for one declared manifest path.
+    let private preparedContentAt (relativePath: string) bytes =
         task {
             let! sha256Hash, blake3Hash = hashes bytes
 
             let manifest =
                 WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
-                                                                              RelativePath "file.txt",
+                                                                              RelativePath relativePath,
                                                                               sha256Hash,
                                                                               blake3Hash
                                                                           ) ]
                 |> required
 
             let files = Dictionary<string, byte array>()
+            files[relativePath] <- bytes
+
+            let! result =
+                WorkingDirectoryUpdateContracts.PreparedContent.create
+                    manifest
+                    (new Reader(files) :> WorkingDirectoryUpdateContracts.IPreparedContentReader)
+                    CancellationToken.None
+
+            return result |> required
+        }
+
+    /// Creates verified prepared bytes that exactly bind the complete standard status graph.
+    let private preparedContent bytes =
+        task {
+            let nestedBytes = [| 4uy; 5uy; 6uy |]
+            let! fileSha256Hash, fileBlake3Hash = hashes bytes
+            let! nestedFileSha256Hash, nestedFileBlake3Hash = hashesAt "nested/child.txt" nestedBytes
+
+            let manifest =
+                WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "empty")
+                                                                          WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "nested")
+                                                                          WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                              RelativePath "file.txt",
+                                                                              fileSha256Hash,
+                                                                              fileBlake3Hash
+                                                                          )
+                                                                          WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                              RelativePath "nested/child.txt",
+                                                                              nestedFileSha256Hash,
+                                                                              nestedFileBlake3Hash
+                                                                          ) ]
+                |> required
+
+            let files = Dictionary<string, byte array>()
             files["file.txt"] <- bytes
+            files["nested/child.txt"] <- nestedBytes
 
             let! result =
                 WorkingDirectoryUpdateContracts.PreparedContent.create
@@ -250,7 +419,7 @@ module WorkingDirectoryUpdateEngineTests =
         databasePath
         =
         task {
-            let target, targetStatus, rootMetadata = targetAndStatus ()
+            let! target, targetStatus, rootMetadata = targetAndStatus ()
             let priorStatus = priorStatusFactory targetStatus rootMetadata
             let! content = contentFactory ()
             let scanInput = scanInputFactory workingRoot
@@ -266,8 +435,8 @@ module WorkingDirectoryUpdateEngineTests =
             let operation, finalizer, request =
                 match callerKind with
                 | "branch" ->
-                    let previousBranchId = Guid.NewGuid()
-                    let selectedReferenceId = Guid.NewGuid()
+                    let previousBranchId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+                    let selectedReferenceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
 
                     let operation =
                         WorkingDirectoryUpdateContracts.Operation.branchSwitch previousBranchId selectedReferenceId target
@@ -282,7 +451,14 @@ module WorkingDirectoryUpdateEngineTests =
                         |> required
 
                     let facts =
-                        WorkingDirectoryUpdate.ApplicationFacts.create target workingRoot objectRoot databasePath priorStatus targetStatus [| rootMetadata |]
+                        WorkingDirectoryUpdate.ApplicationFacts.create
+                            target
+                            workingRoot
+                            objectRoot
+                            databasePath
+                            priorStatus
+                            targetStatus
+                            (targetStatus.Index.Values |> Seq.toArray)
                         |> required
 
                     let finalizer = Finalizer()
@@ -316,7 +492,14 @@ module WorkingDirectoryUpdateEngineTests =
                         |> required
 
                     let facts =
-                        WorkingDirectoryUpdate.ApplicationFacts.create target workingRoot objectRoot databasePath priorStatus targetStatus [| rootMetadata |]
+                        WorkingDirectoryUpdate.ApplicationFacts.create
+                            target
+                            workingRoot
+                            objectRoot
+                            databasePath
+                            priorStatus
+                            targetStatus
+                            (targetStatus.Index.Values |> Seq.toArray)
                         |> required
 
                     let request =
@@ -341,7 +524,7 @@ module WorkingDirectoryUpdateEngineTests =
     let private requestWithReader readerFactory callerKind failurePoint workingRoot objectRoot databasePath =
         requestWithPriorStatus
             readerFactory
-            (fun status _ -> status)
+            emptyPriorStatus
             None
             callerKind
             failurePoint
@@ -356,7 +539,7 @@ module WorkingDirectoryUpdateEngineTests =
     let private requestWithProgress progress callerKind failurePoint workingRoot objectRoot databasePath =
         requestWithPriorStatus
             (fun selection -> SelectedStateReader(selection) :> WorkingDirectoryUpdate.ISelectedStateReader)
-            (fun status _ -> status)
+            emptyPriorStatus
             (Some progress)
             callerKind
             failurePoint
@@ -405,9 +588,15 @@ module WorkingDirectoryUpdateEngineTests =
                 File.ReadAllBytes(Path.Combine(workingRoot, "file.txt"))
                 |> should equal [| 1uy; 2uy; 3uy |]
 
+                File.ReadAllBytes(Path.Combine(workingRoot, "nested", "child.txt"))
+                |> should equal [| 4uy; 5uy; 6uy |]
+
+                Directory.Exists(Path.Combine(workingRoot, "empty"))
+                |> should equal true
+
                 Directory.EnumerateFiles(objectRoot, "*", SearchOption.AllDirectories)
                 |> Seq.length
-                |> should equal 1
+                |> should equal 2
 
                 WorkingDirectoryUpdate.Request.preparedContentDisposalCountForTests updateRequest
                 |> should equal 1
@@ -421,14 +610,14 @@ module WorkingDirectoryUpdateEngineTests =
     let ``typed finalizer observes pending completion after matching status and object facts commit`` () =
         withScenario (fun workingRoot objectRoot databasePath ->
             task {
-                let target, targetStatus, rootMetadata = targetAndStatus ()
+                let! target, targetStatus, rootMetadata = targetAndStatus ()
                 let! content = preparedContent [| 1uy; 2uy; 3uy |]
 
                 let scope =
                     WorkingDirectoryUpdateContracts.LocalRootScope.create workingRoot
                     |> required
 
-                do! LocalStateDb.replaceStatusSnapshot databasePath targetStatus
+                do! LocalStateDb.replaceStatusSnapshot databasePath (emptyPriorStatus targetStatus rootMetadata)
                 let! acceptedRevision = LocalStateDb.readLocalStatusRevision databasePath
                 let previousBranchId = Guid.NewGuid()
                 let selectedReferenceId = Guid.NewGuid()
@@ -446,7 +635,14 @@ module WorkingDirectoryUpdateEngineTests =
                     |> required
 
                 let facts =
-                    WorkingDirectoryUpdate.ApplicationFacts.create target workingRoot objectRoot databasePath targetStatus targetStatus [| rootMetadata |]
+                    WorkingDirectoryUpdate.ApplicationFacts.create
+                        target
+                        workingRoot
+                        objectRoot
+                        databasePath
+                        (emptyPriorStatus targetStatus rootMetadata)
+                        targetStatus
+                        (targetStatus.Index.Values |> Seq.toArray)
                     |> required
 
                 let finalizer = PendingCompletionFinalizer(databasePath, target, operation, rootMetadata)
@@ -479,7 +675,7 @@ module WorkingDirectoryUpdateEngineTests =
         |> Async.RunSynchronously
 
     [<Test>]
-    let ``corrupt existing object rejects before the engine writes a working copy`` () =
+    let ``corrupt existing object is atomically healed before the engine writes a working copy`` () =
         withScenario (fun workingRoot objectRoot databasePath ->
             task {
                 let expectedBytes = [| 1uy; 2uy; 3uy |]
@@ -497,14 +693,14 @@ module WorkingDirectoryUpdateEngineTests =
                 let! outcome = WorkingDirectoryUpdate.run updateRequest CancellationToken.None
 
                 match outcome with
-                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
-                | _ -> failwithf "Expected Rejected but received %A." outcome
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | _ -> failwithf "Expected Updated after healing but received %A." outcome
 
                 File.ReadAllBytes(corruptObjectPath)
-                |> should equal [| 99uy |]
+                |> should equal expectedBytes
 
-                File.Exists(Path.Combine(workingRoot, "file.txt"))
-                |> should equal false
+                File.ReadAllBytes(Path.Combine(workingRoot, "file.txt"))
+                |> should equal expectedBytes
             })
         |> Async.AwaitTask
         |> Async.RunSynchronously
@@ -587,7 +783,7 @@ module WorkingDirectoryUpdateEngineTests =
                 let! _, _, _, updateRequest =
                     requestWithPriorStatus
                         (fun selection -> SelectedStateReader(selection) :> WorkingDirectoryUpdate.ISelectedStateReader)
-                        (fun status _ -> status)
+                        emptyPriorStatus
                         None
                         "connect"
                         None
@@ -728,7 +924,7 @@ module WorkingDirectoryUpdateEngineTests =
                 let! _, _, _, updateRequest =
                     requestWithPriorStatus
                         (fun selection -> SelectedStateReader(selection) :> WorkingDirectoryUpdate.ISelectedStateReader)
-                        (fun status _ -> status)
+                        emptyPriorStatus
                         None
                         "connect"
                         None
@@ -844,6 +1040,21 @@ module WorkingDirectoryUpdateEngineTests =
                     WorkingDirectoryUpdate.AcceptedSelection.create target scope configuration 2L
                     |> required
 
+                match
+                    WorkingDirectoryUpdate.FinalizationRequest.branchSwitch
+                        selection
+                        operation
+                        databasePath
+                        "engine-tests"
+                        (SelectedStateReader(selection))
+                        (Guid.Parse("33333333-3333-3333-3333-333333333333"))
+                        (Guid.Parse("22222222-2222-2222-2222-222222222222"))
+                        (finalizer.Value :> WorkingDirectoryUpdate.IIdempotentFinalizer)
+                        None
+                    with
+                | Error _ -> ()
+                | Ok _ -> failwith "Expected unrelated finalization facts to fail before retry leasing."
+
                 let retryRequest =
                     WorkingDirectoryUpdate.FinalizationRequest.branchSwitch
                         selection
@@ -851,8 +1062,8 @@ module WorkingDirectoryUpdateEngineTests =
                         databasePath
                         "engine-tests"
                         (SelectedStateReader(selection))
-                        Guid.Empty
-                        Guid.Empty
+                        (Guid.Parse("11111111-1111-1111-1111-111111111111"))
+                        (Guid.Parse("22222222-2222-2222-2222-222222222222"))
                         (finalizer.Value :> WorkingDirectoryUpdate.IIdempotentFinalizer)
                         None
                     |> required
@@ -1095,7 +1306,7 @@ module WorkingDirectoryUpdateEngineTests =
                             LocalStateDb.commitWorkingDirectoryUpdateCompletion
                                 dbPath
                                 targetStatus
-                                [| rootMetadata |]
+                                (targetStatus.Index.Values |> Seq.toArray)
                                 (LocalStateDb.BranchFinalization(previousBranchId, selectedReferenceId))
                                 target
                                 pendingOperation
@@ -1111,7 +1322,7 @@ module WorkingDirectoryUpdateEngineTests =
                             := WorkingDirectoryUpdate.AcceptedSelection.localStatusRevision selection
 
                             SelectedStateReader(selection) :> WorkingDirectoryUpdate.ISelectedStateReader)
-                        (fun status _ -> status)
+                        emptyPriorStatus
                         None
                         "branch"
                         None
@@ -1339,8 +1550,8 @@ module WorkingDirectoryUpdateEngineTests =
                         databasePath
                         "engine-tests"
                         (SelectedStateReader(selection))
-                        Guid.Empty
-                        Guid.Empty
+                        (Guid.Parse("11111111-1111-1111-1111-111111111111"))
+                        (Guid.Parse("22222222-2222-2222-2222-222222222222"))
                         (finalizer.Value :> WorkingDirectoryUpdate.IIdempotentFinalizer)
                         None
                     |> required
@@ -1356,6 +1567,237 @@ module WorkingDirectoryUpdateEngineTests =
 
                 File.ReadAllBytes(workingFile)
                 |> should equal beforeRetry
+            })
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
+    [<Test>]
+    let ``request construction rejects a manifest that does not exactly bind the frozen status graph before lease or SQLite completion`` () =
+        withScenario (fun workingRoot objectRoot databasePath ->
+            task {
+                let! target, targetStatus, rootMetadata = targetAndStatus ()
+                let! content = preparedContentAt "other.txt" [| 1uy; 2uy; 3uy |]
+
+                let scope =
+                    WorkingDirectoryUpdateContracts.LocalRootScope.create workingRoot
+                    |> required
+
+                let configuration =
+                    WorkingDirectoryUpdate.AcceptedConfiguration.create "engine-tests" (defaultScanInput workingRoot)
+                    |> required
+
+                do! LocalStateDb.replaceStatusSnapshot databasePath (emptyPriorStatus targetStatus rootMetadata)
+                let! revision = LocalStateDb.readLocalStatusRevision databasePath
+
+                let selection =
+                    WorkingDirectoryUpdate.AcceptedSelection.create target scope configuration revision
+                    |> required
+
+                let facts =
+                    WorkingDirectoryUpdate.ApplicationFacts.create
+                        target
+                        workingRoot
+                        objectRoot
+                        databasePath
+                        (emptyPriorStatus targetStatus rootMetadata)
+                        targetStatus
+                        (targetStatus.Index.Values |> Seq.toArray)
+                    |> required
+
+                let operation =
+                    WorkingDirectoryUpdateContracts.Operation.connectBootstrap target "cursor-1" scope
+                    |> required
+
+                match
+                    WorkingDirectoryUpdate.Request.connectBootstrap
+                        selection
+                        facts
+                        operation
+                        content
+                        "diagnostic-a"
+                        (SelectedStateReader(selection))
+                        "cursor-1"
+                        None
+                    with
+                | Error _ -> ()
+                | Ok _ -> failwith "Expected graph/manifest mismatch to fail request construction."
+
+                File.Exists(Path.Combine(workingRoot, "file.txt"))
+                |> should equal false
+
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion databasePath target operation
+                completion |> should equal None
+                WorkingDirectoryUpdateContracts.PreparedContent.dispose content
+            })
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
+    [<Test>]
+    let ``caller-bound diagnostics preserve one operation identity while a different Branch fact produces a distinct identity`` () =
+        withScenario (fun workingRoot objectRoot databasePath ->
+            task {
+                let! target, targetStatus, rootMetadata = targetAndStatus ()
+
+                let scope =
+                    WorkingDirectoryUpdateContracts.LocalRootScope.create workingRoot
+                    |> required
+
+                let configuration =
+                    WorkingDirectoryUpdate.AcceptedConfiguration.create "engine-tests" (defaultScanInput workingRoot)
+                    |> required
+
+                do! LocalStateDb.replaceStatusSnapshot databasePath (emptyPriorStatus targetStatus rootMetadata)
+                let! revision = LocalStateDb.readLocalStatusRevision databasePath
+
+                let selection =
+                    WorkingDirectoryUpdate.AcceptedSelection.create target scope configuration revision
+                    |> required
+
+                let facts =
+                    WorkingDirectoryUpdate.ApplicationFacts.create
+                        target
+                        workingRoot
+                        objectRoot
+                        databasePath
+                        (emptyPriorStatus targetStatus rootMetadata)
+                        targetStatus
+                        (targetStatus.Index.Values |> Seq.toArray)
+                    |> required
+
+                let previousBranchId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+                let selectedReferenceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+
+                let operation =
+                    WorkingDirectoryUpdateContracts.Operation.branchSwitch previousBranchId selectedReferenceId target
+                    |> required
+
+                let finalizer = Finalizer() :> WorkingDirectoryUpdate.IIdempotentFinalizer
+                let! firstContent = preparedContent [| 1uy; 2uy; 3uy |]
+                let! secondContent = preparedContent [| 1uy; 2uy; 3uy |]
+                let! differentContent = preparedContent [| 1uy; 2uy; 3uy |]
+
+                let firstRequest =
+                    WorkingDirectoryUpdate.Request.branchSwitch
+                        selection
+                        facts
+                        operation
+                        firstContent
+                        "diagnostic-a"
+                        (SelectedStateReader(selection))
+                        previousBranchId
+                        selectedReferenceId
+                        finalizer
+                        None
+                    |> required
+
+                let secondRequest =
+                    WorkingDirectoryUpdate.Request.branchSwitch
+                        selection
+                        facts
+                        operation
+                        secondContent
+                        "diagnostic-b"
+                        (SelectedStateReader(selection))
+                        previousBranchId
+                        selectedReferenceId
+                        finalizer
+                        None
+                    |> required
+
+                let differentReferenceId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+
+                let differentOperation =
+                    WorkingDirectoryUpdateContracts.Operation.branchSwitch previousBranchId differentReferenceId target
+                    |> required
+
+                let differentRequest =
+                    WorkingDirectoryUpdate.Request.branchSwitch
+                        selection
+                        facts
+                        differentOperation
+                        differentContent
+                        "diagnostic-a"
+                        (SelectedStateReader(selection))
+                        previousBranchId
+                        differentReferenceId
+                        finalizer
+                        None
+                    |> required
+
+                WorkingDirectoryUpdate.Request.operationValueForTests firstRequest
+                |> should equal (WorkingDirectoryUpdate.Request.operationValueForTests secondRequest)
+
+                WorkingDirectoryUpdate.Request.operationValueForTests firstRequest
+                |> should not' (equal (WorkingDirectoryUpdate.Request.operationValueForTests differentRequest))
+
+                WorkingDirectoryUpdateContracts.PreparedContent.dispose firstContent
+                WorkingDirectoryUpdateContracts.PreparedContent.dispose secondContent
+                WorkingDirectoryUpdateContracts.PreparedContent.dispose differentContent
+            })
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
+    [<Test>]
+    let ``request execution uses a deep-frozen target graph after the caller mutates its source status`` () =
+        withScenario (fun workingRoot objectRoot databasePath ->
+            task {
+                let! target, targetStatus, rootMetadata = targetAndStatus ()
+                let priorStatus = emptyPriorStatus targetStatus rootMetadata
+                let! content = preparedContent [| 1uy; 2uy; 3uy |]
+
+                let scope =
+                    WorkingDirectoryUpdateContracts.LocalRootScope.create workingRoot
+                    |> required
+
+                let configuration =
+                    WorkingDirectoryUpdate.AcceptedConfiguration.create "engine-tests" (defaultScanInput workingRoot)
+                    |> required
+
+                do! LocalStateDb.replaceStatusSnapshot databasePath priorStatus
+                let! revision = LocalStateDb.readLocalStatusRevision databasePath
+
+                let selection =
+                    WorkingDirectoryUpdate.AcceptedSelection.create target scope configuration revision
+                    |> required
+
+                let facts =
+                    WorkingDirectoryUpdate.ApplicationFacts.create
+                        target
+                        workingRoot
+                        objectRoot
+                        databasePath
+                        priorStatus
+                        targetStatus
+                        (targetStatus.Index.Values |> Seq.toArray)
+                    |> required
+
+                rootMetadata.Files.Clear()
+                targetStatus.Index.Clear()
+
+                let operation =
+                    WorkingDirectoryUpdateContracts.Operation.connectBootstrap target "cursor-1" scope
+                    |> required
+
+                let updateRequest =
+                    WorkingDirectoryUpdate.Request.connectBootstrap
+                        selection
+                        facts
+                        operation
+                        content
+                        "engine-tests"
+                        (SelectedStateReader(selection))
+                        "cursor-1"
+                        None
+                    |> required
+
+                let! outcome = WorkingDirectoryUpdate.run updateRequest CancellationToken.None
+
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | _ -> failwithf "Expected deep-frozen request to update successfully but received %A." outcome
+
+                File.ReadAllBytes(Path.Combine(workingRoot, "nested", "child.txt"))
+                |> should equal [| 4uy; 5uy; 6uy |]
             })
         |> Async.AwaitTask
         |> Async.RunSynchronously
