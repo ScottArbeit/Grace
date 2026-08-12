@@ -493,7 +493,6 @@ module CacheRegistration =
             | Some registration when
                 now < registration.RefreshAfter
                 && registration.Health = CacheHealthStatus.Unhealthy
-                && registration.LastRefreshedAt = registration.EnrolledAt
                 && request.Health = CacheHealthStatus.Healthy
                 ->
                 let refreshed =
@@ -515,7 +514,7 @@ module CacheRegistration =
                             |> Array.map (fun existing -> if existing.CacheId = request.CacheId then refreshed else existing)
                     }
 
-                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Refreshed, Some refreshed, "Initial Cache health was published.")
+                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Refreshed, Some refreshed, "Cache health was published.")
             | Some registration when
                 now < registration.RefreshAfter
                 && request.Health = CacheHealthStatus.Unhealthy

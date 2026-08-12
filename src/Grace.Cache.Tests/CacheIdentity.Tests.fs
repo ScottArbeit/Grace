@@ -273,6 +273,30 @@ type CacheIdentityTests() =
 
             requireInspection CacheIdentityInspection.Ready (CacheIdentity.inspect root))
 
+    /// Verifies a later publication attempt cannot replace an already published protected ready identity.
+    [<Test>]
+    member _.``commitReady never replaces an existing ready identity``() =
+        withLinuxRoot (fun root ->
+            let publicKey = readyIdentity root
+            let ready = Path.Combine(root, "ready")
+            let identityPath = Path.Combine(ready, "identity.pk8")
+            let registrationPath = Path.Combine(ready, "registration.json")
+            let originalIdentity = File.ReadAllBytes(identityPath)
+            let originalRegistration = File.ReadAllBytes(registrationPath)
+
+            CacheIdentity.commitReady root { acceptedConfiguration publicKey with DisplayName = "replacement attempt" }
+            |> requireStateUnavailable
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(File.ReadAllBytes(identityPath).Length, Is.EqualTo(originalIdentity.Length))
+                    Assert.That(Array.forall2 (=) originalIdentity (File.ReadAllBytes(identityPath)), Is.True)
+                    Assert.That(File.ReadAllBytes(registrationPath).Length, Is.EqualTo(originalRegistration.Length))
+                    Assert.That(Array.forall2 (=) originalRegistration (File.ReadAllBytes(registrationPath)), Is.True)
+
+                    requireInspection CacheIdentityInspection.Ready (CacheIdentity.inspect root))
+            ))
+
     /// Verifies the production private-file writer and strict parser work without Linux filesystem primitives.
     [<Test>]
     member _.``ready registration writer and parser preserve accepted facts and reject malformed JSON``() =

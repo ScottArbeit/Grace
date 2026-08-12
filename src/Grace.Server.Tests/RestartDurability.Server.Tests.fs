@@ -636,6 +636,31 @@ type RestartDurabilityServer() =
             let afterRestartError = deserialize<GraceError> afterRestartBody
             Assert.That(afterRestartError.Error, Does.Contain("No eligible Cache registration is currently available."))
 
+            let invalidObservedAt = getCurrentInstant ()
+
+            let invalidRefresh =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.0.1"
+                    ProtocolVersion = "v1"
+                    PrefetchSupported = false
+                    ObservedAt = invalidObservedAt
+                    Proof =
+                        CacheRequestProofPayload.Create(cacheId, CacheRegistrationProof.RefreshOperation, "incorrect-refresh-digest", invalidObservedAt)
+                        |> fun payload -> SignedCacheRequestProof.Create(payload, "invalid-signature")
+                }
+
+            let! invalidRefreshResponse = Client.PostAsync("/cache/refresh", createJsonContent invalidRefresh)
+            let! invalidRefreshBody = invalidRefreshResponse.Content.ReadAsStringAsync()
+            Assert.That(invalidRefreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), invalidRefreshBody)
+            Assert.That(invalidRefreshBody, Does.Contain("Cache refresh proof is invalid"))
+
+            let! afterInvalidProofStatus, afterInvalidProofBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(afterInvalidProofStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), afterInvalidProofBody)
+
             let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint (getCurrentInstant ())
             Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.Refreshed))
 

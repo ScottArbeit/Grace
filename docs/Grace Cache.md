@@ -456,7 +456,7 @@ to establish the static Product V1 shape.
 | Static identity pruning | Cache types, actor state, server routes, OpenAPI, SDKs, docs, test fixtures | Inventory finds no active service-identity rotation/candidate route, field, setting, state, or command; grant-key rollover remains proven. |
 | R1 enrollment | Cache CLI/host boundary, protected key store, local config | Success; validation-before-effect; rejection; lost response; crash cleanup; atomic write failure; key mismatch; redaction; unsupported-profile rejection. |
 | R1 ambiguity gate | Current server enrollment, selection, revoke/list declarations and tests | Concrete proof that inactive orphan is unselectable and fresh manual re-enrollment cannot be blocked; otherwise owner decision packet. |
-| R2 liveness | Cache run host, registration route/actor, injectable clock/timer | Startup; exact endpoint; guard conflict; refresh; temporary retry; `Retry-After` cap; revocation; expiry; shutdown race; restart; server selection. |
+| R2 liveness | Cache run host, registration route/actor, injectable clock/timer | Startup; exact endpoint; guard conflict; signed Unhealthy refresh; temporary retry; `Retry-After` cap; revocation; expiry; shutdown race; restart; server selection. #857 does not publish Healthy. |
 | Artifact store and serving | SQLite/filesystem metadata, read-through fetcher, artifact route | Authorized hit; miss-fill-serve-hit; hash/size mismatch; partial staging; grant/proof rejection; grant-key rollover; restart completeness. |
 | Working Directory Update | Cache execution path and #835 public local-update seam | Exact prepared content invokes `WorkingDirectoryUpdate.run`; no alternate local completion path. |
 | Final integration | Epic branch, generated contracts, implementation audit | Current-head validation, focused integration tracer, generated artifacts, MarkdownLint, audit classification, and fresh review. |
@@ -518,9 +518,9 @@ without rotation, prefetch, or scheduled retention.
 2. **R1A static enrollment identity (#886)**: Starts after R0 and its Tier-2 orphan/re-enrollment proof gate pass.
 3. **R1B enrollment and status commands (#887)**: Follows R1A and owns no R1A protected-identity detail.
 4. **R2 registration liveness (#857)**: Starts after R1 and its Tier-2 server timestamp, response-class, selection, and clock
-   table are complete.
-5. **Runtime/artifact serving**: May proceed independently where write sets do not overlap with #835; it owns storage,
-   grant verification, and the miss-fill-serve-hit tracer.
+   table are complete. Its signed refreshes remain Unhealthy; it does not publish Healthy.
+5. **Runtime/artifact serving (#625)**: May proceed independently where write sets do not overlap with #835; it owns storage,
+   grant verification, the miss-fill-serve-hit tracer, and Healthy publication only after serving readiness is proven.
 6. **Cache-aware local execution and Watch**: #628 to #630 and #634 do not start until #835 merges to `main` and the
    Epic #597 branch refreshes from it.
 7. **Final audit and release candidate**: Classify every row in `docs/Grace Cache implementation audit.md`, validate the
@@ -545,10 +545,10 @@ high-conflict surfaces. Parallel work requires both independent user behavior an
 
 Review uses the Product V1 contract plus a supported producer, supported reproduction, concrete likelihood, and
 observable impact. The former numerical worker limit and cycle-three owner stop are revoked for #597. A repeated
-invariant family requires a stabilization ledger, but does not itself stop implementation. A pull request that reaches
-five implementation or fix workers is superseded by a replacement pull request under the same issue scope. The final
-epic-to-`main` merge is never implied by checks or review; it requires Scott's explicit approval of the reviewed,
-validated current head.
+invariant family requires a stabilization ledger, but does not itself stop implementation. Worker 5 receives the final
+implementation or fix attempt. Supersession occurs only when the fresh review after worker 5 reports a valid,
+addressable finding; reaching worker 5 alone does not supersede the pull request. The final epic-to-`main` merge is
+never implied by checks or review; it requires Scott's explicit approval of the reviewed, validated current head.
 
 ## 15. Lifecycle audit, residual risks, and interruption triggers
 

@@ -117,13 +117,15 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   a new registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without
   mutation; Linux tests restore modified modes before cleanup.
 - **Deferred:** #887 owns HTTP, credentials, command output, accepted/rejected/unknown orchestration, and cleanup calls;
-  #857 owns liveness. R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
+  #857 owns signed refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
+  R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
 
 ### R2: registration liveness (#857)
 
 - **Status classification:** `planned`.
-- **Required result:** One cache process uses one bounded scheduler with server-issued liveness times, bounded retry,
-  and terminal fail-closed behavior at expiry, revocation, or definitive rejection.
+- **Required result:** One cache process uses one bounded scheduler with server-issued liveness times, signed refreshes
+  that remain `Unhealthy`, bounded retry, and terminal fail-closed behavior at expiry, revocation, or definitive
+  rejection. #625, not #857, publishes `Healthy` after serving readiness is proven.
 - **Gate:** Before implementation, record the current registration response classes, timestamps, selection behavior,
   clock model, retry schedule, and expiry cap.
 - **Proof:** Startup, endpoint validation, guard conflict, refresh, temporary retry, capped `Retry-After`, revocation,
