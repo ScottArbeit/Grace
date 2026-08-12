@@ -12,6 +12,7 @@ open System.Collections.Generic
 open System.CommandLine
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
+open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
 
@@ -198,7 +199,24 @@ module CacheCommand =
     /// Renders only the approved redacted local identity facts for a cache command result.
     let private renderStatus (parseResult: ParseResult) (status: Grace.Cache.CacheIdentityStatus) =
         if parseResult |> json then
-            GraceReturnValue.Create status (getCorrelationId parseResult)
+            let jsonStatus = JsonObject()
+            jsonStatus["Class"] <- JsonValue.Create(status.Class)
+            jsonStatus["Enrollment"] <- JsonValue.Create(status.Enrollment)
+            jsonStatus["Key"] <- JsonValue.Create(status.Key)
+
+            status.CacheId
+            |> Option.iter (fun cacheId -> jsonStatus["CacheId"] <- JsonValue.Create(cacheId))
+
+            status.Endpoint
+            |> Option.iter (fun endpoint -> jsonStatus["Endpoint"] <- JsonValue.Create(endpoint))
+
+            status.BoundaryKind
+            |> Option.iter (fun boundaryKind -> jsonStatus["BoundaryKind"] <- JsonValue.Create(boundaryKind))
+
+            status.RepositoryCount
+            |> Option.iter (fun repositoryCount -> jsonStatus["RepositoryCount"] <- JsonValue.Create(repositoryCount))
+
+            GraceReturnValue.Create jsonStatus (getCorrelationId parseResult)
             |> Ok
             |> renderOutput parseResult
         elif parseResult |> silent then

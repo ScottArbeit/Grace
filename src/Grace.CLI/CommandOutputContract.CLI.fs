@@ -199,6 +199,32 @@ module CommandOutputContract =
         schema["description"] <- description
         box schema
 
+    /// Constructs a string schema restricted to one value for conditional command-output variants.
+    let private constantStringSchema value description =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- "string"
+        schema["const"] <- value
+        schema["description"] <- description
+        box schema
+
+    /// Constructs a string schema that excludes one value for conditional command-output variants.
+    let private stringExceptSchema excludedValue description =
+        let excluded = Dictionary<string, obj>(StringComparer.Ordinal)
+        excluded["const"] <- excludedValue
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- "string"
+        schema["not"] <- box excluded
+        schema["description"] <- description
+        box schema
+
+    /// Combines mutually exclusive command-output object variants under one named schema.
+    let private oneOfSchema title (variants: obj array) =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["$schema"] <- "https://json-schema.org/draft/2020-12/schema"
+        schema["title"] <- title
+        schema["oneOf"] <- variants
+        box schema
+
     /// Constructs an array schema and attaches the item schema used by repeated command-output fields.
     let private arraySchema itemSchema description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
@@ -553,17 +579,17 @@ module CommandOutputContract =
                 Summary = {| Total = 1; Ok = 1; Warning = 0; Failed = 0; Skipped = 0 |}
             |}
 
-    /// Defines the redacted local identity shape shared by successful Cache enrollment and status output.
-    let private cacheStatusSchema =
+    /// Defines the ready-only redacted local identity fields shared by Cache enrollment and status output.
+    let private cacheStatusReadySchema =
         schemaObject
-            "CacheStatusDto"
+            "CacheStatusReadyDto"
             [
                 "Class", scalarSchema "string"
-                "Enrollment", scalarSchema "string"
-                "CacheId", nullableStringSchema "Cache identifier when protected ready state is valid."
-                "Endpoint", nullableStringSchema "Registered cache endpoint when protected ready state is valid."
-                "BoundaryKind", nullableStringSchema "Registered boundary kind when protected ready state is valid."
-                "RepositoryCount", nullableIntegerSchema "Repository assignment count when protected ready state is valid."
+                "Enrollment", constantStringSchema "enrolled" "Protected ready state is valid."
+                "CacheId", scalarSchema "string"
+                "Endpoint", scalarSchema "string"
+                "BoundaryKind", scalarSchema "string"
+                "RepositoryCount", scalarSchema "integer"
                 "Key", scalarSchema "string"
             ]
             [|
@@ -574,6 +600,26 @@ module CommandOutputContract =
                 "BoundaryKind"
                 "RepositoryCount"
                 "Key"
+            |]
+
+    /// Defines a non-ready Cache status shape that omits every ready-only identity fact.
+    let private cacheStatusNonReadySchema =
+        schemaObject
+            "CacheStatusNonReadyDto"
+            [
+                "Class", scalarSchema "string"
+                "Enrollment", stringExceptSchema "enrolled" "Any status without a valid protected ready identity."
+                "Key", scalarSchema "string"
+            ]
+            [| "Class"; "Enrollment"; "Key" |]
+
+    /// Defines the conditional redacted local identity shape shared by successful Cache enrollment and status output.
+    let private cacheStatusSchema =
+        oneOfSchema
+            "CacheStatusDto"
+            [|
+                cacheStatusReadySchema
+                cacheStatusNonReadySchema
             |]
 
     /// Provides the representative enrolled local identity output used by inert Cache command examples.
@@ -657,6 +703,7 @@ module CommandOutputContract =
                 cacheStatusExample
                 [
                     "The command never exposes private key material, filesystem paths, or enrollment attempt details."
+                    "CacheId, Endpoint, BoundaryKind, and RepositoryCount are present only when Enrollment is enrolled; all non-ready output omits them."
                 ]
         | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
             supportedReturnValueContract

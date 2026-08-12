@@ -29,9 +29,6 @@ module CacheCliTests =
     /// Records only the target and bearer header needed to prove selected-server enrollment transport behavior.
     type private RecordedRequest = { Target: string; Authorization: string option }
 
-    let private claimHolderRootVariable = "GRACE_CACHE_TEST_CLAIM_HOLDER_ROOT"
-    let private claimHolderSignalVariable = "GRACE_CACHE_TEST_CLAIM_HOLDER_SIGNAL"
-
     /// Runs one callback with the supplied environment values and restores every changed variable in a finally block.
     let private withEnvironment (values: (string * string option) list) (action: unit -> 'T) =
         let originals =
@@ -236,12 +233,14 @@ module CacheCliTests =
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
-    /// Invokes a cache command from a fresh non-repository directory and restores console and directory process state.
-    let private invokeOutsideRepository arguments =
+    /// Invokes a cache command from a fresh non-repository directory and captures both standard streams.
+    let private invokeOutsideRepositoryWithStreams arguments =
         let temporaryDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-cli-tests-{Guid.NewGuid():N}")
         let originalDirectory = Environment.CurrentDirectory
         let originalOut = Console.Out
+        let originalError = Console.Error
         use output = new StringWriter()
+        use error = new StringWriter()
 
         try
             Directory.CreateDirectory(temporaryDirectory)
@@ -249,53 +248,142 @@ module CacheCliTests =
 
             Environment.CurrentDirectory <- temporaryDirectory
             Console.SetOut(output)
+            Console.SetError(error)
             setAnsiConsoleOutput output
             let exitCode = GraceCommand.main arguments
-            exitCode, output.ToString(), Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
+            exitCode, output.ToString(), error.ToString(), Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
         finally
             Console.SetOut(originalOut)
+            Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
             Environment.CurrentDirectory <- originalDirectory
 
             if Directory.Exists(temporaryDirectory) then
                 Directory.Delete(temporaryDirectory, true)
 
-    /// Starts a separate test-host process that holds the production Linux claim until the callback verifies loser behavior.
-    let private withExternalClaimHolder root action =
-        let signalPath = Path.Combine(Path.GetTempPath(), $"grace-cache-claim-held-{Guid.NewGuid():N}")
-        use holder = new Process()
-        holder.StartInfo.FileName <- "dotnet"
-        holder.StartInfo.UseShellExecute <- false
-        holder.StartInfo.CreateNoWindow <- true
-        holder.StartInfo.ArgumentList.Add("vstest")
+    /// Invokes a cache command from a fresh non-repository directory while retaining the existing stdout-only test shape.
+    let private invokeOutsideRepository arguments =
+        let exitCode, output, _, createdGraceDirectory = invokeOutsideRepositoryWithStreams arguments
+        exitCode, output, createdGraceDirectory
 
-        holder.StartInfo.ArgumentList.Add(
-            System
-                .Reflection
-                .Assembly
-                .GetExecutingAssembly()
-                .Location
-        )
+    /// Lists the ready-only JSON property names that must be absent from every non-ready Cache status result.
+    let private readyOnlyStatusFields =
+        Set.ofList [ "CacheId"
+                     "Endpoint"
+                     "BoundaryKind"
+                     "RepositoryCount" ]
 
-        holder.StartInfo.ArgumentList.Add("--Tests:internal Linux Cache claim holder")
-        holder.StartInfo.Environment[ claimHolderRootVariable ] <- root
-        holder.StartInfo.Environment[ claimHolderSignalVariable ] <- signalPath
+    /// Asserts the exact presence or omission of ready-only Cache status properties in a parsed command envelope.
+    let private assertReadyOnlyStatusFields (shouldBePresent: bool) (status: JsonElement) =
+        let presentFields =
+            status.EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
 
+        for field in readyOnlyStatusFields do
+            Assert.That(Set.contains field presentFields = shouldBePresent, Is.True, $"Unexpected Cache status field presence for {field}.")
+
+    /// Locates the test-only direct claim-holder executable built by the test project dependency.
+    let private tryFindClaimHolderCommand () =
         try
-            Assert.That(holder.Start(), Is.True)
-            let deadline = DateTime.UtcNow.AddSeconds(10.0)
+            let assemblyDirectory =
+                DirectoryInfo(
+                    Path.GetDirectoryName(
+                        System
+                            .Reflection
+                            .Assembly
+                            .GetExecutingAssembly()
+                            .Location
+                    )
+                )
 
-            while not (File.Exists(signalPath))
-                  && DateTime.UtcNow < deadline do
-                Thread.Sleep(50)
+            let configuration = assemblyDirectory.Parent.Name
+            let targetFramework = assemblyDirectory.Name
+            let mutable current = assemblyDirectory
+            let mutable sourceDirectory = Unchecked.defaultof<DirectoryInfo>
+            let mutable found = false
 
-            Assert.That(File.Exists(signalPath), Is.True, "The external Cache claim holder did not report an acquired lock.")
-            action ()
-        finally
-            if not holder.HasExited then holder.Kill(true)
-            holder.WaitForExit(10000) |> ignore
+            while not found && not (isNull current) do
+                if Directory.Exists(Path.Combine(current.FullName, "Grace.Cache.ClaimHolder")) then
+                    sourceDirectory <- current
+                    found <- true
+                else
+                    current <- current.Parent
 
-            if File.Exists(signalPath) then File.Delete(signalPath)
+            if not found then
+                None
+            else
+                let holderBinDirectory = Path.Combine(sourceDirectory.FullName, "Grace.Cache.ClaimHolder", "bin", configuration, targetFramework)
+                let executablePath = Path.Combine(holderBinDirectory, "Grace.Cache.ClaimHolder.exe")
+                let libraryPath = Path.Combine(holderBinDirectory, "Grace.Cache.ClaimHolder.dll")
+
+                if
+                    OperatingSystem.IsWindows()
+                    && File.Exists(executablePath)
+                then
+                    Some(executablePath, None)
+                elif File.Exists(libraryPath) then
+                    Some("dotnet", Some libraryPath)
+                else
+                    None
+        with
+        | _ -> None
+
+    /// Starts the direct claim-holder process, verifies its held signal, then terminates that exact descriptor owner.
+    let private withDirectClaimHolder root action =
+        let signalPath = Path.Combine(Path.GetTempPath(), $"grace-cache-claim-held-{Guid.NewGuid():N}")
+
+        match tryFindClaimHolderCommand () with
+        | None -> Assert.Fail("The direct Cache claim-holder executable was not built.")
+        | Some (fileName, libraryPath) ->
+            use holder = new Process()
+            holder.StartInfo.FileName <- fileName
+            holder.StartInfo.UseShellExecute <- false
+            holder.StartInfo.CreateNoWindow <- true
+            holder.StartInfo.RedirectStandardOutput <- true
+            holder.StartInfo.RedirectStandardError <- true
+
+            libraryPath
+            |> Option.iter holder.StartInfo.ArgumentList.Add
+
+            holder.StartInfo.ArgumentList.Add(root)
+            holder.StartInfo.ArgumentList.Add(signalPath)
+            let mutable started = false
+
+            try
+                started <- holder.Start()
+                Assert.That(started, Is.True)
+                let deadline = DateTime.UtcNow.AddSeconds(10.0)
+
+                while not (File.Exists(signalPath))
+                      && DateTime.UtcNow < deadline do
+                    Thread.Sleep(50)
+
+                Assert.That(File.Exists(signalPath), Is.True, "The direct Cache claim holder did not report an acquired claim.")
+                action ()
+            finally
+                if started then
+                    if not holder.HasExited then holder.Kill()
+
+                    let exited = holder.WaitForExit(10000)
+                    let standardOutput = holder.StandardOutput.ReadToEnd()
+                    let standardError = holder.StandardError.ReadToEnd()
+
+                    Assert.That(
+                        exited,
+                        Is.True,
+                        $"Timed out waiting for the direct Cache claim holder to exit. stdout: {standardOutput}; stderr: {standardError}"
+                    )
+
+                    Assert.That(holder.HasExited, Is.True, "The direct Cache claim holder remained alive after termination.")
+
+                    Assert.That(
+                        holder.ExitCode,
+                        Is.Not.EqualTo(0),
+                        $"The terminated direct Cache claim holder unexpectedly returned success. stdout: {standardOutput}; stderr: {standardError}"
+                    )
+
+                if File.Exists(signalPath) then File.Delete(signalPath)
 
     /// Verifies the root command dispatches pure cache status without repository discovery or invocation history.
     [<Test>]
@@ -314,6 +402,31 @@ module CacheCliTests =
         let status = document.RootElement.GetProperty("ReturnValue")
         Assert.That(status.GetProperty("Enrollment").GetString(), Is.Not.EqualTo("enrolled"))
         Assert.That(status.GetProperty("Key").GetString(), Is.Not.Null)
+        assertReadyOnlyStatusFields false status
+
+    /// Verifies a staged local identity has one complete non-ready JSON shape with no ready-only identity facts.
+    [<Test>]
+    let ``cache status omits ready-only JSON fields for staging state`` () =
+        withLinuxCacheRoot (fun root ->
+            Assert.That(
+                Grace.Cache.CacheIdentity.createAttempt root
+                |> Result.isOk,
+                Is.True
+            )
+
+            let exitCode, output, createdGraceDirectory =
+                invokeOutsideRepository [| "--output"
+                                           "Json"
+                                           "cache"
+                                           "status" |]
+
+            Assert.That(exitCode, Is.EqualTo(1))
+            Assert.That(createdGraceDirectory, Is.False)
+            use document = JsonDocument.Parse(output)
+            let status = document.RootElement.GetProperty("ReturnValue")
+            Assert.That(status.GetProperty("Enrollment").GetString(), Is.EqualTo("notEnrolled"))
+            Assert.That(status.GetProperty("Key").GetString(), Is.EqualTo("available"))
+            assertReadyOnlyStatusFields false status)
 
     /// Verifies cache leaves participate in the shared command inventory used by schema and examples introspection.
     [<Test>]
@@ -325,24 +438,131 @@ module CacheCliTests =
         Assert.That(commandIds, Does.Contain("cache.enroll"))
         Assert.That(commandIds, Does.Contain("cache.status"))
 
-    /// Holds the production claim in the child test host used by the root-command cross-process proof.
+    /// Verifies Cache status introspection promises ready-only identity facts only in the enrolled schema variant.
     [<Test>]
-    let ``internal Linux Cache claim holder`` () =
-        let root = Environment.GetEnvironmentVariable(claimHolderRootVariable)
-        let signalPath = Environment.GetEnvironmentVariable(claimHolderSignalVariable)
+    let ``cache status schema examples and help describe conditional ready facts`` () =
+        let schemaExitCode, schemaOutput, schemaCreatedGraceDirectory =
+            invokeOutsideRepository [| "cache"
+                                       "status"
+                                       "--schema" |]
 
-        if
-            not (String.IsNullOrWhiteSpace(root))
-            && not (String.IsNullOrWhiteSpace(signalPath))
-        then
-            match Grace.Cache.CacheIdentity.tryAcquireEnrollmentClaim root with
-            | Error error -> Assert.Fail($"The external Cache claim holder could not acquire its protected root: {error}")
-            | Ok claim ->
-                try
-                    File.WriteAllText(signalPath, "held")
-                    Thread.Sleep(30000)
-                finally
-                    Grace.Cache.CacheIdentity.releaseEnrollmentClaim claim
+        Assert.That(schemaExitCode, Is.EqualTo(0))
+        Assert.That(schemaCreatedGraceDirectory, Is.False)
+        use schemaDocument = JsonDocument.Parse(schemaOutput)
+
+        let returnValueSchema =
+            schemaDocument
+                .RootElement
+                .GetProperty("Schema")
+                .GetProperty("SuccessSchema")
+                .GetProperty("properties")
+                .GetProperty("ReturnValue")
+
+        let variants =
+            returnValueSchema
+                .GetProperty("oneOf")
+                .EnumerateArray()
+            |> Seq.toArray
+
+        Assert.That(variants, Has.Length.EqualTo(2))
+
+        let readyVariant =
+            variants
+            |> Array.find (fun variant ->
+                let enrollment =
+                    variant
+                        .GetProperty("properties")
+                        .GetProperty("Enrollment")
+                        .GetProperty("const")
+                        .GetString()
+
+                enrollment = "enrolled")
+
+        let readyRequired =
+            readyVariant
+                .GetProperty("required")
+                .EnumerateArray()
+            |> Seq.map (fun value -> value.GetString())
+            |> Set.ofSeq
+
+        Assert.That(
+            (readyRequired = Set.ofList [ "Class"
+                                          "Enrollment"
+                                          "CacheId"
+                                          "Endpoint"
+                                          "BoundaryKind"
+                                          "RepositoryCount"
+                                          "Key" ]),
+            Is.True
+        )
+
+        let nonReadyVariant =
+            variants
+            |> Array.find (fun variant ->
+                let hasNot, _ =
+                    variant
+                        .GetProperty("properties")
+                        .GetProperty("Enrollment")
+                        .TryGetProperty("not")
+
+                hasNot)
+
+        let nonReadyRequired =
+            nonReadyVariant
+                .GetProperty("required")
+                .EnumerateArray()
+            |> Seq.map (fun value -> value.GetString())
+            |> Set.ofSeq
+
+        Assert.That(
+            (nonReadyRequired = Set.ofList [ "Class"
+                                             "Enrollment"
+                                             "Key" ]),
+            Is.True
+        )
+
+        let nonReadyProperties =
+            nonReadyVariant
+                .GetProperty("properties")
+                .EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
+
+        for field in readyOnlyStatusFields do
+            Assert.That(Set.contains field nonReadyProperties, Is.False, $"The non-ready Cache status schema must omit {field}.")
+
+        let examplesExitCode, examplesOutput, examplesCreatedGraceDirectory =
+            invokeOutsideRepository [| "cache"
+                                       "status"
+                                       "--examples" |]
+
+        Assert.That(examplesExitCode, Is.EqualTo(0))
+        Assert.That(examplesCreatedGraceDirectory, Is.False)
+        use examplesDocument = JsonDocument.Parse(examplesOutput)
+
+        let exampleStatus =
+            examplesDocument.RootElement.GetProperty("Examples").[0]
+                .GetProperty("Document")
+                .GetProperty("ReturnValue")
+
+        Assert.That(
+            exampleStatus
+                .GetProperty("Enrollment")
+                .GetString(),
+            Is.EqualTo("enrolled")
+        )
+
+        assertReadyOnlyStatusFields true exampleStatus
+
+        let helpExitCode, helpOutput, helpCreatedGraceDirectory =
+            invokeOutsideRepository [| "cache"
+                                       "status"
+                                       "--help" |]
+
+        Assert.That(helpExitCode, Is.EqualTo(0))
+        Assert.That(helpCreatedGraceDirectory, Is.False)
+        Assert.That(helpOutput, Does.Contain("--schema"))
+        Assert.That(helpOutput, Does.Contain("--examples"))
 
     /// Verifies PAT enrollment uses one root-command POST with the exact resolved bearer and no repository state.
     [<Test>]
@@ -385,7 +605,7 @@ module CacheCliTests =
                 (fun request -> if request.Target = "/cache/enroll" then 200, enrolledResponse () else 404, "{}")
                 (fun serverUri requests ->
                     withEnvironment (credentialEnvironment serverUri (Some token) None None None) (fun () ->
-                        withExternalClaimHolder root (fun () ->
+                        withDirectClaimHolder root (fun () ->
                             let exitCode, output, _ = invokeOutsideRepository enrollmentArguments
                             Assert.That(exitCode, Is.Not.EqualTo(0))
                             Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
@@ -400,8 +620,12 @@ module CacheCliTests =
                                 Is.Not.Empty
                             ))
 
-                        let winnerExitCode, _, _ = invokeOutsideRepository enrollmentArguments
-                        Assert.That(winnerExitCode, Is.EqualTo(0))
+                        let winnerExitCode, winnerOutput, winnerError, _ = invokeOutsideRepositoryWithStreams enrollmentArguments
+
+                        Assert.That(winnerExitCode, Is.EqualTo(0), $"The enrollment retry failed. stdout: {winnerOutput}; stderr: {winnerError}")
+
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.True)
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
 
                         Assert.That(
                             requests.ToArray()
@@ -409,7 +633,7 @@ module CacheCliTests =
                             Has.Length.EqualTo(1)
                         ))))
 
-    /// Verifies root status observes a ready identity, then reports weak and corrupt state without leaking private facts.
+    /// Verifies root status exposes ready-only facts only for ready state and omits them for invalid and inaccessible state.
     [<Test>]
     let ``Linux cache status is redacted for ready weak and corrupt identities`` () =
         let token = PersonalAccessToken.formatToken "cache-status" (Guid.NewGuid()) (Array.zeroCreate 32)
@@ -440,17 +664,41 @@ module CacheCliTests =
                             |> Seq.map (fun property -> property.Name)
                             |> Set.ofSeq
 
+                        let readyFieldNames = String.Join(", ", readyFields)
+
                         Assert.That(
-                            Set.isSubset
-                                readyFields
-                                (Set.ofList [ "Class"
-                                              "Enrollment"
-                                              "CacheId"
-                                              "Endpoint"
-                                              "BoundaryKind"
-                                              "RepositoryCount"
-                                              "Key" ]),
+                            (readyFields = Set.ofList [ "Class"
+                                                        "Enrollment"
+                                                        "CacheId"
+                                                        "Endpoint"
+                                                        "BoundaryKind"
+                                                        "RepositoryCount"
+                                                        "Key" ]),
+                            Is.True,
+                            $"Unexpected ready Cache status fields: {readyFieldNames}"
+                        )
+
+                        assertReadyOnlyStatusFields true (readyDocument.RootElement.GetProperty("ReturnValue"))
+
+                        Assert.That(
+                            Guid.TryParse(
+                                readyDocument
+                                    .RootElement
+                                    .GetProperty("ReturnValue")
+                                    .GetProperty("CacheId")
+                                    .GetString()
+                            )
+                            |> fst,
                             Is.True
+                        )
+
+                        Assert.That(
+                            readyDocument
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Endpoint")
+                                .GetString(),
+                            Is.Not.Empty
                         )
 
                         let readyDirectory = Path.Combine(root, "ready")
@@ -477,6 +725,38 @@ module CacheCliTests =
                             let weakStatus = weakDocument.RootElement.GetProperty("ReturnValue")
                             Assert.That(weakStatus.GetProperty("Enrollment").GetString(), Is.EqualTo("invalid"))
                             Assert.That(weakStatus.GetProperty("Key").GetString(), Is.EqualTo("invalid"))
+                            assertReadyOnlyStatusFields false weakStatus
+                        finally
+                            File.SetUnixFileMode(
+                                readyDirectory,
+                                UnixFileMode.UserRead
+                                ||| UnixFileMode.UserWrite
+                                ||| UnixFileMode.UserExecute
+                            )
+
+                        try
+                            File.SetUnixFileMode(readyDirectory, UnixFileMode.UserWrite)
+
+                            let inaccessibleExitCode, inaccessibleOutput, inaccessibleCreatedGraceDirectory =
+                                invokeOutsideRepository [| "--output"
+                                                           "Json"
+                                                           "cache"
+                                                           "status" |]
+
+                            Assert.That(inaccessibleExitCode, Is.EqualTo(1))
+                            Assert.That(inaccessibleCreatedGraceDirectory, Is.False)
+                            use inaccessibleDocument = JsonDocument.Parse(inaccessibleOutput)
+                            let inaccessibleStatus = inaccessibleDocument.RootElement.GetProperty("ReturnValue")
+
+                            Assert.That(
+                                inaccessibleStatus
+                                    .GetProperty("Enrollment")
+                                    .GetString(),
+                                Is.EqualTo("invalid")
+                            )
+
+                            Assert.That(inaccessibleStatus.GetProperty("Key").GetString(), Is.EqualTo("inaccessible"))
+                            assertReadyOnlyStatusFields false inaccessibleStatus
                         finally
                             File.SetUnixFileMode(
                                 readyDirectory,
@@ -507,7 +787,8 @@ module CacheCliTests =
                             Is.EqualTo("invalid")
                         )
 
-                        Assert.That(corruptStatus.GetProperty("Key").GetString(), Is.EqualTo("invalid")))))
+                        Assert.That(corruptStatus.GetProperty("Key").GetString(), Is.EqualTo("invalid"))
+                        assertReadyOnlyStatusFields false corruptStatus)))
 
     /// Verifies an invalid explicit PAT fails before credential success can stage local identity or contact enrollment.
     [<Test>]
