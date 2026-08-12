@@ -53,7 +53,7 @@ does not create a generic request shape or a partly active constructor for eithe
 | Epic base `ff630513` | Branch still owns direct local mutation, status replacement, and Branch publication. | The first replacement path must remove that reachable direct route rather than wrap it. |
 | Closed #841 and superseded PR #854 at `bc9bd109` | The broad implementation mixed persistence, runtime, Save admission, finalization, public projection, and the full failure matrix. | Do not restore its generic request or all-caller shapes. Split the sequential Branch work below. |
 | Exact-head #854 review | Typed marker results were collapsed, Reference finalization was not repeatable, planning used pre-Save status, topology and cancellation rules were incomplete, and the executable phase matrix was absent. | These are explicit requirements, proof seams, and issue owners below. |
-| Accepted D1 | `Reference` and exact-root `DirectoryVersion` have different Branch semantics. | Persist and reconstruct the typed selection; hashes retain the current Branch. |
+| DEC-001 — typed Branch selection | `Reference` and exact-root `DirectoryVersion` have different Branch semantics. | Persist and reconstruct the typed selection; hashes retain the current Branch. |
 | #869–#872 | Four sequential source issues replace #841. | Each issue owns one primary invariant family and a complete vertical proof boundary. |
 
 The superseded commits are evidence and possible narrow test vectors only. They do not establish an implementation
