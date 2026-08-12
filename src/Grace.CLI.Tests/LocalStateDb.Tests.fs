@@ -19,6 +19,8 @@ open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
 
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
+
 /// Groups local state db coverage for the CLI test project.
 [<NonParallelizable>]
 module LocalStateDbTests =

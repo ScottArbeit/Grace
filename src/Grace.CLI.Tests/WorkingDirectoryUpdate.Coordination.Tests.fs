@@ -15,6 +15,8 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
+
 /// Proves local-root lease and owned-marker behavior without invoking a caller workflow.
 module WorkingDirectoryUpdateCoordinationTests =
     /// Extracts a successful private-contract construction or reports its rejection reason.

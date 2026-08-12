@@ -12,6 +12,8 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
+
 /// Covers immutable selected-target and caller-operation identity construction.
 module WorkingDirectoryUpdateContractsTests =
     /// Extracts a valid test value or fails with the contract rejection reason.
