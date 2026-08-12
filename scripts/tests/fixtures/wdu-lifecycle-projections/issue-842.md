@@ -8,6 +8,7 @@ Prepared offline for orchestrator publication. This fragment references the cano
   "schema": "grace.wdu.lifecycle-projection/v1",
   "artifact": "issue-842",
   "canonical": "docs/Working Directory Update.md#normative-branch-lifecycle-table",
+  "canonicalContentDigest": "901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7",
   "rowIds": [
     "WDU-LC-100",
     "WDU-LC-101",

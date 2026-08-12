@@ -65,6 +65,7 @@ The complete requirements, state model, propagation map, and proof contract are 
   "schema": "grace.wdu.lifecycle-projection/v1",
   "artifact": "adr-0011",
   "canonical": "docs/Working Directory Update.md#normative-branch-lifecycle-table",
+  "canonicalContentDigest": "901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7",
   "rowIds": [
     "WDU-LC-200",
     "WDU-LC-201",

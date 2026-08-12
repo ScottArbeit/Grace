@@ -259,6 +259,7 @@ deterministic seams; source-string assertions, sleeps, and impossible hand-built
 ```json
 {
   "schema": "grace.wdu.lifecycle-projection-plan/v1",
+  "canonicalContentDigest": "901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7",
   "canonicalRowCount": 67,
   "canonicalApplicabilityKeyCount": 254,
   "assignments": [

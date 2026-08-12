@@ -170,13 +170,13 @@ try {
     Invoke-Case 'PR 873 publication-before-cleanup regression fails' {
         $packet = New-Packet 'pr873-reversal'
         Add-OutsideProjection $packet.Adr 'Branch publication then marker cleanup completes the pending operation.'
-        Assert-ValidatorFails $packet 'competing or reversed lifecycle ordering prose'
+        Assert-ValidatorFails $packet 'competing lifecycle source outside its projection'
     }
 
     Invoke-Case 'reversed ADR wording fails' {
         $packet = New-Packet 'adr-reversed'
         Add-OutsideProjection $packet.Adr 'Publish the selected Branch before exact marker cleanup.'
-        Assert-ValidatorFails $packet 'competing or reversed lifecycle ordering prose'
+        Assert-ValidatorFails $packet 'competing lifecycle source outside its projection'
     }
 
     Invoke-Case '#842 missing terminal-first row fails' {
@@ -205,10 +205,52 @@ try {
         Assert-ValidatorFails $packet 'second normative lifecycle table'
     }
 
-    Invoke-Case 'fixed cleanup-or-publication wording fails' {
+    Invoke-Case 'historical supersession sentence remains valid evidence' {
         $packet = New-Packet 'fixed-retry-cutoff'
-        Add-OutsideProjection $packet.Adr 'Retry performs cleanup or publication.'
-        Assert-ValidatorFails $packet 'competing or reversed lifecycle ordering prose'
+        Add-OutsideProjection $packet.Adr 'Historical supersession evidence: cleanup-before-publication and publication-before-cleanup orders are superseded by the canonical projection.'
+        $null = Invoke-Validator $packet
+    }
+
+    Invoke-Case 'copied canonical lifecycle sequence outside projection fails' {
+        $packet = New-Packet 'copied-sequence'
+        Add-OutsideProjection $packet.Adr 'The lifecycle will clean the marker, publish the Branch, prove publication, and record terminal completion.'
+        Assert-ValidatorFails $packet 'competing lifecycle source outside its projection'
+    }
+
+    Invoke-Case 'terminal replay outcome mutation fails' {
+        $packet = New-Packet 'terminal-replay-outcome'
+        Replace-Text $packet.Canonical '"durableResult":"existingTerminal","outcome":"Unchanged"' `
+            '"durableResult":"existingTerminal","outcome":"Updated"'
+        Assert-ValidatorFails $packet "outcome 'Updated' requires durableResult 'terminal'|terminal replay must be unchanged"
+    }
+
+    Invoke-Case 'marker refusal cannot attempt publication' {
+        $packet = New-Packet 'refusal-publication'
+        Replace-Text $packet.Canonical '"requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged"' `
+            '"requiredActions":["attemptPublishSelectedBranch"],"workingFiles":"unchanged"'
+        Assert-ValidatorFails $packet 'refusal or evidence-preservation row cannot'
+    }
+
+    Invoke-Case 'unknown durable action fails with row diagnostic' {
+        $packet = New-Packet 'unknown-durable-action'
+        Replace-Text $packet.Canonical '"requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged"' `
+            '"requiredActions":["unknownDurableAction"],"workingFiles":"unchanged"'
+        Assert-ValidatorFails $packet "WDU-LC-202.*unknown durable action 'unknownDurableAction'"
+    }
+
+    Invoke-Case 'missing or malformed projection digest fails' {
+        $packet = New-Packet 'malformed-projection-digest'
+        $path = Join-Path $packet.Issues 'issue-843.md'
+        Replace-Text $path '"canonicalContentDigest": "901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7"' `
+            '"canonicalContentDigest": "not-a-digest"'
+        Assert-ValidatorFails $packet 'projection digest is missing or malformed'
+    }
+
+    Invoke-Case 'one-byte canonical lifecycle mutation rejects all projections' {
+        $packet = New-Packet 'canonical-digest-mutation'
+        Replace-Text $packet.Canonical '  "schema": "grace.wdu.branch-lifecycle/v1"' `
+            '   "schema": "grace.wdu.branch-lifecycle/v1"'
+        Assert-ValidatorFails $packet 'projection plan digest does not match canonical lifecycle content'
     }
 
     Invoke-Case 'check-only leaves every input unchanged' {
@@ -254,6 +296,38 @@ try {
                 Select-Object -ExpandProperty FullName)
         $null = & $validatorPath -CanonicalPath $packet.Canonical -ProjectionPath $renderedAdr `
             -OfflineIssueBodyPath $renderedIssues
+    }
+
+    Invoke-Case 'render preflight rejects duplicate basenames without partial output' {
+        $packet = New-Packet 'render-duplicate-basename'
+        $left = Join-Path $packet.Root 'left'; $right = Join-Path $packet.Root 'right'
+        [void](New-Item -ItemType Directory -Path $left, $right)
+        $leftSource = Join-Path $left 'same.md'; $rightSource = Join-Path $right 'same.md'
+        Copy-Item -LiteralPath (Join-Path $packet.Issues 'issue-842.md') -Destination $leftSource
+        Copy-Item -LiteralPath (Join-Path $packet.Issues 'issue-843.md') -Destination $rightSource
+        $output = Join-Path $packet.Root 'no partial render'
+        $remaining = @(Get-ChildItem -LiteralPath $packet.Issues -Filter '*.md' |
+                Where-Object { $_.Name -notin @('issue-842.md', 'issue-843.md') } |
+                Select-Object -ExpandProperty FullName)
+        try {
+            & $validatorPath -CanonicalPath $packet.Canonical -OfflineIssueBodyPath (@($leftSource, $rightSource) + $remaining) -RenderOutputPath $output
+            throw 'Expected duplicate destination failure.'
+        } catch {
+            Assert-True ($_.Exception.Message -match 'duplicate render destination') "duplicate basename diagnostic: $($_.Exception.Message)"
+        }
+        Assert-True (-not (Test-Path -LiteralPath $output)) 'preflight created partial output directory'
+    }
+
+    Invoke-Case 'render preflight rejects every output-input intersection before bytes change' {
+        $packet = New-Packet 'render-input-intersection'
+        $before = Get-FileDigest $packet.Adr
+        try {
+            & $validatorPath -CanonicalPath $packet.Canonical -ProjectionPath $packet.Adr -RenderOutputPath $packet.Adr
+            throw 'Expected input intersection failure.'
+        } catch {
+            Assert-True ($_.Exception.Message -match 'render output must not overwrite an input artifact') 'input intersection diagnostic'
+        }
+        Assert-True ((Get-FileDigest $packet.Adr) -eq $before) 'input bytes changed before preflight failure'
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }

@@ -69,15 +69,27 @@ function Get-SingleMarkedBlock(
     }
 }
 
-function ConvertFrom-FencedJson([string] $text, [string] $artifact, [string] $schema) {
+function Get-FencedJsonPayload([string] $text, [string] $artifact, [string] $schema) {
     $matches = [regex]::Matches($text, '(?s)```json\s*(\{.*?\})\s*```')
     $matching = @()
     foreach ($match in $matches) {
         try { $value = $match.Groups[1].Value | ConvertFrom-Json -Depth 100 } catch { continue }
-        if ($null -ne $value.PSObject.Properties['schema'] -and $value.schema -eq $schema) { $matching += $value }
+        if ($null -ne $value.PSObject.Properties['schema'] -and $value.schema -eq $schema) {
+            $matching += [pscustomobject]@{ Json = $match.Groups[1].Value; Value = $value }
+        }
     }
     if ($matching.Count -ne 1) { Fail-Contract $artifact "expected exactly one '$schema' JSON block" }
     return $matching[0]
+}
+
+function ConvertFrom-FencedJson([string] $text, [string] $artifact, [string] $schema) {
+    return (Get-FencedJsonPayload $text $artifact $schema).Value
+}
+
+function Get-NormalizedContentDigest([string] $jsonPayload) {
+    $normalized = $jsonPayload -replace "`r`n|`r", "`n"
+    $hash = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($normalized))
+    return [Convert]::ToHexString($hash).ToLowerInvariant()
 }
 
 function Get-PropertyNames($value) {
@@ -234,6 +246,27 @@ function Test-LifecycleContract($contract, [string] $artifact) {
 
     $cells = [Collections.Generic.Dictionary[string, string]]::new()
     $rowCellCounts = @{}
+    $durableActions = @(
+        'applyFreshPlan', 'attemptCleanExactMarker', 'attemptCleanOnlyExactOwnedMarker', 'attemptPublishSelectedBranch',
+        'attemptTerminalRecording', 'beginTrackedWorkingTreeMutation', 'buildFreshPlanFromCurrentTrackedGraph',
+        'checkCancellationImmediatelyBeforeMutation', 'cleanExactMarker', 'cleanOnlyExactOwnedMarker',
+        'continueByActualEvidence', 'createExactOwnedMarkerWithFreshAttemptToken', 'discardEveryPriorPlan',
+        'ignoreCancellation', 'inspectPostCompletionMarker', 'neverRepublishWithoutProof', 'proveCurrentBranchUnchanged',
+        'provePublication', 'proveSelectedBranch', 'publishSelectedBranch', 'recordSqliteLocalCompletion', 'recordTerminal',
+        'rejectStaleRevisionFingerprintMarkerOperationTargetOrPlan', 'replaceAttemptTokenWithFreshAttemptToken',
+        'rereadAcceptedRevisionAndCompleteStatusFingerprint', 'rereadCompleteLocalStatusAndMarker',
+        'rereadMarkerSchemaScopeOperationTargetAndAttemptToken', 'retainEvidence', 'retainExactMarker',
+        'retainExactMarkerEvidence', 'retainMarker', 'retainMarkerEvidence', 'retainPending', 'verifyCompleteTargetRoot',
+        'verifyExactOperationIdentity', 'verifyExactTargetIdentity', 'verifyFreshPlanAgainstReread', 'verifyMarkerSchema',
+        'verifyRepositoryAndLocalRootScope'
+    )
+    $outcomeDurableResult = @{
+        FinalizationIncomplete = 'pending'
+        Rejected = 'noCompletion'
+        Unchanged = 'existingTerminal'
+        Updated = 'terminal'
+        UpdateIncomplete = 'noCompletion'
+    }
     foreach ($row in $rows) {
         Assert-ExactProperties $row.match $axes "$($row.id)/match"
         $expanded = @{}
@@ -257,6 +290,8 @@ function Test-LifecycleContract($contract, [string] $artifact) {
         if ($row.firstApplicableRetryWrite -notin @($grammar.concreteEnums.firstApplicableRetryWrite)) {
             Fail-Contract $row.id "unknown firstApplicableRetryWrite '$($row.firstApplicableRetryWrite)'"
         }
+        $unknownActions = @($row.requiredActions | Where-Object { $_ -notin $durableActions })
+        if ($unknownActions.Count -ne 0) { Fail-Contract $row.id "unknown durable action '$($unknownActions[0])'" }
         if ($null -eq $row.outcome) {
             if ($null -eq $row.PSObject.Properties['nextRows'] -or @($row.nextRows).Count -eq 0) {
                 Fail-Contract $row.id 'routing row has no nextRows'
@@ -264,6 +299,10 @@ function Test-LifecycleContract($contract, [string] $artifact) {
         } elseif ($row.outcome -eq 'FinalizationIncomplete' -and
             ($row.exitClass -ne 'nonzero' -or $row.doctorGuidance -ne $true)) {
             Fail-Contract $row.id 'FinalizationIncomplete lacks nonzero exit or Doctor guidance'
+        } elseif ($null -eq $outcomeDurableResult[$row.outcome]) {
+            Fail-Contract $row.id "unknown outcome '$($row.outcome)'"
+        } elseif ($row.durableResult -ne $outcomeDurableResult[$row.outcome]) {
+            Fail-Contract $row.id "outcome '$($row.outcome)' requires durableResult '$($outcomeDurableResult[$row.outcome])'"
         }
     }
     if ($cells.Count -ne 254) { Fail-Contract $artifact "expected 254 expanded applicability keys, found $($cells.Count)" }
@@ -278,6 +317,22 @@ function Test-LifecycleContract($contract, [string] $artifact) {
                 }
             }
         }
+    }
+
+    $terminalReplays = @($rows | Where-Object { $_.match.invocation.kind -eq 'one' -and $_.match.invocation.value -eq 'terminalReplay' })
+    if ($terminalReplays.Count -ne 1) { Fail-Contract $artifact 'expected one terminal replay row' }
+    foreach ($row in $terminalReplays) {
+        if ($row.outcome -ne 'Unchanged' -or $row.durableResult -ne 'existingTerminal' -or
+            $row.workingFiles -ne 'unchanged' -or $row.branchIdentity -ne 'unchanged' -or
+            @($row.requiredActions).Count -ne 0 -or $null -ne $row.PSObject.Properties['nextRows']) {
+            Fail-Contract $row.id 'terminal replay must be unchanged and mutation-free'
+        }
+    }
+
+    $refusalActions = @('publishSelectedBranch', 'attemptPublishSelectedBranch', 'recordTerminal', 'attemptTerminalRecording')
+    foreach ($row in @($rows | Where-Object { $_.outcome -eq 'Rejected' -or $_.requiredActions -contains 'retainEvidence' -or $_.requiredActions -contains 'retainMarkerEvidence' })) {
+        $forbidden = @($row.requiredActions | Where-Object { $_ -in $refusalActions })
+        if ($forbidden.Count -ne 0) { Fail-Contract $row.id "refusal or evidence-preservation row cannot '$($forbidden[0])'" }
     }
 
     $disallowed = @('differentOperation', 'malformed', 'unsupported', 'unreadable', 'exactCleanupFailed')
@@ -366,27 +421,42 @@ function Test-LifecycleContract($contract, [string] $artifact) {
     return [pscustomobject]@{ Rows = $rows; RowIds = @($rows.id); Cells = $cells; Grammar = $grammar }
 }
 
-function Get-ProjectionPlan([string] $canonicalText, [string] $canonicalArtifact) {
+function Get-ProjectionPlan([string] $canonicalText, [string] $canonicalArtifact, [string] $canonicalContentDigest) {
     $block = Get-SingleMarkedBlock $canonicalText $script:ProjectionPlanStart $script:ProjectionPlanEnd $canonicalArtifact
     $plan = ConvertFrom-FencedJson $block.Content $canonicalArtifact 'grace.wdu.lifecycle-projection-plan/v1'
-    Assert-ExactProperties $plan @('assignments', 'canonicalApplicabilityKeyCount', 'canonicalRowCount', 'schema') $canonicalArtifact
+    Assert-ExactProperties $plan @('assignments', 'canonicalApplicabilityKeyCount', 'canonicalContentDigest', 'canonicalRowCount', 'schema') $canonicalArtifact
+    if ($plan.canonicalContentDigest -notmatch '^[a-f0-9]{64}$') { Fail-Contract $canonicalArtifact 'projection plan digest is missing or malformed' }
+    if ($plan.canonicalContentDigest -ne $canonicalContentDigest) { Fail-Contract $canonicalArtifact 'projection plan digest does not match canonical lifecycle content' }
     $duplicates = @($plan.assignments | Group-Object artifact | Where-Object Count -ne 1)
     if ($duplicates.Count -ne 0) { Fail-Contract $canonicalArtifact "duplicate projection assignment '$($duplicates[0].Name)'" }
     return $plan
 }
 
-function Get-Projection([string] $text, [string] $artifact) {
+function Get-Projection([string] $text, [string] $artifact, [bool] $strict) {
     $block = Get-SingleMarkedBlock $text $script:ProjectionStart $script:ProjectionEnd $artifact
     $projection = ConvertFrom-FencedJson $block.Content $artifact 'grace.wdu.lifecycle-projection/v1'
-    Assert-ExactProperties $projection @('artifact', 'canonical', 'proof', 'rowIds', 'schema') $artifact
+    if ($strict) {
+        Assert-ExactProperties $projection @('artifact', 'canonical', 'canonicalContentDigest', 'proof', 'rowIds', 'schema') $artifact
+    } else {
+        $renderProperties = Get-PropertyNames $projection
+        $allowed = @('artifact', 'canonical', 'canonicalContentDigest', 'proof', 'rowIds', 'schema')
+        $unknown = @($renderProperties | Where-Object { $_ -notin $allowed })
+        if ($unknown.Count -ne 0 -or @($renderProperties | Where-Object { $_ -notin @('artifact', 'canonical', 'proof', 'rowIds', 'schema') }).Count -gt 1) {
+            Fail-Contract $artifact 'renderable projection has malformed properties'
+        }
+        foreach ($required in @('artifact', 'canonical', 'proof', 'rowIds', 'schema')) {
+            if ($null -eq $projection.PSObject.Properties[$required]) { Fail-Contract $artifact "renderable projection is missing '$required'" }
+        }
+    }
     return [pscustomobject]@{ Block = $block; Value = $projection }
 }
 
-function Get-ProjectionJson($assignment) {
+function Get-ProjectionJson($assignment, [string] $canonicalContentDigest) {
     $projection = [ordered]@{
         schema = 'grace.wdu.lifecycle-projection/v1'
         artifact = $assignment.artifact
         canonical = 'docs/Working Directory Update.md#normative-branch-lifecycle-table'
+        canonicalContentDigest = $canonicalContentDigest
         rowIds = @($assignment.rowIds)
         proof = $assignment.proof
     }
@@ -394,11 +464,13 @@ function Get-ProjectionJson($assignment) {
     return @($script:ProjectionStart, '```json', $json, '```', $script:ProjectionEnd) -join "`n"
 }
 
-function Test-Projection($projection, $assignment, [string[]] $canonicalRowIds, [string] $path) {
+function Test-Projection($projection, $assignment, [string[]] $canonicalRowIds, [string] $canonicalContentDigest, [string] $path) {
     if ($projection.artifact -ne $assignment.artifact) { Fail-Contract $path "artifact '$($projection.artifact)' does not match '$($assignment.artifact)'" }
     if ($projection.canonical -ne 'docs/Working Directory Update.md#normative-branch-lifecycle-table') {
         Fail-Contract $path 'canonical lifecycle link drift'
     }
+    if ($projection.canonicalContentDigest -notmatch '^[a-f0-9]{64}$') { Fail-Contract $path 'projection digest is missing or malformed' }
+    if ($projection.canonicalContentDigest -ne $canonicalContentDigest) { Fail-Contract $path 'projection digest does not match canonical lifecycle content' }
     $unknown = @($projection.rowIds | Where-Object { $_ -notin $canonicalRowIds })
     if ($unknown.Count -ne 0) { Fail-Contract $path "unknown row '$($unknown[0])'" }
     if (@($projection.rowIds | Group-Object | Where-Object Count -ne 1).Count -ne 0) { Fail-Contract $path 'duplicate row reference' }
@@ -409,33 +481,50 @@ function Test-Projection($projection, $assignment, [string[]] $canonicalRowIds, 
 function Test-NoCompetingProjection([string] $text, $block, [string] $path) {
     $outside = $text.Remove($block.Start, $block.EndAfter - $block.Start)
     if ($outside -match 'grace\.wdu\.branch-lifecycle/v1') { Fail-Contract $path 'contains a second normative lifecycle table' }
-    if ($outside -match '(?is)(publish|publication).{0,80}(before|then).{0,80}(clean|cleanup)' -or
-        $outside -match '(?is)(cleanup\s+or\s+publication)(?!.*terminal)') {
-        Fail-Contract $path 'contains competing or reversed lifecycle ordering prose'
+    $paragraphs = @($outside -split '(?:\r?\n){2,}')
+    foreach ($paragraph in $paragraphs) {
+        $historicalSupersession = $paragraph -match '(?is)\b(?:historical|supersed(?:e|ed|ing|es))\b' -and
+            $paragraph -match '(?is)\bcleanup-before-publication and publication-before-cleanup orders\b'
+        $reversed = $paragraph -match '(?is)\b(?:publish|publication)\b.{0,60}(?:\bbefore\b|\bthen\b|\bafter\b|-[ ]?before-)\s*.{0,60}\b(?:clean|cleanup)\b'
+        $copiedSequence = $paragraph -match '(?is)\b(?:clean|cleanup)\b.{0,160}\b(?:publish|publication)\b.{0,160}\bprove\b.{0,160}\bterminal\b'
+        if (($reversed -or $copiedSequence) -and -not $historicalSupersession) {
+            Fail-Contract $path 'contains competing lifecycle source outside its projection'
+        }
     }
 }
 
-function Write-RenderedProjection([string] $sourcePath, [string] $text, $projectionBlock, [string] $replacement, [string] $outputRoot, [bool] $multiple) {
-    $rendered = $text.Substring(0, $projectionBlock.Start) + $replacement + $text.Substring($projectionBlock.EndAfter)
+function Get-RenderOutputPath([string] $sourcePath, [string] $outputRoot, [bool] $multiple) {
     if ($multiple -or (Test-Path -LiteralPath $outputRoot -PathType Container)) {
-        if (-not (Test-Path -LiteralPath $outputRoot)) { [void](New-Item -ItemType Directory -Path $outputRoot) }
-        $outputPath = Join-Path $outputRoot ([IO.Path]::GetFileName($sourcePath))
+        return [IO.Path]::GetFullPath((Join-Path $outputRoot ([IO.Path]::GetFileName($sourcePath))))
     } else {
-        $parent = Split-Path -Parent $outputRoot
-        if ($parent -and -not (Test-Path -LiteralPath $parent)) { [void](New-Item -ItemType Directory -Path $parent) }
-        $outputPath = $outputRoot
+        return [IO.Path]::GetFullPath($outputRoot)
     }
-    if ([IO.Path]::GetFullPath($outputPath) -eq [IO.Path]::GetFullPath($sourcePath)) {
-        Fail-Contract $sourcePath 'render output must not overwrite an input artifact'
+}
+
+function Test-RenderPreflight($jobs) {
+    $inputs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $destinations = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($job in $jobs) { [void]$inputs.Add([IO.Path]::GetFullPath($job.Source)) }
+    foreach ($job in $jobs) {
+        if (-not $destinations.Add($job.Output)) { Fail-Contract $job.Source "duplicate render destination '$($job.Output)'" }
+        if ($inputs.Contains($job.Output)) { Fail-Contract $job.Source 'render output must not overwrite an input artifact' }
     }
-    [IO.File]::WriteAllText($outputPath, $rendered, [Text.UTF8Encoding]::new($false))
-    return $outputPath
+}
+
+function Write-RenderedProjection($job) {
+    $rendered = $job.Text.Substring(0, $job.Block.Start) + $job.Replacement + $job.Text.Substring($job.Block.EndAfter)
+    $parent = Split-Path -Parent $job.Output
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { [void](New-Item -ItemType Directory -Path $parent) }
+    [IO.File]::WriteAllText($job.Output, $rendered, [Text.UTF8Encoding]::new($false))
+    return $job.Output
 }
 
 $canonical = Read-Utf8Text $CanonicalPath
-$contract = ConvertFrom-FencedJson $canonical.Text $canonical.Path 'grace.wdu.branch-lifecycle/v1'
+$lifecyclePayload = Get-FencedJsonPayload $canonical.Text $canonical.Path 'grace.wdu.branch-lifecycle/v1'
+$contract = $lifecyclePayload.Value
+$canonicalContentDigest = Get-NormalizedContentDigest $lifecyclePayload.Json
 $validated = Test-LifecycleContract $contract $canonical.Path
-$plan = Get-ProjectionPlan $canonical.Text $canonical.Path
+$plan = Get-ProjectionPlan $canonical.Text $canonical.Path $canonicalContentDigest
 if ($plan.canonicalRowCount -ne $validated.Rows.Count -or $plan.canonicalApplicabilityKeyCount -ne $validated.Cells.Count) {
     Fail-Contract $canonical.Path 'projection plan count does not match lifecycle contract'
 }
@@ -473,19 +562,19 @@ $seenArtifacts = [Collections.Generic.HashSet[string]]::new()
 $renderJobs = @()
 foreach ($input in $inputs) {
     $artifact = Read-Utf8Text $input
-    $projection = Get-Projection $artifact.Text $artifact.Path
+    $projection = Get-Projection $artifact.Text $artifact.Path ($PSCmdlet.ParameterSetName -eq 'Check')
     $assignment = @($plan.assignments | Where-Object artifact -eq $projection.Value.artifact)
     if ($assignment.Count -ne 1) { Fail-Contract $artifact.Path "artifact '$($projection.Value.artifact)' has no canonical assignment" }
     if (-not $seenArtifacts.Add($projection.Value.artifact)) { Fail-Contract $artifact.Path "artifact '$($projection.Value.artifact)' was supplied twice" }
     if ($PSCmdlet.ParameterSetName -eq 'Check') {
-        Test-Projection $projection.Value $assignment[0] $validated.RowIds $artifact.Path
+        Test-Projection $projection.Value $assignment[0] $validated.RowIds $canonicalContentDigest $artifact.Path
     }
     Test-NoCompetingProjection $artifact.Text $projection.Block $artifact.Path
     $renderJobs += [pscustomobject]@{
         Source = $artifact.Path
         Text = $artifact.Text
         Block = $projection.Block
-        Replacement = Get-ProjectionJson $assignment[0]
+        Replacement = Get-ProjectionJson $assignment[0] $canonicalContentDigest
     }
 }
 
@@ -503,8 +592,10 @@ if ($inputs.Count -gt 0) {
 
 if ($PSCmdlet.ParameterSetName -eq 'Render') {
     $multiple = $renderJobs.Count -gt 1
+    foreach ($job in $renderJobs) { $job | Add-Member -NotePropertyName Output -NotePropertyValue (Get-RenderOutputPath $job.Source $RenderOutputPath $multiple) }
+    Test-RenderPreflight $renderJobs
     foreach ($job in $renderJobs) {
-        $output = Write-RenderedProjection $job.Source $job.Text $job.Block $job.Replacement $RenderOutputPath $multiple
+        $output = Write-RenderedProjection $job
         Write-Output "rendered: $output"
     }
 }
