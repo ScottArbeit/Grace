@@ -1,7 +1,9 @@
 namespace Grace.CLI.Tests
 
 open FsUnit
+open Grace.Cache
 open Grace.CLI
+open Grace.CLI.Command
 open Grace.CLI.CommandOutputContract
 open Grace.Shared
 open NUnit.Framework
@@ -46,6 +48,20 @@ module CacheCliTests =
             Console.SetOut(originalOutput)
             setAnsiConsoleOutput originalOutput
             Directory.Delete(temporaryDirectory, true)
+
+    /// Creates an isolated protected cache root for cancellation cleanup coverage on the supported Linux profile.
+    let private createCacheRoot () =
+        let root = Path.Combine(Path.GetTempPath(), "grace-cache-cli-tests", Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(root) |> ignore
+
+        File.SetUnixFileMode(
+            root,
+            UnixFileMode.UserRead
+            ||| UnixFileMode.UserWrite
+            ||| UnixFileMode.UserExecute
+        )
+
+        root
 
     /// Runs a command against a loopback endpoint and exposes the number of attempted HTTP connections.
     let private withRequestCounter action =
@@ -100,9 +116,15 @@ module CacheCliTests =
     [<Test>]
     let ``cache status runs without repository config and emits redacted status`` () =
         withRequestCounter (fun requestCount ->
-            let jsonExitCode, jsonOutput = invokeWithoutRepositoryConfig [| "--output" "Json" "cache" "status" |]
+            let jsonExitCode, jsonOutput =
+                invokeWithoutRepositoryConfig [| "--output"
+                                                 "Json"
+                                                 "cache"
+                                                 "status" |]
 
-            let humanExitCode, humanOutput = invokeWithoutRepositoryConfig [| "cache" "status" |]
+            let humanExitCode, humanOutput =
+                invokeWithoutRepositoryConfig [| "cache"
+                                                 "status" |]
 
             jsonExitCode |> should equal 1
             humanExitCode |> should equal 1
@@ -135,21 +157,21 @@ module CacheCliTests =
         withRequestCounter (fun requestCount ->
             let exitCode, output =
                 invokeWithoutRepositoryConfig [| "--output"
-                                                     "Json"
-                                                     "cache"
-                                                     "enroll"
-                                                     "--display-name"
-                                                     "invalid"
-                                                     "--endpoint"
-                                                     "not-a-uri"
-                                                     "--boundary"
-                                                     "owner"
-                                                     "--owner-id"
-                                                     "11111111-1111-1111-1111-111111111111"
-                                                     "--repository-organization-id"
-                                                     "22222222-2222-2222-2222-222222222222"
-                                                     "--repository-id"
-                                                     "33333333-3333-3333-3333-333333333333" |]
+                                                 "Json"
+                                                 "cache"
+                                                 "enroll"
+                                                 "--display-name"
+                                                 "invalid"
+                                                 "--endpoint"
+                                                 "not-a-uri"
+                                                 "--boundary"
+                                                 "owner"
+                                                 "--owner-id"
+                                                 "11111111-1111-1111-1111-111111111111"
+                                                 "--repository-organization-id"
+                                                 "22222222-2222-2222-2222-222222222222"
+                                                 "--repository-id"
+                                                 "33333333-3333-3333-3333-333333333333" |]
 
             exitCode |> should equal -1
             output |> should not' (contain "graceconfig.json")
@@ -164,3 +186,82 @@ module CacheCliTests =
             |> should contain "Endpoint"
 
             requestCount () |> should equal 0)
+
+    /// Verifies cancellation immediately after private-key staging neither starts transport nor leaves a staging directory.
+    [<Test>]
+    let ``post staging cancellation skips transport and removes private staging`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Linux file-mode persistence is verified on the supported deployment platform.")
+
+        let root = createCacheRoot ()
+
+        try
+            let prepared =
+                CacheIdentity.prepare root CancellationToken.None
+                |> function
+                    | Ok value -> value
+                    | Error message ->
+                        Assert.Fail(message)
+                        Unchecked.defaultof<_>
+
+            use cancellation = new CancellationTokenSource()
+            let mutable transportConnections = 0
+            cancellation.Cancel()
+
+            Assert.Throws<OperationCanceledException>(
+                Action (fun () ->
+                    CacheCommand.completePreparedEnrollment prepared cancellation.Token (fun () ->
+                        task {
+                            transportConnections <- transportConnections + 1
+                            return 0, false
+                        })
+                    |> fun task -> task.GetAwaiter().GetResult() |> ignore)
+            )
+            |> ignore
+
+            Assert.That(transportConnections, Is.Zero)
+            Assert.That(Directory.Exists(prepared.StagingDirectory), Is.False)
+        finally
+            if Directory.Exists(root) then Directory.Delete(root, true)
+
+    /// Verifies cancellation after a response but before ready commit removes staging and prevents ready publication.
+    [<Test>]
+    let ``post response cancellation skips ready commit and removes private staging`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Linux file-mode persistence is verified on the supported deployment platform.")
+
+        let root = createCacheRoot ()
+
+        try
+            let prepared =
+                CacheIdentity.prepare root CancellationToken.None
+                |> function
+                    | Ok value -> value
+                    | Error message ->
+                        Assert.Fail(message)
+                        Unchecked.defaultof<_>
+
+            use cancellation = new CancellationTokenSource()
+            let mutable transportResponses = 0
+            let mutable readyCommitAttempts = 0
+
+            Assert.Throws<OperationCanceledException>(
+                Action (fun () ->
+                    CacheCommand.completePreparedEnrollment prepared cancellation.Token (fun () ->
+                        task {
+                            transportResponses <- transportResponses + 1
+                            cancellation.Cancel()
+                            cancellation.Token.ThrowIfCancellationRequested()
+                            readyCommitAttempts <- readyCommitAttempts + 1
+                            return 0, true
+                        })
+                    |> fun task -> task.GetAwaiter().GetResult() |> ignore)
+            )
+            |> ignore
+
+            Assert.That(transportResponses, Is.EqualTo 1)
+            Assert.That(readyCommitAttempts, Is.Zero)
+            Assert.That(Directory.Exists(prepared.StagingDirectory), Is.False)
+            Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+        finally
+            if Directory.Exists(root) then Directory.Delete(root, true)

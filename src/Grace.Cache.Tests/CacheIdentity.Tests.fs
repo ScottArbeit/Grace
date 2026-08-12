@@ -290,3 +290,25 @@ type CacheIdentityTests() =
             Assert.That(sameStaging, Is.True)
         finally
             deleteRoot root
+
+    /// Verifies required staging cleanup is independent of a canceled enrollment operation.
+    [<Test>]
+    member _.``discard removes staged key after cancellation``() =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Linux file-mode persistence is verified on the supported deployment platform.")
+
+        let root = createRoot ()
+
+        try
+            let prepared =
+                CacheIdentity.prepare root cancellationToken
+                |> requireOk
+
+            use canceled = new CancellationTokenSource()
+            canceled.Cancel()
+            CacheIdentity.discard prepared
+
+            Assert.That(canceled.IsCancellationRequested, Is.True)
+            Assert.That(Directory.Exists(prepared.StagingDirectory), Is.False)
+        finally
+            deleteRoot root

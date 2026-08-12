@@ -187,10 +187,8 @@ module CacheIdentity =
         | _ -> localFailure ()
 
     /// Removes a staging directory created by this component and intentionally suppresses cleanup failures after a failed attempt.
-    let discard (prepared: PreparedCacheIdentity) (cancellationToken: CancellationToken) =
+    let discard (prepared: PreparedCacheIdentity) =
         try
-            cancellationToken.ThrowIfCancellationRequested()
-
             if Directory.Exists(prepared.StagingDirectory) then
                 Directory.Delete(prepared.StagingDirectory, true)
         with

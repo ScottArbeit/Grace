@@ -149,6 +149,20 @@ module CacheCommand =
             return if status.Enrollment = "enrolled" then 0 else 1
         }
 
+    /// Runs post-staging enrollment work while ensuring an uncommitted private key is removed even when the operation is canceled.
+    let internal completePreparedEnrollment prepared (cancellationToken: CancellationToken) continuation =
+        task {
+            let mutable readyCommitted = false
+
+            try
+                cancellationToken.ThrowIfCancellationRequested()
+                let! exitCode, committed = continuation ()
+                readyCommitted <- committed
+                return exitCode
+            finally
+                if not readyCommitted then CacheIdentity.discard prepared
+        }
+
     /// Executes one static enrollment attempt and commits local ready state only after the server accepts it.
     let private enrollHandler (parseResult: ParseResult) (cancellationToken: CancellationToken) =
         task {
@@ -165,56 +179,65 @@ module CacheCommand =
                     match CacheIdentity.validateStateRoot CacheIdentity.StateRoot cancellationToken with
                     | Error message -> return renderOutput parseResult (Error(GraceError.Create message (getCorrelationId parseResult)))
                     | Ok () ->
-                        CacheIdentity.cleanupStaleStaging CacheIdentity.StateRoot cancellationToken
+                        CacheIdentity.cleanupStaleStaging CacheIdentity.StateRoot CancellationToken.None
+                        cancellationToken.ThrowIfCancellationRequested()
 
                         match CacheIdentity.prepare CacheIdentity.StateRoot cancellationToken with
                         | Error message -> return renderOutput parseResult (Error(GraceError.Create message (getCorrelationId parseResult)))
                         | Ok prepared ->
-                            match enrollmentParameters parseResult prepared.PublicKey with
-                            | Error error ->
-                                CacheIdentity.discard prepared cancellationToken
-                                return renderOutput parseResult (Error error)
-                            | Ok (parameters, organizationId) ->
-                                match validateEnrollmentParameters parseResult parameters with
-                                | Error error ->
-                                    CacheIdentity.discard prepared cancellationToken
-                                    return renderOutput parseResult (Error error)
-                                | Ok parameters ->
-                                    match! Grace.SDK.CacheRegistration.Enroll(parameters, cancellationToken) with
-                                    | Error error ->
-                                        CacheIdentity.discard prepared cancellationToken
-                                        return renderOutput parseResult (Error error)
-                                    | Ok response ->
-                                        match response.ReturnValue.Registration with
-                                        | None ->
-                                            CacheIdentity.discard prepared cancellationToken
+                            return!
+                                completePreparedEnrollment prepared cancellationToken (fun () ->
+                                    task {
+                                        match enrollmentParameters parseResult prepared.PublicKey with
+                                        | Error error -> return renderOutput parseResult (Error error), false
+                                        | Ok (parameters, organizationId) ->
+                                            match validateEnrollmentParameters parseResult parameters with
+                                            | Error error -> return renderOutput parseResult (Error error), false
+                                            | Ok parameters ->
+                                                cancellationToken.ThrowIfCancellationRequested()
 
-                                            return
-                                                renderOutput
-                                                    parseResult
-                                                    (Error(GraceError.Create "Cache enrollment did not return a registration." (getCorrelationId parseResult)))
-                                        | Some registration ->
-                                            let configuration =
-                                                CacheIdentity.ReadyConfiguration.create
-                                                    registration.CacheId
-                                                    parameters.Endpoint
-                                                    (parameters
-                                                        .BoundaryKind
-                                                        .ToString()
-                                                        .ToLowerInvariant())
-                                                    parameters.OwnerId
-                                                    organizationId
-                                                    (parameters.RepositoryScopes
-                                                     |> Seq.map (fun scope -> scope.RepositoryId))
-                                                    parameters.DisplayName
-                                                    parameters.ProtocolVersion
-                                                    prepared.PublicKey
+                                                match! Grace.SDK.CacheRegistration.Enroll(parameters, cancellationToken) with
+                                                | Error error -> return renderOutput parseResult (Error error), false
+                                                | Ok response ->
+                                                    cancellationToken.ThrowIfCancellationRequested()
 
-                                            match CacheIdentity.commitReady prepared configuration cancellationToken with
-                                            | Ok () -> return renderOutput parseResult (Ok response)
-                                            | Error message ->
-                                                CacheIdentity.discard prepared cancellationToken
-                                                return renderOutput parseResult (Error(GraceError.Create message (getCorrelationId parseResult)))
+                                                    match response.ReturnValue.Registration with
+                                                    | None ->
+                                                        return
+                                                            renderOutput
+                                                                parseResult
+                                                                (Error(
+                                                                    GraceError.Create
+                                                                        "Cache enrollment did not return a registration."
+                                                                        (getCorrelationId parseResult)
+                                                                )),
+                                                            false
+                                                    | Some registration ->
+                                                        let configuration =
+                                                            CacheIdentity.ReadyConfiguration.create
+                                                                registration.CacheId
+                                                                parameters.Endpoint
+                                                                (parameters
+                                                                    .BoundaryKind
+                                                                    .ToString()
+                                                                    .ToLowerInvariant())
+                                                                parameters.OwnerId
+                                                                organizationId
+                                                                (parameters.RepositoryScopes
+                                                                 |> Seq.map (fun scope -> scope.RepositoryId))
+                                                                parameters.DisplayName
+                                                                parameters.ProtocolVersion
+                                                                prepared.PublicKey
+
+                                                        cancellationToken.ThrowIfCancellationRequested()
+
+                                                        match CacheIdentity.commitReady prepared configuration cancellationToken with
+                                                        | Ok () -> return renderOutput parseResult (Ok response), true
+                                                        | Error message ->
+                                                            return
+                                                                renderOutput parseResult (Error(GraceError.Create message (getCorrelationId parseResult))),
+                                                                false
+                                    })
         }
 
     /// Runs the cache status action when System.CommandLine dispatches the parsed command.

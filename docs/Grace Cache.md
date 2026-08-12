@@ -192,37 +192,115 @@ proof before every serve, and validate exact prepared content before making late
 
 The operator provisions the system-managed `grace-cache` account and its private state directory. The account must own
 `/var/lib/grace-cache`, and that directory must remain mode `0700`. Grace does not install or configure systemd, and it
-does not issue or manage TLS certificates; the selected endpoint and host service remain operator-managed.
+does not issue, install, or manage TLS certificates; the selected endpoint and host service remain operator-managed.
+
+Run `enroll` and `status` as `grace-cache`, not as the administrator who created the directory. The service account
+must have one supported existing Grace credential: an existing normal login, configured M2M credentials, or a
+`GRACE_TOKEN` administrator PAT. Do not place a credential value in a unit file, shell history, or documentation.
 
 PowerShell:
 
 ```powershell
 sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
-$env:GRACE_TOKEN = "<administrator PAT>"
+sudo -iu grace-cache pwsh -NoProfile
+
+# Authenticate with exactly one supported credential before enrollment.
+# Interactive login, when no existing login is present: grace authenticate login
+# Existing operator-configured M2M credentials require no interactive command.
+# PAT alternative, entered without echoing it or adding it to shell history:
+# $env:GRACE_TOKEN = [System.Net.NetworkCredential]::new("", (Read-Host "Grace administrator PAT" -AsSecureString)).Password
+
 grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
 grace --output Json cache status
-Remove-Item Env:GRACE_TOKEN
-grace authenticate login
+Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
+exit
 ```
 
 bash / zsh:
 
 ```bash
 sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
-export GRACE_TOKEN="<administrator PAT>"
+sudo -iu grace-cache
+
+# Authenticate with exactly one supported credential before enrollment.
+# Interactive login, when no existing login is present: grace authenticate login
+# Existing operator-configured M2M credentials require no interactive command.
+# PAT alternative, entered without echoing it or adding it to shell history:
+# read -rsp "Grace administrator PAT: " GRACE_TOKEN; echo; export GRACE_TOKEN
+
 grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
 grace --output Json cache status
 unset GRACE_TOKEN
-grace authenticate login
+exit
 ```
 
 `grace cache enroll` uses the normal Grace authentication path: interactive login, configured M2M credentials, or a
 `GRACE_TOKEN` PAT. It does not create a cache-specific credential. `grace cache status` is local-only and emits no
 private key, key fingerprint, opaque private reference, staging location, private path, or raw filesystem exception.
 An `enrolled` result has a locally valid ready state; `invalid` or `inaccessible` means the account must not treat the
-identity as usable. For recovery, revoke the server registration through the approved administrator route, stop the
-cache host, remove only `/var/lib/grace-cache/ready` and stale `staging-*` directories as the system-managed account,
-then re-establish mode `0700` and enroll again.
+identity as usable.
+
+R1 has no `grace cache revoke` CLI command. Revoke through the current authenticated server operation
+`POST /cache/revoke`, then reset only the protected local enrollment marker and staging directories. Stop the
+operator-managed cache process before the reset; Grace does not provide a systemd unit name or installation command.
+Use the `CacheId` shown by the service-account `status` command and an administrator PAT only for the revoke request.
+
+PowerShell:
+
+```powershell
+sudo -iu grace-cache pwsh -NoProfile
+$env:GRACE_TOKEN = [System.Net.NetworkCredential]::new("", (Read-Host "Grace administrator PAT" -AsSecureString)).Password
+$cacheId = "<CacheId from grace --output Json cache status>"
+$revokeRequest = @{ Class = "CacheRevocationRequest"; CacheId = $cacheId } | ConvertTo-Json -Compress
+if ([string]::IsNullOrWhiteSpace($env:GRACE_SERVER_URI)) { throw "Set GRACE_SERVER_URI for the Grace Server before revoking." }
+Invoke-RestMethod -Method Post -Uri "$env:GRACE_SERVER_URI/cache/revoke" -Headers @{ Authorization = "Bearer $env:GRACE_TOKEN" } -ContentType "application/json" -Body $revokeRequest
+Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
+exit
+
+sudo -u grace-cache -- pwsh -NoProfile -Command @'
+$root = "/var/lib/grace-cache"
+$ready = Join-Path $root "ready"
+if (Test-Path -LiteralPath $ready) { Remove-Item -LiteralPath $ready -Recurse -Force }
+Get-ChildItem -LiteralPath $root -Directory -Force |
+    Where-Object { $_.Name -like "staging-*" } |
+    Remove-Item -Recurse -Force
+'@
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+sudo -iu grace-cache pwsh -NoProfile
+$env:GRACE_TOKEN = [System.Net.NetworkCredential]::new("", (Read-Host "Grace administrator PAT" -AsSecureString)).Password
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
+exit
+```
+
+bash / zsh:
+
+```bash
+sudo -iu grace-cache
+read -rsp "Grace administrator PAT: " GRACE_TOKEN; echo
+export GRACE_TOKEN
+cache_id="<CacheId from grace --output Json cache status>"
+: "${GRACE_SERVER_URI:?Set GRACE_SERVER_URI for the Grace Server before revoking.}"
+curl --fail-with-body --show-error --request POST "$GRACE_SERVER_URI/cache/revoke" --header "Authorization: Bearer $GRACE_TOKEN" --header "Content-Type: application/json" --data "{\"Class\":\"CacheRevocationRequest\",\"CacheId\":\"$cache_id\"}"
+unset GRACE_TOKEN
+exit
+
+sudo -u grace-cache -- sh -c '
+set -eu
+root=/var/lib/grace-cache
+rm -rf -- "$root/ready"
+find "$root" -mindepth 1 -maxdepth 1 -type d -name "staging-*" -exec rm -rf -- {} +
+'
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+sudo -iu grace-cache
+read -rsp "Grace administrator PAT: " GRACE_TOKEN; echo
+export GRACE_TOKEN
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+unset GRACE_TOKEN
+exit
+```
 
 ### Run and bounded registration liveness
 
