@@ -68,26 +68,27 @@ artifact retrieval.
 
 ## 3. Current-state evidence
 
-| Evidence | Current state at the stated commit or live reference | Specification use |
+| Evidence | Current state at the live reference | Specification use |
 | --- | --- | --- |
-| Owner decision, [issue comment](https://github.com/ScottArbeit/Grace/issues/597#issuecomment-5263063211) | Product V1 governs; PR #723 closes without merge; static identity replaces automatic rotation; R0, R1, and R2 replace #622. | Accepted product and scope decisions. |
-| [Epic #597](https://github.com/ScottArbeit/Grace/issues/597) | The issue still contains older rotation addenda and names the audit scaffold. It also records the required Epic #835 sequence. | Drift to remove from current surfaces in R0; not an active cache contract. |
-| [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Open at `647f4067252e5f2805e76a492d26096a854a75a9`, targeting `epic/601-grace-cache-runtime-store`. | Selective salvage source only; its behavioral commits are not reused wholesale. |
-| [Issue #622](https://github.com/ScottArbeit/Grace/issues/622) | Open legacy combined enrollment, runtime, configuration, and status work item. | Superseded by R0, R1, and R2 after tracker work; it is not a future implementation container. |
-| [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) and [PR #854](https://github.com/ScottArbeit/Grace/pull/854) | Both were open when inspected. `WorkingDirectoryUpdate.run` is absent from this epic head. | Hard sequencing gate for #628 to #630 and #634. |
+| Owner decision, [issue comment](https://github.com/ScottArbeit/Grace/issues/597#issuecomment-5263063211) | Product V1 governs; static identity replaces automatic rotation; R0, R1, and R2 replace #622. | Accepted product and scope decisions. |
+| [Epic #597](https://github.com/ScottArbeit/Grace/issues/597) | The approved Product V1 decision is the governing cache contract. Older rotation text in the issue is not current contract text. | R0 removes stale public and internal rotation surfaces. |
+| [Mini-epic #601](https://github.com/ScottArbeit/Grace/issues/601) | Open parent for the replacement runtime and store work. | Hosts the R0, R1, and R2 replacement leaves. |
+| [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selective salvage source only; its behavioral commits are not reused wholesale. |
+| [Issue #622](https://github.com/ScottArbeit/Grace/issues/622) and [issue #724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned for Product V1. | Neither is a future implementation container. |
+| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855), [issue #856](https://github.com/ScottArbeit/Grace/issues/856), and [issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open replacement leaves for R0 contract pruning, R1 static enrollment and status, and R2 registration liveness. | Current implementation sequence under #601. |
+| [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. `WorkingDirectoryUpdate.run` is not available to this epic until #835 merges to `main` and Epic #597 is refreshed. | Hard sequencing gate for #628 to #630 and #634. |
 | `src/Grace.Types/MaterializationExecutionMode.Types.fs` (`MaterializationExecutionMode`) | Defines `Direct`, `CachePreferred`, and `CacheRequired`. | Existing public execution-mode contract. |
 | `src/Grace.Types/MaterializationPlan.Types.fs` (`MaterializationPlan.CacheRequiredAvailability.ErrorCode`) and `src/Grace.Server/Materialization.Server.fs` | Define server-resolved target-root artifacts, cache selection, and `cacheRequiredUnavailable`. | Existing plan and failure seam. |
 | `src/Grace.Actors/CacheRegistration.Actor.fs` (`CacheRegistrationActor`), `src/Grace.Server/CacheRegistration.Server.fs`, and related shared/types files | Current server registration supports enrollment, refresh, revocation, and an older key-rotation surface. | R0 must prune the rotation contract without changing artifact-grant key rollover. |
 | `src/OpenAPI/Cache.Components.OpenAPI.yaml` and `src/OpenAPI/Cache.Paths.OpenAPI.yaml` | Generated input currently exposes `RotationDueAt`, `CacheKeyRotationRequest`, and `/cache/rotate-key`; it separately exposes `/cache/validation-keys`. | R0 propagation inventory and distinct-key rule. |
 | `src/Grace.Server.Security/ArtifactGrantKeys.Server.fs` (`ArtifactGrantKeyRing`) and `src/Grace.Actors/ArtifactGrantSigningKey.Actor.fs` | Grace Server publishes a validation-key set for artifact-grant verification. | Existing artifact-grant validation-key rollover remains in scope. |
 | `src/Grace.Server.Unit.Tests/MaterializationPlan.Server.Tests.fs`, `src/Grace.Types.Tests/MaterializationPlan.Types.Tests.fs`, and `src/Grace.Types.Tests/CacheRegistration.Types.Tests.fs` | Focused seams exist for current plan and registration contracts. | Starting proof seams; later work adds Product V1 cases. |
-| `docs/Grace Cache implementation audit.md` | Existing scaffold records Direct and server-side plan-selection evidence, cache registration foundation, grant proof, and later audit categories. | Audit companion; it does not replace this specification or the issue tracker. |
-| `C:\Source\Grace\skills\grace\references\specification-profile.md` | User-directed newer Grace profile, intentionally newer than this epic branch; it requires explicit Grace surfaces, identity freshness, ordering, and proof. | Current specification profile input; read only, not copied into this worktree. |
+| `docs/Grace Cache implementation audit.md` | Product V1 audit records completed server foundations, planned cache-host work, the tracer, and release gates. | Audit companion; it does not replace this specification or the issue tracker. |
+| `C:\Source\Grace\skills\grace\references\specification-profile.md` | Grace specification profile requires explicit surfaces, identity freshness, ordering, and proof. | Current specification profile input; read only, not copied into this worktree. |
 
-The requested `skills/grace/references/specification-profile.md` does not exist in this worktree at the required
-starting commit. This specification therefore applies the repository instructions, the Product V1 quality contract,
-the portable specification contract, current source evidence, and the durable owner decision. R0 must not treat the
-missing profile as permission to weaken the stated contract.
+The specification profile is supplied from `C:\Source\Grace` for this recovery work. This specification applies that
+profile with the repository instructions, Product V1 quality contract, portable specification contract, current source
+evidence, and the durable owner decision.
 
 ## 4. Quality contract and accepted risk
 
@@ -461,16 +462,16 @@ proof of a safe cache path.
 | ID | Requirement | Status | Likely implementation seam | Proof seam | Planning owner | Residual risk |
 | --- | --- | --- | --- | --- | --- | --- |
 | GC-REQ-001 | Server-resolved immutable full-root plan | required | Materialization types/server/OpenAPI | Plan and resolver tests | Existing plan leaves | Cache must not become a resolver. |
-| GC-REQ-002 | One static cache service identity | required | R0/R1 contracts and host config | Enrollment, config, redaction tests | R0, R1 | Local custody is OS-protected, not hardware-backed. |
-| GC-REQ-003 | Inactive-orphan proof before R1 code | required gate | Current registration server/actor behavior | Tier-2 evidence packet | R1 | Failing proof returns to owner. |
-| GC-REQ-004 | One bounded registration scheduler | required | R2 cache host and registration contract | Fake-clock transition tests | R2 | Exact response classes/time values require Tier-2 inventory. |
+| GC-REQ-002 | One static cache service identity | required | R0/R1 contracts and host config | Enrollment, config, redaction tests | #855, #856 | Local custody is OS-protected, not hardware-backed. |
+| GC-REQ-003 | Inactive-orphan proof before R1 code | required gate | Current registration server/actor behavior | Tier-2 evidence packet | #856 | Failing proof returns to owner. |
+| GC-REQ-004 | One bounded registration scheduler | required | R2 cache host and registration contract | Fake-clock transition tests | #857 | Exact response classes/time values require Tier-2 inventory. |
 | GC-REQ-005 | Current eligible-cache selection | required | Server selection and registration actor | Selection/revocation/expiry tests | Existing and R2 | Snapshot is limited to plan issuance. |
 | GC-REQ-006 | Authorized complete read-through | required | Store, artifact route, grant verifier | Miss-fill-serve-hit and negative integrity proof | #625 to #627 | Partial bytes must never become a hit. |
 | GC-REQ-007 | Three execution-mode behaviors | required | Plan resolver, SDK, CLI, cache executor | Positive/negative mode and generated-contract proof | #625 to #630 | CacheRequired false fallback is high risk. |
 | GC-REQ-008 | Working Directory Update sequence | required | Later local materialization | Cross-epic execution proof | #628 to #630 | Blocked until #835 merge and epic refresh. |
-| GC-REQ-009 | Truthful status and diagnostics | required | R1/R2 commands and process state | Status, redaction, expiry tests | R1, R2 | Must not report stale readiness. |
-| GC-REQ-010 | Reset and redaction | required | Local config/key store and output | Failure and output scans | R1 | Manual recovery is intentional. |
-| GC-REQ-011 | Static contract pruning | required | Shared types, routes, OpenAPI, SDK, docs | Inventory and freshness checks | R0 | Must retain artifact-grant key rollover. |
+| GC-REQ-009 | Truthful status and diagnostics | required | R1/R2 commands and process state | Status, redaction, expiry tests | #856, #857 | Must not report stale readiness. |
+| GC-REQ-010 | Reset and redaction | required | Local config/key store and output | Failure and output scans | #856 | Manual recovery is intentional. |
+| GC-REQ-011 | Static contract pruning | required | Shared types, routes, OpenAPI, SDK, docs | Inventory and freshness checks | #855 | Must retain artifact-grant key rollover. |
 | GC-DEF-001 | Automatic identity rotation | deferred | None | Absence scan | Future Hardened epic | Do not leave a partial surface. |
 | GC-DEF-002 | Prefetch and scheduled retention | deferred | None | Absence scan | Future work | Read-through remains the only correctness path. |
 | GC-DEF-003 | Watch and Operations integration | deferred | None | Dependency-specific proof | #634 and later | Gates remain explicit. |
@@ -497,10 +498,10 @@ without rotation, prefetch, or scheduled retention.
 
 ### Candidate slices and dependencies
 
-1. **R0 static-contract pruning**: Inventory every cache service-identity rotation/candidate surface, remove it or
+1. **R0 static-contract pruning (#855)**: Inventory every cache service-identity rotation/candidate surface, remove it or
    rebaseline it to static identity, regenerate contracts, and prove artifact-grant key rollover remains separate.
-2. **R1 static enrollment and status**: Starts only after R0 and its Tier-2 orphan/re-enrollment proof gate pass.
-3. **R2 registration liveness**: Starts after R1 and its Tier-2 server timestamp, response-class, selection, and clock
+2. **R1 static enrollment and status (#856)**: Starts only after R0 and its Tier-2 orphan/re-enrollment proof gate pass.
+3. **R2 registration liveness (#857)**: Starts after R1 and its Tier-2 server timestamp, response-class, selection, and clock
    table are complete.
 4. **Runtime/artifact serving**: May proceed independently where write sets do not overlap with #835; it owns storage,
    grant verification, and the miss-fill-serve-hit tracer.

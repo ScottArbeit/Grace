@@ -1,323 +1,183 @@
 # Grace Cache Implementation Audit
 
-Issue #609 creates this scaffold for the Grace Cache materialization epic. The scaffold records
-requirement classification, proof seams, and residual risk as implementation PRs land. It is not a
-second task tracker.
+## Purpose and status vocabulary
 
-GitHub issues and pull requests remain the active tracker and the source of implementation truth.
-Update this document only when the related issue or PR can cite current evidence. Do not use this
-document to claim completion without an owning issue, PR, commit, or validation result.
+This is the canonical Product V1 completion audit for Grace Cache Epic #597. It records what current source and
+proof already establish, what the approved recovery plan still requires, and which work is intentionally absent. It is
+not a historical addendum and does not turn an old issue, branch, or pull request into a current requirement.
 
-## Scope
+- `implemented and proven`: current implementation and focused proof are recorded.
+- `planned`: accepted Product V1 work without an implementation claim.
+- `blocked`: accepted work that cannot begin until its named dependency is complete.
+- `deferred`: intentionally not a Product V1 outcome.
+- `out of scope`: intentionally absent from Product V1.
+- `superseded`: older work that must not be resumed as the implementation path.
 
-- Parent epic: #597, Grace Cache and Server-Resolved Materialization Plans.
-- Governance mini-epic: #598, Grace Cache governance, docs, and review-prevention.
-- Scaffold issue: #609, GC-02.
-- Branch family: `epic/598-grace-cache-governance-docs-review-prevention` and its leaf PRs.
+Every final-audit row must cite its implementation seam, proof seam, current issue or pull request evidence, and any
+remaining risk. Checkbox state alone is not evidence.
 
-This document audits Grace Cache implementation evidence only. It does not authorize broad support
-claims, create follow-up buckets, or replace the dependency graph in GitHub.
+## Product V1 baseline
 
-## Status Vocabulary
+Product V1 uses one Linux x64 cache host under systemd and a system-managed account, with an OS-protected private
+cache/key directory. A cache has one static P-256 service identity until manual revocation and re-enrollment. Grace
+does not export that private key and makes no hardware-backed custody promise.
 
-Use exactly one of these status classifications for each audit entry:
+The included user value is a server-resolved immutable full-root plan, Direct, CachePreferred, and CacheRequired mode
+behavior, static enrollment and truthful status, bounded registration liveness, validated local storage, authorized
+read-through, and the full-root miss-fill-serve-hit tracer. Each cache request remains subject to its current grant and
+holder proof; cached bytes alone are never permission to serve an artifact.
 
-- `implemented and proven`: the implementation exists and current proof evidence is recorded.
-- `implemented but proof incomplete`: the implementation exists, but proof is partial, stale, or
-  intentionally deferred to a named issue or PR gate.
-- `deferred`: the requirement is real, but it is blocked by a named dependency or future issue.
-- `out of scope`: the requirement is outside the accepted scope for this epic or milestone.
-- `rejected`: the requirement or implementation shape is intentionally not accepted.
-- `not applicable`: the requirement does not apply to this surface, with rationale.
+Automatic or startup cache identity rotation, candidate promotion, prefetch, scheduled retention or eviction, Watch
+integration, Grace.Operations integration, broad platform parity, HA/DR, and hostile-root defense are not Product V1
+outcomes. Correctness cleanup for incomplete staging or failed commits remains part of the included store behavior.
 
-Do not use checkbox state as the status. If an entry changes status, cite the issue or PR that
-changed it and the evidence that makes the classification current.
+## Current tracker and dependency state
 
-## Required Entry Fields
+| Evidence | Current state | Audit use |
+| --- | --- | --- |
+| [Owner decision for #597](https://github.com/ScottArbeit/Grace/issues/597#issuecomment-5263063211) | Product V1 is approved as the governing contract. The final `epic/597` to `main` pull request still needs explicit maintainer approval at its reviewed, validated current head. | Final release gate. |
+| [Epic #597](https://github.com/ScottArbeit/Grace/issues/597) | The approved decision governs over older rotation text. | Scope source. |
+| [Mini-epic #601](https://github.com/ScottArbeit/Grace/issues/601) | Open parent for replacement runtime and store work. | Owns the replacement leaf sequence. |
+| [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
+| [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
+| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Open R0: prune cache service-identity rotation contracts. | Precedes R1. |
+| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Open R1: static enrollment and redacted status. | Starts after R0 and its orphan-enrollment proof gate. |
+| [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
+| [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
 
-Every audit entry must keep these fields:
+## Implemented and proven server foundations
 
-- Implementation seam: the component, route, command, contract, actor, storage shape, doc, or
-  generated artifact that owns the behavior.
-- Proof seam: the test, validation command, static proof, generated freshness check, manual audit,
-  or external dependency that proves the seam.
-- Status classification: one status from the vocabulary above.
-- Issue or PR evidence: GitHub issue, pull request, commit, or validation artifact that owns the
-  current claim.
-- Residual risk or rationale: remaining risk, blocked dependency, rejected shape, or reason the
-  entry is not applicable.
+### Server-resolved materialization plans and execution modes
 
-## Final Audit Categories
+- **Implementation seam:** `src/Grace.Server/Materialization.Server.fs` resolves the target root and creates Direct,
+  CachePreferred, or CacheRequired plan shapes. Root artifact validation requires the DirectoryVersion zip and recursive
+  metadata artifacts. CacheRequired availability uses the existing `cacheRequiredUnavailable` error contract.
+- **Proof seam:** `src/Grace.Server.Unit.Tests/MaterializationPlan.Server.Tests.fs` and
+  `src/Grace.Types.Tests/MaterializationPlan.Types.Tests.fs` cover the public plan and mode contract.
+- **Status classification:** `implemented and proven` for server plan resolution and source selection. This does not
+  claim a cache-host fetch, store, or local materialization implementation.
+- **Residual risk:** The cache tracer must extend these server foundations through an actual authorized cache request.
 
-The final epic audit should classify these categories before the release-candidate PR is treated as
-review-ready:
+### Artifact grants and holder proofs
 
-- User-selected materialization mode and fallback behavior.
-- Server-resolved content scope and RecursiveDirectoryVersions authority.
-- ContentAccessGrant issuance, binding, validation, and expiry.
-- Grace Cache service registration and identity.
-- Read-through behavior and cache-hit enforcement.
-- Prefetch behavior and retention refresh.
-- Cache artifact metadata, cleanup, and artifact completeness.
-- Watch dependency impact for #473 and #552.
-- Operations dependency impact for #554.
-- Public docs and generated contracts.
-- Validation evidence and residual risks.
+- **Implementation seam:** `Grace.Types.ArtifactGrant`, `Grace.Shared.ArtifactGrant`,
+  `src/Grace.Actors/ArtifactGrantSigningKey.Actor.fs`, and
+  `src/Grace.Server.Security/ArtifactGrantKeys.Server.fs` define and publish the signed artifact-grant contract. Grants
+  bind the requester, selected cache, immutable target root, execution mode, and artifact identity; request proofs bind
+  the grant to the exact method, route, and artifact.
+- **Proof seam:** Artifact-grant validation, request-proof validation, signing-key actor, and integration tests cover
+  valid and rejected grants, holder mismatch, binding mismatch, expiry, overlap validation keys, and unknown-key
+  fail-closed behavior. #619 and PR #697 recorded the focused proof and generated-contract evidence.
+- **Status classification:** `implemented and proven`.
+- **Residual risk:** Artifact-grant validation-key rollover remains an existing server capability. It is separate from
+  cache service identity and must survive R0 pruning.
 
-## Grace Cache Artifact Authorization Guardrails
+### Server cache-registration foundation
 
-Future implementation PRs must preserve these V1 guardrails when updating any audit row:
+- **Implementation seam:** `src/Grace.Actors/CacheRegistration.Actor.fs` and
+  `src/Grace.Server/CacheRegistration.Server.fs` provide administrator-controlled enrollment, refresh, revocation,
+  assignment, durable registration state, and proof verification. Selection is limited to an eligible current
+  registration with its explicit repository assignments.
+- **Proof seam:** `CacheRegistrationLifecycleTests` and registration type tests cover enrollment facts, refresh,
+  revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
+  PR #706 recorded the server-foundation validation.
+- **Status classification:** `implemented and proven` for the server foundation.
+- **Residual risk:** The current foundation contains a cache service-identity rotation surface. Product V1 does not
+  retain that capability; #855 removes it while preserving the separate artifact-grant validation-key behavior.
 
-- V1 cache artifacts are Materialization Plan artifacts. Cache hits depend on artifact completeness
-  and current artifact grants, not low-level storage or object-placement proof.
-- Full-root artifacts require current whole-target-root authorization for the plan artifact. Matching
-  immutable target identity is necessary, but it is not an authorization scope by itself.
-- Narrowed path-scope grants must be rejected for V1 full-root artifacts until Grace accepts a
-  path-scoped artifact shape and proof obligation.
-- A Cache identity is a server-assigned `CacheId` and canonical P-256 public key bound to one explicit
-  Owner or Organization repository boundary. It cannot become a global artifact reader or bypass per-call
-  artifact grant validation.
+### Direct materialization
 
-## Requirement Group Scaffold
+- **Implementation seam:** `grace connect` consumes a Direct plan, validates the selected root artifacts, stages
+  content, and publishes local state only after validation succeeds.
+- **Proof seam:** `Grace.CLI.Tests.ConnectTests` covers Direct plan shape, root-consistency rejection, integrity,
+  staged extraction, retry behavior, and byte equivalence.
+- **Status classification:** `implemented and proven` for Direct materialization.
+- **Residual risk:** This does not establish CachePreferred or CacheRequired host execution.
 
-Each group starts as a scaffold entry for #609. Future implementation PRs should replace the
-docs-only classification with current evidence for the behavior they own.
+## Accepted Product V1 work
 
-### Direct Materialization
+### R0: static contract pruning (#855)
 
-- Implementation seam: `grace connect` requests `MaterializationExecutionMode.Direct` with
-  `MaterializationCacheSelection.Bypass`, downloads the planned DirectUri recursive metadata and
-  DirectoryVersion zip artifacts, validates descriptor/root/integrity evidence, stages extraction,
-  then writes the working tree, local status, and object-cache rows only after validation passes.
-- Proof seam: `Grace.CLI.Tests.ConnectTests` covers Direct plan shape, root consistency rejection,
-  delivered-artifact integrity, staged extraction before local state writes, retry-once behavior for
-  retryable artifact-source failures, no retry for permanent root mismatch, and byte equality for
-  manifest-backed plus whole-file materialization.
-- Status classification: `implemented and proven`.
-- Issue or PR evidence: #616 adds the Direct retry, negative consistency, manifest-backed byte
-  equivalence, object-cache regression, and `pwsh ./scripts/validate.ps1 -Fast` evidence for the
-  tracer branch.
-- Residual risk or rationale: OpenAPI/static contract propagation for the previous Runtime
-  `ReferenceType` decision is deferred to #687; this row only claims the Direct tracer behavior and
-  does not claim CachePreferred or CacheRequired support.
+- **Status classification:** `planned`.
+- **Required result:** Remove cache service-identity rotation and candidate surfaces from types, actor state/events,
+  routes, CLI settings and status, local configuration, OpenAPI, generated SDKs, docs, fixtures, serializers, AOT
+  roots, and command catalogs. Do not remove artifact-grant validation-key rollover.
+- **Proof:** Inventory and generated-contract freshness show no active cache identity rotation surface remains; focused
+  grant-key validation proof remains green.
 
-### CachePreferred Materialization
+### R1: static enrollment and redacted status (#856)
 
-- Implementation seam: mode selection and materialization path that tries Grace Cache first and can
-  fall back to Direct only when the accepted contract allows it. Grace Server selects only a current,
-  healthy Cache with an exact explicit repository assignment for the fully resolved target. Callers
-  cannot supply a cache scope; repository names, wildcard scopes, and storage-pool assignments do not
-  participate in selection.
-- Proof seam: positive and negative tests for cache hit, cache miss, grant failure, cache outage,
-  fallback observability, exact stable-ID scope matching, and exclusion of missing, unrelated,
-  malformed, name-like, wrong-case, storage-pool-only, and unlisted multi-repository registrations.
-- Status classification: `implemented and proven` for server-side plan selection and source shape.
-- Issue or PR evidence: #620 owns current-registration selection, ordinary-absence Direct fallback,
-  holder-bound grant issuance, complete-plan validation, generated contracts, and Fast validation.
-- Residual risk or rationale: #629 and #630 still own client private-key lifetime and cache execution.
+- **Status classification:** `planned`.
+- **Required result:** An administrator enrolls one static P-256 identity, atomically commits one ready local
+  configuration, and receives truthful redacted status. Manual recovery is revoke, local reset, and re-enrollment.
+- **Gate:** Before implementation, prove that an inactive server enrollment after an ambiguous result cannot be selected
+  and cannot block fresh manual re-enrollment. Stop for a maintainer decision if the proof fails.
+- **Proof:** Validation-before-effect, definitive rejection, unknown result, crash cleanup, atomic-write failure, key
+  mismatch, redaction, and unsupported-profile cases.
 
-### CacheRequired Materialization
+### R2: registration liveness (#857)
 
-- Implementation seam: mode selection and materialization path that fails closed when Grace Cache
-  cannot serve the authorized content. Direct, CachePreferred, and CacheRequired root plans reject
-  `WholeFileContent`, `FileManifest`, and `ContentBlock` requests before projection, registration
-  selection, grant issuance, or partial plan publication.
-- Proof seam: tests proving no Direct source is used when CacheRequired cannot satisfy the request,
-  including cache miss, stale grant, malformed grant, and unavailable cache cases. Expected cache or grant-capacity
-  unavailability returns HTTP `503` in Grace's error envelope with `Properties.Code = cacheRequiredUnavailable` and a
-  correlation ID; projection, persistence, and signing faults remain 5xx.
-- Status classification: `implemented and proven` for server-side plan selection and source shape.
-- Issue or PR evidence: #620 proves selected-cache plans and retryable failure on ordinary absence,
-  selection failure, or post-selection grant failure without Direct retrieval details.
-- Generated-client surface: regenerated TypeScript, Python, and Rust raw-client materialization methods now include
-  the `503` response alongside the existing generic `GraceError` model; generated SDK metadata is refreshed against
-  the final OpenAPI projection.
-- Residual risk or rationale: CacheRequired is a high-risk trust contract because a silent Direct
-  fallback would violate the mode name and caller expectations.
+- **Status classification:** `planned`.
+- **Required result:** One cache process uses one bounded scheduler with server-issued liveness times, bounded retry,
+  and terminal fail-closed behavior at expiry, revocation, or definitive rejection.
+- **Gate:** Before implementation, record the current registration response classes, timestamps, selection behavior,
+  clock model, retry schedule, and expiry cap.
+- **Proof:** Startup, endpoint validation, guard conflict, refresh, temporary retry, capped `Retry-After`, revocation,
+  expiry, shutdown race, restart, and server selection with an injectable clock.
 
-### Server-Side Plan Resolution And Recursive Metadata Authority
+### Artifact store, read-through, and tracer
 
-- Implementation seam: Grace Server materialization plan resolution for Reference and
-  DirectoryVersion targets, including the resolved DirectoryVersionId that owns target-root
-  artifacts and RecursiveDirectoryVersions metadata.
-- Proof seam: server-surface tests or static proof showing Grace Server resolves every Reference or
-  DirectoryVersion target before cache interaction, emits recursive metadata for the same resolved
-  DirectoryVersionId, and rejects cache or client code as a resolution authority.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; the owning server-resolution issue or PR must
-  cite implementation and proof before claiming server-resolved content scope or
-  RecursiveDirectoryVersions authority.
-- Residual risk or rationale: later cache, SDK, or CLI rows cannot satisfy this authority seam by
-  resolving Reference or DirectoryVersion inputs locally. Grace Server must remain the source of the
-  plan, resolved DirectoryVersionId, and recursive metadata used by cache artifacts.
+- **Status classification:** `planned`.
+- **Required result:** A selected cache accepts only a current authorized request for the exact full-root plan. On a
+  miss, it fetches the exact server-selected artifacts, validates hash and size, atomically commits a complete set,
+  serves the bytes, and returns a hit for the same authorized artifact on the next request.
+- **Proof:** The tracer must demonstrate `miss -> fill -> serve -> hit`, plus rejected grant, holder proof, route,
+  artifact, hash, size, partial-staging, incomplete-store, stale-registration, and CacheRequired no-fallback cases.
+- **Residual risk:** Local bytes do not prove entitlement, completeness, or current liveness.
 
-### ContentAccessGrant Issuance And Validation
+### Later local materialization
 
-- Implementation seam: #619 defines `Grace.Types.ArtifactGrant`, `Grace.Shared.ArtifactGrant`,
-  `Grace.Actors.ArtifactGrantSigningKeyActor`, and `Grace.Server.Security.ArtifactGrantKeys` as the
-  signed artifact grant contract. One fixed-key Orleans actor backed by `GraceActorStorage` persists
-  P-256 private keys before use and owns rotation for every Grace Server instance. Grants bind the
-  authenticated `grace_user_id` as a `User` requester, the canonical ephemeral holder-key
-  thumbprint, selected CacheId, immutable target root, non-Direct execution mode,
-  and explicit artifact identities. Each cache artifact request carries a stateless holder proof
-  over the grant digest, normalized method and route, artifact identity, and a presentation window
-  of at most 30 seconds with at most 30 seconds of clock-skew tolerance. Canonical request encoding
-  uppercases and trims the HTTP method; it trims the route, excludes query and fragment text, adds a
-  leading slash when absent, and otherwise preserves path case and trailing-slash meaning.
-- Lifecycle seam: the default grant TTL is 5 minutes, the maximum accepted grant TTL is 15 minutes,
-  signing keys are active for 2 hours, old validation keys remain published through the final grant
-  overlap window, and `/cache/validation-keys` advertises a 15-minute cache TTL. Grant and proof
-  expiry are checked when a request is admitted; #625 owns allowing an admitted response to stream
-  to completion and requiring fresh proof for every retry, resume, range, parallel, or later request.
-- Proof seam: `ArtifactGrantValidationTests` covers valid grants, Direct mode skipping grant
-  validation, unsigned grants, missing key ids, unsupported algorithms, wrong cache, wrong target
-  root, wrong execution mode, wrong artifact, wrong signatures, expired grants, overlong TTLs,
-  expired keys, current/overlap key validation, and one-attempt unknown-key refresh fail-closed
-  behavior. `ArtifactRequestProofValidationTests` covers matching holder proof, copied-grant use with
-  another key, exact grant/method/route/artifact binding, tampering, proof lifetime and skew
-  boundaries, and explicit Direct bypass. `ArtifactGrantSigningKeyActorTests` covers
-  persist-before-use, activation recovery, storage-write failure without local fallback, 2-hour
-  rotation, overlap retirement, concurrent signing/publication, and malformed issuance boundaries.
-  `ArtifactGrantKeysIntegrationTests` proves the HTTP publication route resolves stable actor-backed
-  keys through the Aspire-hosted server.
-- Status classification: `implemented and proven`.
-- Issue or PR evidence: #619 and PR #697 own the grant/key contract, validation-key publication
-  route, generated OpenAPI/SDK artifacts, focused proof, and passing `validate.ps1 -Full` evidence.
-- Residual risk or rationale: #620 derives `RequesterPrincipalId` from authenticated server context
-  and adds the holder public key and grant to cache-mode Materialization Plans. #625 owns request
-  admission and stream behavior; #629 and #630 own ephemeral private-key lifetime
-  and just-in-time proof generation. V1 intentionally has no nonce store, so replay of a captured
-  complete request remains possible inside the narrow proof window; TLS protects it in transit.
+- **Status classification:** `blocked`.
+- **Required result:** Cache-aware local execution prepares exact validated content and calls
+  `WorkingDirectoryUpdate.run`; it does not create a second working-tree, SQLite, Branch, Watch, or recovery path.
+- **Dependency:** Do not begin #628 to #630 or #634 until #835 merges to `main` and the Epic #597 branch is refreshed.
 
-### Cache Registration And Identity
+## Deferred and out-of-scope work
 
-- Implementation seam: an authenticated Grace administrator enrolls one Cache under a server-assigned
-  `CacheId`, one Owner or Organization boundary, and exact explicit repository assignments. Enrollment
-  stores only a canonical P-256 public key and the enrollment audit identity. The singleton
-  `CacheRegistrationActor` persists registration lifecycle state through `GraceActorStorage`; refresh
-  and rotation prove possession of the current private key but never store it. Refresh updates only
-  operational facts and liveness. Dedicated administrator routes replace assignments or revoke; key
-  rotation accepts the new public key before retiring the old key.
-- Lifecycle seam: selection is the eligibility cutoff for a materialization request. A registration revoked or
-  de-assigned after selection prevents later plans, but the in-flight request keeps its selected snapshot and may
-  complete with its short-lived grant. A signed `Unhealthy` refresh is persisted immediately without extending other
-  operational facts; healthy recovery remains throttled. Administrators of the stored Owner or Organization can revoke
-  or replace assignments even when a historical assignment was deleted, while every replacement repository must still
-  resolve live and pass the current boundary checks.
-- Proof seam: `CacheRegistrationLifecycleTests` covers immutable enrollment facts, restricted refresh,
-  revocation, exact healthy repository selection, malformed/duplicate boundaries, and canonical proof
-  verification. The Orleans partition-key test proves the singleton `CacheRegistration` Cosmos mapping,
-  persistent-state activation, durable writes, and Cosmos provider selection.
-- Status classification: `implemented and proven` for the server foundation; Cache host scheduling,
-  local private-key storage, and artifact-serving behavior remain out of scope.
-- Issue or PR evidence: #600 and PR #706 own the administrator authorization, durable registration,
-  proof, key-rotation, route, OpenAPI, generated-client, and validation evidence.
-- Residual risk or rationale: every current healthy Cache is inherently read-through eligible for its
-  exact assignments. Read-through is mandatory, not an advertised capability. `PrefetchSupported` is
-  the sole optional capability and does not authorize artifact access.
+| Capability | Status classification | Product V1 disposition |
+| --- | --- | --- |
+| Automatic or startup cache identity rotation, candidate promotion, and rotation recovery | deferred | No active lifecycle, route, setting, timer, or retry surface remains after R0. |
+| Prefetch | deferred | Read-through is the supported acquisition path. |
+| Scheduled retention or eviction | deferred | Only correctness cleanup for incomplete staging or failed commits is included. |
+| Watch integration | deferred | No cache-facing Watch contract is required for Product V1. |
+| Grace.Operations integration | deferred | No Operations contract is required for Product V1. |
+| Platform parity | out of scope | The selected Linux x64 deployment profile is the only advertised host profile. |
+| HA/DR | out of scope | No high-availability or disaster-recovery outcome is promised. |
+| Hostile-root defense | out of scope | Product V1 uses the stated OS-protected local deployment boundary. |
 
-### Read-Through Behavior
+## Contract propagation and final gates
 
-- Implementation seam: Grace Cache request handling that serves only complete Materialization Plan
-  artifacts after a current grant authorizes the plan's full target-root scope.
-- Proof seam: tests for authorized complete-plan hit, unauthorized hit, stale artifact metadata,
-  partial artifact presence, narrowed path-scope grant rejection for full-root artifacts, and
-  server-authority refresh where the contract requires it.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; read-through work must add current proof before
-  claiming cache reads.
-- Residual risk or rationale: local artifact presence is not permission, liveness, or proof that a
-  caller may fetch a full target-root materialization.
+Every accepted change must classify the following surfaces as updated, unchanged with reason, deferred to a named
+issue, or not applicable: shared types, persisted state/events, server routes and error envelopes, CLI, SDK, OpenAPI
+and generated clients, cache host/configuration, storage, diagnostics, tests, and documentation. No accepted field,
+route, state, command, or setting may remain half-active.
 
-### Prefetch Behavior
+The final Epic #597 release candidate requires all of the following:
 
-- Implementation seam: configured prefetch subscriptions, Materialization Plan resolution, artifact
-  fetch scheduling, artifact metadata writes, retention refresh, grant enforcement, and failure
-  reporting.
-- Proof seam: tests for authorized full-root prefetch, denied prefetch, duplicate subscription,
-  partial artifact fetch, retry, cancellation, artifact completeness checks, and retention refresh
-  without creating separate retention classes.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; prefetch work must cite the owning issue or PR.
-- Residual risk or rationale: prefetch can place plan artifacts in cache before a requester needs
-  them, but serving still requires per-call authorization for the artifact scope.
+1. Each accepted audit row has current-head implementation and proof evidence.
+2. The authorized full-root miss-fill-serve-hit tracer passes.
+3. #835 sequencing is honored for later local materialization.
+4. Generated-contract and documentation checks pass where a public surface changed.
+5. Current-head validation and a fresh review complete for every relevant pull request.
+6. The final `epic/597` to `main` pull request receives explicit maintainer approval at that reviewed, validated head.
 
-### Cache Metadata And Cleanup
+## Docs-only validation
 
-- Implementation seam: Cache Artifact Metadata, Cache Retention, artifact completeness state, expiry
-  decisions, and cleanup side effects for target-root zips plus recursive metadata.
-- Proof seam: tests for metadata creation, retention refresh, expiry, cleanup after partial artifact
-  failure, shared artifact retention, and no pinning in v1.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; cleanup work must cite its owning issue or PR.
-- Residual risk or rationale: cache cleanup must not infer authorization, artifact completeness, or
-  global content liveness from local artifact presence alone.
-
-### Watch Dependencies
-
-- Implementation seam: Watch integration points that consume or publish cache-related materialization
-  status after #473 and #552 establish their required boundaries.
-- Proof seam: dependency evidence from #473 and #552 plus focused tests that prove Watch does not use
-  stale materialization mode, grant, reference, or cache-status snapshots.
-- Status classification: `deferred`.
-- Issue or PR evidence: dependency-gated by #473 and #552; #609 records the audit slot only.
-- Residual risk or rationale: Watch impact must not silently disappear. Do not mark this entry
-  implemented until current Watch dependency evidence exists.
-
-### Operations Dependencies
-
-- Implementation seam: Operations surfaces that observe, configure, validate, or report Grace Cache
-  materialization behavior after the #554 Operations branch defines the relevant contracts.
-- Proof seam: dependency evidence from #554 plus Operations-local validation for any exposed command,
-  worker, report, or status surface.
-- Status classification: `deferred`.
-- Issue or PR evidence: dependency-gated by #554; #609 records the audit slot only.
-- Residual risk or rationale: Operations support is not claimed by core cache docs alone. Any
-  Operations impact needs current #554 evidence before completion language is allowed.
-
-### Public Documentation
-
-- Implementation seam: user, operator, contributor, and architecture docs that describe Grace Cache
-  modes, grants, registration, prefetch, read-through, cleanup, and dependency limits.
-- Proof seam: MarkdownLint, manual rendered review, link checks when practical, and comparison
-  against the accepted product spec and implementation issues.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates this audit scaffold; later docs PRs must cite their owning
-  issues and validation.
-- Residual risk or rationale: docs must distinguish proven support, incomplete proof, deferrals, and
-  non-claims instead of using broad supported wording.
-
-### Generated Contracts
-
-- Implementation seam: OpenAPI, SDK generated clients, generated metadata, CLI machine-readable
-  output, or other generated artifacts that expose Grace Cache requests, statuses, grants, or modes.
-- Proof seam: generated freshness checks, OpenAPI proof checks, SDK generation checks, contract
-  tests, and static scans for stale schema or enum values.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; generated-contract work must cite the issue or
-  PR that updates artifacts and proof.
-- Residual risk or rationale: generated drift is a release risk. Do not rely on source-only changes
-  when public or SDK-visible cache contracts change.
-
-## Final Audit Update Rules
-
-- Update an entry only from current branch evidence, not from memory or older dependency snapshots.
-- Preserve the exact status vocabulary so the final audit can be searched and compared mechanically.
-- Replace the #609 scaffold evidence with the owning issue or PR evidence when implementation lands.
-- Keep dependency-gated Watch and Operations entries until their named dependency evidence is current.
-- Record rejected or out-of-scope decisions with rationale, not as anonymous follow-up work.
-- Keep unproven support language narrow: name the seam, proof, and residual risk.
-
-## Docs-Only Validation For This Scaffold
-
-The #609 worker should validate this document with:
+This update is documentation only. Its required local proof is:
 
 ```powershell
-npx --yes markdownlint-cli2 "docs/Grace Cache implementation audit.md"
+npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementation audit.md"
 git diff --check
 ```
 
-Manual review must also confirm that the scaffold covers Direct, CachePreferred, CacheRequired,
-server-side Reference/DirectoryVersion resolution, RecursiveDirectoryVersions metadata authority for
-the same DirectoryVersionId, grants, registration, read-through, prefetch, cleanup, Watch,
-Operations, docs, generated contracts, validation evidence, and residual risks.
+No build or test run is needed because no runtime, contract, generated artifact, or source file changes in this slice.
