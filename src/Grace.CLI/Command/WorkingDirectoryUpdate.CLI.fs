@@ -298,6 +298,223 @@ module internal WorkingDirectoryUpdate =
                 | Error error -> return Error error
         }
 
+    /// Records every tracked topology action before the first local working-tree mutation.
+    type private TopologyPlan =
+        {
+            FilesToDelete: RelativePath array
+            DirectoriesToDelete: RelativePath array
+            DirectoriesToCreate: RelativePath array
+            FilesToMaterialize: (RelativePath * Sha256Hash * Blake3Hash) array
+        }
+
+    /// Turns a configuration into a scan snapshot that cannot consult the process-wide configuration cache.
+    let private scanInputFor (configuration: GraceConfiguration) : WorkingTreeScanInput =
+        {
+            RootDirectory = configuration.RootDirectory
+            GraceDirectory = configuration.GraceDirectory
+            GraceStatusFile = configuration.GraceStatusFile
+            DirectoryIgnoreEntries = Array.copy configuration.GraceDirectoryIgnoreEntries
+            FileIgnoreEntries = Array.copy configuration.GraceFileIgnoreEntries
+        }
+
+    /// Requires the disk configuration read at the final gate to retain the original local transaction scope.
+    let private isSameConfiguration (original: GraceConfiguration) (fresh: GraceConfiguration) =
+        original.RepositoryId = fresh.RepositoryId
+        && original.BranchId = fresh.BranchId
+        && String.Equals(original.RootDirectory, fresh.RootDirectory, StringComparison.OrdinalIgnoreCase)
+        && String.Equals(original.GraceDirectory, fresh.GraceDirectory, StringComparison.OrdinalIgnoreCase)
+        && String.Equals(original.GraceStatusFile, fresh.GraceStatusFile, StringComparison.OrdinalIgnoreCase)
+        && String.Equals(original.ObjectDirectory, fresh.ObjectDirectory, StringComparison.OrdinalIgnoreCase)
+        && original.GraceDirectoryIgnoreEntries = fresh.GraceDirectoryIgnoreEntries
+        && original.GraceFileIgnoreEntries = fresh.GraceFileIgnoreEntries
+
+    /// Maps one absolute entry to the canonical relative spelling used by local status.
+    let private relativePathForRoot root path =
+        let relative = Path.GetRelativePath(root, path)
+
+        if relative = "." then RootDirectoryPath else RelativePath(relative)
+
+    /// Rejects a directory replacement unless every existing descendant is already a tracked path scheduled for removal.
+    let private ensureOnlyPlannedTrackedEntries root (trackedPaths: HashSet<string>) (plannedRemovalPaths: HashSet<string>) fullPath =
+        try
+            Directory.EnumerateFileSystemEntries(fullPath, "*", SearchOption.AllDirectories)
+            |> Seq.iter (fun entry ->
+                let relative = relativePathForRoot root entry |> string
+
+                if
+                    not
+                        (
+                            trackedPaths.Contains(relative)
+                            && plannedRemovalPaths.Contains(relative)
+                        )
+                then
+                    invalidOp $"Working Directory Update refuses to replace '{relative}' because it contains ignored or untracked content.")
+
+            Ok()
+        with
+        | ex -> Error ex.Message
+
+    /// Enumerates all tracked blockers and ordered actions while the tree is still untouched.
+    let private buildTopologyPlan localRoot (currentStatus: GraceStatus) (targetStatus: GraceStatus) files =
+        try
+            let targetFilePaths = HashSet<string>(files |> Seq.map (fun (path, _, _) -> string path), StringComparer.OrdinalIgnoreCase)
+
+            let targetDirectories =
+                targetStatus.Index.Values
+                |> Seq.map (fun directory -> directory.RelativePath)
+                |> Seq.distinct
+                |> Seq.filter (fun path -> path <> RootDirectoryPath)
+                |> Seq.sortBy (fun path -> (string path).Length, string path)
+                |> Seq.toArray
+
+            let targetDirectoryPaths = HashSet<string>(targetDirectories |> Seq.map string, StringComparer.OrdinalIgnoreCase)
+
+            let currentFiles =
+                currentStatus.Index.Values
+                |> Seq.collect (fun directory -> directory.Files)
+                |> Seq.map (fun file -> file.RelativePath)
+                |> Seq.distinct
+                |> Seq.toArray
+
+            let currentDirectories =
+                currentStatus.Index.Values
+                |> Seq.map (fun directory -> directory.RelativePath)
+                |> Seq.distinct
+                |> Seq.filter (fun path -> path <> RootDirectoryPath)
+                |> Seq.toArray
+
+            let currentFilePaths = HashSet<string>(currentFiles |> Seq.map string, StringComparer.OrdinalIgnoreCase)
+            let currentDirectoryPaths = HashSet<string>(currentDirectories |> Seq.map string, StringComparer.OrdinalIgnoreCase)
+
+            let filesToDelete =
+                currentFiles
+                |> Seq.filter (fun path -> not (targetFilePaths.Contains(string path)))
+                |> Seq.sortByDescending (fun path -> (string path).Length, string path)
+                |> Seq.toArray
+
+            let directoriesToDelete =
+                currentDirectories
+                |> Seq.filter (fun path -> not (targetDirectoryPaths.Contains(string path)))
+                |> Seq.sortByDescending (fun path -> (string path).Length, string path)
+                |> Seq.toArray
+
+            let plannedRemovalPaths =
+                HashSet<string>(Seq.append (filesToDelete |> Seq.map string) (directoriesToDelete |> Seq.map string), StringComparer.OrdinalIgnoreCase)
+
+            let trackedPaths =
+                HashSet<string>(Seq.append (currentFiles |> Seq.map string) (currentDirectories |> Seq.map string), StringComparer.OrdinalIgnoreCase)
+
+            for directory in targetDirectories do
+                let fullPath = pathUnderRoot localRoot directory
+
+                if
+                    File.Exists(fullPath)
+                    && not (currentFilePaths.Contains(string directory))
+                then
+                    invalidOp $"Working Directory Update refuses ignored or untracked file blocker '{directory}'."
+
+            for path, _, _ in files do
+                let fullPath = pathUnderRoot localRoot path
+
+                if Directory.Exists(fullPath) then
+                    if not (currentDirectoryPaths.Contains(string path)) then
+                        invalidOp $"Working Directory Update refuses ignored or untracked directory blocker '{path}'."
+
+                    match ensureOnlyPlannedTrackedEntries localRoot trackedPaths plannedRemovalPaths fullPath with
+                    | Ok () -> ()
+                    | Error error -> invalidOp error
+
+            for directory in directoriesToDelete do
+                let fullPath = pathUnderRoot localRoot directory
+
+                if Directory.Exists(fullPath) then
+                    match ensureOnlyPlannedTrackedEntries localRoot trackedPaths plannedRemovalPaths fullPath with
+                    | Ok () -> ()
+                    | Error error -> invalidOp error
+
+            Ok { FilesToDelete = filesToDelete; DirectoriesToDelete = directoriesToDelete; DirectoriesToCreate = targetDirectories; FilesToMaterialize = files }
+        with
+        | ex -> Error ex.Message
+
+    /// Applies a previously complete topology plan, setting the incomplete boundary immediately before each tracked mutation.
+    let private applyTopologyPlan localRoot (objectPaths: Dictionary<string, string>) (plan: TopologyPlan) markMutationStarted =
+        task {
+            for path in plan.FilesToDelete do
+                let fullPath = pathUnderRoot localRoot path
+
+                if File.Exists(fullPath) then
+                    markMutationStarted ()
+                    File.Delete(fullPath)
+
+            for path in plan.DirectoriesToDelete do
+                let fullPath = pathUnderRoot localRoot path
+
+                if Directory.Exists(fullPath) then
+                    if
+                        Directory.EnumerateFileSystemEntries(fullPath)
+                        |> Seq.isEmpty
+                    then
+                        markMutationStarted ()
+                        Directory.Delete(fullPath)
+                    else
+                        invalidOp $"Working Directory Update planned non-empty tracked directory '{path}' for removal."
+
+            for path in plan.DirectoriesToCreate do
+                let fullPath = pathUnderRoot localRoot path
+
+                if File.Exists(fullPath) then
+                    invalidOp $"Working Directory Update planned a file where target directory '{path}' is required."
+                elif not (Directory.Exists(fullPath)) then
+                    markMutationStarted ()
+                    Directory.CreateDirectory(fullPath) |> ignore
+
+            for path, sha256Hash, blake3Hash in plan.FilesToMaterialize do
+                let destination = pathUnderRoot localRoot path
+
+                if Directory.Exists(destination) then
+                    invalidOp $"Working Directory Update planned a directory where target file '{path}' is required."
+
+                match! verifyFile destination sha256Hash blake3Hash with
+                | Ok () -> ()
+                | Error _ ->
+                    let destinationDirectory = Path.GetDirectoryName(destination)
+
+                    if not (Directory.Exists(destinationDirectory)) then
+                        invalidOp $"Working Directory Update planned missing parent directory for '{path}'."
+
+                    markMutationStarted ()
+                    File.Copy(objectPaths[string path], destination, true)
+
+                    match! verifyFile destination sha256Hash blake3Hash with
+                    | Ok () -> ()
+                    | Error error -> invalidOp error
+        }
+
+    /// Converts every owned-marker cleanup disposition into the one pre-mutation reject rule.
+    let private cleanOwnedMarkerBeforeMutation scope attempt context =
+        task {
+            let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+            return
+                match cleanup with
+                | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker
+                | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned -> Ok()
+                | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactCleanupFailed ->
+                    Error $"{context}; retained exact marker evidence; run `grace doctor --repair-local-state`."
+                | WorkingDirectoryUpdateCoordination.MarkerCleanup.DifferentOperationEvidence ->
+                    Error $"{context}; preserved different-operation marker evidence; run `grace doctor --repair-local-state`."
+                | WorkingDirectoryUpdateCoordination.MarkerCleanup.MalformedOrUnsupportedEvidence ->
+                    Error $"{context}; preserved malformed marker evidence; run `grace doctor --repair-local-state`."
+                | WorkingDirectoryUpdateCoordination.MarkerCleanup.UnreadableEvidence ->
+                    Error $"{context}; preserved unreadable marker evidence; run `grace doctor --repair-local-state`."
+        }
+
+    /// Selects a rejected pre-mutation outcome without ever discarding the owned marker cleanup result.
+    let private rejectedAfterCleanup normalReason cleanup =
+        match cleanup with
+        | Ok () -> Contracts.Rejected(failure normalReason)
+        | Error error -> Contracts.Rejected(failure error)
+
     /// Runs the canonical five-input Branch transaction for a selected Reference or exact DirectoryVersion root.
     let run
         (acceptedPhase: Contracts.AcceptedBranchPhase)
@@ -312,14 +529,7 @@ module internal WorkingDirectoryUpdate =
             let cancellationToken = Contracts.AcceptedBranchPhase.actionToken acceptedPhase
             let configuration = Current()
 
-            let scanInput: WorkingTreeScanInput =
-                {
-                    RootDirectory = configuration.RootDirectory
-                    GraceDirectory = configuration.GraceDirectory
-                    GraceStatusFile = configuration.GraceStatusFile
-                    DirectoryIgnoreEntries = Array.copy configuration.GraceDirectoryIgnoreEntries
-                    FileIgnoreEntries = Array.copy configuration.GraceFileIgnoreEntries
-                }
+            let scanInput = scanInputFor configuration
 
             let operation =
                 Contracts.Operation.branchSwitchWithSelection configuration.BranchId selection target
@@ -347,6 +557,90 @@ module internal WorkingDirectoryUpdate =
 
                 match completion with
                 | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> return Contracts.Unchanged(receipt target operation false)
+                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                    let isExactPending =
+                        match pending with
+                        | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (pendingTarget, pendingOperation, _, _)) ->
+                            Contracts.Target.canonical pendingTarget = Contracts.Target.canonical target
+                            && Contracts.Operation.value pendingOperation = Contracts.Operation.value operation
+                        | _ -> false
+
+                    if not isExactPending then
+                        return Contracts.Rejected(failure "A different Working Directory Update finalization is already pending.")
+                    else
+                        let receipt = receipt target operation false
+
+                        let! retryCleanup =
+                            match marker with
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing -> task { return Ok() }
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                if cancellationToken.IsCancellationRequested then
+                                    task {
+                                        return
+                                            Error
+                                                "Working Directory Update retry was cancelled before exact marker cleanup; run `grace doctor --repair-local-state`."
+                                    }
+                                else
+                                    task {
+                                        let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveExactOperation scope target operation
+
+                                        return
+                                            match cleanup with
+                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned -> Ok()
+                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> Ok()
+                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactCleanupFailed ->
+                                                Error "Working Directory Update retry retained exact marker evidence; run `grace doctor --repair-local-state`."
+                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.DifferentOperationEvidence ->
+                                                Error
+                                                    "Working Directory Update retry preserved different-operation marker evidence; run `grace doctor --repair-local-state`."
+                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.MalformedOrUnsupportedEvidence ->
+                                                Error
+                                                    "Working Directory Update retry preserved malformed marker evidence; run `grace doctor --repair-local-state`."
+                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.UnreadableEvidence ->
+                                                Error
+                                                    "Working Directory Update retry preserved unreadable marker evidence; run `grace doctor --repair-local-state`."
+                                    }
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                task {
+                                    return
+                                        Error
+                                            "Working Directory Update retry preserved different-operation marker evidence; run `grace doctor --repair-local-state`."
+                                }
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported ->
+                                task {
+                                    return Error "Working Directory Update retry preserved malformed marker evidence; run `grace doctor --repair-local-state`."
+                                }
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
+                                task {
+                                    return Error "Working Directory Update retry preserved unreadable marker evidence; run `grace doctor --repair-local-state`."
+                                }
+
+                        match retryCleanup with
+                        | Error error -> return Contracts.FinalizationIncomplete(receipt, failure error)
+                        | Ok () when cancellationToken.IsCancellationRequested ->
+                            return
+                                Contracts.FinalizationIncomplete(
+                                    receipt,
+                                    failure "Working Directory Update retry was cancelled before terminal recording; run `grace doctor --repair-local-state`."
+                                )
+                        | Ok () ->
+                            try
+                                do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+
+                                try
+                                    do! WorkingDirectoryUpdateCoordination.Sidecar.write scope operation
+                                with
+                                | _ -> ()
+
+                                return Contracts.Updated(receipt)
+                            with
+                            | ex ->
+                                return
+                                    Contracts.FinalizationIncomplete(
+                                        receipt,
+                                        failure
+                                            $"Working Directory Update could not record terminal completion: {ex.Message}; run `grace doctor --repair-local-state`."
+                                    )
                 | _ when
                     currentRevision
                     <> Contracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
@@ -362,34 +656,46 @@ module internal WorkingDirectoryUpdate =
                     ->
                     return Contracts.Rejected(failure "Working Directory Update preserved disallowed marker evidence; run `grace doctor --repair-local-state`.")
                 | _ ->
-                    let attempt = Contracts.AttemptToken.create ()
+                    let! adoptionCleanup =
+                        if marker = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch then
+                            WorkingDirectoryUpdateCoordination.Marker.tryRemoveExactOperation scope target operation
+                        else
+                            task { return WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker }
 
-                    let markerDocument =
-                        WorkingDirectoryUpdateCoordination.Marker.create scope attempt target operation
-                        |> Result.defaultWith invalidOp
+                    match adoptionCleanup with
+                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactCleanupFailed ->
+                        return Contracts.Rejected(failure "Working Directory Update retained exact marker evidence; run `grace doctor --repair-local-state`.")
+                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.DifferentOperationEvidence
+                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.MalformedOrUnsupportedEvidence
+                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.UnreadableEvidence ->
+                        return Contracts.Rejected(failure "Working Directory Update preserved marker evidence; run `grace doctor --repair-local-state`.")
+                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                        let attempt = Contracts.AttemptToken.create ()
 
-                    do! WorkingDirectoryUpdateCoordination.Marker.write scope markerDocument
-                    ownedAttempt <- Some attempt
+                        let markerDocument =
+                            WorkingDirectoryUpdateCoordination.Marker.create scope attempt target operation
+                            |> Result.defaultWith invalidOp
 
-                    if cancellationToken.IsCancellationRequested then
-                        let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+                        do! WorkingDirectoryUpdateCoordination.Marker.write scope markerDocument
+                        ownedAttempt <- Some attempt
 
-                        return
-                            match cleanup with
-                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
-                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
-                                Contracts.Rejected(failure "Working Directory Update was cancelled before mutation.")
-                            | _ ->
-                                Contracts.Rejected(
-                                    failure
-                                        "Working Directory Update was cancelled before mutation and retained marker evidence; run `grace doctor --repair-local-state`."
-                                )
-                    else
-                        match! scanWorkingTreeForDifferencesReadOnly scanInput currentStatus with
+                        let! initialScan = scanWorkingTreeForDifferencesReadOnly scanInput currentStatus
+
+                        match initialScan with
                         | Error error -> return Contracts.Rejected(failure $"Working Directory Update could not verify the accepted working tree: {error}")
-                        | Ok differences when differences.Count > 0 ->
-                            let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-                            return Contracts.Rejected(failure "Working Directory Update rejected changed eligible working-tree content before mutation.")
+                        | Ok differences when
+                            cancellationToken.IsCancellationRequested
+                            || differences.Count > 0
+                            ->
+                            let reason =
+                                if cancellationToken.IsCancellationRequested then
+                                    "Working Directory Update was cancelled before mutation."
+                                else
+                                    "Working Directory Update rejected changed eligible working-tree content before mutation."
+
+                            let! cleanup = cleanOwnedMarkerBeforeMutation scope attempt reason
+                            return rejectedAfterCleanup reason cleanup
                         | Ok _ ->
                             let files = targetFiles preparedContent
                             let objectPaths = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -401,96 +707,67 @@ module internal WorkingDirectoryUpdate =
                                     | Ok objectPath -> objectPaths[string path] <- objectPath
                                     | Error error -> objectError <- Some error
 
-                            match objectError with
-                            | Some error ->
-                                let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-                                return Contracts.Rejected(failure $"Working Directory Update could not publish prepared objects: {error}")
-                            | None when cancellationToken.IsCancellationRequested ->
-                                let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-                                return Contracts.Rejected(failure "Working Directory Update was cancelled before mutation.")
-                            | None ->
-                                let! finalRevision = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
-                                let! finalStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                            match objectError, tryInspectCurrentDirectoryConfiguration () with
+                            | Some error, _ ->
+                                let! cleanup = cleanOwnedMarkerBeforeMutation scope attempt "Working Directory Update could not publish prepared objects"
+                                return rejectedAfterCleanup $"Working Directory Update could not publish prepared objects: {error}" cleanup
+                            | None, Error _ ->
+                                let! cleanup =
+                                    cleanOwnedMarkerBeforeMutation
+                                        scope
+                                        attempt
+                                        "Working Directory Update could not reread disk configuration immediately before mutation"
 
-                                if finalRevision
-                                   <> Contracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
-                                   || statusFingerprint finalStatus
-                                      <> Contracts.AcceptedBranchPhase.statusFingerprint acceptedPhase then
-                                    let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-                                    return Contracts.Rejected(failure "Working Directory Update rejected stale local status immediately before mutation.")
-                                else
+                                return rejectedAfterCleanup "Working Directory Update could not reread disk configuration immediately before mutation." cleanup
+                            | None, Ok inspection when not (isSameConfiguration configuration inspection.Configuration) ->
+                                let! cleanup =
+                                    cleanOwnedMarkerBeforeMutation
+                                        scope
+                                        attempt
+                                        "Working Directory Update rejected changed disk configuration immediately before mutation"
+
+                                return rejectedAfterCleanup "Working Directory Update rejected changed disk configuration immediately before mutation." cleanup
+                            | None, Ok inspection ->
+                                let freshConfiguration = inspection.Configuration
+                                let freshScanInput = scanInputFor freshConfiguration
+                                let! finalRevision = LocalStateDb.readLocalStatusRevision freshConfiguration.GraceStatusFile
+                                let! finalStatus = LocalStateDb.readStatusSnapshot freshConfiguration.GraceStatusFile
+                                let! finalCompletion = LocalStateDb.readWorkingDirectoryUpdateCompletion freshConfiguration.GraceStatusFile target operation
+                                let! finalPending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization freshConfiguration.GraceStatusFile
+                                let! finalMarker = WorkingDirectoryUpdateCoordination.Marker.inspectOwnedAttempt scope attempt target operation
+                                let! finalScan = scanWorkingTreeForDifferencesReadOnly freshScanInput finalStatus
+
+                                let finalGateIsFresh =
+                                    finalRevision = Contracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
+                                    && statusFingerprint finalStatus = Contracts.AcceptedBranchPhase.statusFingerprint acceptedPhase
+                                    && finalCompletion.IsNone
+                                    && finalPending.IsNone
+                                    && finalMarker = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                                    && (match finalScan with
+                                        | Ok finalDifferences -> finalDifferences.Count = 0
+                                        | Error _ -> false)
+
+                                match buildTopologyPlan freshConfiguration.RootDirectory finalStatus targetStatus files with
+                                | _ when
+                                    not finalGateIsFresh
+                                    || cancellationToken.IsCancellationRequested
+                                    ->
+                                    let reason =
+                                        if cancellationToken.IsCancellationRequested then
+                                            "Working Directory Update was cancelled before mutation."
+                                        else
+                                            "Working Directory Update rejected stale final gate evidence immediately before mutation."
+
+                                    let! cleanup = cleanOwnedMarkerBeforeMutation scope attempt reason
+                                    return rejectedAfterCleanup reason cleanup
+                                | Error error ->
+                                    let! cleanup = cleanOwnedMarkerBeforeMutation scope attempt "Working Directory Update rejected the immutable topology plan"
+                                    return rejectedAfterCleanup $"Working Directory Update rejected the immutable topology plan: {error}" cleanup
+                                | Ok topologyPlan ->
                                     try
-                                        let targetDirectories =
-                                            targetStatus.Index.Values
-                                            |> Seq.map (fun directory -> directory.RelativePath)
-                                            |> Seq.sortBy (fun path -> (string path).Length)
-                                            |> Seq.toArray
+                                        do! applyTopologyPlan freshConfiguration.RootDirectory objectPaths topologyPlan (fun () -> mutationStarted <- true)
 
-                                        for directoryPath in targetDirectories do
-                                            let fullPath =
-                                                if directoryPath = RootDirectoryPath then
-                                                    configuration.RootDirectory
-                                                else
-                                                    pathUnderRoot configuration.RootDirectory directoryPath
-
-                                            if File.Exists(fullPath) then File.Delete(fullPath)
-
-                                            Directory.CreateDirectory(fullPath) |> ignore
-
-                                        let targetPaths = HashSet<string>(files |> Seq.map (fun (path, _, _) -> string path), StringComparer.OrdinalIgnoreCase)
-
-                                        let staleFiles =
-                                            currentStatus.Index.Values
-                                            |> Seq.collect (fun directory -> directory.Files)
-                                            |> Seq.filter (fun file -> not (targetPaths.Contains(string file.RelativePath)))
-                                            |> Seq.sortByDescending (fun file -> string file.RelativePath)
-                                            |> Seq.toArray
-
-                                        for file in staleFiles do
-                                            let fullPath = pathUnderRoot configuration.RootDirectory file.RelativePath
-
-                                            if File.Exists(fullPath) then
-                                                mutationStarted <- true
-                                                File.Delete(fullPath)
-
-                                        for path, sha256Hash, blake3Hash in files do
-                                            let destination = pathUnderRoot configuration.RootDirectory path
-                                            let destinationDirectory = Path.GetDirectoryName(destination)
-
-                                            Directory.CreateDirectory(destinationDirectory)
-                                            |> ignore
-
-                                            match! verifyFile destination sha256Hash blake3Hash with
-                                            | Ok () -> ()
-                                            | Error _ ->
-                                                mutationStarted <- true
-                                                File.Copy(objectPaths[string path], destination, true)
-                                                let! copied = verifyFile destination sha256Hash blake3Hash
-
-                                                match copied with
-                                                | Ok () -> ()
-                                                | Error error -> invalidOp error
-
-                                        let targetDirectoryPaths = HashSet<string>(targetDirectories |> Seq.map string, StringComparer.OrdinalIgnoreCase)
-
-                                        currentStatus.Index.Values
-                                        |> Seq.map (fun directory -> directory.RelativePath)
-                                        |> Seq.filter (fun path ->
-                                            path <> RootDirectoryPath
-                                            && not (targetDirectoryPaths.Contains(string path)))
-                                        |> Seq.sortByDescending (fun path -> (string path).Length)
-                                        |> Seq.iter (fun path ->
-                                            let fullPath = pathUnderRoot configuration.RootDirectory path
-
-                                            if
-                                                Directory.Exists(fullPath)
-                                                && (Directory.EnumerateFileSystemEntries(fullPath)
-                                                    |> Seq.isEmpty)
-                                            then
-                                                mutationStarted <- true
-                                                Directory.Delete(fullPath))
-
-                                        match! verifySelectedRoot configuration.RootDirectory scanInput target targetStatus with
+                                        match! verifySelectedRoot freshConfiguration.RootDirectory freshScanInput target targetStatus with
                                         | Error error ->
                                             return
                                                 Contracts.UpdateIncomplete(
@@ -499,35 +776,59 @@ module internal WorkingDirectoryUpdate =
                                         | Ok () ->
                                             let! _ =
                                                 LocalStateDb.commitWorkingDirectoryUpdateCompletion
-                                                    configuration.GraceStatusFile
+                                                    freshConfiguration.GraceStatusFile
                                                     targetStatus
                                                     targetStatus.Index.Values
                                                     (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization
-                                                        configuration.BranchId)
+                                                        freshConfiguration.BranchId)
                                                     target
                                                     operation
 
-                                            let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+                                            let completedReceipt = receipt target operation mutationStarted
+
+                                            let! cleanup =
+                                                cleanOwnedMarkerBeforeMutation
+                                                    scope
+                                                    attempt
+                                                    "Working Directory Update completed local SQLite state but could not clean marker evidence"
 
                                             match cleanup with
-                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
-                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
-                                                do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
-                                                do! WorkingDirectoryUpdateCoordination.Sidecar.write scope operation
-                                                return Contracts.Updated(receipt target operation mutationStarted)
-                                            | _ ->
-                                                return
-                                                    Contracts.FinalizationIncomplete(
-                                                        receipt target operation mutationStarted,
-                                                        failure "Working Directory Update retained marker evidence; run `grace doctor --repair-local-state`."
-                                                    )
+                                            | Error error -> return Contracts.FinalizationIncomplete(completedReceipt, failure error)
+                                            | Ok () ->
+                                                try
+                                                    do!
+                                                        LocalStateDb.finalizeWorkingDirectoryUpdateCompletion
+                                                            freshConfiguration.GraceStatusFile
+                                                            target
+                                                            operation
+
+                                                    try
+                                                        do! WorkingDirectoryUpdateCoordination.Sidecar.write scope operation
+                                                    with
+                                                    | _ -> ()
+
+                                                    return Contracts.Updated(completedReceipt)
+                                                with
+                                                | ex ->
+                                                    return
+                                                        Contracts.FinalizationIncomplete(
+                                                            completedReceipt,
+                                                            failure
+                                                                $"Working Directory Update could not record terminal completion: {ex.Message}; run `grace doctor --repair-local-state`."
+                                                        )
                                     with
                                     | ex when mutationStarted -> return Contracts.UpdateIncomplete(failure ex.Message)
                                     | ex ->
-                                        let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-                                        return Contracts.Rejected(failure ex.Message)
+                                        let! cleanup = cleanOwnedMarkerBeforeMutation scope attempt "Working Directory Update failed before mutation"
+                                        return rejectedAfterCleanup ex.Message cleanup
             with
             | :? OperationCanceledException -> return Contracts.Rejected(failure "Working Directory Update was cancelled before mutation.")
             | ex when mutationStarted -> return Contracts.UpdateIncomplete(failure ex.Message)
-            | ex -> return Contracts.Rejected(failure ex.Message)
+            | ex ->
+                match ownedAttempt with
+                | Some attempt ->
+                    let! cleanup = cleanOwnedMarkerBeforeMutation scope attempt "Working Directory Update failed before mutation"
+
+                    return rejectedAfterCleanup ex.Message cleanup
+                | None -> return Contracts.Rejected(failure ex.Message)
         }

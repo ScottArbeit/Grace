@@ -536,3 +536,30 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal true)
+
+    /// Proves pending-operation retry cleanup deletes only an exact lease-protected orphan and preserves foreign evidence.
+    [<Test>]
+    let ``exact-operation cleanup removes only the matching orphan marker`` () =
+        withTempRoot (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let selectedTarget = target repositoryId branchId
+            let operation = branchOperation selectedTarget
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdate.AttemptToken.create ()) selectedTarget operation
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveExactOperation scope selectedTarget operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false)

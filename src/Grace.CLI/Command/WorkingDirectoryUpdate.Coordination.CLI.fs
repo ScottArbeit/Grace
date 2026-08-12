@@ -383,6 +383,24 @@ module internal WorkingDirectoryUpdateCoordination =
                         | :? UnauthorizedAccessException -> return Unreadable
             }
 
+        /// Verifies that the current exact-operation marker still carries this attempt token at the final mutation gate.
+        let inspectOwnedAttempt scope attemptToken expectedTarget operation =
+            task {
+                let! inspection = inspect scope expectedTarget operation
+
+                match inspection with
+                | ExactMatch ->
+                    try
+                        match tryReadMarkerDocument scope (File.ReadAllText(Scope.markerPath scope)) with
+                        | Ok marker when marker.AttemptToken = WorkingDirectoryUpdate.AttemptToken.value attemptToken -> return ExactMatch
+                        | Ok _ -> return DifferentOperation
+                        | Error _ -> return MalformedOrUnsupported
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return Unreadable
+                | other -> return other
+            }
+
         /// Removes a marker with an injected deletion action so portable focused proofs can force the exact cleanup-failure boundary.
         let tryRemoveOwnedWithDelete scope attemptToken deleteMarker =
             task {
@@ -411,6 +429,37 @@ module internal WorkingDirectoryUpdateCoordination =
 
         /// Removes a marker only after its currently persisted token exactly matches this attempt and reports every refusal distinctly.
         let tryRemoveOwned scope attemptToken = tryRemoveOwnedWithDelete scope attemptToken File.Delete
+
+        /// Removes a lease-protected orphan only when it still names this exact target and operation.
+        let tryRemoveExactOperation scope expectedTarget operation =
+            task {
+                let path = Scope.markerPath scope
+
+                if not (File.Exists(path)) then
+                    return NoMarker
+                else
+                    try
+                        let content = File.ReadAllText(path)
+
+                        match tryReadMarkerDocument scope content with
+                        | Ok marker when
+                            marker.OperationId = WorkingDirectoryUpdate.Operation.value operation
+                            && marker.Target = WorkingDirectoryUpdate.Target.canonical expectedTarget
+                            && marker.CallerKind = (WorkingDirectoryUpdate.Operation.callerKind operation
+                                                    |> callerKindText)
+                            ->
+                            try
+                                File.Delete(path)
+                                return ExactMatchCleaned
+                            with
+                            | :? IOException
+                            | :? UnauthorizedAccessException -> return ExactCleanupFailed
+                        | Ok _ -> return DifferentOperationEvidence
+                        | Error _ -> return MalformedOrUnsupportedEvidence
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return UnreadableEvidence
+            }
 
     /// Supplies derived sidecar creation without changing or deleting marker evidence.
     module Sidecar =
