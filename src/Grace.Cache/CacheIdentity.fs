@@ -75,6 +75,16 @@ type internal CacheIdentityError =
     | UnsupportedPlatform
     | StateUnavailable
 
+/// Holds one process-scoped exclusive enrollment lock and its opaque attempt ownership token.
+type internal CacheEnrollmentClaim = private CacheEnrollmentClaim of FileStream * string
+
+/// Selects a deterministic post-write failure used only to prove residue cleanup at the protected identity boundary.
+[<RequireQualifiedAccess>]
+type internal CacheIdentityCreateFault =
+    | None
+    | AfterAttemptDirectory
+    | AfterPrivateKeyFlush
+
 /// Owns Linux-only protected static-key staging, ready publication, and opaque local inspection.
 module internal CacheIdentity =
 
@@ -93,6 +103,12 @@ module internal CacheIdentity =
 
     [<Literal>]
     let private RegistrationFileName = "registration.json"
+
+    [<Literal>]
+    let private EnrollmentLockFileName = ".enrollment.lock"
+
+    [<Literal>]
+    let private AttemptOwnerFileName = ".enrollment-owner"
 
     let private directoryMode =
         UnixFileMode.UserRead
@@ -186,6 +202,39 @@ module internal CacheIdentity =
                 | Error _ -> Error CacheIdentityError.StateUnavailable
             | _ -> Error CacheIdentityError.StateUnavailable
 
+    /// Opens and exclusively locks one root-local coordination file; the Linux kernel releases the lock when its process exits.
+    let tryAcquireEnrollmentClaim root =
+        match validateRoot root with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                let lockPath = child root EnrollmentLockFileName
+                let stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite)
+
+                try
+                    File.SetUnixFileMode(lockPath, fileMode)
+
+                    match inspectMode lockPath fileMode with
+                    | Error _ ->
+                        stream.Dispose()
+                        Error CacheIdentityError.StateUnavailable
+                    | Ok () ->
+                        stream.Lock(0L, 1L)
+                        Ok(CacheEnrollmentClaim(stream, Guid.NewGuid().ToString("N")))
+                with
+                | _ ->
+                    stream.Dispose()
+                    Error CacheIdentityError.StateUnavailable
+            with
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Confirms that a caller still owns an open root-local enrollment lock before it mutates protected state.
+    let private validateClaim root (CacheEnrollmentClaim (stream, _)) =
+        if isNull stream || not stream.CanWrite then
+            Error CacheIdentityError.StateUnavailable
+        else
+            validateRoot root
+
     /// Writes one owner-only file and flushes its bytes before any directory publication can occur.
     let private writePrivateFile path bytes =
         try
@@ -198,6 +247,26 @@ module internal CacheIdentity =
             |> Result.mapError (fun _ -> CacheIdentityError.StateUnavailable)
         with
         | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Writes one private attempt marker whose random value binds staged residue to the invocation that created it.
+    let private writeAttemptOwner attempt (CacheEnrollmentClaim (_, token)) =
+        writePrivateFile (child attempt AttemptOwnerFileName) (Text.Encoding.ASCII.GetBytes token)
+
+    /// Verifies that a staged directory still belongs to one invocation before cleanup, validation, or publication.
+    let private hasAttemptOwner attempt (CacheEnrollmentClaim (_, token)) =
+        try
+            let ownerPath = child attempt AttemptOwnerFileName
+
+            match inspectMode ownerPath fileMode with
+            | Error _ -> false
+            | Ok () ->
+                let recorded =
+                    File.ReadAllBytes(ownerPath)
+                    |> Text.Encoding.ASCII.GetString
+
+                String.Equals(recorded, token, StringComparison.Ordinal)
+        with
+        | _ -> false
 
     /// Checks whether a value is canonical base64url for one required P-256 coordinate.
     let private tryCanonicalCoordinate value =
@@ -611,13 +680,93 @@ module internal CacheIdentity =
             | :? IOException -> CacheIdentityInspection.Inaccessible
             | _ -> CacheIdentityInspection.Invalid
 
-    /// Generates one protected P-256 key below a new fixed attempt directory and returns its canonical public half only.
-    let createAttempt root =
-        match validateRoot root with
+    /// Releases the kernel-managed root lock after one enrollment invocation reaches its terminal result.
+    let releaseEnrollmentClaim (CacheEnrollmentClaim (stream, _)) = stream.Dispose()
+
+    /// Reads a protected staged key only when it still yields canonical coordinates for ownership comparison.
+    let private tryReadAttemptPublicKey attempt : CacheIdentityPublicKey option =
+        try
+            let identityPath = child attempt IdentityFileName
+
+            match inspectMode attempt directoryMode, inspectMode identityPath fileMode with
+            | Ok (), Ok () ->
+                File.ReadAllBytes(identityPath)
+                |> tryImportP256
+                |> Option.map (fun (x, y) -> { PublicKeyX = base64Url x; PublicKeyY = base64Url y })
+            | _ -> None
+        with
+        | _ -> None
+
+    /// Compares only the canonical public half required to preserve staged-key ownership across command barriers.
+    let private samePublicKey (expected: CacheIdentityPublicKey) (actual: CacheIdentityPublicKey) =
+        String.Equals(expected.PublicKeyX, actual.PublicKeyX, StringComparison.Ordinal)
+        && String.Equals(expected.PublicKeyY, actual.PublicKeyY, StringComparison.Ordinal)
+
+    /// Removes only a still-owned staged attempt while the caller retains the root claim.
+    let discardClaimedAttempt claim root (expectedPublicKey: CacheIdentityPublicKey option) =
+        match validateClaim root claim with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                let attempt = child root AttemptDirectoryName
+
+                let ownsAttempt =
+                    Directory.Exists(attempt)
+                    && hasAttemptOwner attempt claim
+                    && (expectedPublicKey
+                        |> Option.forall (fun expected ->
+                            tryReadAttemptPublicKey attempt
+                            |> Option.exists (samePublicKey expected)))
+
+                if ownsAttempt then Directory.Delete(attempt, true)
+
+                Ok()
+            with
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Revalidates one protected key immediately before publication, optionally requiring the current invocation's attempt marker.
+    let private validateAttemptForClaim claim root (expectedPublicKey: CacheIdentityPublicKey) requireAttemptOwner =
+        match validateClaim root claim with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                let attempt = child root AttemptDirectoryName
+                let ready = child root ReadyDirectoryName
+
+                if Directory.Exists(ready)
+                   || not (Directory.Exists(attempt))
+                   || (requireAttemptOwner
+                       && not (hasAttemptOwner attempt claim)) then
+                    Error CacheIdentityError.StateUnavailable
+                else
+                    match tryReadAttemptPublicKey attempt with
+                    | Some actual when samePublicKey expectedPublicKey actual -> Ok()
+                    | _ -> Error CacheIdentityError.StateUnavailable
+            with
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Revalidates the claim-owned protected key immediately before external enrollment or local ready publication.
+    let validateClaimedAttempt claim root expectedPublicKey = validateAttemptForClaim claim root expectedPublicKey true
+
+    /// Creates a protected key under an already-held claim and removes only invocation-owned residue when staging fails.
+    let private createClaimedAttemptWithFault claim root fault =
+        match validateClaim root claim with
         | Error error -> Error error
         | Ok () ->
             let attempt = child root AttemptDirectoryName
             let ready = child root ReadyDirectoryName
+            let mutable createdDirectory = false
+
+            let cleanup () =
+                try
+                    if Directory.Exists(attempt) then
+                        if
+                            not (File.Exists(child attempt AttemptOwnerFileName))
+                            || hasAttemptOwner attempt claim
+                        then
+                            Directory.Delete(attempt, true)
+                with
+                | _ -> ()
 
             if
                 Directory.Exists(attempt)
@@ -625,33 +774,78 @@ module internal CacheIdentity =
             then
                 Error CacheIdentityError.StateUnavailable
             else
-                try
-                    Directory.CreateDirectory(attempt) |> ignore
-                    File.SetUnixFileMode(attempt, directoryMode)
+                let result =
+                    try
+                        Directory.CreateDirectory(attempt) |> ignore
+                        createdDirectory <- true
+                        File.SetUnixFileMode(attempt, directoryMode)
 
-                    match inspectMode attempt directoryMode with
-                    | Error _ -> Error CacheIdentityError.StateUnavailable
-                    | Ok () ->
-                        use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
-                        let parameters = key.ExportParameters(false)
+                        match inspectMode attempt directoryMode with
+                        | Error _ -> Error CacheIdentityError.StateUnavailable
+                        | Ok () ->
+                            if fault = CacheIdentityCreateFault.AfterAttemptDirectory then
+                                raise (IOException())
 
-                        match parameters.Q.X, parameters.Q.Y with
-                        | x, y when
-                            not (isNull x)
-                            && not (isNull y)
-                            && x.Length = 32
-                            && y.Length = 32
-                            ->
-                            match writePrivateFile (child attempt IdentityFileName) (key.ExportPkcs8PrivateKey()) with
-                            | Ok () -> Ok { PublicKeyX = base64Url x; PublicKeyY = base64Url y }
+                            match writeAttemptOwner attempt claim with
                             | Error error -> Error error
-                        | _ -> Error CacheIdentityError.StateUnavailable
-                with
-                | _ -> Error CacheIdentityError.StateUnavailable
+                            | Ok () ->
+                                use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+                                let parameters = key.ExportParameters(false)
 
-    /// Publishes an accepted registration only after its key fingerprint matches the staged private key and all modes are protected.
-    let commitReady root configuration =
-        match validateRoot root, tryExpectedFingerprint configuration with
+                                match parameters.Q.X, parameters.Q.Y with
+                                | x, y when
+                                    not (isNull x)
+                                    && not (isNull y)
+                                    && x.Length = 32
+                                    && y.Length = 32
+                                    ->
+                                    let publicKey: CacheIdentityPublicKey = { PublicKeyX = base64Url x; PublicKeyY = base64Url y }
+
+                                    match writePrivateFile (child attempt IdentityFileName) (key.ExportPkcs8PrivateKey()) with
+                                    | Error error -> Error error
+                                    | Ok () ->
+                                        if fault = CacheIdentityCreateFault.AfterPrivateKeyFlush then
+                                            raise (IOException())
+                                        else
+                                            match validateClaimedAttempt claim root publicKey with
+                                            | Ok () -> Ok publicKey
+                                            | Error error -> Error error
+                                | _ -> Error CacheIdentityError.StateUnavailable
+                    with
+                    | _ -> Error CacheIdentityError.StateUnavailable
+
+                match result with
+                | Ok _ -> result
+                | Error _ ->
+                    if createdDirectory then cleanup ()
+                    result
+
+    /// Generates one protected P-256 key below a new fixed attempt directory and returns its canonical public half only.
+    let createAttempt root =
+        match tryAcquireEnrollmentClaim root with
+        | Error error -> Error error
+        | Ok claim ->
+            try
+                createClaimedAttemptWithFault claim root CacheIdentityCreateFault.None
+            finally
+                releaseEnrollmentClaim claim
+
+    /// Injects a bounded staging failure so Linux proof can verify cleanup after directory and key-file creation.
+    let createAttemptWithFault root fault =
+        match tryAcquireEnrollmentClaim root with
+        | Error error -> Error error
+        | Ok claim ->
+            try
+                createClaimedAttemptWithFault claim root fault
+            finally
+                releaseEnrollmentClaim claim
+
+    /// Generates one protected P-256 key while retaining the caller's enrollment claim through its external command flow.
+    let createClaimedAttempt claim root = createClaimedAttemptWithFault claim root CacheIdentityCreateFault.None
+
+    /// Publishes a claimed accepted registration only after the staged key remains protected, owned, and fingerprint-matched.
+    let private commitReadyWithClaim claim root (configuration: CacheAcceptedRegistration) requireAttemptOwner =
+        match validateAttemptForClaim claim root configuration.PublicKey requireAttemptOwner, tryExpectedFingerprint configuration with
         | Error error, _ -> Error error
         | _, None -> Error CacheIdentityError.StateUnavailable
         | _, Some _ when not (hasCompleteAcceptedRegistration configuration) -> Error CacheIdentityError.StateUnavailable
@@ -660,6 +854,7 @@ module internal CacheIdentity =
             let ready = child root ReadyDirectoryName
             let identityPath = child attempt IdentityFileName
             let registrationPath = child attempt RegistrationFileName
+            let ownerPath = child attempt AttemptOwnerFileName
 
             if
                 Directory.Exists(ready)
@@ -680,21 +875,51 @@ module internal CacheIdentity =
                                 match writePrivateFile registrationPath registrationBytes with
                                 | Error error -> Error error
                                 | Ok () ->
-                                    match inspectMode root directoryMode,
-                                          inspectMode attempt directoryMode,
-                                          inspectMode identityPath fileMode,
-                                          inspectMode registrationPath fileMode
-                                        with
-                                    | Ok (), Ok (), Ok (), Ok () ->
-                                        Directory.Move(attempt, ready)
+                                    let publishResult =
+                                        try
+                                            File.Delete(ownerPath)
 
-                                        inspectMode ready directoryMode
-                                        |> Result.mapError (fun _ -> CacheIdentityError.StateUnavailable)
-                                    | _ -> Error CacheIdentityError.StateUnavailable
+                                            match inspectMode root directoryMode,
+                                                  inspectMode attempt directoryMode,
+                                                  inspectMode identityPath fileMode,
+                                                  inspectMode registrationPath fileMode
+                                                with
+                                            | Ok (), Ok (), Ok (), Ok () ->
+                                                Directory.Move(attempt, ready)
+
+                                                inspectMode ready directoryMode
+                                                |> Result.mapError (fun _ -> CacheIdentityError.StateUnavailable)
+                                            | _ -> Error CacheIdentityError.StateUnavailable
+                                        with
+                                        | _ -> Error CacheIdentityError.StateUnavailable
+
+                                    match publishResult with
+                                    | Ok _ -> publishResult
+                                    | Error _ ->
+                                        if
+                                            requireAttemptOwner && Directory.Exists(attempt)
+                                            && not (File.Exists(ownerPath))
+                                        then
+                                            writeAttemptOwner attempt claim |> ignore
+
+                                        publishResult
                         | _ -> Error CacheIdentityError.StateUnavailable
                     | _ -> Error CacheIdentityError.StateUnavailable
                 with
                 | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Publishes an accepted registration only after its key fingerprint matches the staged private key and all modes are protected.
+    let commitReady root configuration =
+        match tryAcquireEnrollmentClaim root with
+        | Error error -> Error error
+        | Ok claim ->
+            try
+                commitReadyWithClaim claim root configuration false
+            finally
+                releaseEnrollmentClaim claim
+
+    /// Publishes one accepted registration while retaining the command invocation's marker-bound enrollment claim.
+    let commitClaimedReady claim root configuration = commitReadyWithClaim claim root configuration true
 
     /// Reads one ready configuration without emitting raw paths, filesystem errors, keys, or fingerprints.
     let private inspectReady ready =
@@ -762,10 +987,10 @@ module internal CacheIdentity =
         | Ok () -> inspect root
 
     /// Removes exactly one stale staged attempt and confirms that no changed state remains before a new enrollment starts.
-    let discardStaleAttempt root =
-        if not (OperatingSystem.IsLinux()) then
-            Error CacheIdentityError.UnsupportedPlatform
-        else
+    let discardStaleAttempt claim root =
+        match validateClaim root claim with
+        | Error error -> Error error
+        | Ok () ->
             try
                 let attempt = child root AttemptDirectoryName
 

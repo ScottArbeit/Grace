@@ -130,7 +130,7 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 - **Propagation:** CLI root dispatch bypasses repository configuration and invocation history; the narrow SDK facade
   accepts the selected URI and resolved bearer directly. Server routes, DTOs, OpenAPI, generated clients, cache host,
   liveness, storage, retries, and reconciliation are unchanged.
-- **Proof:** The focused Linux CLI root-command suite passes 18 cases: parser registration, inert help/schema/examples,
+- **Proof:** The focused Linux CLI root-command suite passes the registered Cache cases: parser registration, inert help/schema/examples,
   complete-buffer JSON parsing, pure repository-independent status, ready/weak/corrupt redaction and exit codes, PAT
   success/rejection/invalid input, M2M success/acquisition failure, missing and expired interactive results,
   cancellation before and after staging, malformed nominal success, and forced local-commit failure. The bounded
@@ -139,11 +139,10 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   bearer forwarding, protected ready publication, failure cleanup, redacted JSON, and no repository `.grace` state. A
   separate unprivileged Linux executable run observes inaccessible state as redacted `invalid`/`inaccessible` JSON with
   exit code `1`.
-- **Interactive proof composition:** Existing Auth tests cover normal producer selection and invalid token behavior.
-  Cache root-command tests consume one resolved stored interactive bearer and one expired interactive error through the
-  same production command path. The available Linux SDK image has no dbus or libsecret service, so it cannot execute a
-  real secure-store-backed login. This is an environment limitation, not a cache product branch; hosted Linux may add
-  that exercise only when its documented secure-store dependencies are available.
+- **Interactive proof composition:** The Linux secure-store harness provisions an ephemeral D-Bus session, GNOME
+  Keyring, libsecret, and unlocked collection. It drives normal device login and production Cache root dispatch for a
+  valid stored bearer and an expired stored bearer: 2/2 pass. Existing Auth tests continue to cover producer selection
+  and invalid token behavior.
 
 ### R2: registration liveness (#857)
 
@@ -217,4 +216,5 @@ npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementati
 git diff --check
 ```
 
-This status does not claim R1B commands, R2 liveness, serving, rotation, reconciliation, non-Linux support, or CacheStore behavior.
+This status claims the R1B enrollment and status commands only. It excludes R2 liveness, serving, rotation,
+reconciliation, non-Linux support, and CacheStore behavior.

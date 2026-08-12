@@ -456,6 +456,27 @@ type CacheIdentityTests() =
 
             withRestoredMode registration UnixFileMode.UserWrite (fun () -> requireInspection CacheIdentityInspection.Inaccessible (CacheIdentity.inspect root)))
 
+    /// Proves staging faults remove only the newly created residue and do not prevent a later normal enrollment attempt.
+    [<Test>]
+    member _.``createAttempt cleans partial directory and private key residues``() =
+        withLinuxRoot (fun root ->
+            for fault in
+                [
+                    CacheIdentityCreateFault.AfterAttemptDirectory
+                    CacheIdentityCreateFault.AfterPrivateKeyFlush
+                ] do
+                CacheIdentity.createAttemptWithFault root fault
+                |> requireStateUnavailable
+
+                Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                requireInspection CacheIdentityInspection.Missing (CacheIdentity.inspect root)
+
+            CacheIdentity.createAttempt root
+            |> requireOk
+            |> ignore
+
+            requireInspection CacheIdentityInspection.AttemptPresent (CacheIdentity.inspect root))
+
     /// Verifies discard has no cancellation/error channel and removes only the fixed attempt marker.
     [<Test>]
     member _.``discardAttempt removes staging without changing ready state``() =

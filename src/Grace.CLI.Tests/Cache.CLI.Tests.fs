@@ -12,6 +12,7 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.Collections.Concurrent
+open System.Diagnostics
 open System.IO
 open System.Net
 open System.Net.Sockets
@@ -27,6 +28,9 @@ module CacheCliTests =
 
     /// Records only the target and bearer header needed to prove selected-server enrollment transport behavior.
     type private RecordedRequest = { Target: string; Authorization: string option }
+
+    let private claimHolderRootVariable = "GRACE_CACHE_TEST_CLAIM_HOLDER_ROOT"
+    let private claimHolderSignalVariable = "GRACE_CACHE_TEST_CLAIM_HOLDER_SIGNAL"
 
     /// Runs one callback with the supplied environment values and restores every changed variable in a finally block.
     let private withEnvironment (values: (string * string option) list) (action: unit -> 'T) =
@@ -256,6 +260,43 @@ module CacheCliTests =
             if Directory.Exists(temporaryDirectory) then
                 Directory.Delete(temporaryDirectory, true)
 
+    /// Starts a separate test-host process that holds the production Linux claim until the callback verifies loser behavior.
+    let private withExternalClaimHolder root action =
+        let signalPath = Path.Combine(Path.GetTempPath(), $"grace-cache-claim-held-{Guid.NewGuid():N}")
+        use holder = new Process()
+        holder.StartInfo.FileName <- "dotnet"
+        holder.StartInfo.UseShellExecute <- false
+        holder.StartInfo.CreateNoWindow <- true
+        holder.StartInfo.ArgumentList.Add("vstest")
+
+        holder.StartInfo.ArgumentList.Add(
+            System
+                .Reflection
+                .Assembly
+                .GetExecutingAssembly()
+                .Location
+        )
+
+        holder.StartInfo.ArgumentList.Add("--Tests:internal Linux Cache claim holder")
+        holder.StartInfo.Environment[ claimHolderRootVariable ] <- root
+        holder.StartInfo.Environment[ claimHolderSignalVariable ] <- signalPath
+
+        try
+            Assert.That(holder.Start(), Is.True)
+            let deadline = DateTime.UtcNow.AddSeconds(10.0)
+
+            while not (File.Exists(signalPath))
+                  && DateTime.UtcNow < deadline do
+                Thread.Sleep(50)
+
+            Assert.That(File.Exists(signalPath), Is.True, "The external Cache claim holder did not report an acquired lock.")
+            action ()
+        finally
+            if not holder.HasExited then holder.Kill(true)
+            holder.WaitForExit(10000) |> ignore
+
+            if File.Exists(signalPath) then File.Delete(signalPath)
+
     /// Verifies the root command dispatches pure cache status without repository discovery or invocation history.
     [<Test>]
     let ``cache status is repository independent and emits one JSON envelope`` () =
@@ -283,6 +324,25 @@ module CacheCliTests =
 
         Assert.That(commandIds, Does.Contain("cache.enroll"))
         Assert.That(commandIds, Does.Contain("cache.status"))
+
+    /// Holds the production claim in the child test host used by the root-command cross-process proof.
+    [<Test>]
+    let ``internal Linux Cache claim holder`` () =
+        let root = Environment.GetEnvironmentVariable(claimHolderRootVariable)
+        let signalPath = Environment.GetEnvironmentVariable(claimHolderSignalVariable)
+
+        if
+            not (String.IsNullOrWhiteSpace(root))
+            && not (String.IsNullOrWhiteSpace(signalPath))
+        then
+            match Grace.Cache.CacheIdentity.tryAcquireEnrollmentClaim root with
+            | Error error -> Assert.Fail($"The external Cache claim holder could not acquire its protected root: {error}")
+            | Ok claim ->
+                try
+                    File.WriteAllText(signalPath, "held")
+                    Thread.Sleep(30000)
+                finally
+                    Grace.Cache.CacheIdentity.releaseEnrollmentClaim claim
 
     /// Verifies PAT enrollment uses one root-command POST with the exact resolved bearer and no repository state.
     [<Test>]
@@ -314,6 +374,40 @@ module CacheCliTests =
                         Assert.That(recorded, Has.Length.EqualTo(1))
                         Assert.That(recorded[0].Target, Is.EqualTo("/cache/enroll"))
                         Assert.That(recorded[0].Authorization, Is.EqualTo(Some $"Bearer {token}")))))
+
+    /// Proves an external process claim blocks one root command without a POST, then dies and releases the next enrollment.
+    [<Test>]
+    let ``Linux external claim blocks root enrollment then process exit releases it`` () =
+        let token = PersonalAccessToken.formatToken "cache-claim" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withLinuxCacheRoot (fun root ->
+            withLoopbackServer
+                (fun request -> if request.Target = "/cache/enroll" then 200, enrolledResponse () else 404, "{}")
+                (fun serverUri requests ->
+                    withEnvironment (credentialEnvironment serverUri (Some token) None None None) (fun () ->
+                        withExternalClaimHolder root (fun () ->
+                            let exitCode, output, _ = invokeOutsideRepository enrollmentArguments
+                            Assert.That(exitCode, Is.Not.EqualTo(0))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                            Assert.That(requests.IsEmpty, Is.True)
+                            use document = JsonDocument.Parse(output)
+
+                            Assert.That(
+                                document
+                                    .RootElement
+                                    .GetProperty("Error")
+                                    .GetString(),
+                                Is.Not.Empty
+                            ))
+
+                        let winnerExitCode, _, _ = invokeOutsideRepository enrollmentArguments
+                        Assert.That(winnerExitCode, Is.EqualTo(0))
+
+                        Assert.That(
+                            requests.ToArray()
+                            |> Array.filter (fun request -> request.Target = "/cache/enroll"),
+                            Has.Length.EqualTo(1)
+                        ))))
 
     /// Verifies root status observes a ready identity, then reports weak and corrupt state without leaking private facts.
     [<Test>]
@@ -790,6 +884,43 @@ module CacheCliTests =
                                 .GetString(),
                             Is.Not.Empty
                         ))))
+
+    /// Proves a replacement staged attempt cannot be posted or removed by the invocation that created the prior key.
+    [<Test>]
+    let ``Linux replaced staged attempt prevents POST and preserves replacement state`` () =
+        withLinuxCacheRoot (fun root ->
+            withLoopbackServer
+                (fun request -> if request.Target = "/cache/enroll" then 200, enrolledResponse () else 404, "{}")
+                (fun serverUri requests ->
+                    withEnvironment (credentialEnvironment serverUri None None None None) (fun () ->
+                        withEnrollmentDependencies
+                            (fun dependencies ->
+                                { dependencies with
+                                    ResolveBearer = (fun () -> Task.FromResult(Ok(Some "replacement-bearer")))
+                                    AfterAttemptCreated =
+                                        (fun () ->
+                                            let attempt = Path.Combine(root, "attempt")
+
+                                            Directory.Delete(attempt, true)
+
+                                            Grace.Cache.CacheIdentity.createAttempt root
+                                            |> Result.iter ignore)
+                                })
+                            (fun () ->
+                                let exitCode, output, _ = invokeOutsideRepository enrollmentArguments
+                                Assert.That(exitCode, Is.Not.EqualTo(0))
+                                Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+                                Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.True)
+                                Assert.That(requests.IsEmpty, Is.True)
+                                use document = JsonDocument.Parse(output)
+
+                                Assert.That(
+                                    document
+                                        .RootElement
+                                        .GetProperty("Error")
+                                        .GetString(),
+                                    Is.Not.Empty
+                                )))))
 
     /// Proves stale staged state survives failed credential resolution and is recovered only after one bearer resolves.
     [<Test>]

@@ -235,8 +235,8 @@ module CacheCommand =
     /// Renders a redacted cache enrollment failure without exposing local state or transport details.
     let private renderEnrollmentFailure parseResult message = renderOutput parseResult (Error(GraceError.Create message (getCorrelationId parseResult)))
 
-    /// Removes the current attempt after a post-staging failure without masking the primary command outcome.
-    let private completeAttempt (root: string) (completion: unit -> Task<int * bool>) =
+    /// Removes only this invocation's claimed attempt after a post-staging failure without masking the primary command outcome.
+    let private completeAttempt claim (root: string) publicKey (completion: unit -> Task<int * bool>) =
         task {
             let mutable committed = false
 
@@ -245,7 +245,9 @@ module CacheCommand =
                 committed <- isCommitted
                 return exitCode
             finally
-                if not committed then CacheIdentity.discardAttempt root
+                if not committed then
+                    CacheIdentity.discardClaimedAttempt claim root (Some publicKey)
+                    |> ignore
         }
 
     /// Enrolls exactly once after validation and one credential acquisition, then publishes ready only after local commit succeeds.
@@ -275,100 +277,124 @@ module CacheCommand =
                         return renderEnrollmentFailure parseResult "The protected Grace Cache state root is inaccessible."
                     | Ok CacheIdentityInspection.Ready -> return renderEnrollmentFailure parseResult "The protected Grace Cache state root is already enrolled."
                     | Ok (CacheIdentityInspection.Missing
-                    | CacheIdentityInspection.AttemptPresent as inspection) ->
+                    | CacheIdentityInspection.AttemptPresent) ->
                         let! bearer = resolveBearer parseResult cancellationToken
 
                         match bearer with
                         | Error error -> return renderOutput parseResult (Error error)
                         | Ok bearer ->
-                            let staleRecovery =
-                                match inspection with
-                                | CacheIdentityInspection.AttemptPresent -> CacheIdentity.discardStaleAttempt stateRoot
-                                | CacheIdentityInspection.Missing -> Ok()
-                                | _ -> Error CacheIdentityError.StateUnavailable
+                            match CacheIdentity.tryAcquireEnrollmentClaim stateRoot with
+                            | Error _ -> return renderEnrollmentFailure parseResult "Cache enrollment could not acquire exclusive local state."
+                            | Ok claim ->
+                                try
+                                    let staleRecovery =
+                                        match CacheIdentity.inspectEnrollmentRoot stateRoot with
+                                        | Ok CacheIdentityInspection.AttemptPresent -> CacheIdentity.discardStaleAttempt claim stateRoot
+                                        | Ok CacheIdentityInspection.Missing -> Ok()
+                                        | _ -> Error CacheIdentityError.StateUnavailable
 
-                            match staleRecovery with
-                            | Error _ -> return renderEnrollmentFailure parseResult "A stale cache enrollment attempt could not be safely cleared."
-                            | Ok () ->
-                                cancellationToken.ThrowIfCancellationRequested()
+                                    match staleRecovery with
+                                    | Error _ -> return renderEnrollmentFailure parseResult "A stale cache enrollment attempt could not be safely cleared."
+                                    | Ok () ->
+                                        cancellationToken.ThrowIfCancellationRequested()
 
-                                match CacheIdentity.createAttempt stateRoot with
-                                | Error _ ->
-                                    return
-                                        renderOutput
-                                            parseResult
-                                            (Error(
-                                                GraceError.Create
-                                                    "The protected Grace Cache state root could not create an enrollment attempt."
-                                                    (getCorrelationId parseResult)
-                                            ))
-                                | Ok publicKey ->
-                                    return!
-                                        completeAttempt stateRoot (fun () ->
-                                            task {
-                                                enrollmentDependencies.AfterAttemptCreated()
-                                                cancellationToken.ThrowIfCancellationRequested()
-
-                                                match requestFromArguments parseResult publicKey with
-                                                | Error error -> return renderOutput parseResult (Error error), false
-                                                | Ok request ->
-                                                    let! response =
-                                                        CacheRegistration.Enroll(request, serverUri, bearer, getCorrelationId parseResult, cancellationToken)
-
-                                                    match response with
-                                                    | Error error -> return renderOutput parseResult (Error error), false
-                                                    | Ok accepted ->
+                                        match CacheIdentity.createClaimedAttempt claim stateRoot with
+                                        | Error _ ->
+                                            return
+                                                renderOutput
+                                                    parseResult
+                                                    (Error(
+                                                        GraceError.Create
+                                                            "The protected Grace Cache state root could not create an enrollment attempt."
+                                                            (getCorrelationId parseResult)
+                                                    ))
+                                        | Ok publicKey ->
+                                            return!
+                                                completeAttempt claim stateRoot publicKey (fun () ->
+                                                    task {
+                                                        enrollmentDependencies.AfterAttemptCreated()
                                                         cancellationToken.ThrowIfCancellationRequested()
 
-                                                        match accepted.ReturnValue.Status, accepted.ReturnValue.Registration with
-                                                        | CacheRegistrationRefreshStatus.Enrolled, Some registration ->
-                                                            let configuration: Grace.Cache.CacheAcceptedRegistration =
-                                                                {
-                                                                    CacheId = registration.CacheId
-                                                                    DisplayName = request.DisplayName
-                                                                    BoundaryKind = request.BoundaryKind.ToString()
-                                                                    OwnerId = request.OwnerId
-                                                                    OrganizationId = request.OrganizationId
-                                                                    RepositoryScopes =
-                                                                        request.RepositoryScopes
-                                                                        |> Seq.map (fun (scope: Grace.Types.CacheRegistration.CacheRepositoryScope) ->
-                                                                            { OrganizationId = scope.OrganizationId; RepositoryId = scope.RepositoryId }: Grace.Cache.CacheAcceptedRepositoryScope)
-                                                                        |> Seq.toArray
-                                                                    Endpoint = request.Endpoint
-                                                                    ProtocolVersion = request.ProtocolVersion
-                                                                    PublicKey = publicKey
-                                                                }
-
-                                                            match
-                                                                enrollmentDependencies.CommitReady (fun () ->
-                                                                    CacheIdentity.commitReady stateRoot configuration
-                                                                    |> Result.isOk)
-                                                                with
-                                                            | false ->
+                                                        match requestFromArguments parseResult publicKey with
+                                                        | Error error -> return renderOutput parseResult (Error error), false
+                                                        | Ok request ->
+                                                            match CacheIdentity.validateClaimedAttempt claim stateRoot publicKey with
+                                                            | Error _ ->
                                                                 return
-                                                                    renderOutput
+                                                                    renderEnrollmentFailure
                                                                         parseResult
-                                                                        (Error(
-                                                                            GraceError.Create
-                                                                                "Cache enrollment was accepted but protected ready state could not be committed."
-                                                                                (getCorrelationId parseResult)
-                                                                        )),
+                                                                        "Cache enrollment local state changed before it could be sent.",
                                                                     false
-                                                            | true ->
-                                                                let status = CacheIdentity.status stateRoot
-                                                                let exitCode = renderStatus parseResult status
-                                                                return exitCode, status.Enrollment = "enrolled"
-                                                        | _ ->
-                                                            return
-                                                                renderOutput
-                                                                    parseResult
-                                                                    (Error(
-                                                                        GraceError.Create
-                                                                            "Cache enrollment did not return an accepted registration."
-                                                                            (getCorrelationId parseResult)
-                                                                    )),
-                                                                false
-                                            })
+                                                            | Ok () ->
+                                                                let! response =
+                                                                    CacheRegistration.Enroll(
+                                                                        request,
+                                                                        serverUri,
+                                                                        bearer,
+                                                                        getCorrelationId parseResult,
+                                                                        cancellationToken
+                                                                    )
+
+                                                                match response with
+                                                                | Error error -> return renderOutput parseResult (Error error), false
+                                                                | Ok accepted ->
+                                                                    cancellationToken.ThrowIfCancellationRequested()
+
+                                                                    match accepted.ReturnValue.Status, accepted.ReturnValue.Registration with
+                                                                    | CacheRegistrationRefreshStatus.Enrolled, Some registration ->
+                                                                        let configuration: Grace.Cache.CacheAcceptedRegistration =
+                                                                            {
+                                                                                CacheId = registration.CacheId
+                                                                                DisplayName = request.DisplayName
+                                                                                BoundaryKind = request.BoundaryKind.ToString()
+                                                                                OwnerId = request.OwnerId
+                                                                                OrganizationId = request.OrganizationId
+                                                                                RepositoryScopes =
+                                                                                    request.RepositoryScopes
+                                                                                    |> Seq.map
+                                                                                        (fun (scope: Grace.Types.CacheRegistration.CacheRepositoryScope) ->
+                                                                                            {
+                                                                                                OrganizationId = scope.OrganizationId
+                                                                                                RepositoryId = scope.RepositoryId
+                                                                                            }: Grace.Cache.CacheAcceptedRepositoryScope)
+                                                                                    |> Seq.toArray
+                                                                                Endpoint = request.Endpoint
+                                                                                ProtocolVersion = request.ProtocolVersion
+                                                                                PublicKey = publicKey
+                                                                            }
+
+                                                                        match
+                                                                            enrollmentDependencies.CommitReady (fun () ->
+                                                                                CacheIdentity.commitClaimedReady claim stateRoot configuration
+                                                                                |> Result.isOk)
+                                                                            with
+                                                                        | false ->
+                                                                            return
+                                                                                renderOutput
+                                                                                    parseResult
+                                                                                    (Error(
+                                                                                        GraceError.Create
+                                                                                            "Cache enrollment was accepted but protected ready state could not be committed."
+                                                                                            (getCorrelationId parseResult)
+                                                                                    )),
+                                                                                false
+                                                                        | true ->
+                                                                            let status = CacheIdentity.status stateRoot
+                                                                            let exitCode = renderStatus parseResult status
+                                                                            return exitCode, status.Enrollment = "enrolled"
+                                                                    | _ ->
+                                                                        return
+                                                                            renderOutput
+                                                                                parseResult
+                                                                                (Error(
+                                                                                    GraceError.Create
+                                                                                        "Cache enrollment did not return an accepted registration."
+                                                                                        (getCorrelationId parseResult)
+                                                                                )),
+                                                                            false
+                                                    })
+                                finally
+                                    CacheIdentity.releaseEnrollmentClaim claim
         }
 
     /// Runs the pure local cache status handler through System.CommandLine.
