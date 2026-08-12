@@ -25,26 +25,30 @@ supported: they select an exact root without a Reference and keep the current Br
 
 ## Decision
 
-- The first private `WorkingDirectoryUpdate.run` input is Branch-only. Its caller provides only typed Branch selection,
-  exact target graph, verified prepared content, and diagnostic correlation.
-- The module derives canonical configuration, working/object/SQLite paths, scan input, current revision and complete
-  status fingerprint, operation identity, completion facts, marker disposition, and typed Branch finalization facts.
-  It does not accept an arbitrary path or context bag, old status graph, selected-state reader, finalizer callback,
-  mutation plan, or database handle.
+- Immediately after successful Save or no-Save admission, Branch constructs an immutable `AcceptedBranchPhase` holding
+  the accepted SQLite revision, canonical complete-status fingerprint, and public action token. It holds no status graph,
+  alternate path, selected-state reader, or mutable callback.
+- The first private `WorkingDirectoryUpdate.run` input is Branch-only. Its caller provides the unchanged
+  `AcceptedBranchPhase`, typed Branch selection, exact target graph, verified prepared content, and diagnostic
+  correlation.
+- The module derives canonical configuration, working/object/SQLite paths, scan input, operation identity, completion
+  facts, marker disposition, and typed Branch finalization facts. It rereads current revision and complete status under
+  the lease, then compares them with the immutable phase. It does not accept an arbitrary path or context bag, old
+  status graph, selected-state reader, finalizer callback, mutation plan, or database handle.
 - Branch selection is typed. `Reference` carries the required selected Reference ID. Hash-selected `DirectoryVersion`
   carries no Reference ID, binds the operation to its exact selected root, and retains the current Branch as both
   previous and selected Branch.
 - A successful current-version Save produces the only accepted local baseline for a Save-enabled switch: its SQLite
-  revision plus a canonical fingerprint of the complete status graph. After acquiring the lease, the module rereads and
-  requires that binding before planning.
+  revision plus a canonical fingerprint of the complete status graph. The same phase carries that binding through target
+  resolution and preparation. After acquiring the lease, the module rereads and requires it before planning.
 - The module inspects and cleans markers through explicit dispositions. Missing or exact-cleaned evidence may advance
   the relevant phase. Different-operation, malformed or unsupported, unreadable, and exact-cleanup-failed evidence is
   preserved and never converted into success.
 - The module plans the complete tracked topology, including empty directories and file/directory transitions; it
   preserves ignored content. It verifies dual-hash objects before use and independently verifies the complete final
   graph and both root hashes before local completion.
-- The public action token applies through admission, Save, resolution, preparation, lease waiting, object publication,
-  and the final pre-mutation check. It is deferred only after working-tree mutation starts.
+- The public action token in the phase applies through admission, Save, resolution, preparation, lease waiting, object
+  publication, and the final pre-mutation check. It is deferred only after working-tree mutation starts.
 - SQLite local completion remains the irreversible local point. `Reference` finalization occurs afterward while the
   lease is held: previous Branch applies once, exact selected Branch is already applied, and any third Branch rejects.
   `DirectoryVersion` finalization proves the current Branch remains active and changes no Branch identity.
@@ -64,6 +68,10 @@ facts, while the module owns the current Branch transaction end to end. Issue #8
 evidence; #870 delivers the hash-selected tracer; #871 adds repeatable Reference finalization; #872 adds Save-enabled
 baseline binding. Issue #842 later uses the same exact pending Branch facts for Doctor recovery without working-file
 mutation.
+
+The phase is executable rather than descriptive: #870 proves deterministic no-Save construction and phase consumption;
+issue #872 proves Save-enabled construction and a tracked edit during preparation that the post-lease comparison rejects
+before target mutation. This preserves the one deep module seam without allowing an arbitrary caller status graph.
 
 Watch and Connect stay outside this interface until a later accepted design names their independent admission and
 finalization rules. This avoids treating one future caller's callback or path needs as a current Branch contract.

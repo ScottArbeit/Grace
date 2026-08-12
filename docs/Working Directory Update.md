@@ -24,8 +24,9 @@ does not create a generic request shape or a partly active constructor for eithe
 - `Reference` selection may change the active Branch only after verified local completion.
 - Exact-root `DirectoryVersion` selection keeps the current Branch active. It does not invent a Reference ID.
 - One successful pre-switch Save establishes the only accepted current-version baseline for a Save-enabled switch.
-- The module derives its repository configuration, local paths, scan input, current-state binding, operation identity,
-  completion facts, marker facts, and Branch finalization facts.
+- The module derives its repository configuration, local paths, scan input, operation identity, completion facts,
+  marker facts, and Branch finalization facts; its immutable admission phase carries and validates the current-state
+  binding.
 - The result is one of `Unchanged`, `Updated`, `Rejected`, `UpdateIncomplete`, or `FinalizationIncomplete`.
 
 ### Deferred callers and work
@@ -89,11 +90,16 @@ The immutable complete selected directory graph contains the root DirectoryVersi
 declared files, declared directories including empty directories, and their canonical paths. Root fields alone are not
 proof of the graph.
 
-### Accepted local baseline
+### Accepted Branch phase
 
-The immutable binding created by the successful current-version Save, or by supported no-Save admission, contains the
-SQLite revision and canonical fingerprint of the complete current Grace status graph. It is not a caller-supplied
-prior-status graph. The post-lease reread must equal it before a plan can be built.
+Immediately after successful Save or no-Save admission, Branch constructs one immutable `AcceptedBranchPhase`. It holds
+the accepted SQLite revision, canonical fingerprint of the complete current Grace status graph, and the public action
+token for that command invocation. It does not hold or expose a mutable status graph, alternate local paths, or a
+selected-state reader.
+
+Target resolution and preparation receive that same phase unchanged. `WorkingDirectoryUpdate.run` uses its scalar
+revision and fingerprint only to compare its post-lease reread with the accepted baseline before planning. A caller
+cannot replace either value or supply a separately assembled prior-status graph after admission.
 
 ### Operation and attempt
 
@@ -109,18 +115,28 @@ persisted typed operation; it changes Branch configuration only for `Reference`.
 
 ## 6. Minimal Branch module contract
 
-The private Branch entry to `WorkingDirectoryUpdate.run` accepts exactly four caller-provided facts:
+The private Branch flow has one executable admission phase and one update entry. Admission returns the opaque
+`AcceptedBranchPhase` described above immediately after Save or no-Save admission. Resolution and preparation can carry
+that phase, but cannot alter its revision, fingerprint, or action token.
 
-1. The typed `Reference` or `DirectoryVersion` selection.
-2. The exact resolved target graph.
-3. Verified prepared content for that graph.
-4. Diagnostic correlation.
+The `WorkingDirectoryUpdate.run` entry accepts only the following Branch facts:
 
-From these facts and canonical Branch configuration, the module derives the working root, object root, `.grace`
-directory, SQLite path, ignore-aware scan input, local-root scope, accepted revision and complete-status fingerprint,
-operation identity, pending and completion facts, marker disposition, and Branch finalization facts. A caller cannot
-provide alternate paths, a selected-state reader, an old status graph, a finalizer, a filesystem writer, a mutation
-plan, or a database handle.
+1. The immutable `AcceptedBranchPhase`.
+2. The typed `Reference` or `DirectoryVersion` selection.
+3. The exact resolved target graph.
+4. Verified prepared content for that graph.
+5. Diagnostic correlation.
+
+This is a narrow phase and interface, not a caller-supplied context bag. From the phase and canonical Branch
+configuration, the module derives the working root, object root, `.grace` directory, SQLite path, ignore-aware scan
+input, local-root scope, operation identity, pending and completion facts, marker disposition, and Branch finalization
+facts. It compares the phase's accepted revision and fingerprint with its own post-lease reread. A caller cannot
+provide alternate paths, a status graph, a selected-state reader, a finalizer, a filesystem writer, a mutation plan, or
+a database handle.
+
+The one action token in `AcceptedBranchPhase` is observed before and during admission and Save, during target resolution
+and preparation, while waiting for the lease, during object publication, and immediately before the first
+working-tree mutation. Cancellation is deferred only after mutation begins.
 
 The module exposes `run` and the internal exact-finalization retry used by #871 and #842. It does not expose Watch or
 Connect construction. Any later caller requires its own accepted design and must not widen this Branch input by adding
@@ -148,8 +164,9 @@ admission and optional current-version Save
 → mark terminal completion and release the lease
 ```
 
-Target resolution and prepared-content work finish before the lease. Planning always consumes the complete state
-reread under that lease, never the earlier in-memory status or a separately assembled prior graph.
+Target resolution and prepared-content work finish before the lease while retaining the same immutable
+`AcceptedBranchPhase`. Planning always consumes the complete state reread under that lease, never the earlier in-memory
+status or a separately assembled prior graph.
 
 ### Marker inspection and cleanup table
 
@@ -220,37 +237,52 @@ transaction half way through. It may apply again to finalization.
 
 ## 8. Requirements and proof contract
 
-| ID | Requirement | Implementation owner | Independent proof |
-| --- | --- | --- | --- |
-| REQ-001 | Persist and reconstruct exact typed `Reference` and `DirectoryVersion` selection; a hash retains the current Branch and exact root. | #869 | Real SQLite close/reopen for both kinds; equivalent SHA-256 and BLAKE3 prefixes map to one exact-root operation. |
-| REQ-002 | Reject impossible selector combinations and preserve exact marker dispositions. | #869 | Real marker files cover missing, exact, different, malformed or unsupported, unreadable, and portable exact-cleanup failure. |
-| REQ-003 | The Branch module receives only selection, exact target graph, prepared content, and correlation. | #870 | Construction tests show config, paths, scan, revision, fingerprint, operation, completion, marker, and finalization facts are derived. |
-| REQ-004 | Plan only after the post-lease complete-status reread equals the accepted baseline. | #870, #872 | Deterministically change config, revision, fingerprint, relevant file, target, or pending row while waiting; each rejects before mutation. |
-| REQ-005 | Publish and reverify objects before copying tracked working files. | #870 | Real object corruption and final-tree mismatch cases leave no local completion. |
-| REQ-006 | Plan and verify files, directories, empty directories, and path-type transitions while preserving ignored content. | #870 | Real filesystem nested addition/removal, empty directory, file/directory, directory/file, ignored-content, and unexpected-eligible cases. |
-| REQ-007 | Observe the action token through every pre-mutation stage and defer it after mutation begins. | #870, #872 | Deterministic cancellation at lease wait, object publication, final pre-mutation, and post-mutation boundaries. |
-| REQ-008 | Reference finalization accepts previous and exact-selected states, but rejects a third state. | #871 | Fail terminal completion after successful publication, reopen, retry without file changes, and assert all three Branch states. |
-| REQ-009 | Cleanup and finalization after local completion remain pending on every non-success disposition. | #871 | Real completion/reopen cases for foreign, malformed, unsupported, unreadable, finalizer, and exact-cleanup failures. |
-| REQ-010 | A successful pre-switch Save supplies the only accepted current baseline. | #872 | Built Save-enabled switch proves saved graph, revision, and full-status fingerprint are reread under lease; post-Save drift rejects. |
-| REQ-011 | All supported selectors use the transaction and project five truthful outcomes. | #870–#872 | Built `grace switch` fixtures cover Reference, SHA-256, BLAKE3, representative human/JSON/exits, and repair guidance. |
-| REQ-012 | Recovery is exact and does not mutate working files. | #842 | Built Doctor retry proves typed pending facts and leaves working bytes and timestamps unchanged. |
+This is the canonical 17-row ledger for epic #835. Every row has exactly one primary delivery owner. Companion issues
+consume, extend, or prove that requirement at their own caller seam; they do not become a second primary owner. #846 is
+the final audit owner, not a substitute for a row's delivery owner.
+
+| ID | Requirement | Primary delivery owner | Companion proof, extension, or disposition | #846 final-audit disposition |
+| --- | --- | --- | --- | --- |
+| REQ-001 | One deep transaction module | #870 | #871 and #872 extend Branch; #843 and #845 add their real callers. | Verify every caller crosses the one module and no bypass remains. |
+| REQ-002 | Exact target and operation identity | #869 | #870, #871, #842, #843, and #845 consume persisted identity. | Verify no caller rebuilds a contradictory tuple. |
+| REQ-003 | Exact prepared content | #837 | #870 consumes verified Branch objects; #844 owns the deferred Connect zip adapter. | Verify every active adapter satisfies the exact-content contract. |
+| REQ-004 | Stable repository/local-root serialization scope | #839 | #870 proves Branch use; #843 and #845 later consume the same scope. | Verify no caller creates an alternate lease scope. |
+| REQ-005 | Typed, versioned owned marker evidence | #869 | #870, #871, and #842 consume all dispositions; #843 and #845 defer their caller adoption. | Verify no Boolean replay or cleanup reduction remains. |
+| REQ-006 | Fresh planning and local-content safety | #870 | #872 adds the Save baseline; #845 applies the proven plan to Connect. | Verify no direct caller plan or unsafe local mutation remains. |
+| REQ-007 | Verified object-first application | #870 | #844 proves Connect zip preparation; #845 consumes the prepared adapter. | Verify active callers copy only verified objects. |
+| REQ-008 | Complete final-root verification | #870 | #871, #872, #843, and #845 prove their caller ordering. | Verify no completion can precede independent complete-root proof. |
+| REQ-009 | Canonical atomic local completion | #838 | #870, #871, #872, and #845 consume the transaction. | Verify all committed caller facts share the one local completion path. |
+| REQ-010 | Bounded pending and terminal completion state | #838 | #871 and #842 prove finalization and recovery retention. | Verify no caller adds a second pending state or retention path. |
+| REQ-011 | Idempotent finalization and blocking | #871 | #842 proves Doctor retry; #843 later adds Watch cursor finalization. | Verify finalizers use persisted exact facts and block different work. |
+| REQ-012 | Truthful five outcomes and public exit behavior | #871 | #870 proves hash projection; #872, #842, #843, and #845 add their real output cases. | Verify built human/JSON/schema/examples/exits agree. |
+| REQ-013 | Action-token cancellation through the last pre-mutation check | #870 | #872 adds Save-enabled admission; #844 and #845 later carry their Connect preparation. | Verify deterministic pre-mutation cancellation and deferred post-mutation behavior. |
+| REQ-014 | Same-operation marker adoption with fresh planning | #869 | #870, #871, and #842 prove Branch and recovery replay. | Verify adoption never resumes an old plan or deletes foreign evidence. |
+| REQ-015 | Explicit Doctor recovery without working-file mutation | #842 | No later caller delivery; #846 only audits the completed recovery proof. | Verify exact pending retry and refusal evidence remain current. |
+| REQ-016 | Caller-specific ordering | #871 | #872 completes Save ordering; #843 and #845 add Watch and Connect ordering. | Verify each caller has one real ordering path through the transaction. |
+| REQ-017 | Current public and contributor documentation | #846 | #868 establishes the Plan-ready contract; #870–#872, #843, #844, and #845 update behavior docs when executable. | Publish the completed 17-row implementation/proof ledger and remove stale planned wording. |
 
 Every phase failure must be deterministically activated somewhere. Module tests use real filesystem and SQLite state for
 lease, mutation, local-completion, marker, replay, finalizer, disposal, and release behavior. Built-command tests remain
 bounded: they prove selector routing and the corresponding public output rather than trying to inject every internal
-phase failure through the command process.
+phase failure through the command process. #870 proves deterministic construction of `AcceptedBranchPhase` for no-Save
+admission. #872 proves the Save-enabled built command, including a deterministic tracked edit made after the phase is
+captured while target preparation is still in progress; the post-lease revision/fingerprint comparison must reject
+before target mutation.
 
 ## 9. Propagation and traceability
 
 | Surface | Disposition | Owner and proof |
 | --- | --- | --- |
 | Private Branch selection, pending row, and marker records | Updated with typed selection and explicit dispositions. | #869; contract, SQLite, and marker tests. |
-| `WorkingDirectoryUpdate` Branch module | Updated as one deep Branch-only transaction. | #870; real filesystem/SQLite phase matrix. |
+| `WorkingDirectoryUpdate` Branch module | Updated as one deep Branch-only transaction with immutable admission phase and action token. | #870; construction and real filesystem/SQLite phase matrix. |
 | `grace switch` Reference and hash dispatch | Updated; no direct mutation/status/finalization bypass. | #870–#872; built selector fixtures. |
 | Local schema | Clean development replacement for the typed pending selection. | #869; schema reset and reopen tests. |
 | Branch output, schema, examples, and current behavior docs | Updated only as the replacement selectors and outcomes become executable. | #870–#872; built human/JSON/exit checks and MarkdownLint. |
 | Doctor `--repair-local-state` | Deferred until exact pending Branch facts exist. | #842; filesystem-free retry proof. |
-| Watch and Connect | Deferred; no Branch-side request construction or policy is added. | Later named epic work; scoped-diff review. |
+| Watch replay and cursor finalization | Deferred; no Branch-side Watch constructor or policy is added. | #843; ordered replay and built Watch proof. |
+| Connect zip preparation | Deferred; no Branch-side zip adapter or target-conflict policy is added. | #844; exact staged-content proof. |
+| Connect retrieval and cursor completion | Deferred; no Branch-side Connect constructor or policy is added. | #845; retrieval, completion, and output proof. |
+| Retired-path removal and completed ledger | Deferred final audit; it adds no new behavior. | #846; source-boundary, built-command, documentation, and canonical 17-row audit. |
 | Server, SDK, OpenAPI, and generated artifacts | Not applicable: this local Branch contract changes no wire shape. | Scoped diff and review. |
 | This specification and ADR 0011 | Updated by #868 before source work resumes. | MarkdownLint, local links, traceability and lifecycle audit. |
 
