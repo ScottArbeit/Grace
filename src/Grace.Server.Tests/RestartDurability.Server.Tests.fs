@@ -632,6 +632,12 @@ type RestartDurabilityServer() =
 
             do! RestartDurabilityHelpers.restartGraceServerAsync ()
 
+            let! afterRestartStatus, afterRestartBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(afterRestartStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), afterRestartBody)
+
+            let afterRestartError = deserialize<GraceError> afterRestartBody
+            Assert.That(afterRestartError.Error, Does.Contain("No eligible Cache registration is currently available."))
+
             let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint
             Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue))
 

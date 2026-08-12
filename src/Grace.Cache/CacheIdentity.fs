@@ -79,12 +79,23 @@ module internal CacheIdentity =
         with
         | :? DirectoryNotFoundException -> Ok false
         | :? UnauthorizedAccessException -> Error CacheIdentityInspection.Inaccessible
+        | :? IOException -> Error CacheIdentityInspection.Inaccessible
         | _ -> Error CacheIdentityInspection.Invalid
 
     /// Checks exact owner-only Linux modes and preserves inaccessible as a separate opaque classification.
     let private inspectMode (path: string) (expected: UnixFileMode) =
         try
-            if File.GetUnixFileMode(path) = expected then
+            let actual = File.GetUnixFileMode(path)
+
+            let requiredAccess =
+                if expected = directoryMode then
+                    UnixFileMode.UserRead ||| UnixFileMode.UserExecute
+                else
+                    UnixFileMode.UserRead
+
+            if (actual &&& requiredAccess) <> requiredAccess then
+                Error CacheIdentityInspection.Inaccessible
+            elif actual = expected then
                 Ok()
             else
                 Error CacheIdentityInspection.Invalid
@@ -92,6 +103,7 @@ module internal CacheIdentity =
         | :? UnauthorizedAccessException -> Error CacheIdentityInspection.Inaccessible
         | :? FileNotFoundException
         | :? DirectoryNotFoundException -> Error CacheIdentityInspection.Invalid
+        | :? IOException -> Error CacheIdentityInspection.Inaccessible
         | _ -> Error CacheIdentityInspection.Invalid
 
     /// Validates the caller-managed root before it can hold protected cache identity state.
@@ -156,6 +168,53 @@ module internal CacheIdentity =
             | Some x, Some y -> Some(fingerprint x y)
             | _ -> None
 
+    /// Imports exactly one complete P-256 PKCS#8 private key and returns its fixed-width public coordinates.
+    let private tryImportP256 (privateBytes: byte array) =
+        if isNull privateBytes || privateBytes.Length = 0 then
+            None
+        else
+            try
+                use key = ECDsa.Create()
+                let mutable bytesRead = 0
+                key.ImportPkcs8PrivateKey(privateBytes, &bytesRead)
+                let parameters = key.ExportParameters(true)
+                let p256Oid = ECCurve.NamedCurves.nistP256.Oid.Value
+
+                match parameters.Curve.Oid.Value, parameters.Q.X, parameters.Q.Y, parameters.D with
+                | curveOid, x, y, privateScalar when
+                    bytesRead = privateBytes.Length
+                    && String.Equals(curveOid, p256Oid, StringComparison.Ordinal)
+                    && not (isNull x)
+                    && not (isNull y)
+                    && not (isNull privateScalar)
+                    && x.Length = 32
+                    && y.Length = 32
+                    && privateScalar.Length = 32
+                    ->
+                    Some(x, y)
+                | _ -> None
+            with
+            | _ -> None
+
+    /// Inspects staged identity bytes so only a complete protected P-256 key can represent an enrollment attempt.
+    let private inspectAttempt attempt =
+        let identityPath = child attempt IdentityFileName
+
+        match inspectMode attempt directoryMode, inspectMode identityPath fileMode with
+        | Error CacheIdentityInspection.Inaccessible, _
+        | _, Error CacheIdentityInspection.Inaccessible -> CacheIdentityInspection.Inaccessible
+        | Error _, _
+        | _, Error _ -> CacheIdentityInspection.Invalid
+        | Ok (), Ok () ->
+            try
+                match File.ReadAllBytes(identityPath) |> tryImportP256 with
+                | Some _ -> CacheIdentityInspection.AttemptPresent
+                | None -> CacheIdentityInspection.Invalid
+            with
+            | :? UnauthorizedAccessException -> CacheIdentityInspection.Inaccessible
+            | :? IOException -> CacheIdentityInspection.Inaccessible
+            | _ -> CacheIdentityInspection.Invalid
+
     /// Generates one protected P-256 key below a new fixed attempt directory and returns its canonical public half only.
     let createAttempt root =
         match validateRoot root with
@@ -215,17 +274,9 @@ module internal CacheIdentity =
                     match inspectMode attempt directoryMode, inspectMode identityPath fileMode with
                     | Ok (), Ok () ->
                         let privateBytes = File.ReadAllBytes(identityPath)
-                        use key = ECDsa.Create()
-                        let mutable bytesRead = 0
-                        key.ImportPkcs8PrivateKey(privateBytes, &bytesRead)
-                        let parameters = key.ExportParameters(false)
 
-                        match parameters.Q.X, parameters.Q.Y with
-                        | x, y when
-                            not (isNull x)
-                            && not (isNull y)
-                            && fingerprint x y = expectedFingerprint
-                            ->
+                        match tryImportP256 privateBytes with
+                        | Some (x, y) when fingerprint x y = expectedFingerprint ->
                             let registrationBytes =
                                 JsonSerializer.SerializeToUtf8Bytes({ Configuration = configuration; PublicKeyFingerprint = expectedFingerprint })
 
@@ -271,22 +322,16 @@ module internal CacheIdentity =
                     with
                 | None -> CacheIdentityInspection.Invalid
                 | Some expectedFingerprint ->
-                    use key = ECDsa.Create()
-                    let mutable bytesRead = 0
-                    key.ImportPkcs8PrivateKey(File.ReadAllBytes(identityPath), &bytesRead)
-                    let parameters = key.ExportParameters(false)
-
-                    match parameters.Q.X, parameters.Q.Y with
-                    | x, y when
-                        not (isNull x)
-                        && not (isNull y)
-                        && fingerprint x y = expectedFingerprint
+                    match File.ReadAllBytes(identityPath) |> tryImportP256 with
+                    | Some (x, y) when
+                        fingerprint x y = expectedFingerprint
                         && String.Equals(registration.PublicKeyFingerprint, expectedFingerprint, StringComparison.Ordinal)
                         ->
                         CacheIdentityInspection.Ready
                     | _ -> CacheIdentityInspection.Invalid
             with
             | :? UnauthorizedAccessException -> CacheIdentityInspection.Inaccessible
+            | :? IOException -> CacheIdentityInspection.Inaccessible
             | _ -> CacheIdentityInspection.Invalid
 
     /// Inspects fixed local identity markers without mutating, repairing, deleting, or exposing protected state details.
@@ -313,12 +358,7 @@ module internal CacheIdentity =
                     | _, Error _ -> Ok CacheIdentityInspection.Invalid
                     | Ok false, Ok false -> Ok CacheIdentityInspection.Missing
                     | Ok true, Ok true -> Ok CacheIdentityInspection.Invalid
-                    | Ok true, Ok false ->
-                        match inspectMode attempt directoryMode, inspectMode (child attempt IdentityFileName) fileMode with
-                        | Ok (), Ok () -> Ok CacheIdentityInspection.AttemptPresent
-                        | Error CacheIdentityInspection.Inaccessible, _
-                        | _, Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspection.Inaccessible
-                        | _ -> Ok CacheIdentityInspection.Invalid
+                    | Ok true, Ok false -> Ok(inspectAttempt attempt)
                     | Ok false, Ok true -> Ok(inspectReady ready)
 
     /// Best-effort cleanup for a failed caller operation; it intentionally has no cancellation token or failure result.

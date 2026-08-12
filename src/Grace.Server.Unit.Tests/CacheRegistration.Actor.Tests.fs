@@ -78,15 +78,22 @@ type CacheRegistrationActorTests() =
 
             let cacheActor = actor :> ICacheRegistrationActor
             let now = Instant.FromUtc(2026, 8, 12, 12, 0)
+            let cacheId = Guid.Parse("55555555-5555-5555-5555-555555555555")
 
             Assert.ThrowsAsync<InvalidOperationException>(
-                Func<Task>(fun () -> cacheActor.Enroll(Guid.NewGuid(), enrollmentRequest (), "administrator", now, "cache-write-failure") :> Task)
+                Func<Task>(fun () -> cacheActor.Enroll(cacheId, enrollmentRequest (), "administrator", now, "cache-write-failure") :> Task)
             )
             |> ignore
 
+            let! retained = cacheActor.Get(cacheId, "cache-write-failure")
             let! eligible = cacheActor.SelectEligible(CacheRegistrationSelectionQuery.Current, now, "cache-write-failure")
 
             Assert.That(persistentState.WriteCount, Is.EqualTo(1))
             Assert.That(persistentState.State.Registrations, Has.Length.EqualTo(1))
+
+            match retained with
+            | None -> ()
+            | Some registration -> Assert.Fail($"Actor retained CacheId {registration.CacheId} after its durable enrollment write failed.")
+
             Assert.That(eligible, Is.Empty)
         }

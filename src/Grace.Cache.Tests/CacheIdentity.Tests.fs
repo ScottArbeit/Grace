@@ -38,6 +38,49 @@ type CacheIdentityTests() =
             Assert.Fail($"Unexpected protected identity result: {error}")
             Unchecked.defaultof<_>
 
+    /// Requires an inspection state while reporting a returned error or wrong opaque state directly.
+    let requireInspection expected =
+        function
+        | Ok actual when actual = expected -> ()
+        | Ok actual -> Assert.Fail($"Expected protected identity inspection {expected}, received {actual}.")
+        | Error error -> Assert.Fail($"Expected protected identity inspection {expected}, received error {error}.")
+
+    /// Requires the opaque operation failure used when protected staging cannot publish a ready identity.
+    let requireStateUnavailable =
+        function
+        | Error CacheIdentityError.StateUnavailable -> ()
+        | Error error -> Assert.Fail($"Expected StateUnavailable, received error {error}.")
+        | Ok value -> Assert.Fail($"Expected StateUnavailable, but the protected operation succeeded with {value}.")
+
+    /// Restores a path's exact mode after one temporary access-denial or weak-mode proof.
+    let withRestoredMode (path: string) (temporaryMode: UnixFileMode) (assertion: unit -> unit) =
+        let originalMode = File.GetUnixFileMode(path)
+        File.SetUnixFileMode(path, temporaryMode)
+
+        try
+            assertion ()
+        finally
+            if File.Exists(path) || Directory.Exists(path) then
+                File.SetUnixFileMode(path, originalMode)
+
+    /// Replaces staged key bytes while preserving their original mode for invalid identity inspection proof.
+    let assertInvalidStagedKey (replaceBytes: byte array -> byte array) =
+        withLinuxRoot (fun root ->
+            CacheIdentity.createAttempt root
+            |> requireOk
+            |> ignore
+
+            let identity = Path.Combine(root, "attempt", "identity.pk8")
+            let privateBytes = File.ReadAllBytes(identity)
+            let originalIdentityMode = File.GetUnixFileMode(identity)
+
+            try
+                File.WriteAllBytes(identity, replaceBytes privateBytes)
+                requireInspection CacheIdentityInspection.Invalid (CacheIdentity.inspect root)
+            finally
+                if File.Exists(identity) then
+                    File.SetUnixFileMode(identity, originalIdentityMode))
+
     /// Builds accepted configuration from the public key that the staged private key must match.
     let acceptedConfiguration publicKey =
         { CacheId = Guid.Parse("11111111-1111-1111-1111-111111111111"); Endpoint = "https://cache.example.test"; PublicKey = publicKey }
@@ -62,7 +105,11 @@ type CacheIdentityTests() =
             Assert.That(File.GetUnixFileMode(root), Is.EqualTo(directoryMode))
             Assert.That(File.GetUnixFileMode(attempt), Is.EqualTo(directoryMode))
             Assert.That(File.GetUnixFileMode(identity), Is.EqualTo(privateMode))
-            Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.AttemptPresent)))
+            requireInspection CacheIdentityInspection.AttemptPresent (CacheIdentity.inspect root))
+
+        assertInvalidStagedKey (fun _ -> Array.empty)
+        assertInvalidStagedKey (fun privateBytes -> privateBytes[0 .. (privateBytes.Length - 2)])
+        assertInvalidStagedKey (fun privateBytes -> Array.append privateBytes [| 0uy |])
 
     /// Verifies matching accepted facts publish one same-parent ready marker with protected key and configuration modes.
     [<Test>]
@@ -75,7 +122,7 @@ type CacheIdentityTests() =
             Assert.That(File.GetUnixFileMode(ready), Is.EqualTo(directoryMode))
             Assert.That(File.GetUnixFileMode(Path.Combine(ready, "identity.pk8")), Is.EqualTo(privateMode))
             Assert.That(File.GetUnixFileMode(Path.Combine(ready, "registration.json")), Is.EqualTo(privateMode))
-            Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.Ready)))
+            requireInspection CacheIdentityInspection.Ready (CacheIdentity.inspect root))
 
     /// Verifies an accepted configuration carrying a different P-256 identity cannot create a ready marker.
     [<Test>]
@@ -104,15 +151,17 @@ type CacheIdentityTests() =
                             .Replace('/', '_')
                 }
 
-            Assert.That(CacheIdentity.commitReady root (acceptedConfiguration otherPublicKey), Is.EqualTo(Error CacheIdentityError.StateUnavailable))
+            CacheIdentity.commitReady root (acceptedConfiguration otherPublicKey)
+            |> requireStateUnavailable
+
             Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
-            Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.AttemptPresent)))
+            requireInspection CacheIdentityInspection.AttemptPresent (CacheIdentity.inspect root))
 
     /// Verifies inspect distinguishes missing, invalid concurrent markers, weak readable modes, and inaccessible state without repairing it.
     [<Test>]
     member _.``inspect classifies opaque local identity states without mutation``() =
         withLinuxRoot (fun root ->
-            Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.Missing))
+            requireInspection CacheIdentityInspection.Missing (CacheIdentity.inspect root)
 
             CacheIdentity.createAttempt root
             |> requireOk
@@ -121,36 +170,37 @@ type CacheIdentityTests() =
             let ready = Path.Combine(root, "ready")
             Directory.CreateDirectory(ready) |> ignore
             File.SetUnixFileMode(ready, directoryMode)
-            Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.Invalid))
+            requireInspection CacheIdentityInspection.Invalid (CacheIdentity.inspect root)
 
             Directory.Delete(ready, true)
             CacheIdentity.discardAttempt root
             readyIdentity root
 
             let identity = Path.Combine(root, "ready", "identity.pk8")
-            let originalIdentityMode = File.GetUnixFileMode(identity)
-            File.SetUnixFileMode(identity, privateMode ||| UnixFileMode.OtherRead)
 
-            try
-                Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.Invalid))
-            finally
-                File.SetUnixFileMode(identity, originalIdentityMode))
+            withRestoredMode identity (privateMode ||| UnixFileMode.OtherRead) (fun () ->
+                requireInspection CacheIdentityInspection.Invalid (CacheIdentity.inspect root)))
 
-    /// Verifies denied root traversal stays distinct from absent or malformed state when the test process is not privileged.
+    /// Verifies denied traversal and owner-read access stay distinct from malformed state for an unprivileged Linux process.
     [<Test>]
-    member _.``inspect reports inaccessible root traversal without exposing details``() =
+    member _.``inspect reports inaccessible traversal and owner-read denial without exposing details``() =
         withLinuxRoot (fun root ->
-            let originalRootMode = File.GetUnixFileMode(root)
-            File.SetUnixFileMode(root, UnixFileMode.None)
+            if String.Equals(Environment.UserName, "root", StringComparison.Ordinal) then
+                Assert.Ignore("These mode-denial cases require an unprivileged Linux test process.")
 
-            try
-                match CacheIdentity.inspect root with
-                | Ok CacheIdentityInspection.Inaccessible -> ()
-                | _ when String.Equals(Environment.UserName, "root", StringComparison.Ordinal) ->
-                    Assert.Ignore("A privileged Linux test process can traverse mode-000 directories.")
-                | result -> Assert.Fail($"Expected inaccessible protected state, received {result}.")
-            finally
-                File.SetUnixFileMode(root, originalRootMode))
+            withRestoredMode root privateMode (fun () -> requireInspection CacheIdentityInspection.Inaccessible (CacheIdentity.inspect root))
+
+            readyIdentity root
+
+            let ready = Path.Combine(root, "ready")
+            let identity = Path.Combine(ready, "identity.pk8")
+            let registration = Path.Combine(ready, "registration.json")
+
+            withRestoredMode ready privateMode (fun () -> requireInspection CacheIdentityInspection.Inaccessible (CacheIdentity.inspect root))
+
+            withRestoredMode identity UnixFileMode.UserWrite (fun () -> requireInspection CacheIdentityInspection.Inaccessible (CacheIdentity.inspect root))
+
+            withRestoredMode registration UnixFileMode.UserWrite (fun () -> requireInspection CacheIdentityInspection.Inaccessible (CacheIdentity.inspect root)))
 
     /// Verifies discard has no cancellation/error channel and removes only the fixed attempt marker.
     [<Test>]
@@ -161,5 +211,5 @@ type CacheIdentityTests() =
             |> ignore
 
             CacheIdentity.discardAttempt root
-            Assert.That(CacheIdentity.inspect root, Is.EqualTo(Ok CacheIdentityInspection.Missing))
+            requireInspection CacheIdentityInspection.Missing (CacheIdentity.inspect root)
             Assert.DoesNotThrow(Action(fun () -> CacheIdentity.discardAttempt root)))
