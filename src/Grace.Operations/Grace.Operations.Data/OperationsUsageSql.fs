@@ -102,13 +102,13 @@ OR EXISTS
     FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK)
     WHERE UsageFactId = @UsageFactId
       AND IsActive = 1
+      AND OwnerId IS NOT NULL
+      AND OrganizationId IS NOT NULL
+      AND RepositoryId IS NOT NULL
+      AND MonthStartUtc IS NOT NULL
       AND
       (
-          OwnerId IS NULL
-          OR OrganizationId IS NULL
-          OR RepositoryId IS NULL
-          OR MonthStartUtc IS NULL
-          OR OwnerId <> @OwnerId
+          OwnerId <> @OwnerId
           OR OrganizationId <> @OrganizationId
           OR RepositoryId <> @RepositoryId
           OR MonthStartUtc <> @MonthStartUtc

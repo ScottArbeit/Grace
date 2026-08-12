@@ -941,6 +941,126 @@ VALUES
                 )
             })
 
+    /// Proves partial diagnostic evidence does not bind a fact to a scope before corrected online or replay acceptance.
+    [<Test>]
+    member _.PartialRejectionEvidenceDoesNotBlockCorrectedOnlineOrReplayAcceptance() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let onlineFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
+                let replayFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 1))
+                let scope = scopeFor ownerId organizationId repositoryId onlineFact.ObservedAt
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let defaultTimestampPartial =
+                    {
+                        RejectionId = Guid.NewGuid()
+                        UsageFactId = Some onlineFact.UsageFactId
+                        Scope = None
+                        ReportedScope =
+                            Some
+                                {
+                                    OwnerId = Some ownerId
+                                    OrganizationId = Some organizationId
+                                    RepositoryId = Some repositoryId
+                                    ObservedAt = Some Constants.DefaultTimestamp
+                                }
+                        Reason = "online default timestamp partial evidence"
+                        IsActive = true
+                    }
+
+                let missingTimestampPartial =
+                    {
+                        RejectionId = Guid.NewGuid()
+                        UsageFactId = Some replayFact.UsageFactId
+                        Scope = None
+                        ReportedScope =
+                            Some { OwnerId = Some ownerId; OrganizationId = Some organizationId; RepositoryId = Some repositoryId; ObservedAt = None }
+                        Reason = "replay missing timestamp partial evidence"
+                        IsActive = true
+                    }
+
+                let! defaultRecorded = store.RecordUsageFactRejectionAsync(defaultTimestampPartial, CancellationToken.None)
+                let! missingRecorded = store.RecordUsageFactRejectionAsync(missingTimestampPartial, CancellationToken.None)
+
+                match defaultRecorded, missingRecorded with
+                | Ok None, Ok None -> ()
+                | _ -> Assert.Fail("Partial evidence must remain unscoped diagnostic evidence.")
+
+                let! onlineFirst = store.StoreUsageFactAsync(onlineFact, payloadFor onlineFact, CancellationToken.None)
+                let! onlineDuplicate = store.StoreUsageFactAsync(onlineFact, payloadFor onlineFact, CancellationToken.None)
+                let! replayFirst = replayAsync store replayFact
+                let! replayDuplicate = replayAsync store replayFact
+
+                let persisted =
+                    [
+                        onlineFirst
+                        onlineDuplicate
+                        replayFirst
+                        replayDuplicate
+                    ]
+
+                let acceptedCount =
+                    persisted
+                    |> List.filter (Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted))
+                    |> List.length
+
+                let alreadyProcessedCount =
+                    persisted
+                    |> List.filter (Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.AlreadyProcessed))
+                    |> List.length
+
+                let! rawFactCount =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId IN ('{onlineFact.UsageFactId:D}', '{replayFact.UsageFactId:D}');"
+
+                let! aggregateCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageAggregateMinute;"
+                let! aggregateQuantity = executeInt32Async connectionString "SELECT SUM(Quantity) FROM ops.UsageAggregateMinute;"
+
+                let! partialDiagnosticCount =
+                    executeInt32Async
+                        connectionString
+                        $"""
+SELECT COUNT(*)
+FROM ops.UsageFactRejection
+WHERE UsageFactId IN ('{onlineFact.UsageFactId:D}', '{replayFact.UsageFactId:D}')
+  AND MonthStartUtc IS NULL
+  AND IsActive = 1;
+"""
+
+                let! activeScopedBlockerCount =
+                    executeInt32Async
+                        connectionString
+                        $"""
+SELECT COUNT(*)
+FROM ops.UsageFactRejection
+WHERE UsageFactId IN ('{onlineFact.UsageFactId:D}', '{replayFact.UsageFactId:D}')
+  AND OwnerId IS NOT NULL
+  AND OrganizationId IS NOT NULL
+  AND RepositoryId IS NOT NULL
+  AND MonthStartUtc IS NOT NULL
+  AND IsActive = 1;
+"""
+
+                let! completeness = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(persisted |> List.forall Result.isOk, Is.True)
+                        Assert.That(acceptedCount, Is.EqualTo(2))
+                        Assert.That(alreadyProcessedCount, Is.EqualTo(2))
+                        Assert.That(rawFactCount, Is.EqualTo(2))
+                        Assert.That(aggregateCount, Is.EqualTo(2))
+                        Assert.That(aggregateQuantity, Is.EqualTo(8192))
+                        Assert.That(partialDiagnosticCount, Is.EqualTo(2))
+                        Assert.That(activeScopedBlockerCount, Is.EqualTo(0))
+                        Assert.That(completeness, Is.EqualTo(Complete)))
+                )
+            })
+
     /// Proves accepted durable usage suppresses stale rejection evidence and default partial evidence has no derived month.
     [<Test>]
     member _.AcceptedFactsWinOverStaleRejectionAndDefaultPartialEvidenceHasNoMonth() =
