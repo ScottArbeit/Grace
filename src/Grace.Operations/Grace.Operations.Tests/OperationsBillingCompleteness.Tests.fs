@@ -1,6 +1,7 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Operations.Worker
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Usage
@@ -77,6 +78,69 @@ type private ObservedOperationsUsageTransactionScope
                         operationCancellationToken),
                 cancellationToken
             )
+
+/// Pauses a real ProcessAsync transaction after raw and aggregate SQL writes have been staged, then lets cancellation abort it.
+type private CancellationAfterJournalStageInterleaving() =
+    let staged = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Completes only after the transaction owns staged raw and aggregate mutations.
+    member _.Staged = staged.Task
+
+    /// Releases a non-cancelled test path without retaining any durable state.
+    member _.Release() = release.TrySetResult(()) |> ignore
+
+    interface IOperationsUsageJournalTransactionInterleaving with
+
+        member _.AfterRawAndAggregateStagedAsync(cancellationToken) =
+            task {
+                staged.TrySetResult(()) |> ignore
+                do! release.Task.WaitAsync(cancellationToken)
+            }
+            :> Task
+
+/// Pauses the production dispatcher loop after selection and before its per-row current-state reread.
+type private PauseAfterPendingScanInterleaving() =
+    let selected = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let selectedUsageFactIds = ResizeArray<UsageFactId>()
+
+    /// Completes when the production loop has a stale candidate that it must reread before sending.
+    member _.Selected = selected.Task
+
+    /// Returns the candidates selected before the required production reread.
+    member _.SelectedUsageFactIds = selectedUsageFactIds |> Seq.toList
+
+    /// Allows the production loop to continue to its per-row reread.
+    member _.Release() = release.TrySetResult(()) |> ignore
+
+    interface IOperationsUsageJournalDispatchInterleaving with
+
+        member _.AfterPendingScanAsync(entries, cancellationToken) =
+            task {
+                entries
+                |> List.iter (fun entry -> selectedUsageFactIds.Add(entry.UsageFactId))
+
+                selected.TrySetResult(()) |> ignore
+                do! release.Task.WaitAsync(cancellationToken)
+            }
+            :> Task
+
+/// Records production dispatch send decisions without inserting a broker substitute into the SQL proof.
+type private RecordingOperationsUsageJournalSignalSender() =
+    let sent = ResizeArray<UsageFactJournalEntry>()
+
+    /// Returns immutable identities the production dispatcher decided to signal.
+    member _.SentUsageFactIds =
+        sent
+        |> Seq.map (fun entry -> entry.UsageFactId)
+        |> Seq.toList
+
+    interface IOperationsUsageJournalSignalSender with
+
+        member _.SendAsync(entry, _cancellationToken) =
+            sent.Add(entry)
+            Task.CompletedTask
 
 /// Proves the owner-month completeness coordination boundary against isolated real SQL Server databases.
 [<TestFixture>]
@@ -1663,6 +1727,75 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 )
             })
 
+    /// Proves cancellation after ProcessAsync stages raw and aggregate SQL mutations rolls every journal-side effect back to Pending truth.
+    [<Test>]
+    member _.JournalProcessCancellationAfterStagedRawAndAggregateRollsBackToPendingTruth() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let interleaving = CancellationAfterJournalStageInterleaving()
+
+                let journal = SqlOperationsUsageJournalStore.CreateForTest(connectionString, interleaving :> IOperationsUsageJournalTransactionInterleaving)
+
+                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! appended = journal.AppendAsync(usageFact, CancellationToken.None)
+                use cancellation = new CancellationTokenSource()
+                let processing = journal.ProcessAsync(usageFact, payloadFor usageFact, cancellation.Token)
+
+                try
+                    do! interleaving.Staged.WaitAsync(TimeSpan.FromSeconds(10.0))
+                    cancellation.Cancel()
+
+                    let! cancelled =
+                        task {
+                            try
+                                let! _ = processing
+                                return false
+                            with
+                            | :? OperationCanceledException -> return true
+                        }
+
+                    let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                    let! aggregateCount =
+                        executeInt32Async
+                            connectionString
+                            $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND OrganizationId = '{organizationId:D}' AND RepositoryId = '{repositoryId:D}';"
+
+                    let! pendingJournalCount =
+                        executeInt32Async
+                            connectionString
+                            $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 0;"
+
+                    let! rejectionEvidenceCount =
+                        executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                    let! completenessAfterCancellation = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                    let appendedPending =
+                        match appended with
+                        | Ok AppendedPending -> true
+                        | _ -> false
+
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(appendedPending, Is.True)
+                            Assert.That(cancelled, Is.True)
+                            Assert.That(rawCount, Is.Zero)
+                            Assert.That(aggregateCount, Is.Zero)
+                            Assert.That(pendingJournalCount, Is.EqualTo(1))
+                            Assert.That(rejectionEvidenceCount, Is.Zero)
+                            Assert.That(completenessAfterCancellation, Is.EqualTo(BlockedByUnresolvedUsageFactJournal)))
+                    )
+                finally
+                    interleaving.Release()
+            })
+
     /// Proves stale dispatch rereads skip a rejected row and concurrent explicit repairs converge without duplicate aggregate state.
     [<Test>]
     member _.JournalStaleDispatchAndConflictingRepairPreserveTerminalTruth() =
@@ -1677,8 +1810,31 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 let journal = SqlOperationsUsageJournalStore(connectionString)
                 let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
                 let! _ = journal.AppendAsync(usageFact, CancellationToken.None)
-                let! staleSelection = journal.ListPendingAsync(10, CancellationToken.None)
-                let! rejected = journal.RejectAsync(usageFact, payloadFor usageFact, "deterministic rejection", CancellationToken.None)
+                let pause = PauseAfterPendingScanInterleaving()
+                let sender = RecordingOperationsUsageJournalSignalSender()
+
+                let dispatch =
+                    OperationsUsageJournalDispatcher.dispatchCurrentPendingAsync
+                        (journal :> IOperationsUsageJournalStore)
+                        10
+                        (pause :> IOperationsUsageJournalDispatchInterleaving)
+                        (sender :> IOperationsUsageJournalSignalSender)
+                        CancellationToken.None
+
+                let! rejected =
+                    task {
+                        try
+                            do! pause.Selected.WaitAsync(TimeSpan.FromSeconds(10.0))
+
+                            let! result = journal.RejectAsync(usageFact, payloadFor usageFact, "deterministic rejection", CancellationToken.None)
+
+                            pause.Release()
+                            return result
+                        finally
+                            pause.Release()
+                    }
+
+                do! dispatch
                 let! pendingAfterRejection = journal.TryGetPendingAsync(usageFact.UsageFactId, CancellationToken.None)
                 let! normal = journal.ProcessAsync(usageFact, payloadFor usageFact, CancellationToken.None)
                 let firstRepair = journal.RepairAsync(usageFact, CancellationToken.None)
@@ -1701,13 +1857,14 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 Assert.Multiple(
                     Action (fun () ->
                         Assert.That(
-                            staleSelection
-                            |> List.exists (fun entry -> entry.UsageFactId = usageFact.UsageFactId),
+                            pause.SelectedUsageFactIds
+                            |> List.contains usageFact.UsageFactId,
                             Is.True
                         )
 
                         Assert.That(rejected, Is.EqualTo(RejectedFromJournal))
                         Assert.That(pendingAfterRejection, Is.EqualTo(None))
+                        Assert.That(sender.SentUsageFactIds, Is.Empty)
                         Assert.That(normal, Is.EqualTo(UsageFactJournalProcessResult.AlreadyRejected))
 
                         Assert.That(

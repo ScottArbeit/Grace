@@ -4,7 +4,7 @@
 schema is intentionally narrow:
 
 - `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
-  the exact accepted broker payload in `RawPayload` for replay and audit.
+  the canonical validated payload owned by the journal in `RawPayload` for replay and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
 - `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
   facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
@@ -46,7 +46,8 @@ usage-facts/v1/observedYear=<yyyy>/observedMonth=<MM>/ownerId=<owner-guid>/organ
 ```
 
 Each Blob contains one gzip-compressed JSONL record with archive schema version, usage fact identity, Grace scope,
-storage pool, quantity, observed UTC timestamp, and the exact accepted broker payload as base64. SQL stores:
+storage pool, quantity, observed UTC timestamp, and the canonical validated payload owned by the journal as base64.
+SQL stores:
 
 - `ArchiveState`, where `0` is hot, `1` is Blob-verified with hot payload retained, and `2` is archived with hot
   payload cleared.

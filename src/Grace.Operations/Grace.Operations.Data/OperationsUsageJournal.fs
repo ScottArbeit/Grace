@@ -53,6 +53,19 @@ type UsageFactJournalRejectResult =
     | RejectJournalConflict
     | RejectAlreadyAccepted
 
+/// Pauses a ProcessAsync transaction only after its raw and aggregate mutations have been staged for deterministic rollback proof.
+type internal IOperationsUsageJournalTransactionInterleaving =
+
+    /// Observes the transaction-local point immediately before journal acceptance can commit.
+    abstract AfterRawAndAggregateStagedAsync: cancellationToken: CancellationToken -> Task
+
+/// Leaves production journal transactions uninterrupted when no deterministic proof interleaving is supplied.
+type private NoOperationsUsageJournalTransactionInterleaving() =
+
+    interface IOperationsUsageJournalTransactionInterleaving with
+
+        member _.AfterRawAndAggregateStagedAsync(_cancellationToken) = Task.CompletedTask
+
 /// Owns the internal Operations append, dispatch scan, and transactionally verified journal processing seam.
 type IOperationsUsageJournalStore =
 
@@ -75,7 +88,7 @@ type IOperationsUsageJournalStore =
     abstract RepairAsync: fact: UsageFact * cancellationToken: CancellationToken -> Task<UsageFactJournalProcessResult>
 
 /// Stores immutable usage facts in the SQL journal and treats Service Bus delivery as a retryable signal only.
-type SqlOperationsUsageJournalStore(connectionString: string) =
+type SqlOperationsUsageJournalStore private (connectionString: string, transactionInterleaving: IOperationsUsageJournalTransactionInterleaving) =
 
     /// Opens the SQL connection used by one append, scan, or processing transaction.
     let openConnectionAsync cancellationToken =
@@ -354,6 +367,13 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
                 return raise ex
         }
 
+    /// Creates the production journal store with no test interleaving in its transaction path.
+    new(connectionString: string) =
+        SqlOperationsUsageJournalStore(connectionString, NoOperationsUsageJournalTransactionInterleaving() :> IOperationsUsageJournalTransactionInterleaving)
+
+    /// Creates an internal deterministic proof store that pauses only a transaction-local test interleaving point.
+    static member internal CreateForTest(connectionString, transactionInterleaving) = SqlOperationsUsageJournalStore(connectionString, transactionInterleaving)
+
     /// Appends one supported fact with immutable-idempotence semantics before a dispatcher can observe it.
     member _.AppendAsync(fact: UsageFact, cancellationToken: CancellationToken) =
         task {
@@ -494,6 +514,7 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
                                     if inserted then
                                         do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
 
+                                    do! transactionInterleaving.AfterRawAndAggregateStagedAsync(operationCancellationToken)
                                     do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
                                     do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken
                                     return AcceptedFromJournal

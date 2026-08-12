@@ -2347,6 +2347,52 @@ type OperationsUsageWorkerService
         /// Stops operational usage ingestion.
         member _.StopAsync(cancellationToken: CancellationToken) = stopBackgroundProcessingAsync cancellationToken
 
+/// Sends one journal entry through a retryable signal transport without making the transport a source of truth.
+type internal IOperationsUsageJournalSignalSender =
+
+    /// Sends the immutable Pending entry that was reread immediately before this call.
+    abstract SendAsync: entry: UsageFactJournalEntry * cancellationToken: CancellationToken -> Task
+
+/// Observes the narrow gap between one Pending scan and its per-row production reread for deterministic stale-scan proof.
+type internal IOperationsUsageJournalDispatchInterleaving =
+
+    /// Runs after a bounded scan and before the production loop rereads each selected identity.
+    abstract AfterPendingScanAsync: entries: UsageFactJournalEntry list * cancellationToken: CancellationToken -> Task
+
+/// Keeps normal dispatch free of test interleavings while retaining the production loop as the proof seam.
+type private NoOperationsUsageJournalDispatchInterleaving() =
+
+    interface IOperationsUsageJournalDispatchInterleaving with
+
+        member _.AfterPendingScanAsync(_entries, _cancellationToken) = Task.CompletedTask
+
+/// Runs the bounded production journal dispatch loop with a current-state reread immediately before every signal send.
+module internal OperationsUsageJournalDispatcher =
+
+    /// Sends only rows that remain Pending after a scan-to-send interleaving, so stale candidates cannot signal terminal truth.
+    let dispatchCurrentPendingAsync
+        (journal: IOperationsUsageJournalStore)
+        batchSize
+        (interleaving: IOperationsUsageJournalDispatchInterleaving)
+        (sender: IOperationsUsageJournalSignalSender)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let! pending = journal.ListPendingAsync(batchSize, cancellationToken)
+            do! interleaving.AfterPendingScanAsync(pending, cancellationToken)
+            let mutable index = 0
+
+            while index < pending.Length do
+                let entry = pending[index]
+                let! currentEntry = journal.TryGetPendingAsync(entry.UsageFactId, cancellationToken)
+
+                match currentEntry with
+                | Some pendingEntry -> do! sender.SendAsync(pendingEntry, cancellationToken)
+                | None -> ()
+
+                index <- index + 1
+        }
+
 /// Repeatedly sends currently Pending immutable journal rows as retryable Service Bus signals without persisting delivery state.
 type OperationsUsageJournalDispatcherService
     (
@@ -2390,6 +2436,15 @@ type OperationsUsageJournalDispatcherService
 
         message
 
+    /// Adapts one Azure Service Bus sender to the production loop's observable signal boundary.
+    let createSignalSender (sender: ServiceBusSender) =
+        { new IOperationsUsageJournalSignalSender with
+            member _.SendAsync(entry, cancellationToken) = sender.SendMessageAsync(createMessage entry, cancellationToken)
+        }
+
+    /// Uses the inert default outside deterministic tests so dispatch runtime behavior has no test-only pause.
+    let dispatchInterleaving = NoOperationsUsageJournalDispatchInterleaving() :> IOperationsUsageJournalDispatchInterleaving
+
     /// Repeats bounded scans so a crash, expiry, uncertain send, or terminal broker movement leaves Pending work discoverable.
     let runAsync (cancellationToken: CancellationToken) =
         task {
@@ -2405,19 +2460,15 @@ type OperationsUsageJournalDispatcherService
                     while scan
                           && not cancellationToken.IsCancellationRequested do
                         try
-                            let! pending = journal.ListPendingAsync(dispatchBatchSize, cancellationToken)
+                            let signalSender = createSignalSender sender
 
-                            let mutable index = 0
-
-                            while index < pending.Length do
-                                let entry = pending[index]
-                                let! currentEntry = journal.TryGetPendingAsync(entry.UsageFactId, cancellationToken)
-
-                                match currentEntry with
-                                | Some pendingEntry -> do! sender.SendMessageAsync(createMessage pendingEntry, cancellationToken)
-                                | None -> ()
-
-                                index <- index + 1
+                            do!
+                                OperationsUsageJournalDispatcher.dispatchCurrentPendingAsync
+                                    journal
+                                    dispatchBatchSize
+                                    dispatchInterleaving
+                                    signalSender
+                                    cancellationToken
 
                             do! Task.Delay(retryDelay, cancellationToken)
                         with

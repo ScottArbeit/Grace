@@ -92,8 +92,8 @@ type OperationsTracerBulletServerTests() =
 
         message
 
-    /// Invokes the Operations-owned test executable so the AppHost tracer enters canonical production append without a root-to-Operations project reference.
-    let appendJournalFactAsync (fact: UsageFact) =
+    /// Invokes one Operations-owned proof command without adding a root-to-Operations project reference.
+    let runOperationsProofCommandAsync command (fact: UsageFact) =
         task {
             let projectPath =
                 Path.GetFullPath(
@@ -111,6 +111,7 @@ type OperationsTracerBulletServerTests() =
             startInfo.ArgumentList.Add(projectPath)
             startInfo.ArgumentList.Add("--no-launch-profile")
             startInfo.ArgumentList.Add("--")
+            startInfo.ArgumentList.Add(command)
             startInfo.ArgumentList.Add(operationsSqlConnectionString)
             startInfo.ArgumentList.Add(Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)))
 
@@ -124,12 +125,23 @@ type OperationsTracerBulletServerTests() =
             let! error = child.StandardError.ReadToEndAsync(timeout.Token)
             do! child.WaitForExitAsync(timeout.Token)
 
-            if
-                child.ExitCode <> 0
-                || not (output.Contains("appended-pending", StringComparison.Ordinal))
-            then
-                failwith $"The Operations append proof executable failed with exit code {child.ExitCode}. Output: {output}. Error: {error}"
+            if child.ExitCode <> 0 then
+                failwith $"The Operations '{command}' proof executable failed with exit code {child.ExitCode}. Output: {output}. Error: {error}"
+
+            return output.Trim()
         }
+
+    /// Appends through the Operations-owned production journal boundary and requires the durable Pending result.
+    let appendJournalFactAsync (fact: UsageFact) =
+        task {
+            let! output = runOperationsProofCommandAsync "append" fact
+
+            if not (String.Equals(output, "appended-pending", StringComparison.Ordinal)) then
+                failwith $"The Operations append proof executable returned unexpected output: {output}"
+        }
+
+    /// Reads exact-scope billing completeness through the Operations production store and checks its machine-readable result.
+    let evaluateBillingCompletenessAsync (fact: UsageFact) = runOperationsProofCommandAsync "completeness" fact
 
     /// Sends one raw message directly to the operational facts topic for duplicate and invalid-payload proof.
     let sendOperationalMessageAsync (message: ServiceBusMessage) =
@@ -537,18 +549,28 @@ WHERE FactKind = @FactKind
 
             Assert.That(fact.CorrelationId, Is.Not.EqualTo(fact.UsageFactId.ToString("D")))
 
-            do! appendJournalFactAsync fact
-            do! waitForUsageStateAsync "Initial published fact" 1L 4096L fact
-            do! waitForJournalStateAsync "Initial published fact" 1 fact
-
-            let restartFact = usageFact (Guid.Parse("53153153-3531-4531-8531-531531531531")) (CorrelationId "ops6-worker-restart-pending-correlation")
-
-            let finalDeliveryFact = usageFact (Guid.Parse("53153153-4531-4531-8531-531531531531")) (CorrelationId "ops6-final-delivery-pending-correlation")
-
             let app =
                 match App with
                 | Some runningApp -> runningApp
                 | None -> failwith "The shared Aspire test host was not available for Operations worker recovery proof."
+
+            do! AspireTestHost.stopOperationsWorkerAsync app
+            do! appendJournalFactAsync fact
+            do! waitForJournalStateAsync "Stopped worker leaves the first append pending before dispatch" 0 fact
+            let! blockedBeforeDispatch = evaluateBillingCompletenessAsync fact
+
+            Assert.That(blockedBeforeDispatch, Is.EqualTo("blocked-by-unresolved-usage-fact-journal"))
+
+            do! AspireTestHost.startOperationsWorkerAsync app
+            do! waitForUsageStateAsync "Initial published fact" 1L 4096L fact
+            do! waitForJournalStateAsync "Initial published fact" 1 fact
+            let! completeAfterAcceptance = evaluateBillingCompletenessAsync fact
+
+            Assert.That(completeAfterAcceptance, Is.EqualTo("complete"))
+
+            let restartFact = usageFact (Guid.Parse("53153153-3531-4531-8531-531531531531")) (CorrelationId "ops6-worker-restart-pending-correlation")
+
+            let finalDeliveryFact = usageFact (Guid.Parse("53153153-4531-4531-8531-531531531531")) (CorrelationId "ops6-final-delivery-pending-correlation")
 
             do! AspireTestHost.stopOperationsWorkerAsync app
             do! appendJournalFactAsync restartFact
