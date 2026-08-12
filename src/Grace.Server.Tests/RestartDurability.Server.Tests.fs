@@ -8,6 +8,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Common
+open Grace.Types.CacheRegistration
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
 open Grace.Types.UploadSession
@@ -16,6 +17,7 @@ open NodaTime
 open NodaTime.Text
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.IO
 open System.Net
 open System.Net.Http
@@ -110,6 +112,44 @@ module private RestartDurabilityHelpers =
                 ()
 
             return repositoryId
+        }
+
+    /// Builds the public half of a static P-256 Cache identity key for HTTP enrollment requests.
+    let cacheIdentityPublicKey (privateKey: ECDsa) =
+        let parameters = privateKey.ExportParameters(false)
+        CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode parameters.Q.X, ArtifactGrant.Base64Url.encode parameters.Q.Y)
+
+    /// Sends a valid Cache enrollment request through the HTTP and Orleans actor boundary.
+    let enrollCacheAsync (privateKey: ECDsa) (repositoryId: string) (displayName: string) (endpoint: string) =
+        task {
+            let organization = Guid.Parse organizationId
+
+            let request =
+                {
+                    Class = nameof CacheEnrollmentRequest
+                    DisplayName = displayName
+                    BoundaryKind = CacheBoundaryKind.Organization
+                    OwnerId = Guid.Parse ownerId
+                    OrganizationId = Some organization
+                    RepositoryScopes =
+                        List<CacheRepositoryScope>(
+                            [
+                                CacheRepositoryScope.Create(organization, Guid.Parse repositoryId)
+                            ]
+                        )
+                    PublicKey = cacheIdentityPublicKey privateKey
+                    Endpoint = endpoint
+                    AllowHttpEndpoint = false
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.0.0"
+                    ProtocolVersion = "v1"
+                    PrefetchSupported = false
+                }
+
+            let! response = Client.PostAsync("/cache/enroll", createJsonContent request)
+            let! body = requireOkAsync response
+            let result = deserialize<GraceReturnValue<CacheRegistrationResult>> body
+            return request, result.ReturnValue
         }
 
     /// Gets owner from the running test server.
@@ -435,4 +475,45 @@ type RestartDurabilityServer() =
             Assert.That(reminderAfterRestart.ActorId, Is.EqualTo(reminderActorId))
             Assert.That(reminderAfterRestart.ReminderType, Is.EqualTo(ReminderTypes.Maintenance))
             Assert.That(reminderAfterRestart.ReminderTime, Is.EqualTo(reminderFireAt))
+        }
+
+    /// Verifies valid HTTP enrollment keeps every immutable request field through the Orleans actor call and persists before success.
+    [<Test>]
+    [<Order(3)>]
+    member _.CacheEnrollmentTransfersValidatedFieldsThroughTheActorBoundary() =
+        task {
+            let! invalidResponse = Client.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
+
+            Assert.That(invalidResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let displayName = $"enrollment-transfer-{Guid.NewGuid():N}"
+            let endpoint = $"https://cache-{Guid.NewGuid():N}.example.test"
+            let! request, result = RestartDurabilityHelpers.enrollCacheAsync privateKey repositoryIds[0] displayName endpoint
+
+            let registration =
+                match result.Registration with
+                | Some value -> value
+                | None ->
+                    Assert.Fail("Successful Cache enrollment did not return the persisted registration.")
+                    Unchecked.defaultof<CacheRegistration>
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(result.Status, Is.EqualTo(CacheRegistrationRefreshStatus.Enrolled))
+                    Assert.That(registration.CacheId, Is.Not.EqualTo(Guid.Empty))
+                    Assert.That(registration.DisplayName, Is.EqualTo(request.DisplayName))
+                    Assert.That(registration.BoundaryKind, Is.EqualTo(request.BoundaryKind))
+                    Assert.That(registration.OwnerId, Is.EqualTo(request.OwnerId))
+                    Assert.That(registration.OrganizationId, Is.EqualTo(request.OrganizationId))
+                    Assert.That(registration.RepositoryScopes, Has.Length.EqualTo(request.RepositoryScopes.Count))
+                    Assert.That(registration.RepositoryScopes[0], Is.EqualTo(request.RepositoryScopes[0]))
+                    Assert.That(registration.PublicKey, Is.EqualTo(request.PublicKey))
+                    Assert.That(registration.Endpoint, Is.EqualTo(request.Endpoint))
+                    Assert.That(registration.AllowHttpEndpoint, Is.EqualTo(request.AllowHttpEndpoint))
+                    Assert.That(registration.Health, Is.EqualTo(request.Health))
+                    Assert.That(registration.SoftwareVersion, Is.EqualTo(request.SoftwareVersion))
+                    Assert.That(registration.ProtocolVersion, Is.EqualTo(request.ProtocolVersion))
+                    Assert.That(registration.PrefetchSupported, Is.EqualTo(request.PrefetchSupported)))
+            )
         }
