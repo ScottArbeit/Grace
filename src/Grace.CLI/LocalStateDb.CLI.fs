@@ -21,7 +21,7 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let SchemaVersion = "10"
+    let SchemaVersion = "11"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -39,6 +39,21 @@ module LocalStateDb =
     type internal WorkingDirectoryUpdateCompletion =
         | Pending
         | Terminal
+
+    /// Carries the bounded caller facts that distinguish one pending finalization from another.
+    type internal WorkingDirectoryUpdateCompletionDetails =
+        | BranchFinalization of previousBranchId: BranchId * selectedReferenceId: ReferenceId
+        | WatchFinalization of eventCursor: string
+        | ConnectCompletion of initialCursor: string * localRootScope: WorkingDirectoryUpdate.LocalRootScope
+
+    /// Reconstructs one exact pending finalizer without creating a general completion-history surface.
+    type internal PendingWorkingDirectoryUpdateFinalization =
+        | PendingBranchFinalization of
+            target: WorkingDirectoryUpdate.Target *
+            operation: WorkingDirectoryUpdate.Operation *
+            previousBranchId: BranchId *
+            selectedReferenceId: ReferenceId
+        | PendingWatchFinalization of target: WorkingDirectoryUpdate.Target * operation: WorkingDirectoryUpdate.Operation * eventCursor: string
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
@@ -238,7 +253,7 @@ module LocalStateDb =
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
             "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE TABLE IF NOT EXISTS remote_reference_boundaries (repository_id TEXT NOT NULL, branch_id TEXT NOT NULL, root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, root_directory_blake3_hash TEXT NOT NULL, event_cursor TEXT NOT NULL, PRIMARY KEY (repository_id, branch_id));"
-            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, target_repository_id TEXT NOT NULL, target_branch_id TEXT NOT NULL, target_root_directory_version_id TEXT NOT NULL, target_root_directory_sha256_hash TEXT NOT NULL, target_root_directory_blake3_hash TEXT NOT NULL, branch_previous_branch_id TEXT NULL, branch_selected_reference_id TEXT NULL, watch_event_cursor TEXT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL, CHECK ((caller_kind = 'Branch' AND branch_previous_branch_id IS NOT NULL AND branch_selected_reference_id IS NOT NULL AND watch_event_cursor IS NULL) OR (caller_kind = 'Watch' AND branch_previous_branch_id IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NOT NULL) OR (caller_kind = 'Connect' AND branch_previous_branch_id IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NULL)));"
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_pending ON working_directory_update_completions(finalization_state) WHERE finalization_state = 'Pending';"
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_terminal_caller ON working_directory_update_completions(caller_kind) WHERE finalization_state = 'Terminal';"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
@@ -3055,7 +3070,7 @@ module LocalStateDb =
         (objectCacheDirectories: LocalDirectoryVersion array)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
-        (connectIdentity: (string * WorkingDirectoryUpdate.LocalRootScope) option)
+        (completionDetails: WorkingDirectoryUpdateCompletionDetails)
         =
         if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
             invalidArg (nameof operation) "The Working Directory Update operation must match its target."
@@ -3092,15 +3107,27 @@ module LocalStateDb =
             ()
         | _ -> invalidArg (nameof objectCacheDirectories) "Working Directory Update object metadata must contain the exact target root once."
 
-        match WorkingDirectoryUpdate.Operation.callerKind operation, connectIdentity with
-        | WorkingDirectoryUpdate.CallerKind.Connect, Some (cursor, localRootScope) when not (String.IsNullOrWhiteSpace(cursor)) ->
+        let operationMatches expectedOperation = WorkingDirectoryUpdate.Operation.value expectedOperation = WorkingDirectoryUpdate.Operation.value operation
+
+        match WorkingDirectoryUpdate.Operation.callerKind operation, completionDetails with
+        | WorkingDirectoryUpdate.CallerKind.Branch, BranchFinalization (previousBranchId, selectedReferenceId) ->
+            match WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target with
+            | Ok expectedOperation when operationMatches expectedOperation -> ()
+            | _ -> invalidArg (nameof completionDetails) "Branch completion details must exactly match its target, previous branch, and selected Reference."
+        | WorkingDirectoryUpdate.CallerKind.Watch, WatchFinalization eventCursor ->
+            match
+                WorkingDirectoryUpdate.Operation.watchReplay
+                    (WorkingDirectoryUpdate.Target.repositoryId target)
+                    (WorkingDirectoryUpdate.Target.branchId target)
+                    eventCursor
+                with
+            | Ok expectedOperation when operationMatches expectedOperation -> ()
+            | _ -> invalidArg (nameof completionDetails) "Watch completion details must exactly match its target repository, branch, and event cursor."
+        | WorkingDirectoryUpdate.CallerKind.Connect, ConnectCompletion (cursor, localRootScope) ->
             match WorkingDirectoryUpdate.Operation.connectBootstrap target cursor localRootScope with
-            | Ok expectedOperation when WorkingDirectoryUpdate.Operation.value expectedOperation = WorkingDirectoryUpdate.Operation.value operation -> ()
-            | _ -> invalidArg (nameof operation) "Connect completion identity must exactly match its target, initial cursor, and local-root scope."
-        | WorkingDirectoryUpdate.CallerKind.Connect, _ ->
-            invalidArg (nameof connectIdentity) "Connect completion requires its exact initial cursor and local-root scope."
-        | _, None -> ()
-        | _ -> invalidArg (nameof connectIdentity) "Only Connect completion may persist a cursor and local-root scope."
+            | Ok expectedOperation when operationMatches expectedOperation -> ()
+            | _ -> invalidArg (nameof completionDetails) "Connect completion details must exactly match its target, initial cursor, and local-root scope."
+        | _ -> invalidArg (nameof completionDetails) "Working Directory Update completion details must match the operation caller."
 
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
     let private replaceStatusSnapshotWithRevisionCore
@@ -3108,7 +3135,7 @@ module LocalStateDb =
         (graceStatus: GraceStatus)
         (boundary: ReferenceMaterializationBoundaryDto option)
         (objectCacheDirectories: LocalDirectoryVersion array)
-        (completion: (WorkingDirectoryUpdate.Target * WorkingDirectoryUpdate.Operation * (string * WorkingDirectoryUpdate.LocalRootScope) option) option)
+        (completion: (WorkingDirectoryUpdate.Target * WorkingDirectoryUpdate.Operation * WorkingDirectoryUpdateCompletionDetails) option)
         (cancellationToken: CancellationToken)
         (repairBaseline: LocalStateRepairBaseline option)
         (beforeWriteClaim: unit -> unit)
@@ -3131,8 +3158,8 @@ module LocalStateDb =
             | _ -> ()
 
             match completion with
-            | Some (target, operation, connectIdentity) ->
-                validateWorkingDirectoryUpdateCompletionInput graceStatus objectCacheDirectories target operation connectIdentity
+            | Some (target, operation, completionDetails) ->
+                validateWorkingDirectoryUpdateCompletionInput graceStatus objectCacheDirectories target operation completionDetails
             | None -> ()
 
             cancellationToken.ThrowIfCancellationRequested()
@@ -3311,7 +3338,7 @@ module LocalStateDb =
                             | None -> ()
 
                             match completion with
-                            | Some (target, operation, connectIdentity) ->
+                            | Some (target, operation, completionDetails) ->
                                 let operationValue = WorkingDirectoryUpdate.Operation.value operation
 
                                 let operationCallerKind = WorkingDirectoryUpdate.Operation.callerKind operation
@@ -3325,6 +3352,18 @@ module LocalStateDb =
 
                                 let targetCanonical = WorkingDirectoryUpdate.Target.canonical target
 
+                                let branchPreviousBranchId, branchSelectedReferenceId, watchEventCursor =
+                                    match completionDetails with
+                                    | BranchFinalization (previousBranchId, selectedReferenceId) ->
+                                        Some(previousBranchId.ToString()), Some(selectedReferenceId.ToString()), None
+                                    | WatchFinalization eventCursor -> None, None, Some eventCursor
+                                    | ConnectCompletion _ -> None, None, None
+
+                                let nullableText value =
+                                    value
+                                    |> Option.map box
+                                    |> Option.defaultValue (box DBNull.Value)
+
                                 use pendingCommand = connection.CreateCommand()
 
                                 pendingCommand.CommandText <-
@@ -3336,8 +3375,8 @@ module LocalStateDb =
                                 if not (isNull (pendingCommand.ExecuteScalar())) then
                                     invalidOp "A different Working Directory Update finalization is already pending."
 
-                                match connectIdentity with
-                                | Some (cursor, _) ->
+                                match completionDetails with
+                                | ConnectCompletion (cursor, _) ->
                                     executeNonQueryWithParams
                                         connection
                                         "INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ($repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor);"
@@ -3367,7 +3406,8 @@ module LocalStateDb =
 
                                             parameters.AddWithValue("$event_cursor", cursor)
                                             |> ignore)
-                                | None -> ()
+                                | BranchFinalization _
+                                | WatchFinalization _ -> ()
 
                                 if operationCallerKind = WorkingDirectoryUpdate.CallerKind.Connect then
                                     executeNonQueryWithParams
@@ -3380,7 +3420,7 @@ module LocalStateDb =
                                 use completionCommand = connection.CreateCommand()
 
                                 completionCommand.CommandText <-
-                                    "INSERT INTO working_directory_update_completions (operation_value, caller_kind, target_canonical, finalization_state, completed_at_unix_ticks) VALUES ($operation_value, $caller_kind, $target_canonical, $finalization_state, $completed_at) ON CONFLICT(operation_value) DO UPDATE SET completed_at_unix_ticks = excluded.completed_at_unix_ticks WHERE working_directory_update_completions.caller_kind = excluded.caller_kind AND working_directory_update_completions.target_canonical = excluded.target_canonical AND working_directory_update_completions.finalization_state = excluded.finalization_state;"
+                                    "INSERT INTO working_directory_update_completions (operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selected_reference_id, watch_event_cursor, finalization_state, completed_at_unix_ticks) VALUES ($operation_value, $caller_kind, $target_canonical, $target_repository_id, $target_branch_id, $target_root_directory_version_id, $target_root_directory_sha256_hash, $target_root_directory_blake3_hash, $branch_previous_branch_id, $branch_selected_reference_id, $watch_event_cursor, $finalization_state, $completed_at) ON CONFLICT(operation_value) DO UPDATE SET completed_at_unix_ticks = excluded.completed_at_unix_ticks WHERE working_directory_update_completions.caller_kind = excluded.caller_kind AND working_directory_update_completions.target_canonical = excluded.target_canonical AND working_directory_update_completions.target_repository_id = excluded.target_repository_id AND working_directory_update_completions.target_branch_id = excluded.target_branch_id AND working_directory_update_completions.target_root_directory_version_id = excluded.target_root_directory_version_id AND working_directory_update_completions.target_root_directory_sha256_hash = excluded.target_root_directory_sha256_hash AND working_directory_update_completions.target_root_directory_blake3_hash = excluded.target_root_directory_blake3_hash AND working_directory_update_completions.branch_previous_branch_id IS excluded.branch_previous_branch_id AND working_directory_update_completions.branch_selected_reference_id IS excluded.branch_selected_reference_id AND working_directory_update_completions.watch_event_cursor IS excluded.watch_event_cursor AND working_directory_update_completions.finalization_state = excluded.finalization_state;"
 
                                 completionCommand.Parameters.AddWithValue("$operation_value", operationValue)
                                 |> ignore
@@ -3389,6 +3429,38 @@ module LocalStateDb =
                                 |> ignore
 
                                 completionCommand.Parameters.AddWithValue("$target_canonical", targetCanonical)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue(
+                                    "$target_repository_id",
+                                    WorkingDirectoryUpdate.Target.repositoryId target
+                                    |> string
+                                )
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue(
+                                    "$target_branch_id",
+                                    WorkingDirectoryUpdate.Target.branchId target
+                                    |> string
+                                )
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$target_root_directory_version_id", graceStatus.RootDirectoryId.ToString())
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$target_root_directory_sha256_hash", graceStatus.RootDirectorySha256Hash)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$target_root_directory_blake3_hash", getRootDirectoryBlake3Hash graceStatus)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$branch_previous_branch_id", nullableText branchPreviousBranchId)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$branch_selected_reference_id", nullableText branchSelectedReferenceId)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$watch_event_cursor", nullableText watchEventCursor)
                                 |> ignore
 
                                 completionCommand.Parameters.AddWithValue("$finalization_state", finalizationState)
@@ -3728,12 +3800,12 @@ module LocalStateDb =
             return ()
         }
 
-    /// Atomically stores exact local facts and a bounded completion after proving optional Connect cursor identity.
+    /// Atomically stores exact local facts and bounded caller-specific completion details.
     let internal commitWorkingDirectoryUpdateCompletion
         (dbPath: string)
         (graceStatus: GraceStatus)
         (objectCacheDirectories: IEnumerable<LocalDirectoryVersion>)
-        (connectIdentity: (string * WorkingDirectoryUpdate.LocalRootScope) option)
+        (completionDetails: WorkingDirectoryUpdateCompletionDetails)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
         =
@@ -3748,18 +3820,18 @@ module LocalStateDb =
             graceStatus
             None
             directories
-            (Some(target, operation, connectIdentity))
+            (Some(target, operation, completionDetails))
             CancellationToken.None
             None
             ignore
             ignore
 
-    /// Commits update completion through an injected pre-commit seam used by deterministic rollback proof.
+    /// Commits exact caller-specific completion through an injected pre-commit seam used by deterministic rollback proof.
     let internal commitWorkingDirectoryUpdateCompletionWithBeforeCommit
         (dbPath: string)
         (graceStatus: GraceStatus)
         (objectCacheDirectories: IEnumerable<LocalDirectoryVersion>)
-        (connectIdentity: (string * WorkingDirectoryUpdate.LocalRootScope) option)
+        (completionDetails: WorkingDirectoryUpdateCompletionDetails)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
         (beforeCommit: unit -> unit)
@@ -3775,11 +3847,83 @@ module LocalStateDb =
             graceStatus
             None
             directories
-            (Some(target, operation, connectIdentity))
+            (Some(target, operation, completionDetails))
             CancellationToken.None
             None
             ignore
             beforeCommit
+
+    /// Reads and validates the one pending Branch or Watch finalizer that survives process restart.
+    let internal readPendingWorkingDirectoryUpdateFinalization (dbPath: string) =
+        task {
+            do! ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT operation_value, caller_kind, target_canonical, target_repository_id, target_branch_id, target_root_directory_version_id, target_root_directory_sha256_hash, target_root_directory_blake3_hash, branch_previous_branch_id, branch_selected_reference_id, watch_event_cursor FROM working_directory_update_completions WHERE finalization_state = 'Pending' LIMIT 1;"
+
+            use reader = command.ExecuteReader()
+
+            if not (reader.Read()) then
+                return None
+            else
+                let requiredText ordinal columnName =
+                    if reader.IsDBNull(ordinal) then
+                        invalidOp $"Pending Working Directory Update finalization is missing '{columnName}'."
+                    else
+                        reader.GetString(ordinal)
+
+                let requiredGuid ordinal columnName =
+                    match Guid.TryParse(requiredText ordinal columnName) with
+                    | true, value -> value
+                    | false, _ -> invalidOp $"Pending Working Directory Update finalization has invalid '{columnName}'."
+
+                let operationValue = requiredText 0 "operation_value"
+                let callerKind = requiredText 1 "caller_kind"
+                let targetCanonical = requiredText 2 "target_canonical"
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create
+                        (requiredGuid 3 "target_repository_id")
+                        (requiredGuid 4 "target_branch_id")
+                        (requiredGuid 5 "target_root_directory_version_id")
+                        (requiredText 6 "target_root_directory_sha256_hash")
+                        (requiredText 7 "target_root_directory_blake3_hash")
+                    |> function
+                        | Ok value when WorkingDirectoryUpdate.Target.canonical value = targetCanonical -> value
+                        | Ok _ -> invalidOp "Pending Working Directory Update finalization target facts do not match their canonical target."
+                        | Error error -> invalidOp $"Pending Working Directory Update finalization target is invalid: {error}"
+
+                let operation, pendingFinalization =
+                    match callerKind with
+                    | "Branch" ->
+                        let previousBranchId = requiredGuid 8 "branch_previous_branch_id"
+                        let selectedReferenceId = requiredGuid 9 "branch_selected_reference_id"
+
+                        match WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target with
+                        | Ok operation -> operation, PendingBranchFinalization(target, operation, previousBranchId, selectedReferenceId)
+                        | Error error -> invalidOp $"Pending Branch finalization is invalid: {error}"
+                    | "Watch" ->
+                        let eventCursor = requiredText 10 "watch_event_cursor"
+
+                        match
+                            WorkingDirectoryUpdate.Operation.watchReplay
+                                (WorkingDirectoryUpdate.Target.repositoryId target)
+                                (WorkingDirectoryUpdate.Target.branchId target)
+                                eventCursor
+                            with
+                        | Ok operation -> operation, PendingWatchFinalization(target, operation, eventCursor)
+                        | Error error -> invalidOp $"Pending Watch finalization is invalid: {error}"
+                    | "Connect" -> invalidOp "Connect completion must be terminal and cannot be a pending finalization."
+                    | value -> invalidOp $"Pending Working Directory Update finalization has invalid caller kind '{value}'."
+
+                if WorkingDirectoryUpdate.Operation.value operation
+                   <> operationValue then
+                    return raise (InvalidOperationException("Pending Working Directory Update finalization facts do not match their operation identity."))
+                else
+                    return Some pendingFinalization
+        }
 
     /// Reads the exact retained completion state for one caller operation and its complete target.
     let internal readWorkingDirectoryUpdateCompletion (dbPath: string) (target: WorkingDirectoryUpdate.Target) (operation: WorkingDirectoryUpdate.Operation) =
