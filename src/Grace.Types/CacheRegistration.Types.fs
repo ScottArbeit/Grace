@@ -130,8 +130,6 @@ module CacheRegistration =
             Endpoint: string
             [<Id(8u)>]
             AllowHttpEndpoint: bool
-            [<Id(9u)>]
-            Health: CacheHealthStatus
             [<Id(10u)>]
             SoftwareVersion: string
             [<Id(11u)>]
@@ -346,9 +344,6 @@ module CacheRegistration =
                 if request.Class <> nameof CacheEnrollmentRequest then
                     errors.Add("Class must be CacheEnrollmentRequest.")
 
-                if not (isDefinedHealth request.Health) then
-                    errors.Add("Health must be Healthy or Unhealthy.")
-
                 if String.IsNullOrWhiteSpace request.DisplayName then
                     errors.Add("DisplayName is required.")
 
@@ -445,7 +440,7 @@ module CacheRegistration =
                     PublicKey = request.PublicKey
                     Endpoint = request.Endpoint.Trim()
                     AllowHttpEndpoint = request.AllowHttpEndpoint
-                    Health = request.Health
+                    Health = CacheHealthStatus.Unhealthy
                     SoftwareVersion = request.SoftwareVersion.Trim()
                     ProtocolVersion = request.ProtocolVersion.Trim()
                     PrefetchSupported = request.PrefetchSupported
@@ -495,6 +490,31 @@ module CacheRegistration =
                     Some registration,
                     "Cache refresh Endpoint must exactly match the registered endpoint."
                 )
+            | Some registration when
+                now < registration.RefreshAfter
+                && registration.Health = CacheHealthStatus.Unhealthy
+                && request.Health = CacheHealthStatus.Healthy
+                ->
+                let refreshed =
+                    { registration with
+                        Health = request.Health
+                        SoftwareVersion = request.SoftwareVersion.Trim()
+                        ProtocolVersion = request.ProtocolVersion.Trim()
+                        PrefetchSupported = request.PrefetchSupported
+                        LastRefreshedAt = now
+                        RefreshAfter = now.Plus RegistrationLifetime.RefreshAfter
+                        ExpiresAt = now.Plus RegistrationLifetime.ActiveLifetime
+                    }
+
+                let next =
+                    {
+                        Class = nameof CacheRegistrationState
+                        Registrations =
+                            current.Registrations
+                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then refreshed else existing)
+                    }
+
+                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Refreshed, Some refreshed, "Cache health was published.")
             | Some registration when
                 now < registration.RefreshAfter
                 && request.Health = CacheHealthStatus.Unhealthy

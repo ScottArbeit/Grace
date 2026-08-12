@@ -1430,6 +1430,36 @@ function Test-OpenApiMaterializationContractDetails {
     }
 }
 
+function Test-OpenApiCacheRegistrationContractDetails {
+    param([string] $OpenApiRoot)
+
+    $cacheComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Cache.Components.OpenAPI.yaml') -Raw
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $cacheComponentsText `
+        'CacheEnrollmentRequest' `
+        'Health:' `
+        'Cache enrollment must not accept caller-controlled Health.'
+
+    Assert-OpenApiSchemaRequiresProperties `
+        $cacheComponentsText `
+        'CacheEnrollmentRequest' `
+        @('Class', 'DisplayName', 'BoundaryKind', 'OwnerId', 'RepositoryScopes', 'PublicKey', 'Endpoint', 'AllowHttpEndpoint', 'SoftwareVersion', 'ProtocolVersion', 'PrefetchSupported') `
+        'Cache enrollment must require its durable identity and endpoint facts without caller Health.'
+
+    Assert-OpenApiSchemaHasProperty `
+        $cacheComponentsText `
+        'CacheRegistrationRefreshRequest' `
+        'Health' `
+        'Cache refresh must retain its operational Health input.'
+
+    Assert-OpenApiSchemaHasProperty `
+        $cacheComponentsText `
+        'CacheRegistration' `
+        'Health' `
+        'Persisted Cache registration must retain durable Health.'
+}
+
 function Test-OpenApiSharedContractDetails {
     param(
         [string] $OpenApiRoot,
@@ -1553,6 +1583,7 @@ function Test-OpenApiSharedContractDetails {
 
     Test-OpenApiBranchReferenceDiffDetails $OpenApiRoot $Operations
     Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails $OpenApiRoot $Operations
+    Test-OpenApiCacheRegistrationContractDetails $OpenApiRoot
     Test-OpenApiMaterializationContractDetails $OpenApiRoot
 }
 

@@ -40,8 +40,10 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [Mini-epic #601](https://github.com/ScottArbeit/Grace/issues/601) | Open parent for replacement runtime and store work. | Owns the replacement leaf sequence. |
 | [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
-| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Open R0: prune cache service-identity rotation contracts. | Precedes R1. |
-| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Open R1: static enrollment and redacted status. | Starts after R0 and its orphan-enrollment proof gate. |
+| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0 static-contract pruning. | Required predecessor completed. |
+| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886 and #887 R1 sequence. | Do not resume its mixed server, command, and status scope. |
+| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is implemented on the current PR head; focused proof and current-head Linux validation remain required before merge. | Owns only static enrollment state, protected local identity, and their focused proof. |
+| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) | Open R1B follow-on for repository-independent cache enrollment and status commands. | Starts after #886 integrates; owns no R1A implementation detail. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
 
@@ -82,8 +84,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
   PR #706 recorded the server-foundation validation.
 - **Status classification:** `implemented and proven` for the server foundation.
-- **Residual risk:** The current foundation contains a cache service-identity rotation surface. Product V1 does not
-  retain that capability; #855 removes it while preserving the separate artifact-grant validation-key behavior.
+- **Residual risk:** The static server foundation still requires the separate R1A identity and R2 liveness leaves before
+  a cache can safely participate in the later runtime path. Artifact-grant validation-key rollover remains separate.
 
 ### Direct materialization
 
@@ -98,28 +100,32 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R0: static contract pruning (#855)
 
-- **Status classification:** `planned`.
-- **Required result:** Remove cache service-identity rotation and candidate surfaces from types, actor state/events,
-  routes, CLI settings and status, local configuration, OpenAPI, generated SDKs, docs, fixtures, serializers, AOT
-  roots, and command catalogs. Do not remove artifact-grant validation-key rollover.
-- **Proof:** Inventory and generated-contract freshness show no active cache identity rotation surface remains; focused
-  grant-key validation proof remains green.
+- **Status classification:** `implemented and proven`.
+- **Recorded result:** #855 removed cache service-identity rotation and candidate surfaces while retaining the separate
+  artifact-grant validation-key rollover behavior.
+- **Recorded proof:** #855 records its inventory, generated-contract freshness, and focused grant-key validation proof;
+  the current source has no active cache service-identity rotation surface.
 
-### R1: static enrollment and redacted status (#856)
+### R1A: static enrollment identity foundation (#886)
 
-- **Status classification:** `planned`.
-- **Required result:** An administrator enrolls one static P-256 identity, atomically commits one ready local
-  configuration, and receives truthful redacted status. Manual recovery is revoke, local reset, and re-enrollment.
-- **Gate:** Before implementation, prove that an inactive server enrollment after an ambiguous result cannot be selected
-  and cannot block fresh manual re-enrollment. Stop for a maintainer decision if the proof fails.
-- **Proof:** Validation-before-effect, definitive rejection, unknown result, crash cleanup, atomic-write failure, key
-  mismatch, redaction, and unsupported-profile cases.
+- **Status classification:** `implementation leaf`.
+- **Required result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration before
+  success, and existing selection excludes it. The internal Linux-only identity primitive stages one `0700` attempt
+  directory with a flushed `0600` PKCS#8 P-256 key, then publishes `0700` ready only after a flushed `0600`
+  registration configuration matches the derived base64url SHA-256 `X || Y` fingerprint.
+- **Proof:** Actor persistence failure cannot advance authoritative in-memory selection; raw JSON `Health` cannot make
+  a new registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without
+  mutation; Linux tests restore modified modes before cleanup.
+- **Deferred:** #887 owns HTTP, credentials, command output, accepted/rejected/unknown orchestration, and cleanup calls;
+  #857 owns signed refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
+  R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
 
 ### R2: registration liveness (#857)
 
 - **Status classification:** `planned`.
-- **Required result:** One cache process uses one bounded scheduler with server-issued liveness times, bounded retry,
-  and terminal fail-closed behavior at expiry, revocation, or definitive rejection.
+- **Required result:** One cache process uses one bounded scheduler with server-issued liveness times, signed refreshes
+  that remain `Unhealthy`, bounded retry, and terminal fail-closed behavior at expiry, revocation, or definitive
+  rejection. #625, not #857, publishes `Healthy` after serving readiness is proven.
 - **Gate:** Before implementation, record the current registration response classes, timestamps, selection behavior,
   clock model, retry schedule, and expiry cap.
 - **Proof:** Startup, endpoint validation, guard conflict, refresh, temporary retry, capped `Retry-After`, revocation,
@@ -171,13 +177,18 @@ The final Epic #597 release candidate requires all of the following:
 5. Current-head validation and a fresh review complete for every relevant pull request.
 6. The final `epic/597` to `main` pull request receives explicit maintainer approval at that reviewed, validated head.
 
-## Docs-only validation
+## R1A validation status
 
-This update is documentation only. Its required local proof is:
+The R1A source, contract, generated-artifact, and focused-proof changes are in PR #888. Its required evidence is
+targeted F# formatting, affected Release builds and tests, OpenAPI/generated freshness, MarkdownLint, `git diff --check`,
+and a passing current-head GitHub `Validate` run that executes the Linux permission and inaccessible-state cases.
+Windows focused identity proof skips those Linux-only cases, so it cannot replace hosted Linux evidence.
+
+The following documentation checks remain part of that focused proof:
 
 ```powershell
 npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementation audit.md"
 git diff --check
 ```
 
-No build or test run is needed because no runtime, contract, generated artifact, or source file changes in this slice.
+This status does not claim R1B commands, R2 liveness, serving, rotation, reconciliation, non-Linux support, or CacheStore behavior.

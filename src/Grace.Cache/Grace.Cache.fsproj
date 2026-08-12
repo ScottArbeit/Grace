@@ -12,7 +12,14 @@
   <ItemGroup>
     <Compile Include="CacheHost.fs" />
     <Compile Include="CacheStore.fs" />
+    <Compile Include="CacheIdentity.fs" />
     <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Grace.Cache.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

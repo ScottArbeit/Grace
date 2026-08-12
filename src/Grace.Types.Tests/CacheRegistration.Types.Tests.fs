@@ -38,7 +38,6 @@ type CacheRegistrationLifecycleTests() =
             PublicKey = publicKey ()
             Endpoint = "https://cache.example.test"
             AllowHttpEndpoint = false
-            Health = CacheHealthStatus.Healthy
             SoftwareVersion = "1.0.0"
             ProtocolVersion = "v1"
             PrefetchSupported = true
@@ -46,6 +45,31 @@ type CacheRegistrationLifecycleTests() =
 
     /// Enrolls one Cache in the empty singleton state.
     let enrolled () = Lifecycle.enroll CacheRegistrationState.Empty cacheId (enrollment [ repositoryId ]) "admin-user" now
+
+    /// Supplies an already-current registration fixture for tests that exercise selection or refresh transitions after liveness.
+    let healthyState () =
+        let state, _ = enrolled ()
+
+        { state with
+            Registrations =
+                state.Registrations
+                |> Array.map (fun registration ->
+                    { registration with Health = CacheHealthStatus.Healthy; EnrolledAt = now.Minus(Duration.FromHours 1); LastRefreshedAt = now })
+        }
+
+    /// Creates an already-authenticated refresh shape for lifecycle transition tests; actor tests prove signature rejection separately.
+    let refreshRequest health observedAt =
+        {
+            Class = nameof CacheRegistrationRefreshRequest
+            CacheId = cacheId
+            Endpoint = "https://cache.example.test"
+            Health = health
+            SoftwareVersion = "1.0.1"
+            ProtocolVersion = "v1"
+            PrefetchSupported = false
+            ObservedAt = observedAt
+            Proof = Unchecked.defaultof<SignedCacheRequestProof>
+        }
 
     [<Test>]
     member _.``administrator enrollment stores CacheId boundary audit identity and explicit repositories``() =
@@ -60,6 +84,92 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.RepositoryScopes[0].RepositoryId, Is.EqualTo repositoryId)
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
         Assert.That(registration.PrefetchSupported, Is.True)
+
+    /// Verifies enrollment begins unavailable to selection and the caller contract cannot supply health.
+    [<Test>]
+    member _.``enrollment has no health input and always starts unhealthy``() =
+        let state, result = enrolled ()
+        let registration = state.Registrations[0]
+
+        Assert.That(typeof<CacheEnrollmentRequest>.GetProperty ("Health"), Is.Null)
+        Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.Enrolled)
+        Assert.That(registration.Health, Is.EqualTo CacheHealthStatus.Unhealthy)
+
+        let eligible = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) now
+
+        Assert.That(eligible, Is.Empty)
+
+    /// Verifies a persisted Unhealthy-to-Healthy transition bypasses throttling after prior validated Unhealthy refreshes, while same-state refreshes remain throttled.
+    [<Test>]
+    member _.``healthy publication bypasses throttle from persisted unhealthy state after prior unhealthy refreshes``() =
+        let state, _ = enrolled ()
+        let firstUnhealthyAt = now.Plus(Duration.FromHours 1)
+        let firstUnhealthy, firstUnhealthyResult = Lifecycle.refresh state (refreshRequest CacheHealthStatus.Unhealthy firstUnhealthyAt) firstUnhealthyAt
+
+        Assert.That(firstUnhealthyResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(firstUnhealthy.Registrations[0].Health, Is.EqualTo CacheHealthStatus.Unhealthy)
+
+        let secondUnhealthyAt = firstUnhealthyAt.Plus(Duration.FromMinutes 1L)
+        let sameState, sameStateResult = Lifecycle.refresh firstUnhealthy (refreshRequest CacheHealthStatus.Unhealthy secondUnhealthyAt) secondUnhealthyAt
+
+        Assert.That(sameStateResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(sameState, Is.EqualTo firstUnhealthy)
+
+        // The state record here is the actor's persisted/reloaded input; the transition must not depend on enrollment timestamps.
+        let restartedState = firstUnhealthy
+        let publishedAt = firstUnhealthyAt.Plus(Duration.FromMinutes 2L)
+        let published, publishedResult = Lifecycle.refresh restartedState (refreshRequest CacheHealthStatus.Healthy publishedAt) publishedAt
+        let registration = published.Registrations[0]
+
+        Assert.That(publishedResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(registration.Health, Is.EqualTo CacheHealthStatus.Healthy)
+        Assert.That(registration.LastRefreshedAt, Is.EqualTo publishedAt)
+
+        let selected = Lifecycle.selectEligible published (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) publishedAt
+        Assert.That(selected, Has.Length.EqualTo 1)
+
+        let tooEarlyAt = publishedAt.Plus(Duration.FromMinutes 1L)
+        let tooEarly = { refreshRequest CacheHealthStatus.Healthy tooEarlyAt with SoftwareVersion = "1.0.2" }
+
+        let throttled, throttledResult = Lifecycle.refresh published tooEarly tooEarlyAt
+        Assert.That(throttledResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(throttled, Is.EqualTo published)
+
+    /// Verifies every lifecycle rejection still wins before an Unhealthy-to-Healthy transition can bypass refresh throttling.
+    [<Test>]
+    member _.``healthy transition bypass does not override lifecycle rejection paths``() =
+        let state, _ = enrolled ()
+        let transitionAt = now.Plus(Duration.FromMinutes 1L)
+        let healthy = refreshRequest CacheHealthStatus.Healthy transitionAt
+
+        let notFound, notFoundResult = Lifecycle.refresh state { healthy with CacheId = Guid.NewGuid() } transitionAt
+        let endpointMismatch, endpointMismatchResult = Lifecycle.refresh state { healthy with Endpoint = "https://other-cache.example.test" } transitionAt
+        let revoked, _ = Lifecycle.revoke state cacheId now
+        let revokedNext, revokedResult = Lifecycle.refresh revoked healthy transitionAt
+
+        let expiredState =
+            { state with
+                Registrations =
+                    state.Registrations
+                    |> Array.map (fun registration -> { registration with ExpiresAt = now })
+            }
+
+        let expiredNext, expiredResult = Lifecycle.refresh expiredState healthy transitionAt
+        let staleNext, staleResult = Lifecycle.refresh state { healthy with ObservedAt = now } transitionAt
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(notFoundResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.NotFound)
+                Assert.That(notFound, Is.EqualTo state)
+                Assert.That(endpointMismatchResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
+                Assert.That(endpointMismatch, Is.EqualTo state)
+                Assert.That(revokedResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Revoked)
+                Assert.That(revokedNext, Is.EqualTo revoked)
+                Assert.That(expiredResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Expired)
+                Assert.That(expiredNext, Is.EqualTo expiredState)
+                Assert.That(staleResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Expired)
+                Assert.That(staleNext, Is.EqualTo state))
+        )
 
     /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
     [<Test>]
@@ -125,7 +235,7 @@ type CacheRegistrationLifecycleTests() =
 
     [<Test>]
     member _.``refresh updates only allowed operational facts and preserves administrator owned endpoint identity``() =
-        let state, _ = enrolled ()
+        let state = healthyState ()
 
         let request =
             {
@@ -160,7 +270,7 @@ type CacheRegistrationLifecycleTests() =
     /// Verifies an early unhealthy report immediately removes a Cache from selection without extending any other operational fact.
     [<Test>]
     member _.``early unhealthy refresh persists only the health downgrade and excludes later selection``() =
-        let state, _ = enrolled ()
+        let state = healthyState ()
 
         let earlyUnhealthy =
             {
@@ -193,10 +303,10 @@ type CacheRegistrationLifecycleTests() =
 
         Assert.That(eligible, Is.Empty)
 
-    /// Verifies early healthy recovery remains throttled after an immediate unhealthy downgrade.
+    /// Verifies an Unhealthy-to-Healthy recovery bypasses the ordinary interval after an immediate unhealthy downgrade.
     [<Test>]
-    member _.``early healthy refresh remains throttled after an unhealthy downgrade``() =
-        let state, _ = enrolled ()
+    member _.``early healthy refresh recovers after an unhealthy downgrade``() =
+        let state = healthyState ()
 
         let unhealthy =
             {
@@ -216,10 +326,10 @@ type CacheRegistrationLifecycleTests() =
         let earlyHealthy =
             { unhealthy with Health = CacheHealthStatus.Healthy; Endpoint = "https://cache.example.test"; ObservedAt = now.Plus(Duration.FromMinutes 2L) }
 
-        let throttledState, throttledResult = Lifecycle.refresh unhealthyState earlyHealthy (now.Plus(Duration.FromMinutes 2L))
+        let recoveredState, recoveredResult = Lifecycle.refresh unhealthyState earlyHealthy (now.Plus(Duration.FromMinutes 2L))
 
-        Assert.That(throttledResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
-        Assert.That(throttledState, Is.EqualTo unhealthyState)
+        Assert.That(recoveredResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(recoveredState.Registrations[0].Health, Is.EqualTo CacheHealthStatus.Healthy)
 
     /// Verifies malformed replacement scopes leave the durable lifecycle state unchanged.
     [<Test>]
@@ -263,7 +373,7 @@ type CacheRegistrationLifecycleTests() =
 
     [<Test>]
     member _.``selection uses exact repository identity and current health without mode or read-through capability``() =
-        let state, _ = enrolled ()
+        let state = healthyState ()
         let exact = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) (now.Plus(Duration.FromMinutes 30L))
         let wrong = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some otherRepositoryId, false)) (now.Plus(Duration.FromMinutes 30L))
         let prefetch = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, true)) (now.Plus(Duration.FromMinutes 30L))
@@ -286,9 +396,9 @@ type CacheRegistrationLifecycleTests() =
             Assert.That(errors, Does.Contain "Owner boundary must not include OrganizationId.")
             Assert.That(errors, Does.Contain "RepositoryScopes must not include duplicate repositories.")
 
-    /// Verifies only the named durable Cache health cases can pass enrollment and refresh validation.
+    /// Verifies only the named durable Cache health cases can pass refresh validation.
     [<Test>]
-    member _.``enrollment and refresh accept named health values and reject undefined numeric values``() =
+    member _.``refresh accepts named health values and rejects undefined numeric values``() =
         let refresh health =
             {
                 Class = nameof CacheRegistrationRefreshRequest
@@ -312,12 +422,6 @@ type CacheRegistrationLifecycleTests() =
                 CacheHealthStatus.Unhealthy
             ] do
             Assert.That(
-                Lifecycle.validateEnrollmentRequest { enrollment [ repositoryId ] with Health = health }
-                |> Result.isOk,
-                Is.True
-            )
-
-            Assert.That(
                 Lifecycle.validateRefreshRequest (refresh health)
                 |> Result.isOk,
                 Is.True
@@ -328,10 +432,6 @@ type CacheRegistrationLifecycleTests() =
                 enum<CacheHealthStatus> 0
                 enum<CacheHealthStatus> 999
             ] do
-            match Lifecycle.validateEnrollmentRequest { enrollment [ repositoryId ] with Health = health } with
-            | Ok () -> Assert.Fail($"Undefined enrollment health value {int health} was accepted.")
-            | Error errors -> Assert.That(errors, Does.Contain "Health must be Healthy or Unhealthy.")
-
             match Lifecycle.validateRefreshRequest (refresh health) with
             | Ok () -> Assert.Fail($"Undefined refresh health value {int health} was accepted.")
             | Error errors -> Assert.That(errors, Does.Contain "Health must be Healthy or Unhealthy.")

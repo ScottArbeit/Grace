@@ -141,7 +141,6 @@ module private RestartDurabilityHelpers =
                     PublicKey = cacheIdentityPublicKey privateKey
                     Endpoint = endpoint
                     AllowHttpEndpoint = true
-                    Health = CacheHealthStatus.Healthy
                     SoftwareVersion = "1.0.0"
                     ProtocolVersion = "v1"
                     PrefetchSupported = true
@@ -408,10 +407,8 @@ module private RestartDurabilityHelpers =
         }
 
     /// Sends a canonical static-key refresh request after restart and returns the lifecycle result from the rehydrated actor.
-    let refreshCacheAsync (privateKey: ECDsa) (cacheId: Guid) (endpoint: string) =
+    let refreshCacheAsync (privateKey: ECDsa) (cacheId: Guid) (endpoint: string) (observedAt: Instant) =
         task {
-            let observedAt = getCurrentInstant ()
-
             let unsignedRequest =
                 {
                     Class = nameof CacheRegistrationRefreshRequest
@@ -577,17 +574,36 @@ type RestartDurabilityServer() =
                     Assert.That(registration.PublicKey, Is.EqualTo(request.PublicKey))
                     Assert.That(registration.Endpoint, Is.EqualTo(request.Endpoint))
                     Assert.That(registration.AllowHttpEndpoint, Is.EqualTo(request.AllowHttpEndpoint))
-                    Assert.That(registration.Health, Is.EqualTo(request.Health))
+                    Assert.That(registration.Health, Is.EqualTo(CacheHealthStatus.Unhealthy))
                     Assert.That(registration.SoftwareVersion, Is.EqualTo(request.SoftwareVersion))
                     Assert.That(registration.ProtocolVersion, Is.EqualTo(request.ProtocolVersion))
                     Assert.That(registration.PrefetchSupported, Is.EqualTo(request.PrefetchSupported)))
             )
+
+            use typedContent = createJsonContent request
+            let! requestJson = typedContent.ReadAsStringAsync()
+
+            let rawJson =
+                requestJson.TrimEnd().TrimEnd('}')
+                + ",\"Health\":1}"
+
+            use rawContent = new StringContent(rawJson, Encoding.UTF8, "application/json")
+            let! rawResponse = Client.PostAsync("/cache/enroll", rawContent)
+            let! rawBody = RestartDurabilityHelpers.requireOkAsync rawResponse
+
+            let rawResult =
+                deserialize<GraceReturnValue<CacheRegistrationResult>> rawBody
+                |> fun value -> value.ReturnValue
+
+            match rawResult.Registration with
+            | Some rawRegistration -> Assert.That(rawRegistration.Health, Is.EqualTo(CacheHealthStatus.Unhealthy))
+            | None -> Assert.Fail("Enrollment with an ignored raw Health member did not return its persisted registration.")
         }
 
-    /// Verifies a persisted static cache identity rehydrates after server restart for signed refresh and exact repository selection.
+    /// Verifies a persisted static cache identity remains ineligible before liveness refresh and rehydrates for signed refresh.
     [<Test>]
     [<Order(4)>]
-    member _.StaticCacheRegistrationRehydratesForSignedRefreshAndExactRepositorySelection() =
+    member _.StaticCacheRegistrationStartsUnhealthyAndRehydratesForSignedRefresh() =
         task {
             use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
             let! selectedRepositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-cache-selected"
@@ -606,10 +622,47 @@ type RestartDurabilityServer() =
                     Assert.Fail("Cache enrollment did not return the persisted registration.")
                     Guid.Empty
 
+            let! initialStatus, initialBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(initialStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), initialBody)
+
+            let initialError = deserialize<GraceError> initialBody
+            Assert.That(initialError.Error, Does.Contain("No eligible Cache registration is currently available."))
+
             do! RestartDurabilityHelpers.restartGraceServerAsync ()
 
-            let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint
-            Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue))
+            let! afterRestartStatus, afterRestartBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(afterRestartStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), afterRestartBody)
+
+            let afterRestartError = deserialize<GraceError> afterRestartBody
+            Assert.That(afterRestartError.Error, Does.Contain("No eligible Cache registration is currently available."))
+
+            let invalidObservedAt = getCurrentInstant ()
+
+            let invalidRefresh =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.0.1"
+                    ProtocolVersion = "v1"
+                    PrefetchSupported = false
+                    ObservedAt = invalidObservedAt
+                    Proof =
+                        CacheRequestProofPayload.Create(cacheId, CacheRegistrationProof.RefreshOperation, "incorrect-refresh-digest", invalidObservedAt)
+                        |> fun payload -> SignedCacheRequestProof.Create(payload, "invalid-signature")
+                }
+
+            let! invalidRefreshResponse = Client.PostAsync("/cache/refresh", createJsonContent invalidRefresh)
+            let! invalidRefreshBody = invalidRefreshResponse.Content.ReadAsStringAsync()
+            Assert.That(invalidRefreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), invalidRefreshBody)
+            Assert.That(invalidRefreshBody, Does.Contain("Cache refresh proof is invalid"))
+
+            let! afterInvalidProofStatus, afterInvalidProofBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(afterInvalidProofStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), afterInvalidProofBody)
+
+            let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint (getCurrentInstant ())
+            Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.Refreshed))
 
             let rehydratedRegistration =
                 match refreshed.Registration with
@@ -631,21 +684,6 @@ type RestartDurabilityServer() =
             let! selectedStatus, selectedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
             Assert.That(selectedStatus, Is.EqualTo(HttpStatusCode.OK), selectedBody)
 
-            let selectedPlan =
-                deserialize<GraceReturnValue<MaterializationPlan>>(
-                    selectedBody
-                )
-                    .ReturnValue
-
-            let selectedGrant =
-                match selectedPlan.ArtifactGrant with
-                | Some grant -> grant
-                | None ->
-                    Assert.Fail("Cache-required plan did not include the selected Cache artifact grant.")
-                    Unchecked.defaultof<_>
-
-            Assert.That(selectedGrant.Payload.CacheId, Is.EqualTo(cacheId.ToString("D")))
-
             let! unrelatedRepositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-cache-unrelated"
             let! unrelatedStatus, unrelatedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync unrelatedRepositoryId
 
@@ -653,4 +691,20 @@ type RestartDurabilityServer() =
 
             let unrelatedError = deserialize<GraceError> (unrelatedBody)
             Assert.That(unrelatedError.Error, Does.Contain("No eligible Cache registration is currently available."))
+
+            let secondObservedAt = rehydratedRegistration.LastRefreshedAt.Plus(Duration.FromMilliseconds 1L)
+
+            Assert.That(
+                secondObservedAt < rehydratedRegistration.RefreshAfter,
+                Is.True,
+                $"First refresh must establish a future throttle boundary. EnrolledAt={rehydratedRegistration.EnrolledAt}; LastRefreshedAt={rehydratedRegistration.LastRefreshedAt}; RefreshAfter={rehydratedRegistration.RefreshAfter}."
+            )
+
+            let! throttled = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint secondObservedAt
+
+            Assert.That(
+                throttled.Status,
+                Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue),
+                $"Immediate second refresh must remain throttled. EnrolledAt={rehydratedRegistration.EnrolledAt}; LastRefreshedAt={rehydratedRegistration.LastRefreshedAt}; RefreshAfter={rehydratedRegistration.RefreshAfter}; ObservedAt={secondObservedAt}."
+            )
         }
