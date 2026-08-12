@@ -245,6 +245,14 @@ module internal WorkingDirectoryUpdateCoordination =
                     let rootScope = WorkingDirectoryUpdate.LocalRootScope.value localRootScope
                     Scope(repositoryId, rootScope, Services.workingDirectoryUpdateTempDirectory repositoryId rootScope))
 
+        /// Rebuilds the stable lease location from the immutable local-root scope retained by a recovery-only request.
+        let createFromLocalRootScope repositoryId localRootScope =
+            if repositoryId = Guid.Empty then
+                Error "Working Directory Update coordination requires a repository id."
+            else
+                let rootScope = WorkingDirectoryUpdate.LocalRootScope.value localRootScope
+                Ok(Scope(repositoryId, rootScope, Services.workingDirectoryUpdateTempDirectory repositoryId rootScope))
+
         /// Returns the lower-case SHA-256 local-root component of a scope.
         let value (scope: Scope) = scopeValue scope
 

@@ -284,11 +284,10 @@ module WorkingDirectoryUpdateContractsTests =
         WorkingDirectoryUpdate.Operation.value operation
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
 
-    /// Verifies Branch and Connect requests and receipts cannot substitute any root identity fact.
+    /// Verifies Branch and Connect receipts cannot substitute any root identity fact.
     [<Test>]
     let ``Branch and Connect bind requests and receipts to their complete selected target`` () =
         let selectedTarget = selectedTarget ()
-        let preparedContent = preparedContent ()
 
         let branchOperation =
             WorkingDirectoryUpdate.Operation.branchSwitch
@@ -313,25 +312,15 @@ module WorkingDirectoryUpdateContractsTests =
             ]
 
         let assertCompleteBinding operation =
-            WorkingDirectoryUpdate.Request.create selectedTarget operation preparedContent "target-binding"
-            |> Result.isOk
-            |> should equal true
-
             WorkingDirectoryUpdate.Receipt.create selectedTarget operation true
             |> Result.isOk
             |> should equal true
 
             mismatchedTargets
             |> List.iter (fun mismatchedTarget ->
-                WorkingDirectoryUpdate.Request.create mismatchedTarget operation preparedContent "target-binding"
-                |> Result.isError
-                |> should equal true
-
                 WorkingDirectoryUpdate.Receipt.create mismatchedTarget operation true
                 |> Result.isError
                 |> should equal true)
 
         assertCompleteBinding branchOperation
         assertCompleteBinding connectOperation
-
-        WorkingDirectoryUpdate.PreparedContent.dispose preparedContent

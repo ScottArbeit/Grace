@@ -61,10 +61,7 @@ module internal WorkingDirectoryUpdateContracts =
         abstract member OpenReadAsync: RelativePath * CancellationToken -> Task<Stream>
 
     /// Represents immutable dual-hash-verified bytes for a future update engine.
-    type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref
-
-    /// Holds validated update inputs without exposing a mutation plan, writer, or transaction callback.
-    type Request = private Request of Target * Operation * PreparedContent * CorrelationId
+    type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref * disposalCount: int ref
 
     /// Holds the target and operation facts proven by a completed update attempt.
     type Receipt = private Receipt of Target * Operation * bytesChanged: bool
@@ -228,6 +225,15 @@ module internal WorkingDirectoryUpdateContracts =
 
         /// Returns the branch selected by this target.
         let branchId (Target (_, branchId, _, _, _, _)) = branchId
+
+        /// Returns the exact root directory version that the verified working tree must represent.
+        let rootDirectoryVersionId (Target (_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
+
+        /// Returns the selected root SHA-256 used to bind local status to the completed update.
+        let sha256Hash (Target (_, _, _, sha256Hash, _, _)) = sha256Hash
+
+        /// Returns the selected root BLAKE3 used to bind local status to the completed update.
+        let blake3Hash (Target (_, _, _, _, blake3Hash, _)) = blake3Hash
 
         /// Returns the canonical target encoding included in caller operation tuples.
         let canonical (Target (_, _, _, _, _, canonical)) = canonical
@@ -500,13 +506,16 @@ module internal WorkingDirectoryUpdateContracts =
 
                             match byteError with
                             | Some error -> return Error error
-                            | None -> return Ok(PreparedContent(manifest, bytesByPath, ref false))
+                            | None -> return Ok(PreparedContent(manifest, bytesByPath, ref false, ref 0))
                     finally
                         reader.Dispose()
             }
 
+        /// Returns the immutable manifest that defines every object and working-file path the engine may materialize.
+        let manifest (PreparedContent (manifest, _, _, _)) = manifest
+
         /// Opens a read-only stream over verified bytes for one declared file.
-        let openRead (PreparedContent (_, bytesByPath, disposed)) path =
+        let openRead (PreparedContent (_, bytesByPath, disposed, _)) path =
             match normalizeRelativePath path with
             | Error error -> Error error
             | Ok path when !disposed -> Error "Prepared-content has already been disposed."
@@ -516,27 +525,17 @@ module internal WorkingDirectoryUpdateContracts =
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
         /// Clears verified bytes when the owning update operation reaches a terminal path.
-        let dispose (PreparedContent (_, bytesByPath, disposed)) =
+        let dispose (PreparedContent (_, bytesByPath, disposed, disposalCount)) =
             if not !disposed then
                 bytesByPath.Values
                 |> Seq.iter (fun bytes -> Array.Clear(bytes, 0, bytes.Length))
 
                 bytesByPath.Clear()
                 disposed := true
+                disposalCount := !disposalCount + 1
 
-    /// Supplies construction and access functions for private update requests.
-    module Request =
-        /// Creates a request only when its deterministic operation belongs to the selected target scope.
-        let create target operation preparedContent correlationId =
-            if isNull (box preparedContent) then
-                Error "Working Directory Update requires prepared content."
-            elif Operation.matchesTarget target operation then
-                Ok(Request(target, operation, preparedContent, correlationId))
-            else
-                Error "Working Directory Update operation does not match the selected target."
-
-        /// Returns the logical operation independently of diagnostic correlation.
-        let operation (Request (_, operation, _, _)) = operation
+        /// Returns the private lifetime count used to prove one terminal update clears its verified byte snapshot once.
+        let internal disposalCount (PreparedContent (_, _, _, disposalCount)) = !disposalCount
 
     /// Supplies construction and access functions for completed update receipts.
     module Receipt =
@@ -558,3 +557,6 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update failure reason must not be empty."
             else
                 Ok(Failure reason)
+
+        /// Returns the private classified reason for focused engine assertions without changing caller rendering.
+        let internal reason (Failure reason) = reason

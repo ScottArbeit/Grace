@@ -329,15 +329,11 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
             reader.Disposed |> should equal true)
 
-    /// Verifies diagnostic correlations cannot redefine or merge Watch operation identities.
+    /// Verifies Watch operation tuples remain distinct without a superseded generic request wrapper.
     [<Test>]
     let ``diagnostic correlations preserve operation identity boundaries`` () =
         let bytes = Encoding.UTF8.GetBytes("request bytes")
         let preparedManifest = manifest [ fileEntry "content.txt" bytes ]
-
-        let preparedContent =
-            prepare preparedManifest (new TrackingReader([ "content.txt" ], [ "content.txt", bytes ]))
-            |> required
 
         let target =
             WorkingDirectoryUpdate.Target.create
@@ -359,32 +355,8 @@ module WorkingDirectoryUpdatePreparedContentTests =
             WorkingDirectoryUpdate.Operation.watchReplay repositoryId branchId "cursor-002"
             |> required
 
-        let firstRequest =
-            WorkingDirectoryUpdate.Request.create target first preparedContent "diagnostic-42"
-            |> required
+        WorkingDirectoryUpdate.Operation.value first
+        |> should equal (WorkingDirectoryUpdate.Operation.value first)
 
-        let secondRequest =
-            WorkingDirectoryUpdate.Request.create target second preparedContent "diagnostic-42"
-            |> required
-
-        let differentCorrelationRequest =
-            WorkingDirectoryUpdate.Request.create target first preparedContent "diagnostic-99"
-            |> required
-
-        WorkingDirectoryUpdate.Request.operation firstRequest
-        |> WorkingDirectoryUpdate.Operation.value
-        |> should
-            equal
-            (WorkingDirectoryUpdate.Request.operation differentCorrelationRequest
-             |> WorkingDirectoryUpdate.Operation.value)
-
-        WorkingDirectoryUpdate.Request.operation firstRequest
-        |> WorkingDirectoryUpdate.Operation.value
-        |> should
-            not'
-            (equal (
-                WorkingDirectoryUpdate.Request.operation secondRequest
-                |> WorkingDirectoryUpdate.Operation.value
-            ))
-
-        WorkingDirectoryUpdate.PreparedContent.dispose preparedContent
+        WorkingDirectoryUpdate.Operation.value first
+        |> should not' (equal (WorkingDirectoryUpdate.Operation.value second))

@@ -3961,10 +3961,11 @@ module LocalStateDb =
         }
 
     /// Marks one exact pending completion terminal while retaining only the latest terminal result for its caller kind.
-    let internal finalizeWorkingDirectoryUpdateCompletion
+    let private finalizeWorkingDirectoryUpdateCompletionCore
         (dbPath: string)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
+        (beforeTerminalUpdate: unit -> unit)
         =
         task {
             if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
@@ -4006,6 +4007,8 @@ module LocalStateDb =
                                 executeNonQuery connection "COMMIT;"
                                 return ()
                             | :? string as "Pending" ->
+                                beforeTerminalUpdate ()
+
                                 executeNonQueryWithParams
                                     connection
                                     "DELETE FROM working_directory_update_completions WHERE caller_kind = $caller_kind AND finalization_state = 'Terminal';"
@@ -4042,6 +4045,13 @@ module LocalStateDb =
                             return raise ex
                     })
         }
+
+    /// Marks a pending completion terminal without an injected interruption.
+    let internal finalizeWorkingDirectoryUpdateCompletion dbPath target operation = finalizeWorkingDirectoryUpdateCompletionCore dbPath target operation ignore
+
+    /// Exposes the one finite pre-terminal seam needed to prove finalizer-success recovery without general callbacks.
+    let internal finalizeWorkingDirectoryUpdateCompletionWithBeforeTerminalUpdate dbPath target operation beforeTerminalUpdate =
+        finalizeWorkingDirectoryUpdateCompletionCore dbPath target operation beforeTerminalUpdate
 
     /// Persists upsert object cache changes in the local SQLite state database.
     let upsertObjectCache (dbPath: string) (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
