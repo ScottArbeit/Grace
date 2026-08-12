@@ -74,15 +74,28 @@ function Get-SingleMarkedBlock(
 }
 
 function Get-FencedJsonPayload([string] $text, [string] $artifact, [string] $schema) {
-    $matches = [regex]::Matches($text, '(?s)```json\s*(\{.*?\})\s*```')
+    $matches = [regex]::Matches($text, '(?s)```json\s*(.*?)\s*```')
     $matching = @()
     foreach ($match in $matches) {
+        $json = $match.Groups[1].Value
+        # A block that names this schema is a candidate even when malformed.  Do not let a later valid block hide it.
+        $identifiesSchema = $json -match [regex]::Escape($schema)
         try {
-            Assert-NoDuplicateJsonProperties $match.Groups[1].Value $artifact
-            $value = $match.Groups[1].Value | ConvertFrom-Json -Depth 100
-        } catch { continue }
-        if ($null -ne $value.PSObject.Properties['schema'] -and $value.schema -eq $schema) {
-            $matching += [pscustomobject]@{ Json = $match.Groups[1].Value; Value = $value }
+            Assert-NoDuplicateJsonProperties $json $artifact
+            $document = [System.Text.Json.JsonDocument]::Parse($json)
+            $raw = $document.RootElement.Clone()
+            $document.Dispose()
+            $value = $json | ConvertFrom-Json -Depth 100
+        } catch {
+            if ($identifiesSchema) { Fail-Contract $artifact "malformed JSON candidate for '$schema'" }
+            continue
+        }
+        $schemaProperty = @($raw.EnumerateObject() | Where-Object { $_.Name -ieq 'schema' })
+        if ($schemaProperty.Count -gt 0 -and $schemaProperty[0].Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String -and
+            $schemaProperty[0].Value.GetString() -eq $schema) {
+            $matching += [pscustomobject]@{ Json = $json; Value = $value; Raw = $raw }
+        } elseif ($identifiesSchema) {
+            Fail-Contract $artifact "ambiguous JSON candidate for '$schema'"
         }
     }
     if ($matching.Count -ne 1) { Fail-Contract $artifact "expected exactly one '$schema' JSON block" }
@@ -111,6 +124,216 @@ function Assert-NoDuplicateJsonProperties([string] $json, [string] $artifact) {
 
 function ConvertFrom-FencedJson([string] $text, [string] $artifact, [string] $schema) {
     return (Get-FencedJsonPayload $text $artifact $schema).Value
+}
+
+function Assert-JsonKind($element, [System.Text.Json.JsonValueKind] $kind, [string] $artifact, [string] $location) {
+    if ($element.ValueKind -ne $kind) { Fail-Contract $artifact "$location must be a $kind JSON value" }
+}
+
+function Get-JsonProperty($element, [string] $name, [string] $artifact, [string] $location) {
+    $property = @($element.EnumerateObject() | Where-Object { $_.Name -ceq $name })
+    if ($property.Count -ne 1) { Fail-Contract $artifact "$location is missing JSON property '$name'" }
+    return $property[0].Value
+}
+
+function Assert-JsonExactProperties($element, [string[]] $names, [string] $artifact, [string] $location) {
+    Assert-JsonKind $element ([System.Text.Json.JsonValueKind]::Object) $artifact $location
+    $actual = @($element.EnumerateObject() | ForEach-Object Name | Sort-Object)
+    if (Compare-Object ($names | Sort-Object) $actual) {
+        Fail-Contract $artifact "$location has malformed JSON properties: $($actual -join ', ')"
+    }
+}
+
+function Assert-JsonString($element, [string] $artifact, [string] $location, [string] $fixedValue = '') {
+    Assert-JsonKind $element ([System.Text.Json.JsonValueKind]::String) $artifact $location
+    if ($fixedValue -and $element.GetString() -cne $fixedValue) { Fail-Contract $artifact "$location must equal '$fixedValue'" }
+}
+
+function Assert-JsonStringOrNull($element, [string] $artifact, [string] $location) {
+    if ($element.ValueKind -ne [System.Text.Json.JsonValueKind]::String -and $element.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        Fail-Contract $artifact "$location must be a string or null JSON value"
+    }
+}
+
+function Assert-JsonBooleanOrNull($element, [string] $artifact, [string] $location) {
+    if ($element.ValueKind -notin @([System.Text.Json.JsonValueKind]::True, [System.Text.Json.JsonValueKind]::False,
+            [System.Text.Json.JsonValueKind]::Null)) { Fail-Contract $artifact "$location must be a Boolean or null JSON value" }
+}
+
+function Get-JsonStringArray($element, [string] $artifact, [string] $location) {
+    Assert-JsonKind $element ([System.Text.Json.JsonValueKind]::Array) $artifact $location
+    $values = @()
+    $index = 0
+    foreach ($item in $element.EnumerateArray()) {
+        Assert-JsonString $item $artifact "$location[$index]"
+        $values += $item.GetString(); $index++
+    }
+    return $values
+}
+
+function Assert-JsonInteger($element, [string] $artifact, [string] $location) {
+    Assert-JsonKind $element ([System.Text.Json.JsonValueKind]::Number) $artifact $location
+    $number = 0
+    if (-not $element.TryGetInt32([ref] $number)) { Fail-Contract $artifact "$location must be an integer JSON number" }
+    return $number
+}
+
+function Assert-JsonPredicate($element, [string] $axis, [string] $artifact, [string] $location) {
+    Assert-JsonKind $element ([System.Text.Json.JsonValueKind]::Object) $artifact $location
+    $kind = Get-JsonProperty $element 'kind' $artifact $location
+    Assert-JsonString $kind $artifact "$location/kind"
+    switch ($kind.GetString()) {
+        'one' { Assert-JsonExactProperties $element @('kind', 'value') $artifact $location; Assert-JsonString (Get-JsonProperty $element 'value' $artifact $location) $artifact "$location/value" }
+        'set' { Assert-JsonExactProperties $element @('kind', 'values') $artifact $location; $null = Get-JsonStringArray (Get-JsonProperty $element 'values' $artifact $location) $artifact "$location/values" }
+        'aggregate' { Assert-JsonExactProperties $element @('kind', 'name') $artifact $location; Assert-JsonString (Get-JsonProperty $element 'name' $artifact $location) $artifact "$location/name" }
+        default { Fail-Contract $artifact "$location/kind has unknown predicate kind '$($kind.GetString())'" }
+    }
+}
+
+function Test-LifecycleSchema($payload, [string] $artifact) {
+    $root = $payload.Raw
+    Assert-JsonExactProperties $root @('boundaries', 'doctorCommand', 'machineGrammar', 'order', 'retryAdmission', 'rows', 'schema') $artifact '$'
+    Assert-JsonString (Get-JsonProperty $root 'schema' $artifact '$') $artifact '$/schema' 'grace.wdu.branch-lifecycle/v1'
+    Assert-JsonString (Get-JsonProperty $root 'doctorCommand' $artifact '$') $artifact '$/doctorCommand' 'grace doctor --repair-local-state'
+
+    $grammar = Get-JsonProperty $root 'machineGrammar' $artifact '$'
+    Assert-JsonExactProperties $grammar @('aggregates', 'concreteEnums', 'encoding', 'expansion', 'overlap', 'predicateAxes', 'terminalReplay') $artifact '$/machineGrammar'
+    $axes = @('invocation', 'trigger', 'marker', 'selectionState')
+    Assert-ExactMembers (Get-JsonStringArray (Get-JsonProperty $grammar 'predicateAxes' $artifact '$/machineGrammar') $artifact '$/machineGrammar/predicateAxes') $axes $artifact 'machineGrammar predicateAxes'
+
+    $encoding = Get-JsonProperty $grammar 'encoding' $artifact '$/machineGrammar'
+    $encodingExpectations = [ordered]@{
+        one = @{ Meaning = 'one concrete value'; Shape = @('kind', 'one', 'value', '<concrete-enum-member>') }
+        set = @{ Meaning = 'nonempty duplicate-free union of concrete values'; Shape = @('kind', 'set', 'values', '<concrete-enum-member>') }
+        aggregate = @{ Meaning = 'exact declared expansion; aggregates cannot nest'; Shape = @('kind', 'aggregate', 'name', '<declared-axis-aggregate>') }
+    }
+    Assert-JsonExactProperties $encoding @($encodingExpectations.Keys) $artifact '$/machineGrammar/encoding'
+    foreach ($name in $encodingExpectations.Keys) {
+        $entry = Get-JsonProperty $encoding $name $artifact '$/machineGrammar/encoding'
+        Assert-JsonExactProperties $entry @('jsonShape', 'meaning') $artifact "$/machineGrammar/encoding/$name"
+        Assert-JsonString (Get-JsonProperty $entry 'meaning' $artifact "$/machineGrammar/encoding/$name") $artifact "$/machineGrammar/encoding/$name/meaning" $encodingExpectations[$name].Meaning
+        $shape = Get-JsonProperty $entry 'jsonShape' $artifact "$/machineGrammar/encoding/$name"
+        Assert-JsonExactProperties $shape @($encodingExpectations[$name].Shape[0], $encodingExpectations[$name].Shape[2]) $artifact "$/machineGrammar/encoding/$name/jsonShape"
+        Assert-JsonString (Get-JsonProperty $shape $encodingExpectations[$name].Shape[0] $artifact "$/machineGrammar/encoding/$name/jsonShape") $artifact "$/machineGrammar/encoding/$name/jsonShape/kind" $encodingExpectations[$name].Shape[1]
+        $shapeValue = Get-JsonProperty $shape $encodingExpectations[$name].Shape[2] $artifact "$/machineGrammar/encoding/$name/jsonShape"
+        if ($name -eq 'set') {
+            $values = Get-JsonStringArray $shapeValue $artifact "$/machineGrammar/encoding/$name/jsonShape/values"
+            Assert-ExactMembers $values @('<concrete-enum-member>') $artifact "encoding $name jsonShape values"
+        } else {
+            Assert-JsonString $shapeValue $artifact "$/machineGrammar/encoding/$name/jsonShape/$($encodingExpectations[$name].Shape[2])" $encodingExpectations[$name].Shape[3]
+        }
+    }
+
+    $concreteEnums = Get-JsonProperty $grammar 'concreteEnums' $artifact '$/machineGrammar'
+    Assert-JsonExactProperties $concreteEnums @('exitClass', 'firstApplicableRetryWrite', 'invocation', 'marker', 'selectionState', 'trigger') $artifact '$/machineGrammar/concreteEnums'
+    foreach ($name in @('exitClass', 'firstApplicableRetryWrite', 'invocation', 'marker', 'selectionState', 'trigger')) {
+        $null = Get-JsonStringArray (Get-JsonProperty $concreteEnums $name $artifact '$/machineGrammar/concreteEnums') $artifact "$/machineGrammar/concreteEnums/$name"
+    }
+    $aggregates = Get-JsonProperty $grammar 'aggregates' $artifact '$/machineGrammar'
+    Assert-JsonExactProperties $aggregates @('marker', 'selectionState') $artifact '$/machineGrammar/aggregates'
+    foreach ($axis in @('marker', 'selectionState')) {
+        $aggregate = Get-JsonProperty $aggregates $axis $artifact '$/machineGrammar/aggregates'
+        Assert-JsonKind $aggregate ([System.Text.Json.JsonValueKind]::Object) $artifact "$/machineGrammar/aggregates/$axis"
+        foreach ($property in $aggregate.EnumerateObject()) { $null = Get-JsonStringArray $property.Value $artifact "$/machineGrammar/aggregates/$axis/$($property.Name)" }
+    }
+    $boundaries = Get-JsonProperty $root 'boundaries' $artifact '$'
+    Assert-JsonExactProperties $boundaries @('firstApplicableRetryWrite', 'firstWorkingTreeMutation', 'sqliteLocalCompletion') $artifact '$/boundaries'
+    Assert-JsonString (Get-JsonProperty $boundaries 'firstWorkingTreeMutation' $artifact '$/boundaries') $artifact '$/boundaries/firstWorkingTreeMutation' 'first tracked working-path mutation'
+    Assert-JsonString (Get-JsonProperty $boundaries 'sqliteLocalCompletion' $artifact '$/boundaries') $artifact '$/boundaries/sqliteLocalCompletion' 'atomic verified status, object metadata, and pending-operation write'
+    Assert-JsonString (Get-JsonProperty $boundaries 'firstApplicableRetryWrite' $artifact '$/boundaries') $artifact '$/boundaries/firstApplicableRetryWrite' 'exactCleanup, branchPublication, or terminalRecording selected from persisted facts'
+    $expansion = Get-JsonProperty $grammar 'expansion' $artifact '$/machineGrammar'
+    Assert-JsonExactProperties $expansion @('aggregateMembers', 'example', 'rule', 'setMembers') $artifact '$/machineGrammar/expansion'
+    Assert-JsonString (Get-JsonProperty $expansion 'rule' $artifact '$/machineGrammar/expansion') $artifact '$/machineGrammar/expansion/rule' 'Resolve each match axis by its kind, then take the Cartesian product across all four axes.'
+    Assert-JsonString (Get-JsonProperty $expansion 'setMembers' $artifact '$/machineGrammar/expansion') $artifact '$/machineGrammar/expansion/setMembers' 'Set values are concrete members of that axis only; unknown values, empty sets, duplicates, and mixed shapes are invalid.'
+    Assert-JsonString (Get-JsonProperty $expansion 'aggregateMembers' $artifact '$/machineGrammar/expansion') $artifact '$/machineGrammar/expansion/aggregateMembers' 'Aggregate names are valid only on the axis where declared; unknown names and aggregate tokens inside sets are invalid.'
+    Assert-JsonString (Get-JsonProperty $expansion 'example' $artifact '$/machineGrammar/expansion') $artifact '$/machineGrammar/expansion/example' 'WDU-LC-100 expands five marker values times four selection states into 20 applicable cells.'
+    $overlap = Get-JsonProperty $grammar 'overlap' $artifact '$/machineGrammar'
+    Assert-JsonExactProperties $overlap @('applicabilityKey', 'routing', 'rule') $artifact '$/machineGrammar/overlap'
+    Assert-ExactMembers (Get-JsonStringArray (Get-JsonProperty $overlap 'applicabilityKey' $artifact '$/machineGrammar/overlap') $artifact '$/machineGrammar/overlap/applicabilityKey') $axes $artifact 'machineGrammar overlap applicability key'
+    Assert-JsonString (Get-JsonProperty $overlap 'rule' $artifact '$/machineGrammar/overlap') $artifact '$/machineGrammar/overlap/rule' 'Expanded applicability keys must be disjoint; duplicate keys are invalid and there is no first-row-wins precedence.'
+    Assert-JsonString (Get-JsonProperty $overlap 'routing' $artifact '$/machineGrammar/overlap') $artifact '$/machineGrammar/overlap/routing' 'A routing row selects only its declared nextRows after its own key matches; nextRows do not create precedence.'
+    $terminal = Get-JsonProperty $grammar 'terminalReplay' $artifact '$/machineGrammar'
+    Assert-JsonExactProperties $terminal @('effects', 'markerExpansion', 'row', 'selectionExpansion') $artifact '$/machineGrammar/terminalReplay'
+    Assert-JsonString (Get-JsonProperty $terminal 'row' $artifact '$/machineGrammar/terminalReplay') $artifact '$/machineGrammar/terminalReplay/row' 'WDU-LC-003'
+    Assert-JsonString (Get-JsonProperty $terminal 'selectionExpansion' $artifact '$/machineGrammar/terminalReplay') $artifact '$/machineGrammar/terminalReplay/selectionExpansion' 'persisted expands to all four concrete persisted selection states'
+    Assert-JsonString (Get-JsonProperty $terminal 'markerExpansion' $artifact '$/machineGrammar/terminalReplay') $artifact '$/machineGrammar/terminalReplay/markerExpansion' 'any expands to all recognized marker values because exact terminal SQLite evidence is authoritative'
+    Assert-JsonString (Get-JsonProperty $terminal 'effects' $artifact '$/machineGrammar/terminalReplay') $artifact '$/machineGrammar/terminalReplay/effects' 'No marker, working-file, Branch, completion, or retry write occurs; invocation cancellation is ignored and the outcome is Unchanged.'
+    $retry = Get-JsonProperty $root 'retryAdmission' $artifact '$'
+    Assert-JsonExactProperties $retry @('requiredActions', 'source', 'staleEvidenceAction') $artifact '$/retryAdmission'
+    Assert-JsonString (Get-JsonProperty $retry 'source' $artifact '$/retryAdmission') $artifact '$/retryAdmission/source' 'exact persisted pending operation, selection, marker evidence, and current Branch evidence'
+    Assert-ExactMembers (Get-JsonStringArray (Get-JsonProperty $retry 'requiredActions' $artifact '$/retryAdmission') $artifact '$/retryAdmission/requiredActions') @('reconstructPersistedTypedFacts', 'acquireLocalLease', 'rereadMarkerAndCurrentBranch', 'selectRowFromFreshEvidence') $artifact 'retry admission actions'
+    Assert-JsonString (Get-JsonProperty $retry 'staleEvidenceAction' $artifact '$/retryAdmission') $artifact '$/retryAdmission/staleEvidenceAction' 'retainPendingAndDisallowedEvidenceWithoutBranchPublication'
+    $order = Get-JsonStringArray (Get-JsonProperty $root 'order' $artifact '$') $artifact '$/order'
+    Assert-ExactMembers $order @('sqliteLocalCompletion', 'postCompletionMarkerInspection', 'conditionalExactCleanup', 'typedBranchPublicationOrProof', 'terminalRecording') $artifact 'lifecycle order'
+
+    $rows = Get-JsonProperty $root 'rows' $artifact '$'
+    Assert-JsonKind $rows ([System.Text.Json.JsonValueKind]::Array) $artifact '$/rows'
+    $index = 0
+    foreach ($row in $rows.EnumerateArray()) {
+        $location = "$/rows[$index]"
+        Assert-JsonKind $row ([System.Text.Json.JsonValueKind]::Object) $artifact $location
+        $allowed = @('branchIdentity', 'doctorGuidance', 'durableResult', 'exitClass', 'firstApplicableRetryWrite', 'id', 'match', 'outcome', 'requiredActions', 'resultingMarker', 'workingFiles', 'nextRows')
+        $names = @($row.EnumerateObject() | ForEach-Object Name)
+        if (@($names | Where-Object { $_ -notin $allowed }).Count -ne 0) { Fail-Contract $artifact "$location has an unknown row property" }
+        foreach ($name in @('branchIdentity', 'doctorGuidance', 'durableResult', 'exitClass', 'firstApplicableRetryWrite', 'id', 'match', 'outcome', 'requiredActions', 'workingFiles')) {
+            $null = Get-JsonProperty $row $name $artifact $location
+        }
+        Assert-JsonString (Get-JsonProperty $row 'id' $artifact $location) $artifact "$location/id"
+        foreach ($name in @('branchIdentity', 'durableResult', 'exitClass', 'workingFiles')) { Assert-JsonStringOrNull (Get-JsonProperty $row $name $artifact $location) $artifact "$location/$name" }
+        Assert-JsonBooleanOrNull (Get-JsonProperty $row 'doctorGuidance' $artifact $location) $artifact "$location/doctorGuidance"
+        Assert-JsonString (Get-JsonProperty $row 'firstApplicableRetryWrite' $artifact $location) $artifact "$location/firstApplicableRetryWrite"
+        $null = Get-JsonStringArray (Get-JsonProperty $row 'requiredActions' $artifact $location) $artifact "$location/requiredActions"
+        $match = Get-JsonProperty $row 'match' $artifact $location
+        Assert-JsonExactProperties $match @('invocation', 'marker', 'selectionState', 'trigger') $artifact "$location/match"
+        foreach ($axis in $axes) { Assert-JsonPredicate (Get-JsonProperty $match $axis $artifact "$location/match") $axis $artifact "$location/match/$axis" }
+        $outcome = Get-JsonProperty $row 'outcome' $artifact $location
+        Assert-JsonStringOrNull $outcome $artifact "$location/outcome"
+        $next = @($row.EnumerateObject() | Where-Object Name -ceq 'nextRows')
+        if ($outcome.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) {
+            if ($next.Count -ne 1 -or @(Get-JsonStringArray $next[0].Value $artifact "$location/nextRows").Count -eq 0) { Fail-Contract $artifact "$location routing row requires nonempty nextRows" }
+        } elseif ($next.Count -ne 0) { Fail-Contract $artifact "$location terminal row cannot contain nextRows" }
+        $resulting = @($row.EnumerateObject() | Where-Object Name -ceq 'resultingMarker')
+        if ($resulting.Count -eq 1) { Assert-JsonString $resulting[0].Value $artifact "$location/resultingMarker" }
+        if ($outcome.ValueKind -eq [System.Text.Json.JsonValueKind]::String -and $outcome.GetString() -in @('Unchanged', 'UpdateIncomplete') -and $resulting.Count -ne 0) {
+            Fail-Contract $artifact "$location resultingMarker is misplaced for outcome '$($outcome.GetString())'"
+        }
+        $index++
+    }
+}
+
+function Test-ProjectionPlanSchema($payload, [string] $artifact) {
+    $plan = $payload.Raw
+    Assert-JsonExactProperties $plan @('assignments', 'canonicalApplicabilityKeyCount', 'canonicalContentDigest', 'canonicalRowCount', 'schema') $artifact '$/projectionPlan'
+    Assert-JsonString (Get-JsonProperty $plan 'schema' $artifact '$/projectionPlan') $artifact '$/projectionPlan/schema' 'grace.wdu.lifecycle-projection-plan/v1'
+    Assert-JsonString (Get-JsonProperty $plan 'canonicalContentDigest' $artifact '$/projectionPlan') $artifact '$/projectionPlan/canonicalContentDigest'
+    $null = Assert-JsonInteger (Get-JsonProperty $plan 'canonicalRowCount' $artifact '$/projectionPlan') $artifact '$/projectionPlan/canonicalRowCount'
+    $null = Assert-JsonInteger (Get-JsonProperty $plan 'canonicalApplicabilityKeyCount' $artifact '$/projectionPlan') $artifact '$/projectionPlan/canonicalApplicabilityKeyCount'
+    $assignments = Get-JsonProperty $plan 'assignments' $artifact '$/projectionPlan'
+    Assert-JsonKind $assignments ([System.Text.Json.JsonValueKind]::Array) $artifact '$/projectionPlan/assignments'
+    $index = 0
+    foreach ($assignment in $assignments.EnumerateArray()) {
+        Assert-JsonExactProperties $assignment @('artifact', 'proof', 'rowIds') $artifact "$/projectionPlan/assignments[$index]"
+        foreach ($name in @('artifact', 'proof')) { Assert-JsonString (Get-JsonProperty $assignment $name $artifact "$/projectionPlan/assignments[$index]") $artifact "$/projectionPlan/assignments[$index]/$name" }
+        $null = Get-JsonStringArray (Get-JsonProperty $assignment 'rowIds' $artifact "$/projectionPlan/assignments[$index]") $artifact "$/projectionPlan/assignments[$index]/rowIds"
+        $index++
+    }
+}
+
+function Test-ProjectionSchema($payload, [string] $artifact, [bool] $strict) {
+    $projection = $payload.Raw
+    $required = @('artifact', 'canonical', 'proof', 'rowIds', 'schema')
+    $expected = if ($strict) { @('artifact', 'canonical', 'canonicalContentDigest', 'proof', 'rowIds', 'schema') } else { $null }
+    if ($strict) { Assert-JsonExactProperties $projection $expected $artifact '$/projection' }
+    else {
+        Assert-JsonKind $projection ([System.Text.Json.JsonValueKind]::Object) $artifact '$/projection'
+        $names = @($projection.EnumerateObject() | ForEach-Object Name)
+        if (@($names | Where-Object { $_ -notin @('artifact', 'canonical', 'canonicalContentDigest', 'proof', 'rowIds', 'schema') }).Count -ne 0 -or
+            @($required | Where-Object { $_ -notin $names }).Count -ne 0) { Fail-Contract $artifact 'renderable projection has malformed properties' }
+    }
+    foreach ($name in @('artifact', 'canonical', 'proof', 'schema')) { Assert-JsonString (Get-JsonProperty $projection $name $artifact '$/projection') $artifact "$/projection/$name" }
+    Assert-JsonString (Get-JsonProperty $projection 'schema' $artifact '$/projection') $artifact '$/projection/schema' 'grace.wdu.lifecycle-projection/v1'
+    $null = Get-JsonStringArray (Get-JsonProperty $projection 'rowIds' $artifact '$/projection') $artifact '$/projection/rowIds'
+    if ($strict) { Assert-JsonString (Get-JsonProperty $projection 'canonicalContentDigest' $artifact '$/projection') $artifact '$/projection/canonicalContentDigest' }
 }
 
 function Get-NormalizedContentDigest([string] $jsonPayload) {
@@ -206,6 +429,97 @@ function Expand-Predicate($grammar, [string] $axis, $expression, [string] $rowId
             return $values
         }
         default { Fail-Contract $rowId "$axis has unknown predicate kind '$($expression.kind)'" }
+    }
+}
+
+function Get-NormalizedLifecycleRow($row, $grammar) {
+    $expanded = @{}
+    foreach ($axis in @('invocation', 'trigger', 'marker', 'selectionState')) {
+        $expanded[$axis] = @(Expand-Predicate $grammar $axis $row.match.$axis $row.id)
+    }
+    $actions = @($row.requiredActions)
+    return [pscustomobject]@{
+        Id = $row.id
+        Invocation = $expanded.invocation
+        Trigger = $expanded.trigger
+        Marker = $expanded.marker
+        Selection = $expanded.selectionState
+        FirstWrite = $row.firstApplicableRetryWrite
+        Actions = $actions
+        ResultingMarker = if ($null -ne $row.PSObject.Properties['resultingMarker']) { $row.PSObject.Properties['resultingMarker'].Value } else { $null }
+        WorkingFiles = $row.workingFiles
+        BranchIdentity = $row.branchIdentity
+        DurableResult = $row.durableResult
+        Outcome = $row.outcome
+        ExitClass = $row.exitClass
+        DoctorGuidance = $row.doctorGuidance
+        NextRows = if ($null -ne $row.PSObject.Properties['nextRows']) { @($row.PSObject.Properties['nextRows'].Value) } else { @() }
+        IsRouting = $null -eq $row.outcome
+        PublicationEffects = @($actions | Where-Object { $_ -in @('publishSelectedBranch', 'attemptPublishSelectedBranch') })
+        TerminalEffects = @($actions | Where-Object { $_ -in @('recordTerminal', 'attemptTerminalRecording') })
+    }
+}
+
+function Test-LifecycleRowSemantics($normalizedRows, [string] $artifact) {
+    $disallowedMarkers = @('differentOperation', 'malformed', 'unsupported', 'unreadable', 'exactCleanupFailed')
+    $outcomeDurableResult = @{ FinalizationIncomplete = 'pending'; Rejected = 'noCompletion'; Unchanged = 'existingTerminal'; Updated = 'terminal'; UpdateIncomplete = 'noCompletion' }
+    foreach ($row in $normalizedRows) {
+        if (@($row.PublicationEffects).Count -gt 1) { Fail-Contract $row.Id 'row contains more than one Branch publication effect' }
+        if (@($row.TerminalEffects).Count -gt 1) { Fail-Contract $row.Id 'row contains more than one terminal effect' }
+        if ($row.IsRouting -and @($row.NextRows).Count -eq 0) { Fail-Contract $row.Id 'routing row has no nextRows' }
+        if (-not $row.IsRouting -and @($row.NextRows).Count -ne 0) { Fail-Contract $row.Id 'terminal row cannot route to nextRows' }
+        if (-not $row.IsRouting -and $null -eq $outcomeDurableResult[$row.Outcome]) { Fail-Contract $row.Id "unknown outcome '$($row.Outcome)'" }
+        if (-not $row.IsRouting -and $row.DurableResult -ne $outcomeDurableResult[$row.Outcome]) { Fail-Contract $row.Id "outcome '$($row.Outcome)' requires durableResult '$($outcomeDurableResult[$row.Outcome])'" }
+        if ($row.Outcome -eq 'FinalizationIncomplete' -and ($row.ExitClass -ne 'nonzero' -or $row.DoctorGuidance -ne $true)) {
+            Fail-Contract $row.Id 'FinalizationIncomplete lacks nonzero exit or Doctor guidance'
+        }
+
+        $hasDisallowedMarker = @($row.Marker | Where-Object { $_ -in $disallowedMarkers }).Count -gt 0
+        if ($hasDisallowedMarker -and $row.Invocation -contains 'finalizationRetry') {
+            foreach ($required in @('retainEvidence', 'retainPending')) {
+                if ($row.Actions -notcontains $required) { Fail-Contract $row.Id "disallowed marker cell must retain '$required'" }
+            }
+            if (@($row.PublicationEffects).Count -ne 0 -or @($row.TerminalEffects).Count -ne 0) {
+                Fail-Contract $row.Id 'disallowed marker cell cannot attempt or complete publication or terminal recording'
+            }
+            if ($row.DurableResult -ne 'pending' -or $row.Outcome -ne 'FinalizationIncomplete' -or $row.DoctorGuidance -ne $true -or
+                $row.WorkingFiles -ne 'unchanged' -or $row.BranchIdentity -ne 'unchanged' -or $row.FirstWrite -ne 'none') {
+                Fail-Contract $row.Id 'disallowed marker cell has incoherent pending result, outcome, guidance, or retry cutoff'
+            }
+        }
+
+        if ($hasDisallowedMarker -and (@($row.PublicationEffects).Count -ne 0 -or @($row.TerminalEffects).Count -ne 0)) {
+            Fail-Contract $row.Id 'disallowed marker cell cannot attempt or complete publication or terminal recording'
+        }
+        if (@($row.PublicationEffects).Count -eq 1) {
+            if ($row.Selection.Count -ne 1 -or $row.Selection[0] -ne 'referencePrevious' -or $hasDisallowedMarker) {
+                Fail-Contract $row.Id 'Branch publication is only legal for Reference previous-Branch finalization without disallowed evidence'
+            }
+        }
+        if (@($row.TerminalEffects).Count -eq 1) {
+            if ($row.Selection.Count -ne 1) { Fail-Contract $row.Id 'terminal recording requires one concrete selection family' }
+            $proof = switch ($row.Selection[0]) {
+                'referencePrevious' { 'provePublication' }
+                'referenceSelected' { 'proveSelectedBranch' }
+                'directoryVersion' { 'proveCurrentBranchUnchanged' }
+                default { $null }
+            }
+            $terminalIndex = [array]::IndexOf($row.Actions, @($row.TerminalEffects)[0])
+            $proofIndex = if ($proof) { [array]::IndexOf($row.Actions, $proof) } else { -1 }
+            if ($proofIndex -lt 0 -or $proofIndex -ge $terminalIndex) { Fail-Contract $row.Id 'terminal recording requires prior durable identity proof' }
+        }
+        if ($row.FirstWrite -eq 'terminalRecording' -and @($row.Selection | Where-Object { $_ -in @('referenceSelected', 'directoryVersion') }).Count -ne $row.Selection.Count) {
+            Fail-Contract $row.Id 'terminal recording cutoff requires selected Reference or DirectoryVersion'
+        }
+        if ($row.Marker -contains 'exact' -and (@($row.PublicationEffects).Count -eq 1 -or @($row.TerminalEffects).Count -eq 1)) {
+            $cleanup = [array]::IndexOf($row.Actions, 'cleanExactMarker')
+            $effect = if (@($row.PublicationEffects).Count -eq 1) { [array]::IndexOf($row.Actions, @($row.PublicationEffects)[0]) } else { [array]::IndexOf($row.Actions, @($row.TerminalEffects)[0]) }
+            if ($cleanup -lt 0 -or $cleanup -ge $effect) { Fail-Contract $row.Id 'exact cleanup must precede publication or terminal effect' }
+        }
+        if ($row.Outcome -eq 'Unchanged' -and ($row.Actions.Count -ne 0 -or $row.ResultingMarker -or $row.FirstWrite -ne 'none' -or
+                $row.WorkingFiles -ne 'unchanged' -or $row.BranchIdentity -ne 'unchanged' -or $row.DurableResult -ne 'existingTerminal')) {
+            Fail-Contract $row.Id 'unchanged terminal replay must be mutation-free and coherent'
+        }
     }
 }
 
@@ -396,109 +710,10 @@ function Test-LifecycleContract($contract, [string] $artifact) {
         }
     }
 
-    # The canonical table has a closed mutation relation. These are structural rules over each normalized row rather
-    # than a duplicate action table: publication may only establish a previously selected Reference, and recording is
-    # always preceded by the proof appropriate to the selected durable identity.
-    foreach ($row in $rows) {
-        $actions = @($row.requiredActions)
-        $invocations = @(Expand-Predicate $grammar invocation $row.match.invocation $row.id)
-        $markers = @(Expand-Predicate $grammar marker $row.match.marker $row.id)
-        $selections = @(Expand-Predicate $grammar selectionState $row.match.selectionState $row.id)
-        $publicationActions = @($actions | Where-Object { $_ -in @('publishSelectedBranch', 'attemptPublishSelectedBranch') })
-        if ($publicationActions.Count -gt 0 -and ($selections -notcontains 'referencePrevious' -or
-                @($markers | Where-Object { $_ -in @('differentOperation', 'malformed', 'unsupported', 'unreadable', 'exactCleanupFailed') }).Count -gt 0)) {
-            Fail-Contract $row.id 'Branch publication is only legal for missing-marker Reference previous-Branch finalization'
-        }
-        if ($publicationActions.Count -gt 1) { Fail-Contract $row.id 'row contains more than one Branch publication action' }
-        $terminalActions = @($actions | Where-Object { $_ -in @('recordTerminal', 'attemptTerminalRecording') })
-        if ($terminalActions.Count -gt 1) { Fail-Contract $row.id 'row contains more than one terminal recording action' }
-        if ($terminalActions.Count -eq 1) {
-            $requiredProof = if ($selections -contains 'referencePrevious') { 'provePublication' } elseif (
-                $selections -contains 'referenceSelected') { 'proveSelectedBranch' } elseif (
-                $selections -contains 'directoryVersion') { 'proveCurrentBranchUnchanged' } else { $null }
-            if ($null -eq $requiredProof -or [array]::IndexOf($actions, $requiredProof) -lt 0 -or
-                [array]::IndexOf($actions, $requiredProof) -gt [array]::IndexOf($actions, $terminalActions[0])) {
-                Fail-Contract $row.id 'terminal recording requires prior durable identity proof'
-            }
-        }
-        if ($row.firstApplicableRetryWrite -eq 'terminalRecording' -and $selections -notcontains 'referenceSelected' -and
-            $selections -notcontains 'directoryVersion') {
-            Fail-Contract $row.id 'terminal recording cutoff requires selected Reference or DirectoryVersion'
-        }
-    }
-
-    $terminalReplays = @($rows | Where-Object { $_.match.invocation.kind -eq 'one' -and $_.match.invocation.value -eq 'terminalReplay' })
+    $normalizedRows = @($rows | ForEach-Object { Get-NormalizedLifecycleRow $_ $grammar })
+    Test-LifecycleRowSemantics $normalizedRows $artifact
+    $terminalReplays = @($normalizedRows | Where-Object { $_.Invocation -contains 'terminalReplay' })
     if ($terminalReplays.Count -ne 1) { Fail-Contract $artifact 'expected one terminal replay row' }
-    foreach ($row in $terminalReplays) {
-        if ($row.outcome -ne 'Unchanged' -or $row.durableResult -ne 'existingTerminal' -or
-            $row.workingFiles -ne 'unchanged' -or $row.branchIdentity -ne 'unchanged' -or
-            @($row.requiredActions).Count -ne 0 -or $null -ne $row.PSObject.Properties['nextRows']) {
-            Fail-Contract $row.id 'terminal replay must be unchanged and mutation-free'
-        }
-    }
-
-    $refusalActions = @('publishSelectedBranch', 'attemptPublishSelectedBranch', 'recordTerminal', 'attemptTerminalRecording')
-    foreach ($row in @($rows | Where-Object { $_.outcome -eq 'Rejected' -or $_.requiredActions -contains 'retainEvidence' -or $_.requiredActions -contains 'retainMarkerEvidence' })) {
-        $forbidden = @($row.requiredActions | Where-Object { $_ -in $refusalActions })
-        if ($forbidden.Count -ne 0) { Fail-Contract $row.id "refusal or evidence-preservation row cannot '$($forbidden[0])'" }
-    }
-
-    $disallowed = @('differentOperation', 'malformed', 'unsupported', 'unreadable', 'exactCleanupFailed')
-    foreach ($row in $rows) {
-        $markers = @(Expand-Predicate $grammar marker $row.match.marker $row.id)
-        if (@($markers | Where-Object { $_ -in $disallowed }).Count -gt 0 -and
-            $row.requiredActions -contains 'publishSelectedBranch') {
-            Fail-Contract $row.id 'disallowed marker evidence advances Branch publication'
-        }
-    }
-
-    foreach ($row in @($rows | Where-Object {
-                $_.requiredActions -contains 'recordTerminal' -or $_.requiredActions -contains 'attemptTerminalRecording' })) {
-        $actions = [object[]]$row.requiredActions
-        $terminalAction = if ($actions -contains 'recordTerminal') { 'recordTerminal' } else { 'attemptTerminalRecording' }
-        $terminal = [array]::IndexOf($actions, $terminalAction)
-        $selections = @(Expand-Predicate $grammar selectionState $row.match.selectionState $row.id)
-        if ($selections.Count -eq 1) {
-            $proofAction = switch ($selections[0]) {
-                'referencePrevious' { 'provePublication' }
-                'referenceSelected' { 'proveSelectedBranch' }
-                'directoryVersion' { 'proveCurrentBranchUnchanged' }
-                default { $null }
-            }
-            if ($null -ne $proofAction) {
-                $proof = [array]::IndexOf($actions, $proofAction)
-                if ($proof -lt 0 -or $proof -ge $terminal) { Fail-Contract $row.id 'Branch proof does not precede terminal recording' }
-            }
-        }
-        $markers = @(Expand-Predicate $grammar marker $row.match.marker $row.id)
-        if ($markers.Count -eq 1 -and $markers[0] -eq 'exact') {
-            $cleanup = [array]::IndexOf($actions, 'cleanExactMarker')
-            if ($cleanup -lt 0 -or $cleanup -ge $terminal) { Fail-Contract $row.id 'exact cleanup does not precede terminal recording' }
-            if ($actions -contains 'publishSelectedBranch' -and
-                $cleanup -ge [array]::IndexOf($actions, 'publishSelectedBranch')) {
-                Fail-Contract $row.id 'Branch publication precedes exact cleanup'
-            }
-        }
-    }
-
-    foreach ($row in $rows) {
-        $markers = @(Expand-Predicate $grammar marker $row.match.marker $row.id)
-        if ($markers.Count -eq 1 -and $markers[0] -eq 'exact' -and
-            ($row.requiredActions -contains 'publishSelectedBranch' -or
-                $row.requiredActions -contains 'attemptPublishSelectedBranch')) {
-            $actions = [object[]]$row.requiredActions
-            $cleanup = [array]::IndexOf($actions, 'cleanExactMarker')
-            $publicationAction = if ($actions -contains 'publishSelectedBranch') {
-                'publishSelectedBranch'
-            } else {
-                'attemptPublishSelectedBranch'
-            }
-            $publication = [array]::IndexOf($actions, $publicationAction)
-            if ($cleanup -lt 0 -or $cleanup -ge $publication) {
-                Fail-Contract $row.id 'Branch publication or its attempt precedes exact cleanup'
-            }
-        }
-    }
 
     $retryRules = @(
         @{ Marker = 'exact'; Selection = '*'; Write = 'exactCleanup' },
@@ -531,7 +746,9 @@ function Test-LifecycleContract($contract, [string] $artifact) {
 
 function Get-ProjectionPlan([string] $canonicalText, [string] $canonicalArtifact, [string] $canonicalContentDigest) {
     $block = Get-SingleMarkedBlock $canonicalText $script:ProjectionPlanStart $script:ProjectionPlanEnd $canonicalArtifact
-    $plan = ConvertFrom-FencedJson $block.Content $canonicalArtifact 'grace.wdu.lifecycle-projection-plan/v1'
+    $payload = Get-FencedJsonPayload $block.Content $canonicalArtifact 'grace.wdu.lifecycle-projection-plan/v1'
+    Test-ProjectionPlanSchema $payload $canonicalArtifact
+    $plan = $payload.Value
     Assert-ExactProperties $plan @('assignments', 'canonicalApplicabilityKeyCount', 'canonicalContentDigest', 'canonicalRowCount', 'schema') $canonicalArtifact
     Assert-String $plan 'schema' $canonicalArtifact
     Assert-Array $plan 'assignments' $canonicalArtifact
@@ -544,7 +761,9 @@ function Get-ProjectionPlan([string] $canonicalText, [string] $canonicalArtifact
 
 function Get-Projection([string] $text, [string] $artifact, [bool] $strict) {
     $block = Get-SingleMarkedBlock $text $script:ProjectionStart $script:ProjectionEnd $artifact
-    $projection = ConvertFrom-FencedJson $block.Content $artifact 'grace.wdu.lifecycle-projection/v1'
+    $payload = Get-FencedJsonPayload $block.Content $artifact 'grace.wdu.lifecycle-projection/v1'
+    Test-ProjectionSchema $payload $artifact $strict
+    $projection = $payload.Value
     if ($strict) {
         Assert-ExactProperties $projection @('artifact', 'canonical', 'canonicalContentDigest', 'proof', 'rowIds', 'schema') $artifact
     } else {
@@ -603,21 +822,43 @@ function Test-NoCompetingProjection([string] $text, $block, [string] $path) {
         $historyStart = $historyStarts[0].Index + $historyStarts[0].Length
         $historyEnd = $historyEnds[0].Index
         if ($historyEnd -le $historyStart) { Fail-Contract $path 'historical evidence markers are reversed' }
-        $history = $outside.Substring($historyStart, $historyEnd - $historyStart).Trim()
-        # History deliberately carries only a stable supersession reference, never operational prose.
-        if ($history -notmatch '^Historical supersession reference: \[[^\]]+\]\([^\)]+\)\.$') {
-            Fail-Contract $path 'historical evidence is not a stable supersession reference'
+        $history = ($outside.Substring($historyStart, $historyEnd - $historyStart) -replace "`r`n|`r", "`n").Trim()
+        # History is generated evidence, not a prose exception.  Its one permitted rendered form is intentionally exact.
+        if ($history -cne 'Historical supersession reference: [PR #873](https://github.com/ScottArbeit/Grace/pull/873).') {
+            Fail-Contract $path 'historical evidence must be the exact generated PR #873 reference'
         }
         $outside = $outside.Remove($historyEnds[0].Index, $historyEnds[0].Length).Remove($historyStarts[0].Index, $historyStarts[0].Length)
         $outside = $outside.Remove($historyStarts[0].Index, $historyEnd - $historyStart)
     }
-    $paragraphs = @($outside -split '(?:\r?\n){2,}')
+    Test-CompetingLifecycleSource $outside $path
+}
+
+function Test-CompetingLifecycleSource([string] $outside, [string] $path) {
+    $normalized = $outside -replace "`r`n|`r", "`n"
+    $paragraphs = @($normalized -split '(?:\n\s*){2,}' | Where-Object { $_.Trim() })
     foreach ($paragraph in $paragraphs) {
-        $reversed = $paragraph -match '(?is)\b(?:publish|publication)\b.{0,60}(?:\bbefore\b|\bthen\b|\bafter\b|-[ ]?before-)\s*.{0,60}\b(?:clean|cleanup)\b'
-        $copiedSequence = $paragraph -match '(?is)\b(?:clean|cleanup)\b.{0,160}\b(?:publish|publication)\b.{0,160}\bprove\b.{0,160}\bterminal\b'
-        $selectedReferenceSequence = $paragraph -match '(?is)\b(?:prove|proof)\b.{0,120}\bselected\b.{0,120}\b(?:record|terminal)\b'
-        if ($reversed -or $copiedSequence -or $selectedReferenceSequence) {
-            Fail-Contract $path 'contains competing lifecycle source outside its projection'
+        # Preserve the original word order across wrapped/split prose while treating ordinary isolated words as harmless.
+        $sequence = (($paragraph -split '(?<=[.!?])\s+|\n+') | ForEach-Object Trim | Where-Object { $_ }) -join ' '
+        $cleanup = '(?:(?:clean(?:up)?|remove)\s+(?:the\s+)?(?:exact\s+)?(?:owned\s+)?marker|(?:exact\s+)?marker\s+cleanup)'
+        $publication = '(?:(?:attempt\s+to\s+)?publish(?:ing|ed)?\s+(?:the\s+)?(?:selected\s+)?Branch|Branch\s+publication)'
+        $terminal = '(?:record(?:ing)?\s+(?:terminal\s+)?(?:completion|recording)|terminal\s+completion)'
+        $proof = '(?:prove\s+(?:publication|the\s+selected\s+Branch|the\s+current\s+Branch\s+(?:is\s+)?unchanged)|proof\s+of\s+(?:publication|selected\s+Branch|current\s+Branch))'
+        if ($sequence -match "(?is)$publication.{0,240}(?:before|then|after).{0,160}$cleanup" -or
+            $sequence -match "(?is)$publication.{0,240}$cleanup") {
+            Fail-Contract $path 'contains competing lifecycle source outside its projection: publication precedes exact cleanup'
+        }
+        if ($sequence -match "(?is)$cleanup.{0,260}$publication.{0,260}$proof.{0,260}$terminal") {
+            Fail-Contract $path 'contains competing lifecycle source outside its projection: copied cleanup/publication/proof/terminal sequence'
+        }
+        foreach ($branch in @('previous', 'selected', 'current')) {
+            $branchProof = if ($branch -eq 'previous') { 'prove\s+(?:publication|the\s+selected\s+Branch)' } else { "prove\s+(?:the\s+)?$branch\s+Branch(?:\s+(?:is\s+)?unchanged)?" }
+            if ($sequence -match "(?is)(?:$branch\s+Branch|$branch\s+Reference|Reference\s+$branch\s+Branch).{0,260}$branchProof.{0,260}$terminal" -or
+                $sequence -match "(?is)$branchProof.{0,260}$terminal") {
+                Fail-Contract $path "contains competing lifecycle source outside its projection: $branch-Branch proof/terminal sequence"
+            }
+        }
+        if ($sequence -match '(?is)retry.{0,160}first\s+applicable\s+write.{0,160}(?:is|before|then).{0,160}(?:exact\s+cleanup|Branch\s+publication|terminal\s+recording)') {
+            Fail-Contract $path 'contains competing lifecycle source outside its projection: retry first-write sequence'
         }
     }
 }
@@ -662,6 +903,7 @@ function Write-RenderedProjection($job) {
 
 $canonical = Read-Utf8Text $CanonicalPath
 $lifecyclePayload = Get-FencedJsonPayload $canonical.Text $canonical.Path 'grace.wdu.branch-lifecycle/v1'
+Test-LifecycleSchema $lifecyclePayload $canonical.Path
 $contract = $lifecyclePayload.Value
 $canonicalContentDigest = Get-NormalizedContentDigest $lifecyclePayload.Json
 $validated = Test-LifecycleContract $contract $canonical.Path

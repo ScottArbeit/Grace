@@ -120,7 +120,7 @@ try {
     Invoke-Case 'missing canonical row fails' {
         $packet = New-Packet 'missing-row'
         Replace-Text $packet.Canonical '"id":"WDU-LC-143"' '"removedId":"WDU-LC-143"'
-        Assert-ValidatorFails $packet 'expected 67 rows|row ID|row is missing id'
+        Assert-ValidatorFails $packet 'expected 67 rows|row ID|row is missing id|unknown row property'
     }
 
     Invoke-Case 'duplicate canonical row ID fails' {
@@ -164,7 +164,7 @@ try {
     Invoke-Case 'malformed tagged shape fails' {
         $packet = New-Packet 'malformed-shape'
         Replace-Text $packet.Canonical '"kind":"one","value":"missingMarkerFreshAdmission"' '"kind":"one","value":"missingMarkerFreshAdmission","name":"any"'
-        Assert-ValidatorFails $packet 'malformed predicate properties'
+        Assert-ValidatorFails $packet 'malformed predicate properties|malformed JSON properties'
     }
 
     Invoke-Case 'PR 873 publication-before-cleanup regression fails' {
@@ -209,7 +209,7 @@ try {
         $packet = New-Packet 'fixed-retry-cutoff'
         Add-OutsideProjection $packet.Adr @'
 <!-- grace:wdu-lifecycle-historical-evidence:start -->
-Historical supersession reference: [WDU lifecycle supersession](https://github.com/ScottArbeit/Grace/issues/873).
+Historical supersession reference: [PR #873](https://github.com/ScottArbeit/Grace/pull/873).
 <!-- grace:wdu-lifecycle-historical-evidence:end -->
 '@
         $null = Invoke-Validator $packet
@@ -232,7 +232,7 @@ Historical supersession reference: [WDU lifecycle supersession](https://github.c
         $packet = New-Packet 'refusal-publication'
         Replace-Text $packet.Canonical '"requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged"' `
             '"requiredActions":["attemptPublishSelectedBranch"],"workingFiles":"unchanged"'
-        Assert-ValidatorFails $packet 'refusal or evidence-preservation row cannot|Branch publication is only legal'
+        Assert-ValidatorFails $packet 'disallowed marker cell cannot|Branch publication is only legal'
     }
 
     Invoke-Case 'unknown durable action fails with row diagnostic' {
@@ -338,7 +338,7 @@ Historical supersession reference: [WDU lifecycle supersession](https://github.c
         $packet = New-Packet 'semantic-publication-mutation'
         Replace-Text $packet.Canonical '"requiredActions":["retainEvidence","retainPending"],"workingFiles":"unchanged"' `
             '"requiredActions":["attemptPublishSelectedBranch","retainEvidence","retainPending"],"workingFiles":"unchanged"'
-        Assert-ValidatorFails $packet 'Branch publication is only legal'
+        Assert-ValidatorFails $packet 'disallowed marker cell cannot|Branch publication is only legal'
     }
 
     Invoke-Case 'closed semantic relation rejects terminal recording before proof' {
@@ -352,11 +352,11 @@ Historical supersession reference: [WDU lifecycle supersession](https://github.c
         $packet = New-Packet 'unknown-fields'
         Replace-Text $packet.Canonical '"schema": "grace.wdu.branch-lifecycle/v1"' `
             '"schema": "grace.wdu.branch-lifecycle/v1", "unexpectedRoot": true'
-        Assert-ValidatorFails $packet 'malformed predicate properties'
+        Assert-ValidatorFails $packet 'malformed predicate properties|malformed JSON properties'
         $packet = New-Packet 'unknown-projection-field'
         Replace-Text (Join-Path $packet.Issues 'issue-843.md') '"schema": "grace.wdu.lifecycle-projection/v1"' `
             '"schema": "grace.wdu.lifecycle-projection/v1", "unexpectedNested": true'
-        Assert-ValidatorFails $packet 'malformed predicate properties'
+        Assert-ValidatorFails $packet 'malformed predicate properties|malformed JSON properties'
     }
 
     Invoke-Case 'copied selected-Reference lifecycle sequence and active history prose fail' {
@@ -369,7 +369,7 @@ Historical supersession reference: [WDU lifecycle supersession](https://github.c
 Historical supersession reference: publish before cleanup.
 <!-- grace:wdu-lifecycle-historical-evidence:end -->
 '@
-        Assert-ValidatorFails $packet 'historical evidence is not a stable supersession reference'
+        Assert-ValidatorFails $packet 'historical evidence must be the exact generated PR #873 reference'
     }
 
     Invoke-Case 'staging write failure preserves inputs and prior output packet' {
@@ -398,6 +398,87 @@ Historical supersession reference: publish before cleanup.
             Assert-True ($_.Exception.Message -match 'render output directory must not already exist|overwrite an input artifact') 'junction alias diagnostic'
         }
         foreach ($path in $inputs) { Assert-True ((Get-FileDigest $path) -eq $before[$path]) "junction alias changed $path" }
+    }
+
+    Invoke-Case 'WDU-LC-100 closed disallowed-marker effects and evidence retention fail independently' {
+        foreach ($mutation in @(
+                '["retainPending"]',
+                '["retainEvidence","retainPending","attemptPublishSelectedBranch"]',
+                '["retainEvidence","retainPending","attemptTerminalRecording"]')) {
+            $packet = New-Packet "closed-row-$([Guid]::NewGuid().ToString('N'))"
+            $text = [IO.File]::ReadAllText($packet.Canonical)
+            $changed = [regex]::Replace($text, '("id":"WDU-LC-100".*?"requiredActions":)\["retainEvidence","retainPending"\]', {
+                    param($match)
+                    return "$($match.Groups[1].Value)$mutation"
+                }, 1)
+            if ($changed -ceq $text) { throw 'WDU-LC-100 action fixture anchor not found' }
+            [IO.File]::WriteAllText($packet.Canonical, $changed, [Text.UTF8Encoding]::new($false))
+            Assert-ValidatorFails $packet 'WDU-LC-100.*disallowed marker cell'
+        }
+    }
+
+    Invoke-Case 'closed JSON schema rejects nested shape, order, scalar kinds, route placement, and duplicate candidate' {
+        $packet = New-Packet 'wrong-encoding-shape'
+        Replace-Text $packet.Canonical '"jsonShape":{"kind":"one","value":"<concrete-enum-member>"}' `
+            '"jsonShape":{"kind":"set","value":"<concrete-enum-member>","extra":true}'
+        Assert-ValidatorFails $packet 'encoding/one/jsonShape|malformed JSON properties'
+
+        $packet = New-Packet 'wrong-order'
+        Replace-Text $packet.Canonical '"conditionalExactCleanup",' `
+            '"typedBranchPublicationOrProof",'
+        Assert-ValidatorFails $packet 'lifecycle order is not the exact canonical member set'
+
+        $packet = New-Packet 'wrong-nested-array-kind'
+        Replace-Text $packet.Canonical '"values":["<concrete-enum-member>"]' '"values":"<concrete-enum-member>"'
+        Assert-ValidatorFails $packet 'encoding/set/jsonShape/values must be a Array JSON value'
+
+        $packet = New-Packet 'string-plan-count'
+        Replace-Text $packet.Canonical '"canonicalRowCount": 67' '"canonicalRowCount": "67"'
+        Assert-ValidatorFails $packet 'canonicalRowCount must be a Number JSON value'
+
+        $packet = New-Packet 'decimal-plan-count'
+        Replace-Text $packet.Canonical '"canonicalApplicabilityKeyCount": 254' '"canonicalApplicabilityKeyCount": 254.5'
+        Assert-ValidatorFails $packet 'canonicalApplicabilityKeyCount must be an integer JSON number'
+
+        $packet = New-Packet 'boolean-plan-count'
+        Replace-Text $packet.Canonical '"canonicalRowCount": 67' '"canonicalRowCount": true'
+        Assert-ValidatorFails $packet 'canonicalRowCount must be a Number JSON value'
+
+        $packet = New-Packet 'missing-route-field'
+        Replace-Text $packet.Canonical '"resultingMarker":"exact","nextRows":["WDU-LC-207"' '"resultingMarker":"exact","routes":["WDU-LC-207"'
+        Assert-ValidatorFails $packet 'routing row requires nonempty nextRows|missing JSON property|unknown row property'
+
+        $packet = New-Packet 'misplaced-terminal-result-marker'
+        Replace-Text $packet.Canonical '"durableResult":"existingTerminal","outcome":"Unchanged"' `
+            '"durableResult":"existingTerminal","outcome":"Unchanged","resultingMarker":"missing"'
+        Assert-ValidatorFails $packet 'resultingMarker is misplaced'
+
+        $packet = New-Packet 'duplicate-schema-candidate'
+        Add-OutsideProjection $packet.Canonical '```json
+{"schema":"grace.wdu.branch-lifecycle/v1","Schema":"grace.wdu.branch-lifecycle/v1"}
+```'
+        Assert-ValidatorFails $packet 'duplicate-equivalent JSON property|malformed JSON candidate'
+    }
+
+    Invoke-Case 'closed competing-source scanner rejects all branch proof families and history variants' {
+        foreach ($sentence in @(
+                'On retry, prove the current Branch is unchanged, then record terminal completion.',
+                'For Reference previous Branch, publish the selected Branch, prove publication, then record terminal completion.',
+                'For selected Reference, prove selected Branch, then record terminal completion.',
+                'On retry, the first applicable write is terminal recording before completion.',
+                'Clean the exact marker, publish the selected Branch, prove publication, and record terminal completion.')) {
+            $packet = New-Packet "competing-$([Guid]::NewGuid().ToString('N'))"
+            Add-OutsideProjection $packet.Adr $sentence
+            Assert-ValidatorFails $packet 'competing lifecycle source outside its projection'
+        }
+        foreach ($history in @(
+                'Historical supersession reference: [PR 873](https://github.com/ScottArbeit/Grace/pull/873).',
+                'Historical supersession reference: [PR #873](https://example.test/873).',
+                'Historical supersession reference: [PR #873](https://github.com/ScottArbeit/Grace/pull/873). Extra active sentence.')) {
+            $packet = New-Packet "history-$([Guid]::NewGuid().ToString('N'))"
+            Add-OutsideProjection $packet.Adr "<!-- grace:wdu-lifecycle-historical-evidence:start -->`n$history`n<!-- grace:wdu-lifecycle-historical-evidence:end -->"
+            Assert-ValidatorFails $packet 'historical evidence must be the exact generated PR #873 reference'
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
