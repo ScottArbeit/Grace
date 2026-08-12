@@ -274,7 +274,7 @@ type OperationsChargePreviewTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
-        let migration = AddChargePreviewLines().TargetModel
+        let migration = AddBillingCompletenessCoordination().TargetModel
 
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()

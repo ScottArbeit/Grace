@@ -1,6 +1,7 @@
 namespace Grace.Operations.Data
 
 open Microsoft.EntityFrameworkCore
+open Microsoft.EntityFrameworkCore.Metadata.Builders
 open Microsoft.EntityFrameworkCore.Design
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
@@ -174,7 +175,37 @@ module OperationsModel =
 
         let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()
 
-        rejection.ToTable("UsageFactRejection", OperationsUsageSql.SchemaName)
+        rejection.ToTable(
+            "UsageFactRejection",
+            OperationsUsageSql.SchemaName,
+            fun (table: TableBuilder<UsageFactRejectionEntity>) ->
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactRejection_SuppliedGuids",
+                    "[RejectionId] <> '00000000-0000-0000-0000-000000000000' AND ([UsageFactId] IS NULL OR [UsageFactId] <> '00000000-0000-0000-0000-000000000000') AND ([OwnerId] IS NULL OR [OwnerId] <> '00000000-0000-0000-0000-000000000000') AND ([OrganizationId] IS NULL OR [OrganizationId] <> '00000000-0000-0000-0000-000000000000') AND ([RepositoryId] IS NULL OR [RepositoryId] <> '00000000-0000-0000-0000-000000000000')"
+                )
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactRejection_CompleteScopeRequiresFact",
+                    "NOT ([OwnerId] IS NOT NULL AND [OrganizationId] IS NOT NULL AND [RepositoryId] IS NOT NULL AND [MonthStartUtc] IS NOT NULL) OR ([UsageFactId] IS NOT NULL AND [UsageFactId] <> '00000000-0000-0000-0000-000000000000')"
+                )
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactRejection_MonthStartUtc",
+                    "[MonthStartUtc] IS NULL OR [MonthStartUtc] = DATETIME2FROMPARTS(YEAR([MonthStartUtc]), MONTH([MonthStartUtc]), 1, 0, 0, 0, 0, 7)"
+                )
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactRejection_Resolution",
+                    "([IsActive] = 1 AND [ResolvedAtUtc] IS NULL) OR ([IsActive] = 0 AND [ResolvedAtUtc] IS NOT NULL)"
+                )
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_UsageFactRejection_Reason", "LEN(LTRIM(RTRIM([Reason]))) > 0")
+                |> ignore
+        )
         |> ignore
 
         rejection

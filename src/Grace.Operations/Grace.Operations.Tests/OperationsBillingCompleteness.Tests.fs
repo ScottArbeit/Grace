@@ -8,11 +8,64 @@ open Microsoft.Data.SqlClient
 open NodaTime
 open NUnit.Framework
 open System
+open System.Data
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
-/// Proves the owner-month completeness coordination boundary against a real SQL Server transaction and application lock.
+/// Observes production store lock calls while delegating every durable command to an actual SQL transaction.
+type private ObservedOperationsUsageTransaction
+    (
+        inner: IOperationsUsageTransaction,
+        beforeScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task,
+        afterScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task
+    ) =
+
+    interface IOperationsUsageTransaction with
+
+        member _.AcquireBillingCompletenessScopeAsync(scope, cancellationToken) =
+            task {
+                do! beforeScopeLockAsync scope cancellationToken
+                do! inner.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
+                do! afterScopeLockAsync scope cancellationToken
+            }
+
+        member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) = inner.TryInsertRawUsageFactAsync(rawFact, cancellationToken)
+
+        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
+            inner.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken)
+
+        member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) = inner.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken)
+
+        member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken)
+
+        member _.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken)
+
+        member _.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, cancellationToken) =
+            inner.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, cancellationToken)
+
+        member _.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken) = inner.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken)
+
+/// Wraps a real SQL transaction scope with deterministic lock-grant callbacks used only by concurrency proofs.
+type private ObservedOperationsUsageTransactionScope
+    (
+        inner: IOperationsUsageTransactionScope,
+        beforeScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task,
+        afterScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task
+    ) =
+
+    interface IOperationsUsageTransactionScope with
+
+        member _.ExecuteAsync(operation, cancellationToken) =
+            inner.ExecuteAsync(
+                (fun transaction operationCancellationToken ->
+                    operation
+                        (ObservedOperationsUsageTransaction(transaction, beforeScopeLockAsync, afterScopeLockAsync) :> IOperationsUsageTransaction)
+                        operationCancellationToken),
+                cancellationToken
+            )
+
+/// Proves the owner-month completeness coordination boundary against isolated real SQL Server databases.
 [<TestFixture>]
 [<NonParallelizable>]
 type OperationsBillingCompletenessTests() =
@@ -85,6 +138,9 @@ type OperationsBillingCompletenessTests() =
             observedAt
         )
 
+    /// Serializes a UsageFact payload exactly as the production Operations storage boundary receives it.
+    let payloadFor usageFact = JsonSerializer.SerializeToUtf8Bytes(usageFact, Constants.JsonSerializerOptions)
+
     /// Derives a validated owner-month scope or fails the test with contract details.
     let scopeFor ownerId organizationId repositoryId observedAt =
         match BillingCompletenessScope.tryCreate ownerId organizationId repositoryId observedAt with
@@ -93,107 +149,463 @@ type OperationsBillingCompletenessTests() =
             Assert.Fail(String.Join("; ", errors))
             Unchecked.defaultof<BillingCompletenessScope>
 
-    /// Acquires one scope lock and keeps it until the supplied release task completes.
-    let holdScopeAsync
-        (transactionScope: IOperationsUsageTransactionScope)
-        (scope: BillingCompletenessScope)
-        (started: TaskCompletionSource<unit>)
-        (release: TaskCompletionSource<unit>)
-        =
-        transactionScope.ExecuteAsync(
-            (fun transaction cancellationToken ->
-                task {
-                    do! transaction.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
-                    started.SetResult()
-                    do! release.Task.WaitAsync cancellationToken
-                    return ()
-                }),
-            CancellationToken.None
+    /// Gives a real SQL connection a unique observable application name for a single competing store operation.
+    let withApplicationName connectionString applicationName =
+        let builder = SqlConnectionStringBuilder(connectionString)
+        builder.ApplicationName <- applicationName
+        builder.ConnectionString
+
+    /// Runs a parameterless real SQL command against an isolated Operations database.
+    let executeNonQueryAsync connectionString commandText =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- commandText
+            let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+            return ()
+        }
+
+    /// Returns a scalar integer from one real SQL command.
+    let executeInt32Async connectionString commandText =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- commandText
+            let! value = command.ExecuteScalarAsync CancellationToken.None
+            return Convert.ToInt32 value
+        }
+
+    /// Reads whether SQL Server reports the named production operation has a waiting application-lock request.
+    let isApplicationLockWaitAsync connectionString applicationName =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                """
+SELECT CASE WHEN EXISTS
+(
+    SELECT 1
+    FROM sys.dm_tran_locks AS lockRequest
+    INNER JOIN sys.dm_exec_sessions AS session
+        ON session.session_id = lockRequest.request_session_id
+    WHERE session.program_name = @ApplicationName
+      AND lockRequest.resource_type = N'APPLICATION'
+      AND lockRequest.request_status = N'WAIT'
+)
+THEN 1
+ELSE 0
+END;
+"""
+
+            command.Parameters.Add("@ApplicationName", SqlDbType.NVarChar, 128).Value <- applicationName
+            let! value = command.ExecuteScalarAsync CancellationToken.None
+            return Convert.ToInt32 value = 1
+        }
+
+    /// Waits for SQL Server to report that the named production operation reached a waiting application-lock request.
+    let waitForApplicationLockWaitAsync connectionString applicationName =
+        let rec observe remainingAttempts =
+            task {
+                if remainingAttempts = 0 then
+                    Assert.Fail($"SQL Server never reported an application-lock request for '{applicationName}'.")
+                else
+                    let! isWaiting = isApplicationLockWaitAsync connectionString applicationName
+
+                    if isWaiting then
+                        return ()
+                    else
+                        do! Task.Delay(TimeSpan.FromMilliseconds 20.0)
+                        return! observe (remainingAttempts - 1)
+            }
+
+        observe 500
+
+    /// Creates a production store whose transaction wrapper pauses only after a real SQL lock has been granted.
+    let heldStore (connectionString: string) (lockGranted: TaskCompletionSource<unit>) (releaseLock: TaskCompletionSource<unit>) =
+        let afterScopeLockAsync (_: BillingCompletenessScope) (cancellationToken: CancellationToken) =
+            (task {
+                lockGranted.TrySetResult() |> ignore
+                do! releaseLock.Task.WaitAsync cancellationToken
+            }
+            :> Task)
+
+        OperationsUsageStore(
+            ObservedOperationsUsageTransactionScope(SqlOperationsUsageTransactionScope connectionString, (fun _ _ -> Task.CompletedTask), afterScopeLockAsync)
         )
 
-    /// Acquires one scope lock and signals when SQL has granted it.
-    let acquireScopeAsync (transactionScope: IOperationsUsageTransactionScope) (scope: BillingCompletenessScope) (acquired: TaskCompletionSource<unit>) =
-        transactionScope.ExecuteAsync(
-            (fun transaction cancellationToken ->
-                task {
-                    do! transaction.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
-                    acquired.SetResult()
-                    return ()
-                }),
-            CancellationToken.None
+    /// Creates a production store that signals after a real SQL lock grant without pausing its durable operation.
+    let observedStore (connectionString: string) (lockGranted: TaskCompletionSource<unit>) =
+        let afterScopeLockAsync (_: BillingCompletenessScope) (_: CancellationToken) =
+            lockGranted.TrySetResult() |> ignore
+            Task.CompletedTask
+
+        OperationsUsageStore(
+            ObservedOperationsUsageTransactionScope(SqlOperationsUsageTransactionScope connectionString, (fun _ _ -> Task.CompletedTask), afterScopeLockAsync)
         )
 
-    /// Proves that two same-scope transactions serialize on the central SQL application-lock resource.
+    /// Creates scoped active rejection evidence for the supplied exact accepted-fact tuple.
+    let scopedRejection usageFactId scope =
+        {
+            RejectionId = Guid.NewGuid()
+            UsageFactId = Some usageFactId
+            Scope = Some scope
+            ReportedScope = None
+            Reason = "transient ingestion rejection"
+            IsActive = true
+        }
+
+    /// Replays a valid fact through the production archived-fact insertion seam.
+    let replayAsync (store: OperationsUsageStore) usageFact =
+        let pointer =
+            {
+                UsageFactId = usageFact.UsageFactId
+                BlobName = $"billing-completeness/{usageFact.UsageFactId:N}.json.gz"
+                ChecksumSha256Hex = String.replicate 64 "a"
+                ByteLength = 4096L
+            }
+
+        store.ReplayArchivedUsageFactAsync(usageFact, payloadFor usageFact, pointer, CancellationToken.None)
+
+    /// Asserts that two production store actions for one scope serialize through the same SQL application-lock resource.
+    let runSameScopeRaceAsync connectionString firstAction secondAction =
+        task {
+            let firstLockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let releaseFirst = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let firstConnection = withApplicationName connectionString $"GraceBillingFirst-{Guid.NewGuid():N}"
+            let secondApplicationName = $"GraceBillingSecond-{Guid.NewGuid():N}"
+            let secondConnection = withApplicationName connectionString secondApplicationName
+            let firstStore = heldStore firstConnection firstLockGranted releaseFirst
+            let secondStore = OperationsUsageStore(SqlOperationsUsageTransactionScope secondConnection)
+            let first = firstAction firstStore
+            do! firstLockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+
+            let second =
+                backgroundTask {
+                    do! Task.Yield()
+                    return! secondAction secondStore
+                }
+
+            do! waitForApplicationLockWaitAsync connectionString secondApplicationName
+            releaseFirst.TrySetResult() |> ignore
+            let! firstResult = first
+            let! secondResult = second
+            return firstResult, secondResult
+        }
+
+    /// Formats one nullable GUID SQL literal without allowing test evidence to use a generated default scope.
+    let nullableGuidSql (value: Guid option) =
+        match value with
+        | Some guid -> $"CONVERT(uniqueidentifier, '{guid:D}')"
+        | None -> "NULL"
+
+    /// Formats one nullable UTC timestamp SQL literal for direct rejection-table validation tests.
+    let nullableDateTimeSql (value: DateTime option) =
+        match value with
+        | Some dateTime ->
+            let formatted = dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffff", Globalization.CultureInfo.InvariantCulture)
+            $"CONVERT(datetime2(7), '{formatted}')"
+        | None -> "NULL"
+
+    /// Builds one direct SQL insertion that bypasses EF and Operations storage validation to exercise durable checks.
+    let directRejectionInsertSql rejectionId usageFactId ownerId organizationId repositoryId monthStartUtc reason isActive resolvedAtUtc =
+        $"""
+INSERT INTO ops.UsageFactRejection
+(
+    RejectionId,
+    UsageFactId,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    MonthStartUtc,
+    Reason,
+    IsActive,
+    ResolvedAtUtc
+)
+VALUES
+(
+    CONVERT(uniqueidentifier, '{rejectionId:D}'),
+    {nullableGuidSql usageFactId},
+    {nullableGuidSql ownerId},
+    {nullableGuidSql organizationId},
+    {nullableGuidSql repositoryId},
+    {nullableDateTimeSql monthStartUtc},
+    N'{reason}',
+    {if isActive then 1 else 0},
+    {nullableDateTimeSql resolvedAtUtc}
+);
+"""
+
+    /// Requires direct SQL to reject a malformed durable rejection row rather than relying on EF validation.
+    let assertDirectRejectionInsertFailsAsync connectionString statement =
+        task {
+            Assert.ThrowsAsync<SqlException>(Func<Task>(fun () -> executeNonQueryAsync connectionString statement :> Task))
+            |> ignore
+        }
+
+    /// Proves each rejection constraint rejects malformed SQL while valid partially scoped evidence remains durable.
     [<Test>]
-    member _.SameScopeOperationsSerializeThroughTheDatabase() =
+    member _.DatabaseRejectsMalformedRejectionEvidenceAndKeepsValidPartialEvidence() =
         withDatabaseAsync (fun connectionString ->
             task {
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
-                let scope = scopeFor ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
-                let transactionScope = SqlOperationsUsageTransactionScope connectionString :> IOperationsUsageTransactionScope
-                let firstStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                let releaseFirst = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                let secondAcquired = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                let first = holdScopeAsync transactionScope scope firstStarted releaseFirst
-                do! firstStarted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
-                let second = acquireScopeAsync transactionScope scope secondAcquired
-                do! Task.Delay 250
-                Assert.That(secondAcquired.Task.IsCompleted, Is.False)
-                releaseFirst.SetResult()
-                do! first
-                do! second
-                Assert.That(secondAcquired.Task.IsCompleted, Is.True)
+                let usageFactId = Guid.NewGuid()
+                let monthStartUtc = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+                let resolvedAtUtc = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql Guid.Empty None None None None None "zero rejection id" true None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql (Guid.NewGuid()) (Some Guid.Empty) None None None None "zero fact id" true None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql (Guid.NewGuid()) None (Some Guid.Empty) None None None "zero owner id" true None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql (Guid.NewGuid()) None None (Some Guid.Empty) None None "zero organization id" true None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql (Guid.NewGuid()) None None None (Some Guid.Empty) None "zero repository id" true None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql
+                            (Guid.NewGuid())
+                            None
+                            (Some ownerId)
+                            (Some organizationId)
+                            (Some repositoryId)
+                            (Some monthStartUtc)
+                            "missing complete-scope fact id"
+                            true
+                            None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql
+                            (Guid.NewGuid())
+                            (Some usageFactId)
+                            (Some ownerId)
+                            (Some organizationId)
+                            (Some repositoryId)
+                            (Some(monthStartUtc.AddDays 1.0))
+                            "not a month start"
+                            true
+                            None)
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql (Guid.NewGuid()) None None None None None "active rows cannot be resolved" true (Some resolvedAtUtc))
+
+                do!
+                    assertDirectRejectionInsertFailsAsync
+                        connectionString
+                        (directRejectionInsertSql (Guid.NewGuid()) None None None None None "inactive rows require resolution" false None)
+
+                do! assertDirectRejectionInsertFailsAsync connectionString (directRejectionInsertSql (Guid.NewGuid()) None None None None None "   " true None)
+
+                let validPartial =
+                    directRejectionInsertSql
+                        (Guid.NewGuid())
+                        (Some usageFactId)
+                        (Some ownerId)
+                        None
+                        (Some repositoryId)
+                        (Some monthStartUtc)
+                        "visible partial operator evidence"
+                        true
+                        None
+
+                do! executeNonQueryAsync connectionString validPartial
+                let! count = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageFactRejection;"
+                Assert.That(count, Is.EqualTo(1))
             })
 
-    /// Proves that database locks do not collide between distinct owner-repository-month tuples.
+    /// Proves a scoped rejection racing online acceptance cannot produce a completeness gap in either commit order.
     [<Test>]
-    member _.DifferentScopesProceedIndependently() =
+    member _.ScopedRejectionAndOnlineAcceptanceSerializeInBothCommitOrders() =
         withDatabaseAsync (fun connectionString ->
             task {
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
-                let firstScope = scopeFor ownerId organizationId (Guid.NewGuid()) (Instant.FromUtc(2026, 8, 4, 12, 0))
-                let secondScope = scopeFor ownerId organizationId (Guid.NewGuid()) (Instant.FromUtc(2026, 8, 4, 12, 0))
-                let transactionScope = SqlOperationsUsageTransactionScope connectionString :> IOperationsUsageTransactionScope
-                let firstStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                let releaseFirst = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                let secondAcquired = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                let first = holdScopeAsync transactionScope firstScope firstStarted releaseFirst
-                do! firstStarted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
-                let second = acquireScopeAsync transactionScope secondScope secondAcquired
-                do! secondAcquired.Task.WaitAsync(TimeSpan.FromSeconds 3.0)
-                releaseFirst.SetResult()
-                do! first
-                do! second
+                let repositoryId = Guid.NewGuid()
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
+                let scope = scopeFor ownerId organizationId repositoryId usageFact.ObservedAt
+
+                let! firstRejection, secondAcceptance =
+                    runSameScopeRaceAsync
+                        connectionString
+                        (fun store -> store.RecordUsageFactRejectionAsync(scopedRejection usageFact.UsageFactId scope, CancellationToken.None))
+                        (fun store -> store.StoreUsageFactAsync(usageFact, payloadFor usageFact, CancellationToken.None))
+
+                Assert.That(firstRejection.IsOk, Is.True)
+                Assert.That(secondAcceptance.IsOk, Is.True)
+
+                let completedAfterAcceptance =
+                    OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                        .EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                let! complete = completedAfterAcceptance
+                Assert.That(complete, Is.EqualTo(Complete))
+
+                let laterFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 5, 12, 0))
+                let laterScope = scopeFor ownerId organizationId repositoryId laterFact.ObservedAt
+
+                let! firstAcceptance, secondRejection =
+                    runSameScopeRaceAsync
+                        connectionString
+                        (fun store -> store.StoreUsageFactAsync(laterFact, payloadFor laterFact, CancellationToken.None))
+                        (fun store -> store.RecordUsageFactRejectionAsync(scopedRejection laterFact.UsageFactId laterScope, CancellationToken.None))
+
+                Assert.That(firstAcceptance.IsOk, Is.True)
+                Assert.That(secondRejection.IsOk, Is.True)
+
+                let! blocked =
+                    OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                        .EvaluateBillingCompletenessAsync(laterScope, CancellationToken.None)
+
+                Assert.That(blocked, Is.EqualTo(BlockedByActiveScopedRejection))
             })
 
-    /// Proves a failed transaction releases its database lock and leaves no durable completion state behind.
+    /// Proves replay and online ingestion use one scope lock and accept one duplicate fact exactly once.
     [<Test>]
-    member _.RollbackReleasesTheDatabaseLock() =
+    member _.ReplayAndOnlineAcceptanceSerializeWithoutDoubleCounting() =
         withDatabaseAsync (fun connectionString ->
             task {
-                let scope = scopeFor (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid()) (Instant.FromUtc(2026, 8, 4, 12, 0))
-                let transactionScope = SqlOperationsUsageTransactionScope connectionString :> IOperationsUsageTransactionScope
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
 
-                Assert.ThrowsAsync<InvalidOperationException>(
-                    Func<Task> (fun () ->
-                        transactionScope.ExecuteAsync(
-                            (fun transaction cancellationToken ->
-                                task {
-                                    do! transaction.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
-                                    return raise (InvalidOperationException "forced rollback")
-                                }),
-                            CancellationToken.None
-                        )
-                        :> Task)
+                let! online, replay =
+                    runSameScopeRaceAsync
+                        connectionString
+                        (fun store -> store.StoreUsageFactAsync(usageFact, payloadFor usageFact, CancellationToken.None))
+                        (fun store -> replayAsync store usageFact)
+
+                Assert.That(online.IsOk, Is.True)
+                Assert.That(replay.IsOk, Is.True)
+
+                let acceptedCount =
+                    [ online; replay ]
+                    |> List.filter (Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted))
+                    |> List.length
+
+                let! rawFactCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.RawUsageFact;"
+                let! aggregateCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageAggregateMinute;"
+                let! quantity = executeInt32Async connectionString "SELECT Quantity FROM ops.UsageAggregateMinute;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(acceptedCount, Is.EqualTo(1))
+                        Assert.That(rawFactCount, Is.EqualTo(1))
+                        Assert.That(aggregateCount, Is.EqualTo(1))
+                        Assert.That(quantity, Is.EqualTo(4096)))
                 )
-                |> ignore
+            })
 
-                let acquired = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-                do! acquireScopeAsync transactionScope scope acquired
-                Assert.That(acquired.Task.IsCompleted, Is.True)
+    /// Proves replay repair and completeness evaluation observe committed blocker state in both writer-reader orders.
+    [<Test>]
+    member _.ReplayRepairAndCompletenessReaderSerializeInBothCommitOrders() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
+                let scope = scopeFor ownerId organizationId repositoryId usageFact.ObservedAt
+                let setupStore = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! recorded = setupStore.RecordUsageFactRejectionAsync(scopedRejection usageFact.UsageFactId scope, CancellationToken.None)
+                Assert.That(recorded.IsOk, Is.True)
+
+                let! replay, readerAfterReplay =
+                    runSameScopeRaceAsync
+                        connectionString
+                        (fun store -> replayAsync store usageFact)
+                        (fun store -> store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None))
+
+                Assert.That(replay.IsOk, Is.True)
+                Assert.That(readerAfterReplay, Is.EqualTo(Complete))
+
+                let nextFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 5, 12, 0))
+                let nextScope = scopeFor ownerId organizationId repositoryId nextFact.ObservedAt
+                let! nextRecorded = setupStore.RecordUsageFactRejectionAsync(scopedRejection nextFact.UsageFactId nextScope, CancellationToken.None)
+                Assert.That(nextRecorded.IsOk, Is.True)
+
+                let! readerBeforeReplay, replayAfterReader =
+                    runSameScopeRaceAsync
+                        connectionString
+                        (fun store -> store.EvaluateBillingCompletenessAsync(nextScope, CancellationToken.None))
+                        (fun store -> replayAsync store nextFact)
+
+                Assert.That(readerBeforeReplay, Is.EqualTo(BlockedByActiveScopedRejection))
+                Assert.That(replayAfterReader.IsOk, Is.True)
+
+                let! complete = setupStore.EvaluateBillingCompletenessAsync(nextScope, CancellationToken.None)
+
+                Assert.That(complete, Is.EqualTo(Complete))
+            })
+
+    /// Proves different repository and organization tuples acquire real SQL locks independently while one scope remains held.
+    [<Test>]
+    member _.DistinctRepositoryAndOrganizationScopesProceedIndependently() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let heldFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let firstLockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let releaseFirst = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let repositoryLockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let organizationLockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let held = heldStore connectionString firstLockGranted releaseFirst
+                let differentRepository = observedStore connectionString repositoryLockGranted
+                let differentOrganization = observedStore connectionString organizationLockGranted
+                let first = held.StoreUsageFactAsync(heldFact, payloadFor heldFact, CancellationToken.None)
+                do! firstLockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+
+                let repositoryFact = fact (Guid.NewGuid()) ownerId organizationId (Guid.NewGuid()) observedAt
+
+                let organizationFact = fact (Guid.NewGuid()) ownerId (Guid.NewGuid()) repositoryId observedAt
+
+                let repositoryWrite = differentRepository.StoreUsageFactAsync(repositoryFact, payloadFor repositoryFact, CancellationToken.None)
+
+                let organizationWrite = differentOrganization.StoreUsageFactAsync(organizationFact, payloadFor organizationFact, CancellationToken.None)
+
+                do! repositoryLockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+                do! organizationLockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+                releaseFirst.TrySetResult() |> ignore
+                let! firstResult = first
+                let! repositoryResult = repositoryWrite
+                let! organizationResult = organizationWrite
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(firstResult.IsOk, Is.True)
+                        Assert.That(repositoryResult.IsOk, Is.True)
+                        Assert.That(organizationResult.IsOk, Is.True))
+                )
             })
 
     /// Proves scoped rejection idempotency, completeness blocking, repair-through-acceptance, and unscoped visibility without invented scope.
@@ -208,16 +620,7 @@ type OperationsBillingCompletenessTests() =
                 let usageFact = fact usageFactId ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
                 let scope = scopeFor ownerId organizationId repositoryId usageFact.ObservedAt
                 let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
-
-                let rejection =
-                    {
-                        RejectionId = Guid.NewGuid()
-                        UsageFactId = Some usageFactId
-                        Scope = Some scope
-                        ReportedScope = None
-                        Reason = "transient ingestion rejection"
-                        IsActive = true
-                    }
+                let rejection = scopedRejection usageFactId scope
 
                 let! first = store.RecordUsageFactRejectionAsync(rejection, CancellationToken.None)
                 let! duplicate = store.RecordUsageFactRejectionAsync({ rejection with RejectionId = Guid.NewGuid() }, CancellationToken.None)
@@ -237,8 +640,7 @@ type OperationsBillingCompletenessTests() =
                 let! blocked = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
                 Assert.That(blocked, Is.EqualTo(BlockedByActiveScopedRejection))
 
-                let payload = JsonSerializer.SerializeToUtf8Bytes(usageFact, Constants.JsonSerializerOptions)
-                let! accepted = store.StoreUsageFactAsync(usageFact, payload, CancellationToken.None)
+                let! accepted = store.StoreUsageFactAsync(usageFact, payloadFor usageFact, CancellationToken.None)
                 Assert.That(accepted.IsOk, Is.True)
                 let! complete = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
                 Assert.That(complete, Is.EqualTo(Complete))
@@ -281,7 +683,7 @@ type OperationsBillingCompletenessTests() =
         let observedAt = Instant.FromUtc(2026, 8, 1, 0, 0)
         let validScope = scopeFor (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid()) observedAt
 
-        let scopedRejection =
+        let scoped =
             {
                 RejectionId = Guid.NewGuid()
                 UsageFactId = Some Guid.Empty
@@ -312,7 +714,7 @@ type OperationsBillingCompletenessTests() =
                 )
 
                 Assert.That(
-                    UsageFactRejection.validate scopedRejection
+                    UsageFactRejection.validate scoped
                     |> Result.isError,
                     Is.True
                 ))

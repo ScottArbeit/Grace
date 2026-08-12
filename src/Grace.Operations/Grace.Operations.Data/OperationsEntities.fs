@@ -72,7 +72,7 @@ type RawUsageFactEntity() =
     /// Stores the SQL-created UTC timestamp for the raw fact row.
     member val CreatedAtUtc = DateTime.MinValue with get, set
 
-/// Represents a durable operator-visible usage rejection that blocks a known owner repository month while active.
+/// Represents durable operator-visible rejection evidence that blocks completeness only when its full billing tuple is known.
 [<AllowNullLiteral>]
 type UsageFactRejectionEntity() =
 
@@ -82,16 +82,16 @@ type UsageFactRejectionEntity() =
     /// Stores the rejected fact identity when the malformed or failed input supplied one.
     member val UsageFactId = Nullable<Guid>() with get, set
 
-    /// Stores the owner only when the rejection has a complete verified billing scope.
+    /// Stores the supplied owner identifier, which contributes to scope only with the complete billing tuple.
     member val OwnerId = Nullable<Guid>() with get, set
 
-    /// Stores the organization only when the rejection has a complete verified billing scope.
+    /// Stores the supplied organization identifier, which contributes to scope only with the complete billing tuple.
     member val OrganizationId = Nullable<Guid>() with get, set
 
-    /// Stores the repository only when the rejection has a complete verified billing scope.
+    /// Stores the supplied repository identifier, which contributes to scope only with the complete billing tuple.
     member val RepositoryId = Nullable<Guid>() with get, set
 
-    /// Stores the UTC month start only when the rejection has a complete verified billing scope.
+    /// Stores the supplied observation month normalized to its UTC calendar boundary without inventing missing identifiers.
     member val MonthStartUtc = Nullable<DateTime>() with get, set
 
     /// Stores a bounded diagnostic reason that remains visible until operator repair.
