@@ -605,8 +605,10 @@ sequencing, and owner interruption rules are explicit. The recovery topology may
 
 This verdict does not make R0, R1, R2, or later semantic work ready to code. The portable specification contract says
 Plan-ready supports implementation planning, while `dev-process` requires each issue to complete Tier-2 research and
-the issue-level Implementation Readiness Gate. The R1 inactive-orphan proof and R2 exact liveness table are intentionally
-leaf-level gates with defined stop outcomes, not hidden assumptions in this document.
+the issue-level Implementation Readiness Gate. The R1 inactive-orphan readiness question is resolved: after an ambiguous
+enrollment outcome, an inactive accepted server record remains an approved Product V1 risk under the existing server
+expiration rule. R2 exact liveness still has a leaf-level gate with a defined stop outcome, not a hidden assumption in
+this document.
 
 ### Passed criteria
 
@@ -620,8 +622,9 @@ leaf-level gates with defined stop outcomes, not hidden assumptions in this docu
 
 - The requested project specification profile is absent at the required starting commit. Its absence is recorded for
   later repository restoration; this document does not infer missing profile rules.
-- R1 has no current proof that inactive orphan enrollment is unselectable and does not block manual re-enrollment. This
-  is a stop condition before R1 code, not an accepted behavior claim.
+- The R1 inactive-orphan readiness question is resolved. An inactive accepted server record after an ambiguous enrollment
+  outcome remains an approved Product V1 risk; this leaf does not add reconciliation or change the existing server
+  expiration rule.
 - R2 still needs exact current server liveness response classes, timestamps, and selection timing on its branch head.
 - Cache host, SQLite/filesystem implementation, artifact route execution, and the local Working Directory Update seam
   do not exist on this epic head. They are planned work, not present behavior.
@@ -632,7 +635,6 @@ leaf-level gates with defined stop outcomes, not hidden assumptions in this docu
 
 Return to the owner before expanding scope when:
 
-- R1's current-contract proof shows an inactive orphan can become selectable or block fresh manual re-enrollment.
 - R0 shows that pruning rotation changes the server source-of-truth model, needs a new durable object/state machine, or
   reveals a real deployed compatibility obligation.
 - R2 needs a second scheduler/state machine, durable recovery workflow, new server source of truth, or generalized

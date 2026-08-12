@@ -166,6 +166,15 @@ module CommandOutputContract =
         schema["properties"] <- Dictionary<string, obj>(properties |> Seq.map KeyValuePair)
         box schema
 
+    /// Constructs a draft 2020-12 object schema that rejects properties outside its published contract.
+    let private closedSchemaObject title properties required =
+        let schema =
+            schemaObject title properties required
+            |> unbox<Dictionary<string, obj>>
+
+        schema["additionalProperties"] <- false
+        box schema
+
     /// Constructs a JSON schema for scalar command-output fields such as strings, booleans, or numbers.
     let private scalarSchema (typeName: string) =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
@@ -207,13 +216,11 @@ module CommandOutputContract =
         schema["description"] <- description
         box schema
 
-    /// Constructs a string schema that excludes one value for conditional command-output variants.
-    let private stringExceptSchema excludedValue description =
-        let excluded = Dictionary<string, obj>(StringComparer.Ordinal)
-        excluded["const"] <- excludedValue
+    /// Constructs a string schema restricted to the values currently emitted by one command-output field.
+    let private enumStringSchema values description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["type"] <- "string"
-        schema["not"] <- box excluded
+        schema["enum"] <- values
         schema["description"] <- description
         box schema
 
@@ -581,16 +588,16 @@ module CommandOutputContract =
 
     /// Defines the ready-only redacted local identity fields shared by Cache enrollment and status output.
     let private cacheStatusReadySchema =
-        schemaObject
+        closedSchemaObject
             "CacheStatusReadyDto"
             [
-                "Class", scalarSchema "string"
+                "Class", constantStringSchema "Grace.Cache.Status" "Redacted local Cache status projection."
                 "Enrollment", constantStringSchema "enrolled" "Protected ready state is valid."
                 "CacheId", scalarSchema "string"
                 "Endpoint", scalarSchema "string"
-                "BoundaryKind", scalarSchema "string"
+                "BoundaryKind", enumStringSchema [| "Owner"; "Organization" |] "Accepted Cache enrollment boundary."
                 "RepositoryCount", scalarSchema "integer"
-                "Key", scalarSchema "string"
+                "Key", constantStringSchema "available" "The ready identity key is available."
             ]
             [|
                 "Class"
@@ -602,14 +609,25 @@ module CommandOutputContract =
                 "Key"
             |]
 
-    /// Defines a non-ready Cache status shape that omits every ready-only identity fact.
-    let private cacheStatusNonReadySchema =
-        schemaObject
-            "CacheStatusNonReadyDto"
+    /// Defines the not-enrolled Cache status combinations that omit every ready-only identity fact.
+    let private cacheStatusNotEnrolledSchema =
+        closedSchemaObject
+            "CacheStatusNotEnrolledDto"
             [
-                "Class", scalarSchema "string"
-                "Enrollment", stringExceptSchema "enrolled" "Any status without a valid protected ready identity."
-                "Key", scalarSchema "string"
+                "Class", constantStringSchema "Grace.Cache.Status" "Redacted local Cache status projection."
+                "Enrollment", constantStringSchema "notEnrolled" "No valid protected ready identity exists."
+                "Key", enumStringSchema [| "missing"; "available" |] "The missing root or staged attempt key state."
+            ]
+            [| "Class"; "Enrollment"; "Key" |]
+
+    /// Defines the invalid Cache status combinations that omit every ready-only identity fact.
+    let private cacheStatusInvalidSchema =
+        closedSchemaObject
+            "CacheStatusInvalidDto"
+            [
+                "Class", constantStringSchema "Grace.Cache.Status" "Redacted local Cache status projection."
+                "Enrollment", constantStringSchema "invalid" "The protected root cannot supply a valid ready identity."
+                "Key", enumStringSchema [| "invalid"; "inaccessible" |] "The invalid or inaccessible key state."
             ]
             [| "Class"; "Enrollment"; "Key" |]
 
@@ -619,7 +637,8 @@ module CommandOutputContract =
             "CacheStatusDto"
             [|
                 cacheStatusReadySchema
-                cacheStatusNonReadySchema
+                cacheStatusNotEnrolledSchema
+                cacheStatusInvalidSchema
             |]
 
     /// Provides the representative enrolled local identity output used by inert Cache command examples.
@@ -634,6 +653,9 @@ module CommandOutputContract =
                 RepositoryCount = 1
                 Key = "available"
             |}
+
+    /// Provides the representative non-ready local identity output used by inert Cache status examples.
+    let private cacheStatusNotEnrolledExample = box {| Class = "Grace.Cache.Status"; Enrollment = "notEnrolled"; Key = "missing" |}
 
     /// Builds command-output contract metadata for supported return value contract so automation can rely on stable JSON shapes.
     let private supportedReturnValueContract name provenance schema example notes =
@@ -891,6 +913,21 @@ module CommandOutputContract =
                     |}
         }
 
+    /// Builds the representative non-ready Cache status success envelope alongside its enrolled success example.
+    let private cacheStatusNotEnrolledSuccessExample (entry: CommandContractEntry) =
+        {
+            Name = "not-enrolled-envelope-shape"
+            Description = "Representative non-ready GraceReturnValue<CacheStatusDto> envelope shape from registry metadata."
+            Document =
+                box
+                    {|
+                        ReturnValue = cacheStatusNotEnrolledExample
+                        EventTime = "2026-06-05T00:00:00Z"
+                        CorrelationId = "correlation-id"
+                        Properties = cliProperties entry.Identity.CommandId entry.ReturnValueContract.Provenance
+                    |}
+        }
+
     /// Builds command-output contract metadata for incomplete metadata example so automation can rely on stable JSON shapes.
     let private incompleteMetadataExample (entry: CommandContractEntry) =
         {
@@ -950,6 +987,8 @@ module CommandOutputContract =
                     | SchemaReady ->
                         [
                             successExample entry
+                            if entry.Identity.CommandId = "cache.status" then
+                                cacheStatusNotEnrolledSuccessExample entry
                             errorExample entry
                         ]
                     | MetadataIncomplete

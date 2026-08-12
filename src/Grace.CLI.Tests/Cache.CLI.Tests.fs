@@ -7,17 +7,20 @@ open Grace.Shared
 open Grace.Types
 open Grace.Types.CacheRegistration
 open Grace.Types.Common
+open Json.Schema
 open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
 open System.Collections.Concurrent
+open System.CommandLine
 open System.Diagnostics
 open System.IO
 open System.Net
 open System.Net.Sockets
 open System.Text
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
 
@@ -234,7 +237,7 @@ module CacheCliTests =
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
     /// Invokes a cache command from a fresh non-repository directory and captures both standard streams.
-    let private invokeOutsideRepositoryWithStreams arguments =
+    let private invokeOutsideRepositoryWithStreamsUsing arguments (invoke: unit -> int) =
         let temporaryDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-cli-tests-{Guid.NewGuid():N}")
         let originalDirectory = Environment.CurrentDirectory
         let originalOut = Console.Out
@@ -250,7 +253,7 @@ module CacheCliTests =
             Console.SetOut(output)
             Console.SetError(error)
             setAnsiConsoleOutput output
-            let exitCode = GraceCommand.main arguments
+            let exitCode = invoke ()
             exitCode, output.ToString(), error.ToString(), Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
         finally
             Console.SetOut(originalOut)
@@ -260,6 +263,19 @@ module CacheCliTests =
 
             if Directory.Exists(temporaryDirectory) then
                 Directory.Delete(temporaryDirectory, true)
+
+    /// Invokes a cache command from a fresh non-repository directory and captures both standard streams.
+    let private invokeOutsideRepositoryWithStreams arguments = invokeOutsideRepositoryWithStreamsUsing arguments (fun () -> GraceCommand.main arguments)
+
+    /// Invokes one parsed root Cache command with a supplied action cancellation token.
+    let private invokeOutsideRepositoryWithCancellation (arguments: string array) (cancellationToken: CancellationToken) =
+        invokeOutsideRepositoryWithStreamsUsing arguments (fun () ->
+            GraceCommand
+                .rootCommand
+                .Parse(arguments)
+                .InvokeAsync(InvocationConfiguration(), cancellationToken)
+                .GetAwaiter()
+                .GetResult())
 
     /// Invokes a cache command from a fresh non-repository directory while retaining the existing stdout-only test shape.
     let private invokeOutsideRepository arguments =
@@ -464,7 +480,7 @@ module CacheCliTests =
                 .EnumerateArray()
             |> Seq.toArray
 
-        Assert.That(variants, Has.Length.EqualTo(2))
+        Assert.That(variants, Has.Length.EqualTo(3))
 
         let readyVariant =
             variants
@@ -496,40 +512,122 @@ module CacheCliTests =
             Is.True
         )
 
-        let nonReadyVariant =
+        let notEnrolledVariant =
             variants
             |> Array.find (fun variant ->
-                let hasNot, _ =
+                let enrollment =
                     variant
                         .GetProperty("properties")
                         .GetProperty("Enrollment")
-                        .TryGetProperty("not")
+                        .GetProperty("const")
+                        .GetString()
 
-                hasNot)
+                enrollment = "notEnrolled")
 
-        let nonReadyRequired =
-            nonReadyVariant
+        let notEnrolledRequired =
+            notEnrolledVariant
                 .GetProperty("required")
                 .EnumerateArray()
             |> Seq.map (fun value -> value.GetString())
             |> Set.ofSeq
 
         Assert.That(
-            (nonReadyRequired = Set.ofList [ "Class"
-                                             "Enrollment"
-                                             "Key" ]),
+            (notEnrolledRequired = Set.ofList [ "Class"
+                                                "Enrollment"
+                                                "Key" ]),
             Is.True
         )
 
-        let nonReadyProperties =
-            nonReadyVariant
-                .GetProperty("properties")
-                .EnumerateObject()
-            |> Seq.map (fun property -> property.Name)
-            |> Set.ofSeq
+        let nonReadyVariants =
+            variants
+            |> Array.filter (fun variant ->
+                let enrollment =
+                    variant
+                        .GetProperty("properties")
+                        .GetProperty("Enrollment")
+                        .GetProperty("const")
+                        .GetString()
 
-        for field in readyOnlyStatusFields do
-            Assert.That(Set.contains field nonReadyProperties, Is.False, $"The non-ready Cache status schema must omit {field}.")
+                enrollment <> "enrolled")
+
+        for nonReadyVariant in nonReadyVariants do
+            Assert.That(
+                nonReadyVariant
+                    .GetProperty("additionalProperties")
+                    .GetBoolean(),
+                Is.False
+            )
+
+            let nonReadyProperties =
+                nonReadyVariant
+                    .GetProperty("properties")
+                    .EnumerateObject()
+                |> Seq.map (fun property -> property.Name)
+                |> Set.ofSeq
+
+            for field in readyOnlyStatusFields do
+                Assert.That(Set.contains field nonReadyProperties, Is.False, $"The non-ready Cache status schema must omit {field}.")
+
+        Assert.That(
+            readyVariant
+                .GetProperty("additionalProperties")
+                .GetBoolean(),
+            Is.False
+        )
+
+        let cacheStatusSchema = JsonSchema.FromText(returnValueSchema.GetRawText())
+
+        let statusDocument (enrollment: string) (key: string) includeReadyFields =
+            let document = JsonObject()
+            document["Class"] <- JsonValue.Create("Grace.Cache.Status")
+            document["Enrollment"] <- JsonValue.Create(enrollment)
+            document["Key"] <- JsonValue.Create(key)
+
+            if includeReadyFields then
+                document["CacheId"] <- JsonValue.Create("11111111-1111-1111-1111-111111111111")
+                document["Endpoint"] <- JsonValue.Create("https://cache.example.test")
+                document["BoundaryKind"] <- JsonValue.Create("Organization")
+                document["RepositoryCount"] <- JsonValue.Create(1)
+
+            document
+
+        let schemaAccepts (document: JsonObject) =
+            use parsedDocument = JsonDocument.Parse(document.ToJsonString())
+
+            cacheStatusSchema
+                .Evaluate(
+                    parsedDocument.RootElement
+                )
+                .IsValid
+
+        let acceptedDocuments =
+            [
+                statusDocument "enrolled" "available" true
+                statusDocument "notEnrolled" "missing" false
+                statusDocument "notEnrolled" "available" false
+                statusDocument "invalid" "invalid" false
+                statusDocument "invalid" "inaccessible" false
+            ]
+
+        for document in acceptedDocuments do
+            Assert.That(schemaAccepts document, Is.True, $"Expected accepted Cache status document: {document}")
+
+        let nonReadyWithReadyField = statusDocument "notEnrolled" "missing" false
+        nonReadyWithReadyField["Endpoint"] <- JsonValue.Create("https://cache.example.test")
+        let unknownEnrollment = statusDocument "pending" "available" false
+        let unknownKey = statusDocument "invalid" "pending" false
+        let invalidCombination = statusDocument "notEnrolled" "inaccessible" false
+        let incompleteReady = statusDocument "enrolled" "available" false
+
+        for document in
+            [
+                nonReadyWithReadyField
+                unknownEnrollment
+                unknownKey
+                invalidCombination
+                incompleteReady
+            ] do
+            Assert.That(schemaAccepts document, Is.False, $"Expected rejected Cache status document: {document}")
 
         let examplesExitCode, examplesOutput, examplesCreatedGraceDirectory =
             invokeOutsideRepository [| "cache"
@@ -539,6 +637,14 @@ module CacheCliTests =
         Assert.That(examplesExitCode, Is.EqualTo(0))
         Assert.That(examplesCreatedGraceDirectory, Is.False)
         use examplesDocument = JsonDocument.Parse(examplesOutput)
+
+        Assert.That(
+            examplesDocument
+                .RootElement
+                .GetProperty("Examples")
+                .GetArrayLength(),
+            Is.EqualTo(3)
+        )
 
         let exampleStatus =
             examplesDocument.RootElement.GetProperty("Examples").[0]
@@ -553,6 +659,34 @@ module CacheCliTests =
         )
 
         assertReadyOnlyStatusFields true exampleStatus
+
+        let nonReadyExampleStatus =
+            examplesDocument.RootElement.GetProperty("Examples").[1]
+                .GetProperty("Document")
+                .GetProperty("ReturnValue")
+
+        Assert.That(
+            examplesDocument.RootElement.GetProperty("Examples").[1]
+                .GetProperty("Name")
+                .GetString(),
+            Is.EqualTo("not-enrolled-envelope-shape")
+        )
+
+        Assert.That(
+            nonReadyExampleStatus
+                .GetProperty("Enrollment")
+                .GetString(),
+            Is.EqualTo("notEnrolled")
+        )
+
+        Assert.That(
+            nonReadyExampleStatus
+                .GetProperty("Key")
+                .GetString(),
+            Is.EqualTo("missing")
+        )
+
+        assertReadyOnlyStatusFields false nonReadyExampleStatus
 
         let helpExitCode, helpOutput, helpCreatedGraceDirectory =
             invokeOutsideRepository [| "cache"
@@ -1086,6 +1220,63 @@ module CacheCliTests =
                                 Assert.That(createdGraceDirectory, Is.False)
                                 Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
                                 Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                                Assert.That(requests.IsEmpty, Is.True)
+                                use document = JsonDocument.Parse(output)
+
+                                Assert.That(
+                                    document
+                                        .RootElement
+                                        .GetProperty("Error")
+                                        .GetString(),
+                                    Does.Contain("cancelled")
+                                )))))
+
+    /// Proves cancellation after a successful credential result preserves a prior attempt without acquiring a claim or contacting the server.
+    [<Test>]
+    let ``Linux cancellation after credential acquisition preserves existing staged attempt`` () =
+        withLinuxCacheRoot (fun root ->
+            Assert.That(
+                Grace.Cache.CacheIdentity.createAttempt root
+                |> Result.isOk,
+                Is.True
+            )
+
+            let claimPath = Path.Combine(root, ".enrollment.lock")
+            File.Delete(claimPath)
+            use credentialEntered = new ManualResetEventSlim(false)
+            use releaseCredential = new ManualResetEventSlim(false)
+            use cancellation = new CancellationTokenSource()
+
+            withLoopbackServer
+                (fun _ -> 404, "{}")
+                (fun serverUri requests ->
+                    withEnvironment (credentialEnvironment serverUri None None None None) (fun () ->
+                        withEnrollmentDependencies
+                            (fun dependencies ->
+                                { dependencies with
+                                    ResolveBearer =
+                                        fun () ->
+                                            task {
+                                                credentialEntered.Set()
+                                                releaseCredential.Wait()
+                                                return Ok(Some "delayed-cancellation-bearer")
+                                            }
+                                })
+                            (fun () ->
+                                let invocation = Task.Run(fun () -> invokeOutsideRepositoryWithCancellation enrollmentArguments cancellation.Token)
+
+                                Assert.That(credentialEntered.Wait(TimeSpan.FromSeconds(5.0)), Is.True)
+                                cancellation.Cancel()
+                                releaseCredential.Set()
+
+                                let exitCode, output, errorOutput, createdGraceDirectory = invocation.GetAwaiter().GetResult()
+
+                                Assert.That(exitCode, Is.Not.EqualTo(0))
+                                Assert.That(errorOutput, Is.Empty)
+                                Assert.That(createdGraceDirectory, Is.False)
+                                Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.True)
+                                Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+                                Assert.That(File.Exists(claimPath), Is.False)
                                 Assert.That(requests.IsEmpty, Is.True)
                                 use document = JsonDocument.Parse(output)
 

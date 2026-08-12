@@ -301,6 +301,8 @@ module CacheCommand =
                         match bearer with
                         | Error error -> return renderOutput parseResult (Error error)
                         | Ok bearer ->
+                            cancellationToken.ThrowIfCancellationRequested()
+
                             match CacheIdentity.tryAcquireEnrollmentClaim stateRoot with
                             | Error _ -> return renderEnrollmentFailure parseResult "Cache enrollment could not acquire exclusive local state."
                             | Ok claim ->
