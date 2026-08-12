@@ -52,19 +52,9 @@ module BillingCompletenessScope =
             .AtStartOfDayInZone(DateTimeZone.Utc)
             .ToInstant()
 
-    /// Derives a reported month only when the timestamp denotes a supplied observation rather than the absent-observation sentinel.
-    let monthStartForObservedAt observedAt =
-        if observedAt = Grace.Shared.Constants.DefaultTimestamp then
-            None
-        else
-            Some(monthStart observedAt)
-
-    /// Validates a complete repository scope and derives its UTC calendar month from an accepted observation.
-    let tryCreate ownerId organizationId repositoryId observedAt =
+    /// Collects missing stable identities shared by incoming-observation and exact-month scope validation.
+    let private requiredIdentifierErrors ownerId organizationId repositoryId =
         let errors = ResizeArray<string>()
-
-        if observedAt = Grace.Shared.Constants.DefaultTimestamp then
-            errors.Add("ObservedAt is required for billing completeness.")
 
         if ownerId = OwnerId.Empty then
             errors.Add("OwnerId is required for billing completeness.")
@@ -74,6 +64,22 @@ module BillingCompletenessScope =
 
         if repositoryId = RepositoryId.Empty then
             errors.Add("RepositoryId is required for billing completeness.")
+
+        errors
+
+    /// Derives a reported month only when the timestamp denotes a supplied observation rather than the absent-observation sentinel.
+    let monthStartForObservedAt observedAt =
+        if observedAt = Grace.Shared.Constants.DefaultTimestamp then
+            None
+        else
+            Some(monthStart observedAt)
+
+    /// Validates a complete repository scope and derives its UTC calendar month from an accepted observation.
+    let tryCreate ownerId organizationId repositoryId observedAt =
+        let errors = requiredIdentifierErrors ownerId organizationId repositoryId
+
+        if observedAt = Grace.Shared.Constants.DefaultTimestamp then
+            errors.Add("ObservedAt is required for billing completeness.")
 
         if errors.Count = 0 then
             Ok { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; MonthStart = monthStart observedAt }
@@ -91,10 +97,12 @@ module BillingCompletenessScope =
 
     /// Rejects an externally supplied scope that is not exactly a UTC month boundary.
     let validate (scope: BillingCompletenessScope) =
-        match tryCreate scope.OwnerId scope.OrganizationId scope.RepositoryId scope.MonthStart with
-        | Ok expected when expected.MonthStart = scope.MonthStart -> Ok scope
-        | Ok _ -> Error [ "MonthStart must be the UTC start of its calendar month." ]
-        | Error errors -> Error errors
+        let errors = requiredIdentifierErrors scope.OwnerId scope.OrganizationId scope.RepositoryId
+
+        if scope.MonthStart <> monthStart scope.MonthStart then
+            errors.Add("MonthStart must be the UTC start of its calendar month.")
+
+        if errors.Count = 0 then Ok scope else Error(List.ofSeq errors)
 
     /// Returns the sole transaction-owned SQL application-lock identity for a validated scope.
     let databaseLockIdentity (scope: BillingCompletenessScope) =
@@ -158,12 +166,12 @@ module UsageFactRejection =
                 | Some value when value = Guid.Empty -> errors.Add("Reported identifiers must not be empty when supplied.")
                 | _ -> ())
 
-            match reported.OwnerId, reported.OrganizationId, reported.RepositoryId, reported.ObservedAt with
-            | Some _, Some _, Some _, Some observedAt when
+            match rejection.UsageFactId, reported.OwnerId, reported.OrganizationId, reported.RepositoryId, reported.ObservedAt with
+            | Some _, Some _, Some _, Some _, Some observedAt when
                 observedAt
                 <> Grace.Shared.Constants.DefaultTimestamp
                 ->
-                errors.Add("A complete reported tuple must be recorded as a scoped rejection.")
+                errors.Add("A complete reported tuple with UsageFactId must be recorded as a scoped rejection.")
             | _ -> ()
         | None -> ()
 
@@ -908,6 +916,15 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
                 addOptionalIdentifier "@UsageFactId" rejection.UsageFactId
                 let reported = rejection.ReportedScope
 
+                /// Derives a reported month only when a fact identity could otherwise form a scoped blocker tuple.
+                let reportedMonthStart =
+                    match rejection.UsageFactId,
+                          (reported
+                           |> Option.bind (fun value -> value.ObservedAt))
+                        with
+                    | Some _, Some observedAt -> BillingCompletenessScope.monthStartForObservedAt observedAt
+                    | _ -> None
+
                 addOptionalIdentifier
                     "@OwnerId"
                     (reported
@@ -927,9 +944,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
                     command
                     "@MonthStartUtc"
                     SqlDbType.DateTime2
-                    (reported
-                     |> Option.bind (fun value -> value.ObservedAt)
-                     |> Option.bind BillingCompletenessScope.monthStartForObservedAt
+                    (reportedMonthStart
                      |> Option.map (fun value -> box (toUtcDateTime value))
                      |> Option.defaultValue DBNull.Value)
 

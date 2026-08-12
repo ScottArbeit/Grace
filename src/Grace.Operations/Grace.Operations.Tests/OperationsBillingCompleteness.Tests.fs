@@ -1160,6 +1160,127 @@ WHERE Reason IN
                 Assert.That(allPartialRowsHaveNoMonth, Is.EqualTo(3))
             })
 
+    /// Proves genuine January 2000 observations remain valid through every production completeness entry point.
+    [<Test>]
+    member _.January2000ObservationFlowsThroughOnlineReplayScopedRejectionAndCompletenessRead() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2000, 1, 15, 12, 34, 56)
+                let onlineFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let replayFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (observedAt + Duration.FromSeconds(1L))
+                let repairedFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (observedAt + Duration.FromSeconds(2L))
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let! online = store.StoreUsageFactAsync(onlineFact, payloadFor onlineFact, CancellationToken.None)
+                let! replay = replayAsync store replayFact
+                let! rejection = store.RecordUsageFactRejectionAsync(scopedRejection repairedFact.UsageFactId scope, CancellationToken.None)
+                let! blocked = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+                let! repaired = store.StoreUsageFactAsync(repairedFact, payloadFor repairedFact, CancellationToken.None)
+                let! complete = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(scope.MonthStart, Is.EqualTo(Instant.FromUtc(2000, 1, 1, 0, 0)))
+
+                        Assert.That(
+                            online
+                            |> Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted),
+                            Is.True
+                        )
+
+                        Assert.That(
+                            replay
+                            |> Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted),
+                            Is.True
+                        )
+
+                        Assert.That(rejection.IsOk, Is.True)
+                        Assert.That(blocked, Is.EqualTo(BlockedByActiveScopedRejection))
+
+                        Assert.That(
+                            repaired
+                            |> Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted),
+                            Is.True
+                        )
+
+                        Assert.That(complete, Is.EqualTo(Complete)))
+                )
+            })
+
+    /// Proves complete reported identifiers without a fact identity remain durable, nonblocking partial evidence.
+    [<Test>]
+    member _.MissingFactIdentityWithCompleteReportedScopePersistsAsNonblockingPartialEvidence() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let scope = scopeFor ownerId organizationId repositoryId observedAt
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+
+                let rejection =
+                    {
+                        RejectionId = Guid.NewGuid()
+                        UsageFactId = None
+                        Scope = None
+                        ReportedScope =
+                            Some
+                                { OwnerId = Some ownerId; OrganizationId = Some organizationId; RepositoryId = Some repositoryId; ObservedAt = Some observedAt }
+                        Reason = "missing fact identity remains partial evidence"
+                        IsActive = true
+                    }
+
+                let! recorded = store.RecordUsageFactRejectionAsync(rejection, CancellationToken.None)
+                let! completeness = store.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                match recorded with
+                | Ok None -> ()
+                | Ok (Some scopedBlocker) -> Assert.Fail($"Fact-less evidence must not become scoped blocker {scopedBlocker.RejectionId}.")
+                | Error errors -> Assert.Fail(String.Join("; ", errors))
+
+                let! partialEvidenceCount =
+                    executeInt32Async
+                        connectionString
+                        $"""
+SELECT COUNT(*)
+FROM ops.UsageFactRejection
+WHERE RejectionId = '{rejection.RejectionId:D}'
+  AND UsageFactId IS NULL
+  AND OwnerId = '{ownerId:D}'
+  AND OrganizationId = '{organizationId:D}'
+  AND RepositoryId = '{repositoryId:D}'
+  AND MonthStartUtc IS NULL
+  AND IsActive = 1;
+"""
+
+                let! completeBlockingTupleCount =
+                    executeInt32Async
+                        connectionString
+                        $"""
+SELECT COUNT(*)
+FROM ops.UsageFactRejection
+WHERE RejectionId = '{rejection.RejectionId:D}'
+  AND UsageFactId IS NOT NULL
+  AND OwnerId IS NOT NULL
+  AND OrganizationId IS NOT NULL
+  AND RepositoryId IS NOT NULL
+  AND MonthStartUtc IS NOT NULL
+  AND IsActive = 1;
+"""
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(partialEvidenceCount, Is.EqualTo(1))
+                        Assert.That(completeBlockingTupleCount, Is.Zero)
+                        Assert.That(completeness, Is.EqualTo(Complete)))
+                )
+            })
+
     /// Proves the first instant of the next UTC month derives a different scope and lock identity from the prior month.
     [<Test>]
     member _.UtcMonthBoundaryUsesAHalfOpenInterval() =
