@@ -51,7 +51,15 @@ supported: they select an exact root without a Reference and keep the current Br
   preserves ignored content. It verifies dual-hash objects before use and independently verifies the complete final
   graph and both root hashes before local completion.
 - The public action token in the phase applies through admission, Save, resolution, preparation, lease waiting, object
-  publication, and the final pre-mutation check. It is deferred only after working-tree mutation starts.
+  publication, and the final pre-mutation check. Cancellation before the first working-tree mutation returns `Rejected`
+  without mutation or a new completion. After mutation starts, the token is non-controlling through local completion,
+  finalization attempt, exact marker cleanup, and terminal recording; actual evidence determines `Updated`,
+  `UpdateIncomplete`, or `FinalizationIncomplete`.
+- Exact terminal replay returns `Unchanged` even when the new invocation token is already cancelled. Explicit
+  finalization retry may observe cancellation only before its first finalization side effect, preserving the pending
+  completion unchanged and returning `FinalizationIncomplete`. After that side effect starts, cancellation is
+  non-controlling through terminal recording. Cancellation never suppresses the
+  `grace doctor --repair-local-state` recommendation for `FinalizationIncomplete`.
 - SQLite local completion remains the irreversible local point. `Reference` finalization occurs afterward while the
   lease is held: previous Branch applies once, exact selected Branch is already applied, and any third Branch rejects.
   `DirectoryVersion` finalization proves the current Branch remains active and changes no Branch identity.

@@ -68,7 +68,7 @@ contract, and this document does not describe their runtime shape as accepted.
 | DEC-003 | Marker evidence is a typed disposition, not a Boolean. | Missing, exact, different-operation, malformed or unsupported, unreadable, and exact-cleanup-failed evidence retain distinct behavior. | #869, consumed by #870–#872 |
 | DEC-004 | Reference finalization is repeatable from persisted typed facts. | Previous Branch applies once; the exact selected Branch is already applied; any third Branch rejects. | #871 |
 | DEC-005 | The plan covers the complete tracked topology. | It creates target directories, removes obsolete tracked empty directories, handles file/directory transitions before mutation, and preserves ignored content. | #870 |
-| DEC-006 | The public action token remains attached until mutation begins. | Admission, Save, resolution, preparation, lease wait, object publication, and the final pre-mutation boundary observe it; only post-mutation cancellation is deferred. | #870, #872 |
+| DEC-006 | The public action token controls only before an irreversible side-effect boundary. | Before the first working-tree mutation, cancellation rejects without mutation or completion. After mutation starts, evidence—not cancellation—determines completion, cleanup, finalization, terminal recording, and outcome. Exact terminal replay is `Unchanged` despite a cancelled invocation token. Explicit finalization retry has the same rule at its first finalization side effect. | #870–#872, #842 |
 | DEC-007 | The first deep module has one exact Branch seam. | The caller supplies only sealed `AcceptedBranchPhase`, typed selection, exact target graph, immutable prepared content, and diagnostic correlation. | #870 |
 | DEC-008 | Phase proof is split by boundary. | Real filesystem and SQLite tests activate phase and recovery seams; built-command tests cover selector routing and bounded public projection. | #870–#872 |
 | DEC-009 | #841 is superseded as an implementation plan. | #868 corrects this contract; #869, #870, #871, and #872 deliver the sequential Branch work. | #868 |
@@ -137,7 +137,9 @@ correlation, a filesystem writer, a mutation plan, a database handle, or a gener
 
 The one action token in `AcceptedBranchPhase` is observed before and during admission and Save, during target resolution
 and preparation, while waiting for the lease, during object publication, and immediately before the first
-working-tree mutation. Cancellation is deferred only after mutation begins.
+working-tree mutation. Cancellation before that mutation returns `Rejected` without working-tree mutation or a new
+completion. Once mutation begins, the token is non-controlling through local completion, the Branch finalization
+attempt, exact marker cleanup, and terminal recording.
 
 The module exposes `run` and the internal exact-finalization retry used by #871 and #842. Retry reconstructs the same
 typed Branch finalization behavior from the persisted typed operation facts; it cannot accept a separately assembled
@@ -222,17 +224,26 @@ types independently of the selected root fields.
 ### Action token and outcomes
 
 The public action token is observed during admission, optional Save, target resolution, preparation, lease waiting,
-object publication, and immediately before the first working-tree mutation. Once mutation starts, cancellation is
-deferred until verified local completion or an unavoidable incomplete failure; it does not interrupt the local
-transaction half way through. It may apply again to finalization.
+object publication, and immediately before the first working-tree mutation. Cancellation before that mutation returns
+`Rejected` with no working-tree mutation and no new completion. Once mutation starts, cancellation is non-controlling
+through local completion, the finalization attempt, exact marker cleanup, and terminal recording. Actual filesystem,
+SQLite, marker, and Branch evidence alone determines `Updated`, `UpdateIncomplete`, or `FinalizationIncomplete`.
+
+An exact terminal replay returns `Unchanged` even when the replay invocation's action token is already cancelled. An
+explicit finalization retry may observe cancellation only before its first finalization side effect—exact marker cleanup
+or Branch publication, whichever occurs first. A cancellation there preserves the pending completion unchanged,
+returns `FinalizationIncomplete`, and retains the `grace doctor --repair-local-state` recommendation. After the first
+retry side effect begins, cancellation is non-controlling through terminal recording and actual evidence determines the
+result.
 
 | Condition | Durable result | Public outcome |
 | --- | --- | --- |
-| Existing matching terminal completion or exact no-mutation result | Matching terminal completion | `Unchanged` |
-| Complete verified root, local completion, marker cleanup, and finalization | Terminal completion | `Updated` |
-| Stale baseline, foreign or damaged pre-completion evidence, conflict, or cancellation before mutation | No new completion | `Rejected` |
-| Mutation started but local completion did not commit | No completion | `UpdateIncomplete` |
-| Local completion committed but cleanup, finalization, or terminal completion did not finish | Pending completion | `FinalizationIncomplete` |
+| Exact terminal replay, including an already-cancelled invocation token, or an exact no-mutation result | Matching terminal completion or no new mutation | `Unchanged` |
+| Cancellation observed before the first working-tree mutation | No new completion and no working-tree mutation | `Rejected` |
+| Complete verified root, local completion, exact marker cleanup, finalization, and terminal recording after mutation began | Terminal completion | `Updated` |
+| Mutation started but local completion did not commit, regardless of later cancellation | No completion | `UpdateIncomplete` |
+| Local completion committed but cleanup, finalization, or terminal recording did not finish, regardless of later cancellation | Pending completion | `FinalizationIncomplete` |
+| Explicit finalization retry cancelled before its first finalization side effect | Existing pending completion remains unchanged | `FinalizationIncomplete` |
 
 `FinalizationIncomplete` is nonzero, states that bytes were updated, and recommends
 `grace doctor --repair-local-state`. It is never reported as `UpdateIncomplete` after local completion.
@@ -257,7 +268,7 @@ the final audit owner, not a substitute for a row's delivery owner.
 | REQ-010 | Bounded pending and terminal completion state | #838 | #871 and #842 prove finalization and recovery retention. | Verify no caller adds a second pending state or retention path. |
 | REQ-011 | Idempotent finalization and blocking | #871 | #842 proves Doctor retry; #843 later adds Watch cursor finalization. | Verify finalizers use persisted exact facts and block different work. |
 | REQ-012 | Truthful five outcomes and public exit behavior | #871 | #870 proves hash projection; #872, #842, #843, and #845 add their real output cases. | Verify built human/JSON/schema/examples/exits agree. |
-| REQ-013 | Action-token cancellation through the last pre-mutation check | #870 | #872 adds Save-enabled admission; #844 and #845 later carry their Connect preparation. | Verify deterministic pre-mutation cancellation and deferred post-mutation behavior. |
+| REQ-013 | Deterministic action-token precedence at mutation, replay, and retry boundaries | #870 | #871 proves finalization/retry precedence; #872 adds Save-enabled admission; #842 proves Branch-only Doctor retry; #844 and #845 later carry Connect preparation. | Verify pre-mutation rejection, post-mutation evidence precedence, cancelled terminal replay, and retry's first-side-effect boundary. |
 | REQ-014 | Same-operation marker adoption with fresh planning | #869 | #870, #871, and #842 prove Branch and recovery replay. | Verify adoption never resumes an old plan or deletes foreign evidence. |
 | REQ-015 | Explicit Doctor recovery without working-file mutation | #842 | No later caller delivery; #846 only audits the completed recovery proof. | Verify exact pending retry and refusal evidence remain current. |
 | REQ-016 | Caller-specific ordering | #871 | #872 completes Save ordering; #843 and #845 add Watch and Connect ordering. | Verify each caller has one real ordering path through the transaction. |
