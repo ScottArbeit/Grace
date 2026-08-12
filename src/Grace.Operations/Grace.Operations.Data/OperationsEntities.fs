@@ -106,6 +106,39 @@ type UsageFactRejectionEntity() =
     /// Stores SQL-created ordering evidence for diagnostics.
     member val CreatedAtUtc = DateTime.MinValue with get, set
 
+/// Represents the immutable SQL source of truth for a supported fact before any Service Bus signal is sent.
+[<AllowNullLiteral>]
+type UsageFactJournalEntity() =
+
+    /// Stores the stable fact identity shared by journal, broker message, raw usage, and rejection evidence.
+    member val UsageFactId = Guid.Empty with get, set
+
+    /// Stores the canonical immutable fact bytes compared on append and processing replay.
+    member val RawPayload: byte array = Array.empty with get, set
+
+    /// Stores the correlation lineage without using it as a journal identity.
+    member val CorrelationId = String.Empty with get, set
+
+    /// Stores the persisted usage-fact kind.
+    member val FactKind = 0 with get, set
+
+    /// Stores the complete billing scope and resource identity carried by the immutable fact.
+    member val OwnerId = Guid.Empty with get, set
+    member val OrganizationId = Guid.Empty with get, set
+    member val RepositoryId = Guid.Empty with get, set
+    member val StoragePoolId = String.Empty with get, set
+    member val Quantity = 0L with get, set
+    member val ObservedAtUtc = DateTime.MinValue with get, set
+
+    /// Stores Pending, Accepted, or Rejected; sending and settlement never change this state.
+    member val State = 0 with get, set
+
+    /// Stores when the immutable journal row became durable.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+    /// Stores when a terminal state was durably recorded.
+    member val TerminalAtUtc = Nullable<DateTime>() with get, set
+
 /// Represents one repository resource aggregate row for a UTC minute.
 [<AllowNullLiteral>]
 type UsageAggregateMinuteEntity() =

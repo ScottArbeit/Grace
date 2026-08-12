@@ -281,8 +281,14 @@ type OperationsWorkerIngestionTests() =
         let events = List<string>()
 
         let store =
-            OperationsUsageStore(FailingOperationsUsageTransactionScope())
-            |> OperationsUsageFactStoreAdapter
+            StubUsageFactStore(
+                (fun _ _ _ ->
+                    Task.FromResult(
+                        Error [ "CorrelationId exceeds the Operations SQL storage limit."
+                                "Resource.StoragePoolId exceeds the Operations SQL storage limit." ]
+                    )),
+                events
+            )
 
         let logger =
             NullLogger<OperationsUsageIngestionProcessor>
@@ -1890,7 +1896,7 @@ type OperationsWorkerIngestionTests() =
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(eventText events, Is.EqualTo("store|dead-letter"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
             )
         }

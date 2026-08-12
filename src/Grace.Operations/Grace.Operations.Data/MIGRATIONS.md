@@ -15,6 +15,22 @@ schema is intentionally narrow:
 The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
 `UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
 
+## Usage-Fact Journal
+
+`ops.UsageFactJournal` is the internal Operations source of truth for each supported fact before any Service Bus send.
+Appending an immutable, validated fact commits it as `Pending`; Service Bus then carries only a retryable signal with
+the same `UsageFactId`. A bounded dispatcher rescans pending rows after send uncertainty, expiry, terminal broker
+movement, or restart. Those broker outcomes never change journal state.
+
+For an exact owner, organization, repository, and UTC-month scope, billing completeness remains blocked while a journal
+row is `Pending` or `Rejected`. The worker rereads and compares the journal identity, payload, and scope inside its
+SQL mutation transaction. It atomically writes raw usage, its aggregate, and `Accepted`; duplicate delivery only sees
+the already accepted identity. A caller with a deterministic supported-fact decision can atomically write scoped
+rejection evidence and `Rejected`, which remains blocked until explicit same-payload processing repairs it.
+
+This internal seam does not create a repository-storage producer. #829 owns the first such producer and must append to
+the journal before sending any signal.
+
 ## Hot/Cold Raw Payload Archive
 
 Raw payloads stay hot in SQL only for the configured Operations archive retention window. When archive Blob settings

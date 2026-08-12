@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Azure.Messaging.ServiceBus
+open Grace.Operations.Data
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Types.Common
@@ -52,6 +53,10 @@ type OperationsTracerBulletServerTests() =
     [<Literal>]
     let operationsUsageAggregateMinuteTable = "ops.UsageAggregateMinute"
 
+    /// Operations journal table verified when proving dispatch recovery from durable Pending state.
+    [<Literal>]
+    let operationsUsageFactJournalTable = "ops.UsageFactJournal"
+
     /// Storage pool identifier width enforced by the operations database schema.
     [<Literal>]
     let operationsStoragePoolIdMaxLength = 256
@@ -86,6 +91,22 @@ type OperationsTracerBulletServerTests() =
         message.ApplicationProperties[ usageFactKindProperty ] <- fact.FactKind.ToString()
 
         message
+
+    /// Appends the supported immutable fact through the production Operations seam before the hosted dispatcher emits its Service Bus signal.
+    let appendJournalFactAsync (fact: UsageFact) =
+        task {
+            let payload = JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
+            let journal = SqlOperationsUsageJournalStore(operationsSqlConnectionString)
+            let! result = journal.AppendAsync(fact, payload, CancellationToken.None)
+
+            match result with
+            | Ok AppendedPending
+            | Ok AlreadyPending -> return ()
+            | Ok terminal -> return invalidOp $"Tracer journal fact unexpectedly reached terminal state {terminal} before dispatch."
+            | Error errors ->
+                let details = String.Join("; ", errors)
+                return invalidOp $"Tracer journal append failed: {details}"
+        }
 
     /// Sends one raw message directly to the operational facts topic for duplicate and invalid-payload proof.
     let sendOperationalMessageAsync (message: ServiceBusMessage) =
@@ -213,6 +234,21 @@ type OperationsTracerBulletServerTests() =
             return Convert.ToInt64 scalar
         }
 
+    /// Reads the durable journal state for one usage-fact identity.
+    let journalStateAsync usageFactId =
+        task {
+            use! connection = openOperationsSqlAsync ()
+            use command = connection.CreateCommand()
+            command.CommandText <- $"SELECT State FROM {operationsUsageFactJournalTable} WHERE UsageFactId = @UsageFactId;"
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
+            let! scalar = command.ExecuteScalarAsync()
+
+            return
+                match scalar with
+                | :? DBNull -> None
+                | value -> Some(Convert.ToInt32 value)
+        }
+
     /// Reads the minute aggregate quantity for the fact's repository resource and UTC bucket.
     let aggregateQuantityAsync (fact: UsageFact) =
         task {
@@ -288,6 +324,45 @@ WHERE FactKind = @FactKind
                 )
         }
 
+    /// Waits for the requested durable journal state while retaining SQL and broker diagnostics on timeout.
+    let waitForJournalStateAsync description expectedState fact =
+        task {
+            let stopwatch = Stopwatch.StartNew()
+            let mutable matched = false
+            let mutable lastState = None
+            let mutable lastError = String.Empty
+
+            while not matched && stopwatch.Elapsed < proofTimeout do
+                try
+                    let! state = journalStateAsync fact.UsageFactId
+                    lastState <- state
+                    lastError <- String.Empty
+
+                    if state = Some expectedState then
+                        matched <- true
+                    else
+                        do! Task.Delay(TimeSpan.FromSeconds(1.0))
+                with
+                | ex ->
+                    lastError <- ex.Message
+                    do! Task.Delay(TimeSpan.FromSeconds(1.0))
+
+            if not matched then
+                let! serviceBusDiagnostics = operationsServiceBusDiagnosticsAsync ()
+
+                let errorSuffix =
+                    if String.IsNullOrWhiteSpace lastError then
+                        ""
+                    else
+                        $" Last SQL error: {lastError}"
+
+                raise (
+                    TimeoutException(
+                        $"{description} did not reach journal state {expectedState}. Actual state={lastState}.{errorSuffix}{Environment.NewLine}{serviceBusDiagnostics}"
+                    )
+                )
+        }
+
     /// Waits until the operations worker has removed one expected message from its durable subscription.
     let waitForOperationalMessageSettledAsync description messageId =
         task {
@@ -328,6 +403,67 @@ WHERE FactKind = @FactKind
                         $"{description} message '{messageId}' was not settled by the operations worker before timeout.{Environment.NewLine}{activeDiagnostics}{Environment.NewLine}{deadLetterDiagnostics}"
                     )
                 )
+        }
+
+    /// Abandons one locked signal until the emulator applies its configured final-delivery movement.
+    let abandonOperationalMessageThroughFinalDeliveryAsync messageId =
+        task {
+            let client = ServiceBusClient(serviceBusConnectionString)
+            use _client = client
+
+            let receiver =
+                client.CreateReceiver(
+                    operationalFactsTopic,
+                    operationsProcessorSubscriptionName,
+                    ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock)
+                )
+
+            use _receiver = receiver
+            let mutable delivery = 0
+
+            while delivery < 10 do
+                let! message = receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5.0))
+
+                if isNull message then
+                    raise (TimeoutException($"Timed out receiving final-delivery signal '{messageId}' at delivery {delivery + 1}."))
+
+                if not (String.Equals(message.MessageId, messageId, StringComparison.Ordinal)) then
+                    raise (InvalidOperationException($"Expected final-delivery signal '{messageId}', received '{message.MessageId}'."))
+
+                do! receiver.AbandonMessageAsync(message)
+                delivery <- delivery + 1
+        }
+
+    /// Receives the expected broker-terminal signal and returns the broker's terminal reason.
+    let receiveTerminalOperationalMessageReasonAsync messageId =
+        task {
+            let client = ServiceBusClient(serviceBusConnectionString)
+            use _client = client
+
+            let receiver =
+                client.CreateReceiver(
+                    operationalFactsTopic,
+                    operationsProcessorSubscriptionName,
+                    ServiceBusReceiverOptions(SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete)
+                )
+
+            use _receiver = receiver
+            let stopwatch = Stopwatch.StartNew()
+            let mutable terminalReason = None
+
+            while terminalReason.IsNone
+                  && stopwatch.Elapsed < proofTimeout do
+                let! message = receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1.0))
+
+                if
+                    not (isNull message)
+                    && String.Equals(message.MessageId, messageId, StringComparison.Ordinal)
+                then
+                    terminalReason <- Some message.DeadLetterReason
+
+            return
+                terminalReason
+                |> Option.defaultWith (fun () -> raise (TimeoutException($"Timed out waiting for terminal signal '{messageId}' in the dead-letter subqueue.")))
         }
 
     /// Waits for an invalid operational message to reach the worker's dead-letter queue.
@@ -378,15 +514,46 @@ WHERE FactKind = @FactKind
 
             Assert.That(fact.CorrelationId, Is.Not.EqualTo(fact.UsageFactId.ToString("D")))
 
-            do! sendOperationalMessageAsync (usageFactMessage (fact.UsageFactId.ToString("D")) fact)
+            do! appendJournalFactAsync fact
             do! waitForUsageStateAsync "Initial published fact" 1L 4096L fact
+            do! waitForJournalStateAsync "Initial published fact" 1 fact
+
+            let restartFact = usageFact (Guid.Parse("53153153-3531-4531-8531-531531531531")) (CorrelationId "ops6-worker-restart-pending-correlation")
+
+            let finalDeliveryFact = usageFact (Guid.Parse("53153153-4531-4531-8531-531531531531")) (CorrelationId "ops6-final-delivery-pending-correlation")
+
+            let app =
+                match App with
+                | Some runningApp -> runningApp
+                | None -> failwith "The shared Aspire test host was not available for Operations worker recovery proof."
+
+            do! AspireTestHost.stopOperationsWorkerAsync app
+            do! appendJournalFactAsync restartFact
+            do! waitForJournalStateAsync "Stopped worker leaves journal append pending" 0 restartFact
+
+            do! appendJournalFactAsync finalDeliveryFact
+            do! waitForJournalStateAsync "Final-delivery journal append remains pending" 0 finalDeliveryFact
+
+            let finalDeliveryMessageId = $"{finalDeliveryFact.UsageFactId:D}-terminal"
+            do! sendOperationalMessageAsync (usageFactMessage finalDeliveryMessageId finalDeliveryFact)
+            do! abandonOperationalMessageThroughFinalDeliveryAsync finalDeliveryMessageId
+            let! finalDeliveryReason = receiveTerminalOperationalMessageReasonAsync finalDeliveryMessageId
+
+            Assert.That(finalDeliveryReason, Is.Not.Empty)
+            do! waitForJournalStateAsync "Broker terminal movement leaves journal fact pending" 0 finalDeliveryFact
+
+            do! AspireTestHost.startOperationsWorkerAsync app
+            do! waitForUsageStateAsync "Restarted worker dispatches pending journal fact" 1L 12288L restartFact
+            do! waitForJournalStateAsync "Restarted worker accepts pending journal fact" 1 restartFact
+            do! waitForUsageStateAsync "Terminal broker movement is redispatched from SQL journal" 1L 12288L finalDeliveryFact
+            do! waitForJournalStateAsync "Terminal broker movement journal fact is accepted" 1 finalDeliveryFact
 
             let duplicateMessageId = $"{fact.UsageFactId:D}-redelivery"
             let duplicateDelivery = usageFactMessage duplicateMessageId fact
 
             do! sendOperationalMessageAsync duplicateDelivery
             do! waitForOperationalMessageSettledAsync "Duplicate UsageFactId delivery" duplicateMessageId
-            do! waitForUsageStateAsync "Duplicate UsageFactId delivery" 1L 4096L fact
+            do! waitForUsageStateAsync "Duplicate UsageFactId delivery" 1L 12288L fact
 
             let futureFact = usageFact (Guid.Parse("53153153-2531-4531-8531-531531531531")) (CorrelationId "ops6-future-kind-correlation")
 

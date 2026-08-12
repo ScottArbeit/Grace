@@ -20,6 +20,14 @@ module OperationsUsageSql =
     [<Literal>]
     let UsageFactRejectionTable = "ops.UsageFactRejection"
 
+    /// Names the immutable pre-send fact journal used by dispatch and billing completeness.
+    [<Literal>]
+    let UsageFactJournalTable = "ops.UsageFactJournal"
+
+    /// Names the journal table without schema qualification for EF migrations.
+    [<Literal>]
+    let UsageFactJournalTableName = "UsageFactJournal"
+
     /// Names the minute aggregate table without schema qualification for EF migrations.
     [<Literal>]
     let UsageAggregateMinuteTableName = "UsageAggregateMinute"
@@ -163,6 +171,17 @@ WHERE UsageFactId = @UsageFactId AND OwnerId = @OwnerId AND OrganizationId = @Or
 SELECT CASE WHEN EXISTS (SELECT 1 FROM ops.UsageFactRejection WITH (UPDLOCK, HOLDLOCK)
                          WHERE OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
                            AND MonthStartUtc = @MonthStartUtc AND IsActive = 1)
+THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END;
+"""
+
+    /// Reads unresolved journal truth only after the caller owns the matching completeness lock.
+    [<Literal>]
+    let HasUnresolvedUsageFactJournal =
+        """
+SELECT CASE WHEN EXISTS (SELECT 1 FROM ops.UsageFactJournal WITH (UPDLOCK, HOLDLOCK)
+                         WHERE OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+                           AND ObservedAtUtc >= @MonthStartUtc AND ObservedAtUtc < @NextMonthStartUtc
+                           AND State IN (@PendingState, @RejectedState))
 THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END;
 """
 

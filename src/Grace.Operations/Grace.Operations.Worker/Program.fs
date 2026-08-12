@@ -48,10 +48,12 @@ module Program =
         services.AddSingleton<IHealthCheckPublisher, OperationsUsageReadinessHealthCheckPublisher>()
         |> ignore
 
-        services.AddSingleton<IOperationsUsageFactStore> (fun _ ->
-            let transactionScope = SqlOperationsUsageTransactionScope(settings.SqlConnectionString)
-            let store = OperationsUsageStore transactionScope
-            OperationsUsageFactStoreAdapter(store) :> IOperationsUsageFactStore)
+        services.AddSingleton<IOperationsUsageJournalStore> (fun _ ->
+            SqlOperationsUsageJournalStore(settings.SqlConnectionString) :> IOperationsUsageJournalStore)
+        |> ignore
+
+        services.AddSingleton<IOperationsUsageFactStore> (fun serviceProvider ->
+            OperationsUsageFactStoreAdapter(serviceProvider.GetRequiredService<IOperationsUsageJournalStore>()) :> IOperationsUsageFactStore)
         |> ignore
 
         services.AddSingleton<IOperationsUsageArchiveStore> (fun _ ->
@@ -73,6 +75,9 @@ module Program =
         |> ignore
 
         services.AddHostedService<OperationsUsageWorkerService>()
+        |> ignore
+
+        services.AddHostedService<OperationsUsageJournalDispatcherService>()
         |> ignore
 
         services.AddHostedService<OperationsUsageTemporaryHotCleanupWorkerService>()

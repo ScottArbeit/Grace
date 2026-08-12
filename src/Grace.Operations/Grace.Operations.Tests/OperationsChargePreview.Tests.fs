@@ -244,7 +244,7 @@ type OperationsChargePreviewTests() =
                 "..",
                 "Grace.Operations.Data",
                 "Migrations",
-                "20260812090000_AddBillingCompletenessCoordination.fs"
+                "20260812110000_AddUsageFactJournal.fs"
             )
             |> Path.GetFullPath
 
@@ -274,7 +274,7 @@ type OperationsChargePreviewTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
-        let migration = AddBillingCompletenessCoordination().TargetModel
+        let migration = AddUsageFactJournal().TargetModel
 
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()
@@ -342,6 +342,8 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
+            Assert.That(targetModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
+            Assert.That(snapshotModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
             Assert.That(rejection, Is.Not.Null)
             Assert.That((migrationShape = snapshotShape), Is.True)
 

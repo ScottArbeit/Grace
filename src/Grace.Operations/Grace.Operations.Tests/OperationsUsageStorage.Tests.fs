@@ -164,6 +164,10 @@ type private InMemoryOperationsUsageTransactionScope() =
                         member _.HasActiveScopedUsageFactRejectionAsync(_scope, readCancellationToken) =
                             readCancellationToken.ThrowIfCancellationRequested()
                             Task.FromResult false
+
+                        member _.HasUnresolvedUsageFactJournalAsync(_scope, readCancellationToken) =
+                            readCancellationToken.ThrowIfCancellationRequested()
+                            Task.FromResult false
                     }
 
                 let! result = operation transaction cancellationToken

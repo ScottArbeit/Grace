@@ -1,26 +1,81 @@
-namespace Grace.Operations.Data
+namespace Grace.Operations.Data.Migrations
 
+open Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
-open Microsoft.EntityFrameworkCore.Design
-open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
 open Microsoft.EntityFrameworkCore.Metadata.Builders
-open Microsoft.EntityFrameworkCore.SqlServer.Migrations.Internal
 open System
 
-/// Configures the Operations EF Core model without opening a database connection.
-[<RequireQualifiedAccess>]
-module OperationsModel =
+/// Adds the immutable pre-send journal that keeps supported usage visible when Service Bus delivery is delayed or lost.
+[<Microsoft.EntityFrameworkCore.Infrastructure.DbContextAttribute(typeof<OperationsDbContext>)>]
+[<Migration("20260812110000_AddUsageFactJournal")>]
+type AddUsageFactJournal() =
+    inherit Migration()
 
-    /// Configures the raw fact and minute aggregate tables that form the Operations usage foundation.
-    let configure (modelBuilder: ModelBuilder) =
-        modelBuilder.HasDefaultSchema(OperationsUsageSql.SchemaName)
+    /// Creates the one journal row per immutable fact, including the indexes used by dispatch and exact-scope completeness.
+    override _.Up(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            """
+CREATE TABLE ops.UsageFactJournal
+(
+    UsageFactId uniqueidentifier NOT NULL,
+    RawPayload varbinary(max) NOT NULL,
+    CorrelationId nvarchar(200) NOT NULL,
+    FactKind int NOT NULL,
+    OwnerId uniqueidentifier NOT NULL,
+    OrganizationId uniqueidentifier NOT NULL,
+    RepositoryId uniqueidentifier NOT NULL,
+    StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL,
+    Quantity bigint NOT NULL,
+    ObservedAtUtc datetime2(7) NOT NULL,
+    State int NOT NULL,
+    CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_UsageFactJournal_CreatedAtUtc DEFAULT (SYSUTCDATETIME()),
+    TerminalAtUtc datetime2(7) NULL,
+    CONSTRAINT PK_ops_UsageFactJournal PRIMARY KEY (UsageFactId),
+    CONSTRAINT CK_ops_UsageFactJournal_Identity CHECK
+    (
+        UsageFactId <> '00000000-0000-0000-0000-000000000000'
+        AND OwnerId <> '00000000-0000-0000-0000-000000000000'
+        AND OrganizationId <> '00000000-0000-0000-0000-000000000000'
+        AND RepositoryId <> '00000000-0000-0000-0000-000000000000'
+        AND LEN(LTRIM(RTRIM(CorrelationId))) > 0
+        AND LEN(LTRIM(RTRIM(StoragePoolId))) > 0
+        AND DATALENGTH(RawPayload) > 0
+    ),
+    CONSTRAINT CK_ops_UsageFactJournal_State CHECK
+    (
+        (State = 0 AND TerminalAtUtc IS NULL)
+        OR (State IN (1, 2) AND TerminalAtUtc IS NOT NULL)
+    )
+);
+
+CREATE INDEX IX_ops_UsageFactJournal_ScopeState
+    ON ops.UsageFactJournal(OwnerId, OrganizationId, RepositoryId, ObservedAtUtc, State, UsageFactId);
+
+CREATE INDEX IX_ops_UsageFactJournal_PendingDispatch
+    ON ops.UsageFactJournal(State, CreatedAtUtc, UsageFactId);
+"""
+        )
         |> ignore
+
+    /// Removes only the journal introduced by this slice.
+    override _.Down(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.DropTable("UsageFactJournal", "ops")
+        |> ignore
+
+    /// Rebuilds the complete model at this reviewed migration point.
+    override _.BuildTargetModel(modelBuilder: ModelBuilder) =
+
+        modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
+        |> ignore
+
+        // Deliberately keep this snapshot frozen with literals so future runtime model edits
+        // cannot change the latest reviewed migration point before a new migration updates it.
+        modelBuilder.HasDefaultSchema("ops") |> ignore
 
         let rawFact = modelBuilder.Entity<RawUsageFactEntity>()
 
-        rawFact.ToTable(OperationsUsageSql.RawUsageFactTableName, OperationsUsageSql.SchemaName)
-        |> ignore
+        rawFact.ToTable("RawUsageFact", "ops") |> ignore
 
         rawFact
             .HasKey([| "UsageFactId" |])
@@ -40,7 +95,7 @@ module OperationsModel =
 
         rawFact
             .Property<string>("CorrelationId")
-            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 
@@ -67,8 +122,8 @@ module OperationsModel =
 
         rawFact
             .Property<string>("StoragePoolId")
-            .HasMaxLength(OperationsUsageSql.StoragePoolIdMaxLength)
-            .UseCollation(OperationsUsageSql.CaseSensitiveStoragePoolIdCollation)
+            .HasMaxLength(256)
+            .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
         |> ignore
 
@@ -86,43 +141,43 @@ module OperationsModel =
 
         rawFact
             .Property<string>("ArchiveBlobName")
-            .HasMaxLength(OperationsUsageSql.ArchiveBlobNameMaxLength)
+            .HasMaxLength(512)
         |> ignore
 
         rawFact
             .Property<string>("ArchiveChecksumSha256Hex")
-            .HasMaxLength(OperationsUsageSql.ArchiveChecksumSha256HexLength)
+            .HasMaxLength(64)
             .IsFixedLength()
             .IsUnicode(false)
         |> ignore
 
         rawFact
-            .Property<Nullable<int64>>("ArchiveByteLength")
+            .Property<System.Nullable<int64>>("ArchiveByteLength")
             .HasColumnType("bigint")
         |> ignore
 
         rawFact
-            .Property<Nullable<System.DateTime>>("ArchiveVerifiedAtUtc")
+            .Property<System.Nullable<System.DateTime>>("ArchiveVerifiedAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
         rawFact
-            .Property<Nullable<System.DateTime>>("ArchivedAtUtc")
+            .Property<System.Nullable<System.DateTime>>("ArchivedAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
         rawFact
-            .Property<Nullable<System.DateTime>>("RehydrationExpiresAtUtc")
+            .Property<System.Nullable<System.DateTime>>("RehydrationExpiresAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
         rawFact
             .Property<string>("LastArchiveFailureReason")
-            .HasMaxLength(OperationsUsageSql.ArchiveFailureReasonMaxLength)
+            .HasMaxLength(400)
         |> ignore
 
         rawFact
-            .Property<Nullable<System.DateTime>>("LastArchiveFailureAtUtc")
+            .Property<System.Nullable<System.DateTime>>("LastArchiveFailureAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
@@ -132,7 +187,7 @@ module OperationsModel =
         |> ignore
 
         rawFact
-            .Property<Nullable<System.DateTime>>("ArchiveRetiredAtUtc")
+            .Property<System.Nullable<System.DateTime>>("ArchiveRetiredAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
@@ -169,7 +224,7 @@ module OperationsModel =
 
         rawFact
             .HasIndex([| "RehydrationExpiresAtUtc" |])
-            .HasDatabaseName(OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+            .HasDatabaseName("IX_ops_RawUsageFact_RehydrationExpiresAtUtc")
             .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
         |> ignore
 
@@ -177,7 +232,7 @@ module OperationsModel =
 
         rejection.ToTable(
             "UsageFactRejection",
-            OperationsUsageSql.SchemaName,
+            "ops",
             fun (table: TableBuilder<UsageFactRejectionEntity>) ->
                 table.HasCheckConstraint(
                     "CK_ops_UsageFactRejection_SuppliedGuids",
@@ -238,7 +293,7 @@ module OperationsModel =
 
         rejection
             .Property<string>("Reason")
-            .HasMaxLength(OperationsUsageSql.ArchiveFailureReasonMaxLength)
+            .HasMaxLength(400)
             .IsRequired()
         |> ignore
 
@@ -289,7 +344,7 @@ module OperationsModel =
 
         let journal = modelBuilder.Entity<UsageFactJournalEntity>()
 
-        journal.ToTable(OperationsUsageSql.UsageFactJournalTableName, OperationsUsageSql.SchemaName)
+        journal.ToTable("UsageFactJournal", "ops")
         |> ignore
 
         journal
@@ -311,7 +366,7 @@ module OperationsModel =
 
         journal
             .Property<string>("CorrelationId")
-            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 
@@ -332,8 +387,8 @@ module OperationsModel =
 
         journal
             .Property<string>("StoragePoolId")
-            .HasMaxLength(OperationsUsageSql.StoragePoolIdMaxLength)
-            .UseCollation(OperationsUsageSql.CaseSensitiveStoragePoolIdCollation)
+            .HasMaxLength(256)
+            .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
         |> ignore
 
@@ -388,7 +443,7 @@ module OperationsModel =
 
         let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()
 
-        aggregate.ToTable(OperationsUsageSql.UsageAggregateMinuteTableName, OperationsUsageSql.SchemaName)
+        aggregate.ToTable("UsageAggregateMinute", "ops")
         |> ignore
 
         aggregate
@@ -428,8 +483,8 @@ module OperationsModel =
 
         aggregate
             .Property<string>("StoragePoolId")
-            .HasMaxLength(OperationsUsageSql.StoragePoolIdMaxLength)
-            .UseCollation(OperationsUsageSql.CaseSensitiveStoragePoolIdCollation)
+            .HasMaxLength(256)
+            .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
         |> ignore
 
@@ -464,7 +519,7 @@ module OperationsModel =
 
         let pricingPlan = modelBuilder.Entity<PricingPlanEntity>()
 
-        pricingPlan.ToTable(OperationsPricingSql.PricingPlanTableName, OperationsUsageSql.SchemaName)
+        pricingPlan.ToTable("PricingPlan", "ops")
         |> ignore
 
         pricingPlan
@@ -480,13 +535,13 @@ module OperationsModel =
 
         pricingPlan
             .Property<string>("PlanCode")
-            .HasMaxLength(OperationsPricingSql.PlanCodeMaxLength)
+            .HasMaxLength(128)
             .IsRequired()
         |> ignore
 
         pricingPlan
             .Property<string>("DisplayName")
-            .HasMaxLength(OperationsPricingSql.DisplayNameMaxLength)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 
@@ -497,7 +552,7 @@ module OperationsModel =
         |> ignore
 
         pricingPlan
-            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .Property<System.Nullable<System.DateTime>>("EffectiveToUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
@@ -516,7 +571,7 @@ module OperationsModel =
 
         let mapping = modelBuilder.Entity<BillableUsageKindMappingEntity>()
 
-        mapping.ToTable(OperationsPricingSql.BillableUsageKindMappingTableName, OperationsUsageSql.SchemaName)
+        mapping.ToTable("BillableUsageKindMapping", "ops")
         |> ignore
 
         mapping
@@ -540,7 +595,7 @@ module OperationsModel =
 
         mapping
             .Property<string>("DisplayName")
-            .HasMaxLength(OperationsPricingSql.DisplayNameMaxLength)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 
@@ -551,7 +606,7 @@ module OperationsModel =
         |> ignore
 
         mapping
-            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .Property<System.Nullable<System.DateTime>>("EffectiveToUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
@@ -576,12 +631,12 @@ module OperationsModel =
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName(OperationsPricingSql.BillableUsageKindMappingEffectiveIndexName)
+            .HasDatabaseName("IX_ops_BillableUsageKindMapping_FactKindEffective")
         |> ignore
 
         let pricingRate = modelBuilder.Entity<PricingRateEntity>()
 
-        pricingRate.ToTable(OperationsPricingSql.PricingRateTableName, OperationsUsageSql.SchemaName)
+        pricingRate.ToTable("PricingRate", "ops")
         |> ignore
 
         pricingRate
@@ -609,7 +664,7 @@ module OperationsModel =
         pricingRate
             .Property<string>("CurrencyCode")
             .HasColumnType("varchar(3)")
-            .HasMaxLength(OperationsPricingSql.CurrencyCodeLength)
+            .HasMaxLength(3)
             .IsUnicode(false)
             .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
@@ -617,7 +672,7 @@ module OperationsModel =
 
         pricingRate
             .Property<string>("UnitName")
-            .HasMaxLength(OperationsPricingSql.UnitNameMaxLength)
+            .HasMaxLength(64)
             .IsRequired()
         |> ignore
 
@@ -638,7 +693,7 @@ module OperationsModel =
         |> ignore
 
         pricingRate
-            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .Property<System.Nullable<System.DateTime>>("EffectiveToUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
@@ -670,7 +725,7 @@ module OperationsModel =
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName(OperationsPricingSql.PricingRateEffectiveIndexName)
+            .HasDatabaseName("IX_ops_PricingRate_PlanUsageKindEffective")
         |> ignore
 
         pricingRate
@@ -683,7 +738,7 @@ module OperationsModel =
 
         let assignment = modelBuilder.Entity<PricingAssignmentEntity>()
 
-        assignment.ToTable(OperationsPricingSql.PricingAssignmentTableName, OperationsUsageSql.SchemaName)
+        assignment.ToTable("PricingAssignment", "ops")
         |> ignore
 
         assignment
@@ -728,7 +783,7 @@ module OperationsModel =
         |> ignore
 
         assignment
-            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .Property<System.Nullable<System.DateTime>>("EffectiveToUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
 
@@ -741,7 +796,7 @@ module OperationsModel =
 
         assignment
             .HasIndex([| "PricingPlanId" |])
-            .HasDatabaseName(OperationsPricingSql.PricingAssignmentPricingPlanIndexName)
+            .HasDatabaseName("IX_PricingAssignment_PricingPlanId")
         |> ignore
 
         assignment
@@ -767,7 +822,7 @@ module OperationsModel =
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName(OperationsPricingSql.PricingAssignmentScopeIndexName)
+            .HasDatabaseName("IX_ops_PricingAssignment_ScopeEffective")
         |> ignore
 
         assignment
@@ -778,168 +833,142 @@ module OperationsModel =
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
-        OperationsChargePreviewModel.configure modelBuilder
+        let line = modelBuilder.Entity<ChargePreviewLineEntity>()
 
-/// Owns the EF Core model for Grace Operations SQL Server schema evolution.
-type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
-    inherit DbContext(options)
+        line.ToTable(
+            "ChargePreviewLine",
+            "ops",
+            fun (table: TableBuilder<ChargePreviewLineEntity>) ->
+                table.HasCheckConstraint("CK_ops_ChargePreviewLine_PeriodRange", "[PeriodFromUtc] < [PeriodToUtc]")
+                |> ignore
 
-    /// Exposes immutable usage facts for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private rawUsageFacts: DbSet<RawUsageFactEntity>
+                table.HasCheckConstraint(
+                    "CK_ops_ChargePreviewLine_EffectiveRange",
+                    "[PeriodFromUtc] <= [EffectiveFromUtc] AND [EffectiveFromUtc] < [EffectiveToUtc] AND [EffectiveToUtc] <= [PeriodToUtc]"
+                )
+                |> ignore
 
-    /// Exposes UTC minute aggregates for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private usageAggregateMinutes: DbSet<UsageAggregateMinuteEntity>
+                table.HasCheckConstraint("CK_ops_ChargePreviewLine_UnitQuantity", "[UnitQuantity] > 0")
+                |> ignore
 
-    /// Exposes durable scoped and partial usage rejection evidence for migrations and SQL inspection.
-    [<DefaultValue>]
-    val mutable private usageFactRejections: DbSet<UsageFactRejectionEntity>
+                table.HasCheckConstraint("CK_ops_ChargePreviewLine_Amounts", "[UnitPriceMicros] >= 0 AND [TotalQuantity] >= 0 AND [ChargeMicros] >= 0")
+                |> ignore
 
-    /// Exposes immutable pending and terminal journal rows for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private usageFactJournal: DbSet<UsageFactJournalEntity>
-
-    /// Exposes pricing plans for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private pricingPlans: DbSet<PricingPlanEntity>
-
-    /// Exposes billable usage-kind mappings for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private billableUsageKindMappings: DbSet<BillableUsageKindMappingEntity>
-
-    /// Exposes pricing rates for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private pricingRates: DbSet<PricingRateEntity>
-
-    /// Exposes owner-scoped pricing assignments for EF migrations and schema inspection.
-    [<DefaultValue>]
-    val mutable private pricingAssignments: DbSet<PricingAssignmentEntity>
-
-    /// Provides EF access to provisional charge-preview lines.
-    [<DefaultValue>]
-    val mutable private chargePreviewLines: DbSet<ChargePreviewLineEntity>
-
-    /// Provides the EF set for immutable usage fact rows.
-    member this.RawUsageFacts
-        with get () = this.rawUsageFacts
-        and set value = this.rawUsageFacts <- value
-
-    /// Provides the EF set for repository resource minute aggregate rows.
-    member this.UsageAggregateMinutes
-        with get () = this.usageAggregateMinutes
-        and set value = this.usageAggregateMinutes <- value
-
-    /// Provides the EF set for active and repaired usage rejection records.
-    member this.UsageFactRejections
-        with get () = this.usageFactRejections
-        and set value = this.usageFactRejections <- value
-
-    /// Provides the EF set for immutable usage-fact journal rows.
-    member this.UsageFactJournal
-        with get () = this.usageFactJournal
-        and set value = this.usageFactJournal <- value
-
-    /// Provides the EF set for effective-dated pricing plans.
-    member this.PricingPlans
-        with get () = this.pricingPlans
-        and set value = this.pricingPlans <- value
-
-    /// Provides the EF set for billable usage-kind mappings.
-    member this.BillableUsageKindMappings
-        with get () = this.billableUsageKindMappings
-        and set value = this.billableUsageKindMappings <- value
-
-    /// Provides the EF set for effective-dated pricing rates.
-    member this.PricingRates
-        with get () = this.pricingRates
-        and set value = this.pricingRates <- value
-
-    /// Provides the EF set for owner-scoped pricing assignments.
-    member this.PricingAssignments
-        with get () = this.pricingAssignments
-        and set value = this.pricingAssignments <- value
-
-    /// Provides the EF set for provisional charge-preview lines.
-    member this.ChargePreviewLines
-        with get () = this.chargePreviewLines
-        and set value = this.chargePreviewLines <- value
-
-    /// Configures the Operations SQL Server schema shape that migrations must preserve.
-    override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder
-
-/// Ensures EF-generated scripts create the Operations schema before SQL Server receives history-table DDL.
-type OperationsSqlServerHistoryRepository(dependencies: HistoryRepositoryDependencies) =
-    inherit SqlServerHistoryRepository(dependencies)
-
-    let withOpsSchemaPreamble (script: string) =
-        if String.IsNullOrWhiteSpace script then
-            script
-        else
-            $"{OperationsUsageSql.CreateSchemaIfMissing.Trim()}{Environment.NewLine}{Environment.NewLine}{script}"
-
-    /// Creates the Operations schema before EF creates `[ops].[__EFMigrationsHistory]` in non-idempotent scripts.
-    override _.GetCreateScript() = base.GetCreateScript() |> withOpsSchemaPreamble
-
-    /// Creates the Operations schema before EF creates `[ops].[__EFMigrationsHistory]` in idempotent scripts and bundles.
-    override _.GetCreateIfNotExistsScript() =
-        base.GetCreateIfNotExistsScript()
-        |> withOpsSchemaPreamble
-
-/// Builds configured Operations EF contexts for runtime schema migration and tests.
-[<RequireQualifiedAccess>]
-module OperationsDbContextFactory =
-
-    /// Provides the SQL Server connection string used when EF tooling builds migrations without opening the database.
-    let private defaultDesignTimeConnectionString = "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsDesignTime;Integrated Security=true;"
-
-    /// Names the documented Operations SQL environment variable shared with `Grace.Operations.Worker`.
-    let private documentedSqlConnectionStringEnvironmentVariable = "grace__operations__sql__connectionstring"
-
-    /// Names the legacy design-time SQL environment variable retained for local developer compatibility.
-    let private legacySqlConnectionStringEnvironmentVariable = "GRACE_OPERATIONS_SQL_CONNECTION_STRING"
-
-    /// Reads the first non-empty environment variable from the supplied precedence order.
-    let private firstEnvironmentConnectionString variableNames =
-        variableNames
-        |> Seq.map Environment.GetEnvironmentVariable
-        |> Seq.tryFind (fun value -> not (String.IsNullOrWhiteSpace value))
-
-    /// Resolves the design-time SQL Server connection string from EF command arguments, environment, or LocalDB.
-    let designTimeConnectionString (args: string array) =
-        match args
-              |> Array.tryFind (fun value -> not (String.IsNullOrWhiteSpace value))
-            with
-        | Some connectionString -> connectionString
-        | None ->
-            [|
-                documentedSqlConnectionStringEnvironmentVariable
-                legacySqlConnectionStringEnvironmentVariable
-            |]
-            |> firstEnvironmentConnectionString
-            |> Option.defaultValue defaultDesignTimeConnectionString
-
-    /// Creates EF Core options for the Operations SQL Server database.
-    let options (connectionString: string) =
-        DbContextOptionsBuilder<OperationsDbContext>()
-            .ReplaceService<IHistoryRepository, OperationsSqlServerHistoryRepository>()
-            .UseSqlServer(
-            connectionString,
-            System.Action<SqlServerDbContextOptionsBuilder> (fun sql ->
-                sql.MigrationsHistoryTable("__EFMigrationsHistory", OperationsUsageSql.SchemaName)
-                |> ignore)
+                table.HasCheckConstraint(
+                    "CK_ops_ChargePreviewLine_Currency",
+                    "LEN([CurrencyCode]) = 3 AND [CurrencyCode] = UPPER([CurrencyCode]) AND [CurrencyCode] NOT LIKE '%[^A-Z]%'"
+                )
+                |> ignore
         )
-            .Options
+        |> ignore
 
-    /// Creates a configured Operations EF context for the supplied SQL Server connection string.
-    let create connectionString = new OperationsDbContext(options connectionString)
+        line
+            .HasKey([| "ChargePreviewLineId" |])
+            .HasName("PK_ops_ChargePreviewLine")
+        |> ignore
 
-/// Provides the discoverable EF Core design-time factory used by `dotnet ef migrations add`.
-type OperationsDesignTimeDbContextFactory() =
+        line
+            .Property<Guid>("ChargePreviewLineId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
 
-    interface IDesignTimeDbContextFactory<OperationsDbContext> with
+        for name in
+            [
+                "OwnerId"
+                "OrganizationId"
+                "RepositoryId"
+                "BillableUsageKindMappingId"
+                "PricingAssignmentId"
+                "PricingPlanId"
+                "PricingRateId"
+            ] do
+            line
+                .Property<Guid>(name)
+                .HasColumnType("uniqueidentifier")
+                .IsRequired()
+            |> ignore
 
-        /// Creates an Operations context without relying on F# module discovery.
-        member _.CreateDbContext(args: string array) =
-            OperationsDbContextFactory.designTimeConnectionString args
-            |> OperationsDbContextFactory.create
+        for name in
+            [
+                "PeriodFromUtc"
+                "PeriodToUtc"
+                "EffectiveFromUtc"
+                "EffectiveToUtc"
+            ] do
+            line
+                .Property<DateTime>(name)
+                .HasColumnType("datetime2(7)")
+                .IsRequired()
+            |> ignore
+
+        line.Property<int>("FactKind").IsRequired()
+        |> ignore
+
+        line
+            .Property<int>("BillableUsageKind")
+            .IsRequired()
+        |> ignore
+
+        line
+            .Property<string>("CurrencyCode")
+            .HasColumnType("varchar(3)")
+            .HasMaxLength(3)
+            .IsUnicode(false)
+            .UseCollation("Latin1_General_100_BIN2")
+            .IsRequired()
+        |> ignore
+
+        line
+            .Property<string>("UnitName")
+            .HasMaxLength(64)
+            .IsRequired()
+        |> ignore
+
+        for name in
+            [
+                "UnitQuantity"
+                "UnitPriceMicros"
+                "TotalQuantity"
+                "ChargeMicros"
+            ] do
+            line.Property<int64>(name).IsRequired() |> ignore
+
+        line
+            .HasIndex(
+                [|
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "PeriodFromUtc"
+                    "PeriodToUtc"
+                |]
+            )
+            .HasDatabaseName("IX_ops_ChargePreviewLine_Scope")
+        |> ignore
+
+        line
+            .HasIndex(
+                [|
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "PeriodFromUtc"
+                    "PeriodToUtc"
+                    "FactKind"
+                    "BillableUsageKindMappingId"
+                    "BillableUsageKind"
+                    "PricingAssignmentId"
+                    "PricingPlanId"
+                    "PricingRateId"
+                    "CurrencyCode"
+                    "UnitName"
+                    "UnitQuantity"
+                    "UnitPriceMicros"
+                    "EffectiveFromUtc"
+                    "EffectiveToUtc"
+                |]
+            )
+            .HasDatabaseName("UX_ops_ChargePreviewLine_CompleteGrain")
+            .IsUnique()
+        |> ignore
