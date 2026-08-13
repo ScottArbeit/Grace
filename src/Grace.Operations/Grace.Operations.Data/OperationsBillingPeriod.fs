@@ -1,5 +1,6 @@
 namespace Grace.Operations.Data
 
+open Grace.Types.Usage
 open Microsoft.Data.SqlClient
 open NodaTime
 open System
@@ -60,6 +61,12 @@ type internal IBillingPeriodCloseTransactionInterleaving =
     /// Runs after immutable close evidence is staged but before the period is marked closed.
     abstract AfterCloseEvidenceStagedAsync: cancellationToken: CancellationToken -> Task
 
+    /// Runs after one required kind's pricing boundaries are captured and before its effective rows are selected.
+    abstract AfterZeroFactPricingBoundaryEnumerationAsync: factKind: UsageFactKind * cancellationToken: CancellationToken -> Task
+
+    /// Runs immediately before a captured boundary is evaluated against the same serializable pricing view.
+    abstract BeforeZeroFactPricingSelectionAsync: factKind: UsageFactKind * boundary: DateTime * cancellationToken: CancellationToken -> Task
+
 /// Provides production execution with no injected work between close-transaction stages.
 type private NoBillingPeriodCloseTransactionInterleaving() =
     interface IBillingPeriodCloseTransactionInterleaving with
@@ -69,6 +76,17 @@ type private NoBillingPeriodCloseTransactionInterleaving() =
         member _.AfterPreviewReplacementAsync _ = Task.CompletedTask
         member _.AfterChargeInsertionAsync _ = Task.CompletedTask
         member _.AfterCloseEvidenceStagedAsync _ = Task.CompletedTask
+        member _.AfterZeroFactPricingBoundaryEnumerationAsync(_, _) = Task.CompletedTask
+        member _.BeforeZeroFactPricingSelectionAsync(_, _, _) = Task.CompletedTask
+
+/// Adapts close-transaction test stages to the pricing evaluator without widening the evaluator's SQL contract.
+type private ZeroFactPricingCoverageInterleaving(transactionInterleaving: IBillingPeriodCloseTransactionInterleaving) =
+    interface IZeroFactPricingCoverageInterleaving with
+        member _.AfterBoundaryEnumerationAsync(factKind, cancellationToken) =
+            transactionInterleaving.AfterZeroFactPricingBoundaryEnumerationAsync(factKind, cancellationToken)
+
+        member _.BeforeSelectionAsync(factKind, boundary, cancellationToken) =
+            transactionInterleaving.BeforeZeroFactPricingSelectionAsync(factKind, boundary, cancellationToken)
 
 /// Reads the database clock on the connection and transaction that already hold the scope lock.
 type internal IBillingPeriodCloseClock =
@@ -588,7 +606,12 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
                             let! facts = readPricedFactsAsync connection transaction request.Scope cancellationToken
 
                             if List.isEmpty facts then
-                                let coverage = SqlZeroFactPricingCoverage() :> IZeroFactPricingCoverage
+                                use pricingCatalogIsolation = command connection transaction "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;"
+
+                                let! _ = pricingCatalogIsolation.ExecuteNonQueryAsync cancellationToken
+
+                                let coverage =
+                                    SqlZeroFactPricingCoverage(ZeroFactPricingCoverageInterleaving(transactionInterleaving)) :> IZeroFactPricingCoverage
 
                                 match! coverage.EvaluateAsync(connection, transaction, request.Scope, cancellationToken) with
                                 | Incomplete diagnostic -> raise (ZeroFactPricingCoverageException(diagnostic))

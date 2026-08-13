@@ -20,8 +20,16 @@ type internal IZeroFactPricingCoverage =
         connection: SqlConnection * transaction: SqlTransaction * scope: BillingCompletenessScope * cancellationToken: CancellationToken ->
             Task<ZeroFactPricingCoverageResult>
 
-/// Evaluates the current SQL pricing catalog at every effective boundary that can affect an empty period close.
-type internal SqlZeroFactPricingCoverage() =
+/// Exposes only the zero-fact evaluator stages needed by real-SQL cancellation and catalog-serialization proofs.
+type internal IZeroFactPricingCoverageInterleaving =
+    /// Runs after one required kind's pricing boundaries are captured and before its effective rows are selected.
+    abstract AfterBoundaryEnumerationAsync: factKind: UsageFactKind * cancellationToken: CancellationToken -> Task
+
+    /// Runs immediately before a captured boundary is evaluated against the same serializable pricing view.
+    abstract BeforeSelectionAsync: factKind: UsageFactKind * boundary: DateTime * cancellationToken: CancellationToken -> Task
+
+/// Evaluates the current serializable SQL pricing catalog at every effective boundary that can affect an empty period close.
+type internal SqlZeroFactPricingCoverage(transactionInterleaving: IZeroFactPricingCoverageInterleaving) =
 
     /// Creates a SQL command tied to the already locked close transaction.
     let command (connection: SqlConnection) (transaction: SqlTransaction) text =
@@ -62,38 +70,47 @@ type internal SqlZeroFactPricingCoverage() =
 WITH BoundaryRows AS
 (
     SELECT @MonthStartUtc AS BoundaryUtc
-    UNION ALL SELECT @NextMonthStartUtc
     UNION ALL SELECT assignment.EffectiveFromUtc FROM ops.PricingAssignment AS assignment
         WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-          AND assignment.EffectiveFromUtc < @NextMonthStartUtc
+          AND assignment.EffectiveFromUtc > @MonthStartUtc AND assignment.EffectiveFromUtc < @NextMonthStartUtc
           AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > @MonthStartUtc)
     UNION ALL SELECT assignment.EffectiveToUtc FROM ops.PricingAssignment AS assignment
         WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
           AND assignment.EffectiveToUtc IS NOT NULL AND assignment.EffectiveToUtc > @MonthStartUtc AND assignment.EffectiveToUtc < @NextMonthStartUtc
-    UNION ALL SELECT pricingPlan.EffectiveFromUtc FROM ops.PricingPlan AS pricingPlan INNER JOIN ops.PricingAssignment AS assignment ON assignment.PricingPlanId=pricingPlan.PricingPlanId
-        WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-          AND pricingPlan.EffectiveFromUtc < @NextMonthStartUtc AND (pricingPlan.EffectiveToUtc IS NULL OR pricingPlan.EffectiveToUtc > @MonthStartUtc)
-    UNION ALL SELECT pricingPlan.EffectiveToUtc FROM ops.PricingPlan AS pricingPlan INNER JOIN ops.PricingAssignment AS assignment ON assignment.PricingPlanId=pricingPlan.PricingPlanId
-        WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-          AND pricingPlan.EffectiveToUtc IS NOT NULL AND pricingPlan.EffectiveToUtc > @MonthStartUtc AND pricingPlan.EffectiveToUtc < @NextMonthStartUtc
+    UNION ALL SELECT pricingPlan.EffectiveFromUtc FROM ops.PricingPlan AS pricingPlan
+        WHERE pricingPlan.EffectiveFromUtc > @MonthStartUtc AND pricingPlan.EffectiveFromUtc < @NextMonthStartUtc
+          AND (pricingPlan.EffectiveToUtc IS NULL OR pricingPlan.EffectiveToUtc > @MonthStartUtc)
+          AND EXISTS (SELECT 1 FROM ops.PricingAssignment AS assignment WHERE assignment.PricingPlanId=pricingPlan.PricingPlanId
+              AND assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+              AND assignment.EffectiveFromUtc < @NextMonthStartUtc AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > @MonthStartUtc))
+    UNION ALL SELECT pricingPlan.EffectiveToUtc FROM ops.PricingPlan AS pricingPlan
+        WHERE pricingPlan.EffectiveToUtc IS NOT NULL AND pricingPlan.EffectiveToUtc > @MonthStartUtc AND pricingPlan.EffectiveToUtc < @NextMonthStartUtc
+          AND EXISTS (SELECT 1 FROM ops.PricingAssignment AS assignment WHERE assignment.PricingPlanId=pricingPlan.PricingPlanId
+              AND assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+              AND assignment.EffectiveFromUtc < @NextMonthStartUtc AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > @MonthStartUtc))
     UNION ALL SELECT mapping.EffectiveFromUtc FROM ops.BillableUsageKindMapping AS mapping
-        WHERE mapping.FactKind=@FactKind AND mapping.EffectiveFromUtc < @NextMonthStartUtc
+        WHERE mapping.FactKind=@FactKind AND mapping.EffectiveFromUtc > @MonthStartUtc AND mapping.EffectiveFromUtc < @NextMonthStartUtc
           AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc > @MonthStartUtc)
     UNION ALL SELECT mapping.EffectiveToUtc FROM ops.BillableUsageKindMapping AS mapping
         WHERE mapping.FactKind=@FactKind AND mapping.EffectiveToUtc IS NOT NULL
           AND mapping.EffectiveToUtc > @MonthStartUtc AND mapping.EffectiveToUtc < @NextMonthStartUtc
     UNION ALL SELECT rate.EffectiveFromUtc FROM ops.PricingRate AS rate
-        INNER JOIN ops.PricingAssignment AS assignment ON assignment.PricingPlanId=rate.PricingPlanId
-        INNER JOIN ops.BillableUsageKindMapping AS mapping ON mapping.BillableUsageKind=rate.BillableUsageKind
-        WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-          AND mapping.FactKind=@FactKind AND rate.EffectiveFromUtc < @NextMonthStartUtc
+        WHERE rate.EffectiveFromUtc > @MonthStartUtc AND rate.EffectiveFromUtc < @NextMonthStartUtc
           AND (rate.EffectiveToUtc IS NULL OR rate.EffectiveToUtc > @MonthStartUtc)
+          AND EXISTS (SELECT 1 FROM ops.PricingAssignment AS assignment WHERE assignment.PricingPlanId=rate.PricingPlanId
+              AND assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+              AND assignment.EffectiveFromUtc < @NextMonthStartUtc AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > @MonthStartUtc))
+          AND EXISTS (SELECT 1 FROM ops.BillableUsageKindMapping AS mapping WHERE mapping.FactKind=@FactKind
+              AND mapping.BillableUsageKind=rate.BillableUsageKind AND mapping.EffectiveFromUtc < @NextMonthStartUtc
+              AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc > @MonthStartUtc))
     UNION ALL SELECT rate.EffectiveToUtc FROM ops.PricingRate AS rate
-        INNER JOIN ops.PricingAssignment AS assignment ON assignment.PricingPlanId=rate.PricingPlanId
-        INNER JOIN ops.BillableUsageKindMapping AS mapping ON mapping.BillableUsageKind=rate.BillableUsageKind
-        WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-          AND mapping.FactKind=@FactKind AND rate.EffectiveToUtc IS NOT NULL
-          AND rate.EffectiveToUtc > @MonthStartUtc AND rate.EffectiveToUtc < @NextMonthStartUtc
+        WHERE rate.EffectiveToUtc IS NOT NULL AND rate.EffectiveToUtc > @MonthStartUtc AND rate.EffectiveToUtc < @NextMonthStartUtc
+          AND EXISTS (SELECT 1 FROM ops.PricingAssignment AS assignment WHERE assignment.PricingPlanId=rate.PricingPlanId
+              AND assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+              AND assignment.EffectiveFromUtc < @NextMonthStartUtc AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > @MonthStartUtc))
+          AND EXISTS (SELECT 1 FROM ops.BillableUsageKindMapping AS mapping WHERE mapping.FactKind=@FactKind
+              AND mapping.BillableUsageKind=rate.BillableUsageKind AND mapping.EffectiveFromUtc < @NextMonthStartUtc
+              AND (mapping.EffectiveToUtc IS NULL OR mapping.EffectiveToUtc > @MonthStartUtc))
 )
 SELECT DISTINCT BoundaryUtc FROM BoundaryRows WHERE BoundaryUtc IS NOT NULL ORDER BY BoundaryUtc;
 """
@@ -244,10 +261,12 @@ SELECT DISTINCT BoundaryUtc FROM BoundaryRows WHERE BoundaryUtc IS NOT NULL ORDE
                       && result = Complete do
                     let factKind = requiredFactKinds[factKindIndex]
                     let! boundaries = boundariesAsync connection transaction scope factKind cancellationToken
+                    do! transactionInterleaving.AfterBoundaryEnumerationAsync(factKind, cancellationToken)
                     let mutable boundaryIndex = 0
 
                     while boundaryIndex < boundaries.Length
                           && result = Complete do
+                        do! transactionInterleaving.BeforeSelectionAsync(factKind, boundaries[boundaryIndex], cancellationToken)
                         let! missing = firstIncompleteBoundaryAsync connection transaction scope factKind boundaries[boundaryIndex] cancellationToken
 
                         match missing with
