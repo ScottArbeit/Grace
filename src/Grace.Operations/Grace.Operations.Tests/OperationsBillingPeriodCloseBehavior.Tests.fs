@@ -1519,6 +1519,8 @@ ORDER BY 1;
                             "The deliberate scope-identity perturbation must make the proof fail before the real identity is restored."
                         )
 
+                        Assert.That(initialScopes.Count, Is.EqualTo(2))
+                        Assert.That(restartedScopes.Count, Is.EqualTo(3))
                         Assert.That(closeAInterleaving.Resource, Is.EqualTo(BillingCompletenessScope.databaseLockIdentity scopeA))
 
                         Assert.That(
