@@ -3,16 +3,16 @@ namespace Grace.Operations.Data.Migrations
 open Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
+open Microsoft.EntityFrameworkCore.Migrations
 open Microsoft.EntityFrameworkCore.Metadata.Builders
 open System
 
-/// Captures the current Operations EF model so future migrations can detect reviewed schema drift.
-[<DbContextAttribute(typeof<OperationsDbContext>)>]
-type OperationsDbContextModelSnapshot() =
-    inherit ModelSnapshot()
+/// Owns the migration-local frozen declaration for the billing-close physical contract.
+[<RequireQualifiedAccess>]
+module BillingPeriodCloseFrozenTarget =
 
-    /// Rebuilds the Operations model represented by the latest migration.
-    override _.BuildModel(modelBuilder: ModelBuilder) =
+    /// Rebuilds the complete pre-close Operations model with migration-local literals.
+    let applyPriorModel (modelBuilder: ModelBuilder) =
         modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
         |> ignore
 
@@ -935,7 +935,10 @@ type OperationsDbContextModelSnapshot() =
             .IsUnique()
         |> ignore
 
-        // Keep this close fragment independently declared from the migration target and runtime model.
+
+    /// Applies the three billing-close tables after the complete frozen prior model.
+    let apply (modelBuilder: ModelBuilder) =
+
         let period = modelBuilder.Entity<BillingPeriodEntity>()
 
         period.ToTable(
@@ -1265,3 +1268,58 @@ type OperationsDbContextModelSnapshot() =
             .HasConstraintName("FK_ops_BillingPeriodCloseEvidence_BillingPeriod")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
+
+/// Adds the self-contained physical close schema without calculating charges in SQL.
+[<DbContextAttribute(typeof<OperationsDbContext>)>]
+[<Migration("20260812130000_AddBillingPeriodClose")>]
+type AddBillingPeriodClose() =
+    inherit Migration()
+
+    /// Creates only the period, posting, evidence, constraints, and immutable triggers owned by issue 916.
+    override _.Up(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            """
+CREATE TABLE ops.BillingPeriod (BillingPeriodId uniqueidentifier NOT NULL, OwnerId uniqueidentifier NOT NULL, OrganizationId uniqueidentifier NOT NULL, RepositoryId uniqueidentifier NOT NULL, MonthStartUtc datetime2(7) NOT NULL, NextMonthStartUtc datetime2(7) NOT NULL, State int NOT NULL, RetryDiagnostic nvarchar(400) NULL, RetryDiagnosticAtUtc datetime2(7) NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingPeriod_CreatedAtUtc DEFAULT (SYSUTCDATETIME()), UpdatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingPeriod_UpdatedAtUtc DEFAULT (SYSUTCDATETIME()), CONSTRAINT PK_ops_BillingPeriod PRIMARY KEY (BillingPeriodId), CONSTRAINT CK_ops_BillingPeriod_MonthRange CHECK ([MonthStartUtc] < [NextMonthStartUtc] AND [MonthStartUtc] = DATETIME2FROMPARTS(YEAR([MonthStartUtc]), MONTH([MonthStartUtc]), 1, 0, 0, 0, 0, 7) AND [NextMonthStartUtc] = DATEADD(month, 1, [MonthStartUtc])), CONSTRAINT CK_ops_BillingPeriod_State CHECK ([State] IN (0, 1, 2)), CONSTRAINT CK_ops_BillingPeriod_Diagnostic CHECK (([RetryDiagnostic] IS NULL AND [RetryDiagnosticAtUtc] IS NULL) OR ([State] IN (0, 1) AND LEN(LTRIM(RTRIM([RetryDiagnostic]))) > 0 AND [RetryDiagnosticAtUtc] IS NOT NULL)));
+CREATE UNIQUE INDEX UX_ops_BillingPeriod_ExactScope ON ops.BillingPeriod(OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc);
+CREATE TABLE ops.Charge (ChargeId uniqueidentifier NOT NULL, OwnerId uniqueidentifier NOT NULL, OrganizationId uniqueidentifier NOT NULL, RepositoryId uniqueidentifier NOT NULL, BillingPeriodId uniqueidentifier NOT NULL, ChargePreviewLineId uniqueidentifier NOT NULL, PeriodFromUtc datetime2(7) NOT NULL, PeriodToUtc datetime2(7) NOT NULL, FactKind int NOT NULL, BillableUsageKindMappingId uniqueidentifier NOT NULL, BillableUsageKind int NOT NULL, PricingAssignmentId uniqueidentifier NOT NULL, PricingPlanId uniqueidentifier NOT NULL, PricingRateId uniqueidentifier NOT NULL, CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL, UnitName nvarchar(64) NOT NULL, UnitQuantity bigint NOT NULL, UnitPriceMicros bigint NOT NULL, EffectiveFromUtc datetime2(7) NOT NULL, EffectiveToUtc datetime2(7) NOT NULL, TotalQuantity bigint NOT NULL, ChargeMicros bigint NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_Charge_CreatedAtUtc DEFAULT (SYSUTCDATETIME()), CONSTRAINT PK_ops_Charge PRIMARY KEY (ChargeId), CONSTRAINT FK_ops_Charge_BillingPeriod FOREIGN KEY (BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId), CONSTRAINT FK_ops_Charge_ChargePreviewLine FOREIGN KEY (ChargePreviewLineId) REFERENCES ops.ChargePreviewLine(ChargePreviewLineId), CONSTRAINT CK_ops_Charge_Identity CHECK ([ChargeId] <> '00000000-0000-0000-0000-000000000000' AND [OwnerId] <> '00000000-0000-0000-0000-000000000000' AND [OrganizationId] <> '00000000-0000-0000-0000-000000000000' AND [RepositoryId] <> '00000000-0000-0000-0000-000000000000' AND [BillingPeriodId] <> '00000000-0000-0000-0000-000000000000' AND [ChargePreviewLineId] <> '00000000-0000-0000-0000-000000000000'), CONSTRAINT CK_ops_Charge_Quantity CHECK ([UnitQuantity] > 0 AND [UnitPriceMicros] >= 0 AND [TotalQuantity] >= 0), CONSTRAINT CK_ops_Charge_Provenance CHECK ([PeriodFromUtc] < [PeriodToUtc] AND [PeriodFromUtc] <= [EffectiveFromUtc] AND [EffectiveFromUtc] < [EffectiveToUtc] AND [EffectiveToUtc] <= [PeriodToUtc] AND [FactKind] >= 0 AND [BillableUsageKind] >= 0 AND [BillableUsageKindMappingId] <> '00000000-0000-0000-0000-000000000000' AND [PricingAssignmentId] <> '00000000-0000-0000-0000-000000000000' AND [PricingPlanId] <> '00000000-0000-0000-0000-000000000000' AND [PricingRateId] <> '00000000-0000-0000-0000-000000000000' AND LEN(LTRIM(RTRIM([UnitName]))) > 0), CONSTRAINT CK_ops_Charge_Amount CHECK ([ChargeMicros] >= 0), CONSTRAINT CK_ops_Charge_Currency CHECK (LEN([CurrencyCode]) = 3 AND [CurrencyCode] = UPPER([CurrencyCode]) AND [CurrencyCode] NOT LIKE '%[^A-Z]%'));
+CREATE UNIQUE INDEX UX_ops_Charge_InitialPosting ON ops.Charge(BillingPeriodId, ChargePreviewLineId);
+CREATE INDEX IX_ops_Charge_ChargePreviewLine ON ops.Charge(ChargePreviewLineId);
+ CREATE TABLE ops.BillingPeriodCloseEvidence (BillingPeriodId uniqueidentifier NOT NULL, AcceptedFactDigestSha256Hex char(64) NOT NULL, PricingPreviewDigestSha256Hex char(64) NOT NULL, ClosedAtUtc datetime2(7) NOT NULL, ScheduledOperationProvenance nvarchar(200) NOT NULL, CONSTRAINT PK_ops_BillingPeriodCloseEvidence PRIMARY KEY (BillingPeriodId), CONSTRAINT FK_ops_BillingPeriodCloseEvidence_BillingPeriod FOREIGN KEY (BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId), CONSTRAINT CK_ops_BillingPeriodCloseEvidence_Digests CHECK (LEN([AcceptedFactDigestSha256Hex]) = 64 AND [AcceptedFactDigestSha256Hex] NOT LIKE '%[^0-9A-F]%' AND LEN([PricingPreviewDigestSha256Hex]) = 64 AND [PricingPreviewDigestSha256Hex] NOT LIKE '%[^0-9A-F]%'), CONSTRAINT CK_ops_BillingPeriodCloseEvidence_Provenance CHECK (LEN(LTRIM(RTRIM([ScheduledOperationProvenance]))) > 0));
+"""
+        )
+        |> ignore
+
+        migrationBuilder.Sql(
+            """
+CREATE TRIGGER ops.TR_ops_Charge_Immutable ON ops.Charge AFTER UPDATE, DELETE AS BEGIN THROW 57231, 'Initial charge postings are append-only.', 1; END;
+"""
+        )
+        |> ignore
+
+        migrationBuilder.Sql(
+            """
+CREATE TRIGGER ops.TR_ops_BillingPeriodCloseEvidence_Immutable ON ops.BillingPeriodCloseEvidence AFTER UPDATE, DELETE AS BEGIN THROW 57232, 'Billing-period close evidence is immutable.', 1; END;
+"""
+        )
+        |> ignore
+
+    /// Removes only the schema introduced by this literal migration.
+    override _.Down(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            """
+DROP TRIGGER IF EXISTS ops.TR_ops_BillingPeriodCloseEvidence_Immutable;
+DROP TRIGGER IF EXISTS ops.TR_ops_Charge_Immutable;
+DROP TABLE ops.BillingPeriodCloseEvidence;
+DROP TABLE ops.Charge;
+DROP TABLE ops.BillingPeriod;
+"""
+        )
+        |> ignore
+
+    /// Captures the literal migration target without reading the runtime model helpers.
+    override _.BuildTargetModel(modelBuilder: ModelBuilder) =
+        modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
+        |> ignore
+
+        BillingPeriodCloseFrozenTarget.applyPriorModel modelBuilder
+        BillingPeriodCloseFrozenTarget.apply modelBuilder

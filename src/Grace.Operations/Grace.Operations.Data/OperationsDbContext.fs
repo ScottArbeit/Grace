@@ -794,6 +794,7 @@ module OperationsModel =
         |> ignore
 
         OperationsChargePreviewModel.configure modelBuilder
+        OperationsBillingPeriodModel.configure modelBuilder
 
 /// Owns the EF Core model for Grace Operations SQL Server schema evolution.
 type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
