@@ -39,6 +39,9 @@ type CacheRegistration() =
                         new HttpClient(handler)
                         |> ClientIdentity.applyHeaders
 
+                    // A bounded one-shot call makes transport loss terminal and testable without adding retry behavior.
+                    client.Timeout <- TimeSpan.FromSeconds(2.0)
+
                     client.DefaultRequestHeaders.TryAddWithoutValidation(Constants.CorrelationIdHeaderKey, correlationId)
                     |> ignore
 

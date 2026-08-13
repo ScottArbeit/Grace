@@ -103,7 +103,7 @@ evidence, and the durable owner decision.
 | #904 | Superseded status issue. | It does not own current delivery work. |
 | PR #907 | Closed superseded status implementation. | Evidence only; do not reuse it wholesale. |
 | #913 / #914 | Current docs-only correction; planned pure local status follows. | #913 reconciles this record; #914 then owns status only. |
-| #905 | Planned one-shot enrollment after #913 and #914. | It owns enrollment only after the docs and status leaves complete. |
+| #941 / PR #950 | One-shot enrollment is under review and not merged. | It owns enrollment after the docs and status leaves complete. |
 
 ### Enrollment ambiguity disposition
 
@@ -142,7 +142,7 @@ or unsupported-platform work merely because those capabilities could be useful l
 | DEC-GC-001 | Quality level | product | accepted | Product V1 governs every leaf and final release candidate. | Owner decision; each leaf declares the profile and proof. |
 | DEC-GC-002 | Cache service identity | domain | accepted | One static P-256 identity; no automatic or startup rotation. | R0 removes old rotation contract; R1 creates one static identity. |
 | DEC-GC-003 | Key custody promise | scope | accepted | OS-protected private storage and no Grace export surface; no hardware-backed claim. | R1 host and redaction proof. |
-| DEC-GC-004 | Enrollment ambiguity | product | accepted | An inactive accepted enrollment is unselectable; fresh manual enrollment is allowed; server expiry performs eventual cleanup; no automatic retry or reconciliation is added. | #886 completed the supporting implementation and proof; #905 consumes the disposition without changing it. |
+| DEC-GC-004 | Enrollment ambiguity | product | accepted | An inactive accepted enrollment is unselectable; fresh manual enrollment is allowed; server expiry performs eventual cleanup; no automatic retry or reconciliation is added. | #886 completed the supporting implementation and proof; #941 / PR #950 consumes the disposition without changing it. |
 | DEC-GC-005 | Registration liveness | architecture | accepted | One scheduler, server-issued liveness times, bounded retry, and fail-closed expiration or definitive rejection. | R2 transition and fake-clock proof. |
 | DEC-GC-006 | Artifact-grant keys | domain | accepted | Keep existing artifact-grant validation-key rollover distinct from cache service identity. | R0 inventory must not remove grant-key behavior. |
 | DEC-GC-007 | Local mutation | architecture | accepted | Later materialization prepares exact content and calls `WorkingDirectoryUpdate.run`. | #835 merge and epic refresh gate before affected leaves. |
@@ -287,8 +287,8 @@ create another local working-tree mutation, SQLite-completion, Branch/Watch-fina
   eventual cleanup.
 - **Invariant:** Grace Cache does not add automatic enrollment retry, reconciliation, background lookup, or a durable
   recovery workflow.
-- **Evidence:** #886 and PR #888 completed the static enrollment implementation and focused proof. #905 consumes this
-  disposition for one-shot enrollment.
+- **Evidence:** #886 and PR #888 completed the static enrollment implementation and focused proof. #941 / PR #950
+  consumes this disposition for one-shot enrollment and remains under review.
 
 ### GC-REQ-004 - One bounded liveness scheduler
 
@@ -524,7 +524,7 @@ protected paths, or attempt details.
 | GC-REQ-007 | Three execution-mode behaviors | required | Plan resolver, SDK, CLI, cache executor | Positive/negative mode and generated-contract proof | #625 to #630 | CacheRequired false fallback is high risk. |
 | GC-REQ-008 | Working Directory Update sequence | required | Later local materialization | Cross-epic execution proof | #628 to #630 | Blocked until #835 merge and epic refresh. |
 | GC-REQ-009 | Truthful status and diagnostics | required | #914 status and R2 process state | Status, redaction, expiry tests | #914, #857 | Must not report stale readiness. |
-| GC-REQ-010 | Reset and redaction | required | Local config/key store and enrollment output | Failure and output scans | #905 | Manual recovery is intentional. |
+| GC-REQ-010 | Reset and redaction | required | Local config/key store and enrollment output | Failure and output scans | #941 / PR #950 | Manual recovery is intentional. |
 | GC-REQ-011 | Static contract pruning | required | Shared types, routes, OpenAPI, SDK, docs | Inventory and freshness checks | #855 | Must retain artifact-grant key rollover. |
 | GC-DEF-001 | Automatic identity rotation | deferred | None | Absence scan | Future Hardened epic | Do not leave a partial surface. |
 | GC-DEF-002 | Prefetch and scheduled retention | deferred | None | Absence scan | Future work | Read-through remains the only correctness path. |
@@ -556,9 +556,9 @@ without rotation, prefetch, or scheduled retention.
    rebaseline it to static identity, regenerate contracts, and prove artifact-grant key rollover remains separate.
 2. **R1A static enrollment identity (#886 / PR #888)**: Implemented and proven; its merged evidence establishes the
    completed static identity foundation.
-3. **R1 record, status, and enrollment (#913, #914, #905)**: #913 reconciles the canonical record; #914 then owns
-   pure local status only; #905 then owns one-shot enrollment only.
-4. **R2 registration liveness (#857)**: Starts after #905 and its Tier-2 server timestamp, response-class, selection, and clock
+3. **R1 record, status, and enrollment (#913, #914, #941 / PR #950)**: #913 reconciles the canonical record; #914 then
+   owns pure local status only; #941 / PR #950 owns one-shot enrollment while the pull request is under review.
+4. **R2 registration liveness (#857)**: Starts after #941 / PR #950 and its Tier-2 server timestamp, response-class, selection, and clock
    table are complete. Its signed refreshes remain Unhealthy; it does not publish Healthy.
 5. **Runtime/artifact serving (#625)**: May proceed independently where write sets do not overlap with #835; it owns storage,
    grant verification, the miss-fill-serve-hit tracer, and Healthy publication only after serving readiness is proven.
@@ -576,7 +576,7 @@ high-conflict surfaces. Parallel work requires both independent user behavior an
   OpenAPI/SDK, documentation, tests, serializers, AOT roots, and command catalogs. It distinguishes cache service
   identity from artifact-grant validation keys.
 - **R1 completion sequence:** #913 records the completed #886 / PR #888 disposition, #914 implements status only, and
-  #905 implements enrollment only after #913 and #914. No leaf adds automatic retry or reconciliation.
+  #941 / PR #950 implements enrollment after #913 and #914. It remains open for review; no leaf adds automatic retry or reconciliation.
 - **R2:** Before code, produce the exact current registration response, timestamp, revocation/access, selection,
   capability, and clock transition table. It names one bounded retry schedule and its expiry cap.
 - **All leaves:** Declare owned paths, forbidden paths, state/time model where needed, propagation dispositions, focused
@@ -605,7 +605,7 @@ sequencing, and owner interruption rules are explicit. The recovery topology may
 
 This verdict does not make R2 or later semantic work ready to code. The portable specification contract says Plan-ready
 supports implementation planning, while `dev-process` requires each issue to complete Tier-2 research and the issue-level
-Implementation Readiness Gate. #913, #914, and #905 retain their declared docs, status, and enrollment boundaries; the
+Implementation Readiness Gate. #913, #914, and #941 / PR #950 retain their declared docs, status, and enrollment boundaries; the
 R2 exact liveness table remains a leaf-level gate.
 
 ### Passed criteria
@@ -620,7 +620,7 @@ R2 exact liveness table remains a leaf-level gate.
 
 - The requested project specification profile is absent at the required starting commit. Its absence is recorded for
   later repository restoration; this document does not infer missing profile rules.
-- #914 status and #905 one-shot enrollment remain planned replacement leaves after #913's documentation correction.
+- #914 status remains planned; #941 one-shot enrollment is under review in PR #950 and is not merged yet.
 - R2 still needs exact current server liveness response classes, timestamps, and selection timing on its branch head.
 - Cache host, SQLite/filesystem implementation, artifact route execution, and the local Working Directory Update seam
   do not exist on this epic head. They are planned work, not present behavior.

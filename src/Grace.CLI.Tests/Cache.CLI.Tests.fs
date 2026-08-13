@@ -18,6 +18,7 @@ open System.IO
 open System.Net
 open System.Net.Sockets
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Text
 open System.Threading
 open System.Threading.Tasks
@@ -261,8 +262,65 @@ module CacheCliTests =
             do! stream.WriteAsync(bytes, 0, bytes.Length)
         }
 
+    /// Writes a redirect response with a valid target so selected-server transport proof can reject redirect following.
+    let private writeEnrollmentRedirect (client: TcpClient) (location: string) =
+        task {
+            use stream = client.GetStream()
+
+            let headers =
+                $"HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                |> Encoding.ASCII.GetBytes
+
+            do! stream.WriteAsync(headers, 0, headers.Length)
+        }
+
+    /// Hosts exactly one selected-server enrollment request and exposes its complete request evidence to a root-command test.
+    let private withSingleEnrollmentServer (respond: EnrollmentRequest -> TcpClient -> Task) (action: Uri -> ConcurrentQueue<EnrollmentRequest> -> unit) =
+        use listener = new TcpListener(IPAddress.Loopback, 0)
+        let requests = ConcurrentQueue<EnrollmentRequest>()
+        listener.Start()
+        let serverUri = Uri($"http://127.0.0.1:{(listener.LocalEndpoint :?> IPEndPoint).Port}")
+
+        let serverTask =
+            Task.Run(
+                Func<Task> (fun () ->
+                    task {
+                        let! client = listener.AcceptTcpClientAsync()
+                        use client = client
+                        let! request = readEnrollmentRequest client
+                        requests.Enqueue(request)
+                        do! respond request client
+                    })
+            )
+
+        try
+            action serverUri requests
+        finally
+            listener.Stop()
+
+            serverTask.Wait(TimeSpan.FromSeconds(10.0))
+            |> ignore
+
+    /// Runs the production root with a caller-controlled cancellation token while retaining captured output.
+    let private runProductionEnrollmentWithCancellation (args: string array) (cancellationToken: CancellationToken) =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+
+            let exitCode =
+                GraceCommand.run (GraceCommand.productionDependencies ()) args cancellationToken
+                |> fun invocation -> invocation.GetAwaiter().GetResult()
+
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
     /// Hosts one selected server and its OAuth endpoints for real production-credential root-dispatch tests.
-    let private withProductionEnrollmentServer (action: Uri -> ConcurrentQueue<EnrollmentRequest> -> unit) =
+    let private withProductionEnrollmentServerResponse (m2mTokenResponse: (int * string) option) (action: Uri -> ConcurrentQueue<EnrollmentRequest> -> unit) =
         use listener = new TcpListener(IPAddress.Loopback, 0)
         use cancellation = new CancellationTokenSource()
         let requests = ConcurrentQueue<EnrollmentRequest>()
@@ -292,7 +350,9 @@ module CacheCliTests =
                             | "/oauth/token" when request.Body.Contains("device_code", StringComparison.Ordinal) ->
                                 200,
                                 "{\"access_token\":\"interactive-access-token\",\"refresh_token\":\"interactive-refresh-token\",\"expires_in\":3600,\"scope\":\"openid offline_access\",\"token_type\":\"Bearer\"}"
-                            | "/oauth/token" -> 200, "{\"access_token\":\"m2m-access-token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}"
+                            | "/oauth/token" ->
+                                m2mTokenResponse
+                                |> Option.defaultValue (200, "{\"access_token\":\"m2m-access-token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}")
                             | "/cache/enroll" ->
                                 let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
 
@@ -321,6 +381,9 @@ module CacheCliTests =
             serverTask.Wait(TimeSpan.FromSeconds(5.0))
             |> ignore
 
+    /// Hosts the standard successful OAuth and enrollment responses for production root-dispatch tests.
+    let private withProductionEnrollmentServer (action: Uri -> ConcurrentQueue<EnrollmentRequest> -> unit) = withProductionEnrollmentServerResponse None action
+
     /// Applies isolated producer settings so a root-dispatch test uses exactly the requested credential mechanism.
     let private withCredentialEnvironment (values: (string * string option) list) (action: unit -> 'T) =
         let originalValues =
@@ -335,6 +398,25 @@ module CacheCliTests =
         finally
             originalValues
             |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+
+    /// Applies one PAT-only production credential environment with all OIDC producers disabled.
+    let private withPatCredential (serverUri: Uri) (action: unit -> 'T) =
+        let pat = Grace.Types.PersonalAccessToken.formatToken "cache-test-user" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withCredentialEnvironment
+            [
+                Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                Constants.EnvironmentVariables.GraceToken, Some pat
+                Constants.EnvironmentVariables.GraceAuthOidcAuthority, None
+                Constants.EnvironmentVariables.GraceAuthOidcAudience, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+            ]
+            action
 
     /// Runs an action with one temporary environment variable value.
     let private withEnv (name: string) (value: string option) (action: unit -> 'T) =
@@ -1107,6 +1189,45 @@ module CacheCliTests =
                 fun request ->
                     let accepted = acceptedResponse request
                     Accepted { accepted with ReturnValue = { accepted.ReturnValue with Class = "UnexpectedResult" } }
+                "null envelope", (fun _ -> Accepted Unchecked.defaultof<GraceReturnValue<CacheRegistrationResult>>)
+                "null result",
+                fun request ->
+                    let accepted = acceptedResponse request
+                    Accepted { accepted with ReturnValue = Unchecked.defaultof<CacheRegistrationResult> }
+                "null public key",
+                fun request ->
+                    let accepted = acceptedResponse request
+                    let registration = accepted.ReturnValue.Registration |> Option.get
+
+                    Accepted
+                        { accepted with
+                            ReturnValue =
+                                { accepted.ReturnValue with Registration = Some { registration with PublicKey = Unchecked.defaultof<CacheIdentityPublicKey> } }
+                        }
+                "null repository scopes",
+                fun request ->
+                    let accepted = acceptedResponse request
+                    let registration = accepted.ReturnValue.Registration |> Option.get
+                    Accepted { accepted with ReturnValue = { accepted.ReturnValue with Registration = Some { registration with RepositoryScopes = null } } }
+                "null repository scope element",
+                fun request ->
+                    let accepted = acceptedResponse request
+                    let registration = accepted.ReturnValue.Registration |> Option.get
+
+                    Accepted
+                        { accepted with
+                            ReturnValue =
+                                { accepted.ReturnValue with
+                                    Registration =
+                                        Some
+                                            { registration with
+                                                RepositoryScopes =
+                                                    [|
+                                                        Unchecked.defaultof<CacheRepositoryScope>
+                                                    |]
+                                            }
+                                }
+                        }
             ]
 
         for name, makeOutcome in cases do
@@ -1176,7 +1297,7 @@ module CacheCliTests =
                             use client = client
                             let! request = readEnrollmentRequest client
                             received.TrySetResult(request) |> ignore
-                            do! writeEnrollmentResponse client 302 "{\"redirect\":true}"
+                            do! writeEnrollmentRedirect client "http://127.0.0.1:9/redirected"
                         })
                 )
 
@@ -1200,6 +1321,427 @@ module CacheCliTests =
                 Assert.That(serverTask.Wait(TimeSpan.FromSeconds(5.0)), Is.True)
             finally
                 listener.Stop())
+
+    /// Proves the real selected-server transport classifies timeout, connection loss, and response loss without retry.
+    [<Test>]
+    let ``Linux cache enroll keeps real transport loss terminal and redacted`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let cases: (string * (EnrollmentRequest -> TcpClient -> Task)) list =
+            [
+                "timeout", (fun _ _ -> Task.Delay(TimeSpan.FromSeconds(3.0)))
+                "connection loss", (fun _ _ -> Task.CompletedTask)
+                "response loss",
+                (fun _ client ->
+                    task {
+                        use stream = client.GetStream()
+
+                        let headers =
+                            Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\nConnection: close\r\n\r\n{")
+
+                        do! stream.WriteAsync(headers, 0, headers.Length)
+                    })
+            ]
+
+        for name, respond in cases do
+            withRoot (fun root _ ->
+                withSingleEnrollmentServer respond (fun serverUri requests ->
+                    withPatCredential serverUri (fun () ->
+                        let exitCode, output = runProductionEnrollment enrollmentArguments
+                        Assert.That(exitCode, Is.Not.EqualTo(0), $"{name}: {output}")
+                        Assert.That(requests.Count, Is.EqualTo(1), $"{name} retried transport.")
+                        let request = requests.ToArray()[0]
+                        Assert.That(request.Method, Is.EqualTo("POST"))
+                        Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+
+                        Assert.That(
+                            request.Authorization
+                            |> Option.defaultValue String.Empty,
+                            Does.StartWith("Bearer ")
+                        )
+
+                        Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        assertRedactedError exitCode output
+                        assertRedacted output (protectedValues root))))
+
+    /// Proves selected-server URI path bases compose one enrollment route instead of discarding the configured base path.
+    [<Test>]
+    let ``Linux cache enroll composes the selected server path base exactly once`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            withSingleEnrollmentServer
+                (fun request client ->
+                    task {
+                        let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
+
+                        let response =
+                            acceptedResponse enrollment
+                            |> fun result -> JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
+
+                        do! writeEnrollmentResponse client 200 response
+                    })
+                (fun serverUri requests ->
+                    let pathBase = Uri(serverUri, "api")
+
+                    withPatCredential pathBase (fun () ->
+                        let exitCode, output = runProductionEnrollment enrollmentArguments
+                        Assert.That(exitCode, Is.EqualTo(0), output)
+                        Assert.That(requests.Count, Is.EqualTo(1))
+                        let request = requests.ToArray()[0]
+                        Assert.That(request.Method, Is.EqualTo("POST"))
+                        Assert.That(request.Path, Is.EqualTo("/api/cache/enroll"))
+
+                        Assert.That(
+                            request.Authorization
+                            |> Option.defaultValue String.Empty,
+                            Does.StartWith("Bearer ")
+                        )
+
+                        Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("enrolled")))))
+
+    /// Proves cancellation after the real request reaches the selected server stays indeterminate and never publishes ready state.
+    [<Test>]
+    let ``Linux cache enroll treats post-start cancellation as indeterminate`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            use cancellation = new CancellationTokenSource()
+
+            withSingleEnrollmentServer
+                (fun _ _ ->
+                    task {
+                        try
+                            do! Task.Delay(Timeout.InfiniteTimeSpan, cancellation.Token)
+                        with
+                        | :? OperationCanceledException -> ()
+                    })
+                (fun serverUri requests ->
+                    withPatCredential serverUri (fun () ->
+                        let invocation = Task.Run(Func<int * string>(fun () -> runProductionEnrollmentWithCancellation enrollmentArguments cancellation.Token))
+
+                        Assert.That(SpinWait.SpinUntil((fun () -> requests.Count = 1), TimeSpan.FromSeconds(5.0)), Is.True)
+                        cancellation.Cancel()
+                        let exitCode, output = invocation.GetAwaiter().GetResult()
+                        Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                        Assert.That(output, Does.Contain("outcome is unknown after transport started"))
+                        Assert.That(requests.Count, Is.EqualTo(1))
+                        let request = requests.ToArray()[0]
+                        Assert.That(request.Method, Is.EqualTo("POST"))
+                        Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+
+                        Assert.That(
+                            request.Authorization
+                            |> Option.defaultValue String.Empty,
+                            Does.StartWith("Bearer ")
+                        )
+
+                        Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        assertRedactedError exitCode output
+                        assertRedacted output (protectedValues root))))
+
+    /// Proves null and incomplete 2xx response bodies received through the real SDK transport remain typed and redacted.
+    [<Test>]
+    let ``Linux cache enroll rejects incomplete real accepted response graphs`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let mutateBody (mutate: JsonNode -> unit) (request: CacheEnrollmentRequest) =
+            let node =
+                acceptedResponse request
+                |> fun response -> JsonSerializer.Serialize(response, Constants.JsonSerializerOptions)
+                |> JsonNode.Parse
+
+            mutate node
+            node.ToJsonString(Constants.JsonSerializerOptions)
+
+        let cases: (string * (JsonNode -> unit)) list =
+            [
+                "null return value", (fun node -> node["ReturnValue"] <- null)
+                "missing registration",
+                fun node ->
+                    let result = node[ "ReturnValue" ].AsObject()
+                    result["Registration"] <- null
+                "missing public key",
+                fun node ->
+                    let result = node[ "ReturnValue" ].AsObject()
+                    let registration = result[ "Registration" ].AsObject()
+                    registration["PublicKey"] <- null
+                "missing repository scopes",
+                fun node ->
+                    let result = node[ "ReturnValue" ].AsObject()
+                    let registration = result[ "Registration" ].AsObject()
+                    registration["RepositoryScopes"] <- null
+                "null repository scope element",
+                fun node ->
+                    let result = node[ "ReturnValue" ].AsObject()
+                    let registration = result[ "Registration" ].AsObject()
+                    let scopes = JsonArray()
+                    scopes.Add(null)
+                    registration["RepositoryScopes"] <- scopes
+                "missing required display name",
+                fun node ->
+                    let result = node[ "ReturnValue" ].AsObject()
+                    let registration = result[ "Registration" ].AsObject()
+                    registration["DisplayName"] <- null
+            ]
+
+        for name, mutate in cases do
+            withRoot (fun root _ ->
+                withSingleEnrollmentServer
+                    (fun request client ->
+                        let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
+                        writeEnrollmentResponse client 200 (mutateBody mutate enrollment))
+                    (fun serverUri requests ->
+                        withPatCredential serverUri (fun () ->
+                            let exitCode, output = runProductionEnrollment enrollmentArguments
+                            Assert.That(exitCode, Is.Not.EqualTo(0), $"{name}: {output}")
+                            Assert.That(requests.Count, Is.EqualTo(1))
+                            let request = requests.ToArray()[0]
+                            Assert.That(request.Method, Is.EqualTo("POST"))
+                            Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+
+                            Assert.That(
+                                request.Authorization
+                                |> Option.defaultValue String.Empty,
+                                Does.StartWith("Bearer ")
+                            )
+
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                            assertRedactedError exitCode output
+                            assertRedacted output (protectedValues root))))
+
+    /// Proves immutable server-response mismatches cannot publish the staged identity after a real selected-server POST.
+    [<Test>]
+    let ``Linux cache enroll rejects immutable real accepted response mismatches`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let cases =
+            [
+                "display name", "DisplayName", JsonValue.Create("different-cache") :> JsonNode
+                "endpoint", "Endpoint", JsonValue.Create("https://different.example.test") :> JsonNode
+                "protocol", "ProtocolVersion", JsonValue.Create("v2") :> JsonNode
+            ]
+
+        for name, field, replacement in cases do
+            withRoot (fun root _ ->
+                withSingleEnrollmentServer
+                    (fun request client ->
+                        task {
+                            let node =
+                                JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
+                                |> acceptedResponse
+                                |> fun response -> JsonSerializer.Serialize(response, Constants.JsonSerializerOptions)
+                                |> JsonNode.Parse
+
+                            let result = node[ "ReturnValue" ].AsObject()
+                            let registration = result[ "Registration" ].AsObject()
+                            registration[field] <- replacement.DeepClone()
+                            do! writeEnrollmentResponse client 200 (node.ToJsonString(Constants.JsonSerializerOptions))
+                        })
+                    (fun serverUri requests ->
+                        withPatCredential serverUri (fun () ->
+                            let exitCode, output = runProductionEnrollment enrollmentArguments
+                            Assert.That(exitCode, Is.Not.EqualTo(0), $"{name}: {output}")
+                            Assert.That(requests.Count, Is.EqualTo(1))
+                            let request = requests.ToArray()[0]
+                            Assert.That(request.Method, Is.EqualTo("POST"))
+                            Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+
+                            Assert.That(
+                                request.Authorization
+                                |> Option.defaultValue String.Empty,
+                                Does.StartWith("Bearer ")
+                            )
+
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                            assertRedactedError exitCode output
+                            assertRedacted output (protectedValues root))))
+
+    /// Proves a lost staged identity after the real response cannot be published through the root command.
+    [<Test>]
+    let ``Linux cache enroll does not publish after the claimed staged identity is lost`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            withSingleEnrollmentServer
+                (fun request client ->
+                    task {
+                        let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
+
+                        let response =
+                            acceptedResponse enrollment
+                            |> fun result -> JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
+
+                        do! writeEnrollmentResponse client 200 response
+                    })
+                (fun serverUri requests ->
+                    withEnv Constants.EnvironmentVariables.GraceServerUri (Some serverUri.AbsoluteUri) (fun () ->
+                        let dependencies =
+                            enrollmentDependencies
+                                root
+                                (fun _ -> Task.FromResult(Ok "lost-claim-token"))
+                                (fun request uri bearer correlationId cancellationToken ->
+                                    CacheRegistration.Enroll(request, uri, bearer, correlationId, cancellationToken))
+                                (fun phase ->
+                                    if phase = CacheCommand.EnrollmentPhase.BeforeReadyCommit then
+                                        Directory.Delete(Path.Combine(root, "attempt"), true)
+
+                                    Task.FromResult(()))
+                                CacheIdentity.commitClaimedReady
+
+                        let exitCode, output = runEnrollment dependencies enrollmentArguments CancellationToken.None
+                        Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                        Assert.That(requests.Count, Is.EqualTo(1))
+                        let request = requests.ToArray()[0]
+                        Assert.That(request.Method, Is.EqualTo("POST"))
+                        Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+                        Assert.That(request.Authorization, Is.EqualTo(Some "Bearer lost-claim-token"))
+                        Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+                        assertRedactedError exitCode output
+                        assertRedacted output (Array.append (protectedValues root) [| "lost-claim-token" |]))))
+
+    /// Proves an actual protected local registration write failure remains non-ready and cleans only the staged attempt.
+    [<Test>]
+    let ``Linux cache enroll handles a real protected local write failure`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            withSingleEnrollmentServer
+                (fun request client ->
+                    task {
+                        let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
+
+                        let response =
+                            acceptedResponse enrollment
+                            |> fun result -> JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
+
+                        do! writeEnrollmentResponse client 200 response
+                    })
+                (fun serverUri requests ->
+                    withEnv Constants.EnvironmentVariables.GraceServerUri (Some serverUri.AbsoluteUri) (fun () ->
+                        let dependencies =
+                            enrollmentDependencies
+                                root
+                                (fun _ -> Task.FromResult(Ok "local-write-token"))
+                                (fun request uri bearer correlationId cancellationToken ->
+                                    CacheRegistration.Enroll(request, uri, bearer, correlationId, cancellationToken))
+                                (fun phase ->
+                                    if phase = CacheCommand.EnrollmentPhase.BeforeReadyCommit then
+                                        File.SetUnixFileMode(Path.Combine(root, "attempt"), UnixFileMode.UserRead ||| UnixFileMode.UserExecute)
+
+                                    Task.FromResult(()))
+                                CacheIdentity.commitClaimedReady
+
+                        let exitCode, output = runEnrollment dependencies enrollmentArguments CancellationToken.None
+                        Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                        Assert.That(requests.Count, Is.EqualTo(1))
+                        let request = requests.ToArray()[0]
+                        Assert.That(request.Method, Is.EqualTo("POST"))
+                        Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+                        Assert.That(request.Authorization, Is.EqualTo(Some "Bearer local-write-token"))
+                        Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                        Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        assertRedactedError exitCode output
+                        assertRedacted output (Array.append (protectedValues root) [| "local-write-token" |]))))
+
+    /// Proves missing and failed production credential producers make no enrollment request and redact Normal and JSON output.
+    [<Test>]
+    let ``Linux cache enroll rejects production credential failures before enrollment transport`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let normalArguments = enrollmentArguments[2..]
+
+        let runAbsent modeArguments =
+            withRoot (fun root _ ->
+                withProductionEnrollmentServer (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, None
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+                        ]
+                        (fun () ->
+                            let exitCode, output = runProductionEnrollment modeArguments
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+
+                            let enrollmentRequests =
+                                requests.ToArray()
+                                |> Array.filter (fun request -> request.Path = "/cache/enroll")
+
+                            Assert.That(enrollmentRequests.Length, Is.EqualTo(0))
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                            assertRedacted output (protectedValues root)
+
+                            if modeArguments = enrollmentArguments then assertRedactedError exitCode output)))
+
+        runAbsent normalArguments
+        runAbsent enrollmentArguments
+
+        let runFailedM2m modeArguments =
+            withRoot (fun root _ ->
+                withProductionEnrollmentServerResponse (Some(400, "{\"error\":\"invalid_client\"}")) (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, None
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, Some "failed-m2m-client"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, Some "failed-m2m-secret"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+                        ]
+                        (fun () ->
+                            let exitCode, output = runProductionEnrollment modeArguments
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                            Assert.That(output, Does.Contain("Machine-to-machine authentication failed."))
+                            Assert.That(requests.Count, Is.EqualTo(1))
+                            let request = requests.ToArray()[0]
+                            Assert.That(request.Method, Is.EqualTo("POST"))
+                            Assert.That(request.Path, Is.EqualTo("/oauth/token"))
+                            Assert.That(request.Authorization, Is.EqualTo(None))
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+
+                            assertRedacted
+                                output
+                                (Array.append
+                                    (protectedValues root)
+                                    [|
+                                        "failed-m2m-client"
+                                        "failed-m2m-secret"
+                                    |])
+
+                            if modeArguments = enrollmentArguments then assertRedactedError exitCode output)))
+
+        runFailedM2m normalArguments
+        runFailedM2m enrollmentArguments
 
     /// Proves PAT and M2M credential producers each supply one bearer to the selected server through the production root graph.
     [<Test>]
@@ -1270,7 +1812,7 @@ module CacheCliTests =
                         Assert.That((paths = [| "/oauth/token"; "/cache/enroll" |]), Is.True)
                         Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("enrolled")))))
 
-    /// Proves the normal-build holder owns the protected enrollment claim until its exact process is killed and joined.
+    /// Proves a live normal-build claim holder blocks GraceCommand enrollment, then exact holder termination permits one ready retry.
     [<Test>]
     let ``Linux claim holder blocks enrollment claim then releases a retry`` () =
         if not (OperatingSystem.IsLinux()) then
@@ -1313,21 +1855,46 @@ module CacheCliTests =
 
                 Assert.That(File.Exists(signalPath), Is.True, "The holder did not acquire the production claim.")
 
-                match CacheIdentity.tryAcquireEnrollmentClaim root with
-                | Error CacheIdentityError.StateUnavailable -> ()
-                | Error error -> Assert.Fail($"Expected a conflicting claim failure, received {error}.")
-                | Ok claim ->
-                    CacheIdentity.releaseEnrollmentClaim claim
-                    Assert.Fail("A second process acquired the claim while the holder was live.")
+                let beforeConflict = snapshot root
 
-                holderProcess.Kill()
-                Assert.That(holderProcess.WaitForExit(10000), Is.True, "The exact claim-holder process did not exit.")
+                withSingleEnrollmentServer
+                    (fun request client ->
+                        task {
+                            let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
 
-                let retry =
-                    CacheIdentity.tryAcquireEnrollmentClaim root
-                    |> requireOk
+                            let response =
+                                acceptedResponse enrollment
+                                |> fun result -> JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
 
-                CacheIdentity.releaseEnrollmentClaim retry
+                            do! writeEnrollmentResponse client 200 response
+                        })
+                    (fun serverUri requests ->
+                        withPatCredential serverUri (fun () ->
+                            let conflictExit, conflictOutput = runProductionEnrollment enrollmentArguments
+                            Assert.That(conflictExit, Is.Not.EqualTo(0), conflictOutput)
+                            Assert.That(requests.Count, Is.EqualTo(0), "A competing command reached enrollment transport.")
+                            Assert.That(snapshot root = beforeConflict, Is.True, "A competing command changed the holder's protected state.")
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+                            assertRedactedError conflictExit conflictOutput
+                            assertRedacted conflictOutput (protectedValues root)
+
+                            holderProcess.Kill()
+                            Assert.That(holderProcess.WaitForExit(10000), Is.True, "The exact claim-holder process did not exit.")
+
+                            let retryExit, retryOutput = runProductionEnrollment enrollmentArguments
+                            Assert.That(retryExit, Is.EqualTo(0), retryOutput)
+                            Assert.That(requests.Count, Is.EqualTo(1))
+                            let request = requests.ToArray()[0]
+                            Assert.That(request.Method, Is.EqualTo("POST"))
+                            Assert.That(request.Path, Is.EqualTo("/cache/enroll"))
+
+                            Assert.That(
+                                request.Authorization
+                                |> Option.defaultValue String.Empty,
+                                Does.StartWith("Bearer ")
+                            )
+
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("enrolled"))))
             finally
                 if not holderProcess.HasExited then
                     holderProcess.Kill()
@@ -1371,6 +1938,53 @@ module CacheCliTests =
                                                        "device" |]
 
                         Assert.That(loginExit, Is.EqualTo(0), loginOutput)
+
+                        let beforePartialM2m = snapshot root
+                        let normalArguments = enrollmentArguments[2..]
+
+                        withCredentialEnvironment
+                            [
+                                Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, Some "cache-partial-client-should-not-appear"
+                                Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                            ]
+                            (fun () ->
+                                let normalExit, normalOutput = runProductionEnrollment normalArguments
+                                let jsonExit, jsonOutput = runProductionEnrollment enrollmentArguments
+                                Assert.That(normalExit, Is.Not.EqualTo(0), normalOutput)
+                                Assert.That(jsonExit, Is.Not.EqualTo(0), jsonOutput)
+                                Assert.That(normalOutput, Does.Contain("Machine-to-machine authentication configuration is incomplete."))
+                                Assert.That(jsonOutput, Does.Contain("Machine-to-machine authentication configuration is incomplete."))
+                                Assert.That(snapshot root = beforePartialM2m, Is.True)
+
+                                assertRedacted
+                                    normalOutput
+                                    (Array.append
+                                        (protectedValues root)
+                                        [|
+                                            "cache-partial-client-should-not-appear"
+                                        |])
+
+                                assertRedacted
+                                    jsonOutput
+                                    (Array.append
+                                        (protectedValues root)
+                                        [|
+                                            "cache-partial-client-should-not-appear"
+                                        |]))
+
+                        let requestPathsAfterPartialM2m =
+                            requests.ToArray()
+                            |> Array.map (fun request -> request.Path)
+
+                        Assert.That(
+                            (requestPathsAfterPartialM2m = [|
+                                "/oauth/device/code"
+                                "/oauth/token"
+                            |]),
+                            Is.True,
+                            "Partial M2M configuration fell through to the interactive credential or enrollment transport."
+                        )
+
                         let exitCode, output = runProductionEnrollment enrollmentArguments
                         Assert.That(exitCode, Is.EqualTo(0), output)
                         let requests = requests.ToArray()

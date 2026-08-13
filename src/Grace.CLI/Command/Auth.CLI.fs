@@ -322,8 +322,14 @@ module Auth =
             | None -> return! tryGetOidcCliConfigFromServer correlationId
         }
 
-    /// Tries to map get oidc m2m config and returns a GraceError instead of throwing on unsupported input.
-    let private tryGetOidcM2mConfig () =
+    /// Distinguishes no M2M settings from an unsafe partial M2M configuration before credential fallback is selected.
+    type private OidcM2mConfiguration =
+        | Absent
+        | Partial
+        | Complete of OidcM2mConfig
+
+    /// Reads the required M2M settings while preserving whether the producer was absent or incomplete.
+    let private oidcM2mConfiguration () =
         match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
               tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
               tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId,
@@ -335,7 +341,7 @@ module Auth =
                 | Some raw when not (String.IsNullOrWhiteSpace raw) -> parseScopes raw
                 | _ -> []
 
-            Some
+            Complete
                 {
                     Authority = normalizeAuthority authority
                     Audience = audience.Trim()
@@ -343,7 +349,15 @@ module Auth =
                     ClientSecret = clientSecret
                     Scopes = scopes
                 }
-        | _ -> None
+        | _, _, None, None -> Absent
+        | _ -> Partial
+
+    /// Reads complete OIDC M2M settings for established flows that may fall back to interactive authentication.
+    let private tryGetOidcM2mConfig () =
+        match oidcM2mConfiguration () with
+        | Complete config -> Some config
+        | Absent
+        | Partial -> None
 
     /// Tries to map get grace token from env and returns a GraceError instead of throwing on unsupported input.
     let private tryGetGraceTokenFromEnv () =
@@ -1006,6 +1020,61 @@ module Auth =
                         | Ok (Some cliConfig) ->
                             let! tokenResult = tryGetInteractiveTokenAsync cliConfig
                             return tokenResult
+                        | Error error -> return Error error.Error
+        }
+
+    /// Resolves Cache enrollment credentials without allowing partial M2M settings to fall through to interactive state.
+    let internal tryGetAccessTokenForCacheEnrollment () =
+        task {
+            match tryGetGraceTokenFromEnv () with
+            | Error message -> return Error message
+            | Ok (Some token) -> return Ok(Some token)
+            | Ok None ->
+                match tryGetEnv Constants.EnvironmentVariables.GraceTokenFile with
+                | Some _ ->
+                    return
+                        Error
+                            $"Local token files are no longer supported. Remove {Constants.EnvironmentVariables.GraceTokenFile} and set {Constants.EnvironmentVariables.GraceToken} instead."
+                | None ->
+                    match oidcM2mConfiguration () with
+                    | Partial -> return Error "Machine-to-machine authentication configuration is incomplete."
+                    | Complete m2mConfig ->
+                        let endpoint = buildEndpoint m2mConfig.Authority "oauth/token"
+
+                        let formValues =
+                            [
+                                "grant_type", "client_credentials"
+                                "client_id", m2mConfig.ClientId
+                                "client_secret", m2mConfig.ClientSecret
+                                "audience", m2mConfig.Audience
+                            ]
+                            |> fun values ->
+                                if List.isEmpty m2mConfig.Scopes then
+                                    values
+                                else
+                                    values
+                                    @ [
+                                        "scope", String.Join(" ", m2mConfig.Scopes)
+                                    ]
+
+                        let! response = postFormAsync endpoint formValues
+
+                        match response with
+                        | Ok json ->
+                            match parseTokenResponse json with
+                            | Ok token when not (String.IsNullOrWhiteSpace token.AccessToken) -> return Ok(Some token.AccessToken)
+                            | _ -> return Error "Machine-to-machine authentication failed."
+                        | Error _ -> return Error "Machine-to-machine authentication failed."
+                    | Absent ->
+                        let correlationId = ensureNonEmptyCorrelationId String.Empty
+                        let! cliConfigResult = tryGetOidcCliConfig correlationId
+
+                        match cliConfigResult with
+                        | Ok None ->
+                            return
+                                Error
+                                    $"Authentication is not configured. Set {Constants.EnvironmentVariables.GraceAuthOidcAuthority}, {Constants.EnvironmentVariables.GraceAuthOidcAudience}, and {Constants.EnvironmentVariables.GraceAuthOidcCliClientId} (or provide GRACE_TOKEN / M2M credentials)."
+                        | Ok (Some cliConfig) -> return! tryGetInteractiveTokenAsync cliConfig
                         | Error error -> return Error error.Error
         }
 

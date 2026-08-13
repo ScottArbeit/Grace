@@ -228,13 +228,23 @@ module CacheCommand =
         | _ ->
             Error(GraceError.Create ($"Set {Constants.EnvironmentVariables.GraceServerUri} to an absolute HTTP or HTTPS URI.") (getCorrelationId parseResult))
 
+    /// Checks a required string before later response comparison accesses the value.
+    let private hasRequiredText (value: string) = not (String.IsNullOrWhiteSpace(value))
+
     /// Compares immutable request facts and the staged P-256 public key before accepted state can be published.
     let private matchesAcceptedRegistration (request: CacheEnrollmentRequest) (registration: CacheRegistration) =
         not (isNull (box registration))
+        && not (isNull (box request))
+        && not (isNull (box request.PublicKey))
+        && hasRequiredText registration.Class
         && registration.Class = nameof CacheRegistration
         && registration.CacheId <> Guid.Empty
         && registration.Health = CacheHealthStatus.Unhealthy
-        && not (String.IsNullOrWhiteSpace(registration.EnrolledBy))
+        && hasRequiredText registration.EnrolledBy
+        && hasRequiredText registration.DisplayName
+        && hasRequiredText registration.Endpoint
+        && hasRequiredText registration.SoftwareVersion
+        && hasRequiredText registration.ProtocolVersion
         && registration.EnrolledAt
            <= registration.LastRefreshedAt
         && registration.LastRefreshedAt < registration.RefreshAfter
@@ -250,12 +260,24 @@ module CacheCommand =
         && registration.ProtocolVersion = request.ProtocolVersion
         && registration.PrefetchSupported = request.PrefetchSupported
         && not (isNull (box registration.PublicKey))
+        && hasRequiredText registration.PublicKey.Class
+        && hasRequiredText registration.PublicKey.Algorithm
+        && hasRequiredText registration.PublicKey.Curve
+        && hasRequiredText registration.PublicKey.PublicKeyX
+        && hasRequiredText registration.PublicKey.PublicKeyY
         && registration.PublicKey.Class = request.PublicKey.Class
         && registration.PublicKey.Algorithm = request.PublicKey.Algorithm
         && registration.PublicKey.Curve = request.PublicKey.Curve
         && registration.PublicKey.PublicKeyX = request.PublicKey.PublicKeyX
         && registration.PublicKey.PublicKeyY = request.PublicKey.PublicKeyY
+        && not (isNull registration.RepositoryScopes)
         && registration.RepositoryScopes.Length = request.RepositoryScopes.Count
+        && registration.RepositoryScopes
+           |> Array.forall (fun scope ->
+               not (isNull (box scope))
+               && hasRequiredText scope.Class
+               && scope.OrganizationId <> Guid.Empty
+               && scope.RepositoryId <> Guid.Empty)
         && Array.forall2
             (fun (actual: CacheRepositoryScope) (expected: CacheRepositoryScope) ->
                 actual.Class = expected.Class
@@ -379,7 +401,10 @@ module CacheCommand =
                                                 match outcome with
                                                 | Rejected error
                                                 | Indeterminate error -> return renderOutput parseResult (Error error)
-                                                | Accepted response ->
+                                                | Accepted response when
+                                                    not (isNull (box response))
+                                                    && not (isNull (box response.ReturnValue))
+                                                    ->
                                                     match response.ReturnValue.Class, response.ReturnValue.Status, response.ReturnValue.Registration with
                                                     | resultClass, CacheRegistrationRefreshStatus.Enrolled, Some registration when
                                                         resultClass = nameof CacheRegistrationResult
@@ -421,6 +446,15 @@ module CacheCommand =
                                                                         "Cache enrollment response did not strictly accept the staged identity."
                                                                         correlationId
                                                                 ))
+                                                | Accepted _ ->
+                                                    return
+                                                        renderOutput
+                                                            parseResult
+                                                            (Error(
+                                                                GraceError.Create
+                                                                    "Cache enrollment response did not strictly accept the staged identity."
+                                                                    correlationId
+                                                            ))
                                 finally
                                     if not committed then
                                         CacheIdentity.discardClaimedAttempt claim dependencies.StateRoot stagedKey
@@ -453,13 +487,15 @@ module CacheCommand =
                 fun cancellationToken ->
                     task {
                         cancellationToken.ThrowIfCancellationRequested()
-                        let! bearer = Auth.tryGetAccessToken ()
+                        let! bearer = Auth.tryGetAccessTokenForCacheEnrollment ()
                         cancellationToken.ThrowIfCancellationRequested()
 
                         let normalized: Result<string, string> =
                             match bearer with
-                            | Some value when not (String.IsNullOrWhiteSpace(value)) -> Result.Ok value
-                            | _ -> Result.Error "Authentication required. Run 'grace authenticate login' and try again."
+                            | Ok (Some value) when not (String.IsNullOrWhiteSpace(value)) -> Result.Ok value
+                            | Error message -> Result.Error message
+                            | Ok (Some _) -> Result.Error "Authentication required. Run 'grace authenticate login' and try again."
+                            | Ok None -> Result.Error "Authentication required. Run 'grace authenticate login' and try again."
 
                         return normalized
                     }
