@@ -82,61 +82,103 @@ function Invoke-Mutation {
 }
 
 function Assert-IndependentRawPayload {
-    param([object] $Projection, [object] $Compiled)
+    param([object] $Projection, [object] $ExpectedArtifact, [object] $Compiled)
     $document = [Text.Json.JsonDocument]::Parse($Projection.Utf8Json)
     try {
         $root = $document.RootElement
-        Assert-True ($root.ValueKind -eq [Text.Json.JsonValueKind]::Object) "$($Projection.Artifact) root is an object"
+        Assert-True ([StringComparer]::Ordinal.Equals($Projection.Artifact, $ExpectedArtifact.Id)) "returned Artifact equals requested $($ExpectedArtifact.Id)"
+        Assert-True ($root.ValueKind -eq [Text.Json.JsonValueKind]::Object) "$($ExpectedArtifact.Id) root is an object"
         $properties = @($root.EnumerateObject())
         $expectedNames = @('schema', 'artifact', 'canonical', 'canonicalContentDigest', 'assignmentDigest', 'rowCount', 'applicabilityKeyCount', 'requirementCount', 'artifactCount', 'requirements', 'artifactIds', 'assignment')
-        Assert-True ($properties.Count -eq $expectedNames.Count) "$($Projection.Artifact) has twelve root properties"
+        Assert-True ($properties.Count -eq $expectedNames.Count) "$($ExpectedArtifact.Id) has twelve root properties"
         for ($index = 0; $index -lt $expectedNames.Count; $index++) {
-            Assert-True ([StringComparer]::Ordinal.Equals($properties[$index].Name, $expectedNames[$index])) "$($Projection.Artifact) root property $index is ordered"
+            Assert-True ([StringComparer]::Ordinal.Equals($properties[$index].Name, $expectedNames[$index])) "$($ExpectedArtifact.Id) root property $index is ordered"
         }
-        Assert-True ([StringComparer]::Ordinal.Equals($properties[0].Value.GetString(), 'grace.wdu.lifecycle-projection/v2')) "$($Projection.Artifact) schema is fixed"
-        Assert-True ([StringComparer]::Ordinal.Equals($properties[1].Value.GetString(), $Projection.Artifact)) "$($Projection.Artifact) identity is exact"
-        Assert-True ([StringComparer]::Ordinal.Equals($properties[2].Value.GetString(), 'docs/Working Directory Update.md#normative-branch-lifecycle-table')) "$($Projection.Artifact) canonical anchor is fixed"
-        Assert-True ([StringComparer]::Ordinal.Equals($properties[3].Value.GetString(), $Compiled.Digest)) "$($Projection.Artifact) digest comes from compiler"
-        Assert-True ([StringComparer]::Ordinal.Equals($properties[4].Value.GetString(), $Compiled.AssignmentDigest)) "$($Projection.Artifact) assignment digest comes from compiler"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[0].Value.GetString(), 'grace.wdu.lifecycle-projection/v2')) "$($ExpectedArtifact.Id) schema is fixed"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[1].Value.GetString(), $ExpectedArtifact.Id)) "raw $.artifact equals requested $($ExpectedArtifact.Id)"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[2].Value.GetString(), 'docs/Working Directory Update.md#normative-branch-lifecycle-table')) "$($ExpectedArtifact.Id) canonical anchor is fixed"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[3].Value.GetString(), $Compiled.Digest)) "$($ExpectedArtifact.Id) digest comes from compiler"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[4].Value.GetString(), $Compiled.AssignmentDigest)) "$($ExpectedArtifact.Id) assignment digest comes from compiler"
         $expectedCounts = @($Compiled.Counts.rowCount, $Compiled.Counts.applicabilityKeyCount, $Compiled.Counts.requirementCount, $Compiled.Counts.artifactCount)
         foreach ($index in 5..8) {
-            Assert-True ($properties[$index].Value.ValueKind -eq [Text.Json.JsonValueKind]::Number) "$($Projection.Artifact) count $index is numeric"
-            Assert-True ($properties[$index].Value.GetRawText() -ceq [Convert]::ToString($expectedCounts[$index - 5], [Globalization.CultureInfo]::InvariantCulture)) "$($Projection.Artifact) count $index is exact"
+            Assert-True ($properties[$index].Value.ValueKind -eq [Text.Json.JsonValueKind]::Number) "$($ExpectedArtifact.Id) count $index is numeric"
+            Assert-True ($properties[$index].Value.GetRawText() -ceq [Convert]::ToString($expectedCounts[$index - 5], [Globalization.CultureInfo]::InvariantCulture)) "$($ExpectedArtifact.Id) count $index is exact"
         }
         $requirements = @($properties[9].Value.EnumerateArray())
-        Assert-True ($requirements.Count -eq $Compiled.Requirements.Count) "$($Projection.Artifact) has all requirement pairs"
+        Assert-True ($requirements.Count -eq $Compiled.Requirements.Count) "$($ExpectedArtifact.Id) has all requirement pairs"
         for ($index = 0; $index -lt $requirements.Count; $index++) {
             $pair = @($requirements[$index].EnumerateObject())
-            Assert-True ([StringComparer]::Ordinal.Equals($pair[0].Name, 'id')) "$($Projection.Artifact) requirement $index ID name"
-            Assert-True ([StringComparer]::Ordinal.Equals($pair[1].Name, 'owner')) "$($Projection.Artifact) requirement $index owner name"
-            Assert-True ([StringComparer]::Ordinal.Equals($pair[0].Value.GetString(), $Compiled.Requirements[$index].Id)) "$($Projection.Artifact) requirement $index ID"
-            Assert-True ([StringComparer]::Ordinal.Equals($pair[1].Value.GetString(), $Compiled.Requirements[$index].Owner)) "$($Projection.Artifact) requirement $index owner"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[0].Name, 'id')) "$($ExpectedArtifact.Id) requirement $index ID name"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[1].Name, 'owner')) "$($ExpectedArtifact.Id) requirement $index owner name"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[0].Value.GetString(), $Compiled.Requirements[$index].Id)) "$($ExpectedArtifact.Id) requirement $index ID"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[1].Value.GetString(), $Compiled.Requirements[$index].Owner)) "$($ExpectedArtifact.Id) requirement $index owner"
         }
         $artifactIds = @($properties[10].Value.EnumerateArray())
-        Assert-True ($artifactIds.Count -eq $Compiled.Artifacts.Count) "$($Projection.Artifact) has all artifact IDs"
+        Assert-True ($artifactIds.Count -eq $Compiled.Artifacts.Count) "$($ExpectedArtifact.Id) has all artifact IDs"
         for ($index = 0; $index -lt $artifactIds.Count; $index++) {
-            Assert-True ([StringComparer]::Ordinal.Equals($artifactIds[$index].GetString(), $Compiled.Artifacts[$index].Id)) "$($Projection.Artifact) artifact ID $index"
+            Assert-True ([StringComparer]::Ordinal.Equals($artifactIds[$index].GetString(), $Compiled.Artifacts[$index].Id)) "$($ExpectedArtifact.Id) artifact ID $index"
         }
-        $compilerArtifact = @($Compiled.Artifacts | Where-Object { [StringComparer]::Ordinal.Equals($_.Id, $Projection.Artifact) })
         $assignmentProperties = @($properties[11].Value.EnumerateObject())
-        Assert-True ($properties[11].Value.ValueKind -eq [Text.Json.JsonValueKind]::Object) "$($Projection.Artifact) assignment is an object"
-        Assert-True ($assignmentProperties.Count -eq 1) "$($Projection.Artifact) assignment has one property"
-        Assert-True ([StringComparer]::Ordinal.Equals($assignmentProperties[0].Name, 'rowIds')) "$($Projection.Artifact) assignment property is rowIds"
-        Assert-True ($assignmentProperties[0].Value.ValueKind -eq [Text.Json.JsonValueKind]::Array) "$($Projection.Artifact) row IDs are an array"
+        Assert-True ($properties[11].Value.ValueKind -eq [Text.Json.JsonValueKind]::Object) "$($ExpectedArtifact.Id) assignment is an object"
+        Assert-True ($assignmentProperties.Count -eq 1) "$($ExpectedArtifact.Id) assignment has one property"
+        Assert-True ([StringComparer]::Ordinal.Equals($assignmentProperties[0].Name, 'rowIds')) "$($ExpectedArtifact.Id) assignment property is rowIds"
+        Assert-True ($assignmentProperties[0].Value.ValueKind -eq [Text.Json.JsonValueKind]::Array) "$($ExpectedArtifact.Id) row IDs are an array"
         $rowIds = @($assignmentProperties[0].Value.EnumerateArray())
-        Assert-True ($compilerArtifact.Count -eq 1) "$($Projection.Artifact) compiler artifact is unique"
-        Assert-True ($rowIds.Count -eq $compilerArtifact[0].RowIds.Count) "$($Projection.Artifact) assignment count"
+        Assert-True ($rowIds.Count -eq $ExpectedArtifact.RowIds.Count) "$($ExpectedArtifact.Id) assignment count"
         for ($index = 0; $index -lt $rowIds.Count; $index++) {
-            Assert-True ([StringComparer]::Ordinal.Equals($rowIds[$index].GetString(), $compilerArtifact[0].RowIds[$index])) "$($Projection.Artifact) row ID $index"
+            Assert-True ([StringComparer]::Ordinal.Equals($rowIds[$index].GetString(), $ExpectedArtifact.RowIds[$index])) "raw assignment $($ExpectedArtifact.Id) row ID $index equals requested artifact"
         }
     }
     finally { $document.Dispose() }
 }
 
+function Assert-ReturnedArtifactBindings {
+    param([object[]] $ProjectionBindings)
+    for ($index = 0; $index -lt $ProjectionBindings.Count; $index++) {
+        $binding = $ProjectionBindings[$index]
+        Assert-True ([StringComparer]::Ordinal.Equals($binding.Projection.Artifact, $binding.ExpectedArtifact.Id)) "projection $index returned Artifact equals requested $($binding.ExpectedArtifact.Id)"
+    }
+}
+
+function Assert-ExactArtifactOrder {
+    param([string[]] $ActualArtifactIds, [string[]] $ExpectedArtifactIds)
+    Assert-True ($ActualArtifactIds.Count -eq $ExpectedArtifactIds.Count) 'returned artifact vector has exactly fifteen IDs'
+    for ($index = 0; $index -lt $ExpectedArtifactIds.Count; $index++) {
+        Assert-True ([StringComparer]::Ordinal.Equals($ActualArtifactIds[$index], $ExpectedArtifactIds[$index])) "returned artifact order $index equals compiler order"
+    }
+}
+
+function Assert-UniqueArtifactIds {
+    param([string[]] $ArtifactIds)
+    $uniqueIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($artifactId in $ArtifactIds) {
+        Assert-True ($uniqueIds.Add($artifactId)) "returned artifact IDs must be unique: $artifactId"
+    }
+}
+
+function Assert-ExactProjectionBindings {
+    param([object[]] $ProjectionBindings, [object] $Compiled)
+    Assert-True ($ProjectionBindings.Count -eq $Compiled.Artifacts.Count) 'projection bindings retain all fifteen requested artifacts'
+    Assert-ReturnedArtifactBindings $ProjectionBindings
+    $actualArtifactIds = @($ProjectionBindings | ForEach-Object { $_.Projection.Artifact })
+    $expectedArtifactIds = @($Compiled.Artifacts | ForEach-Object { $_.Id })
+    Assert-ExactArtifactOrder $actualArtifactIds $expectedArtifactIds
+    Assert-UniqueArtifactIds $actualArtifactIds
+    foreach ($binding in $ProjectionBindings) {
+        Assert-IndependentRawPayload $binding.Projection $binding.ExpectedArtifact $Compiled
+    }
+}
+
 Import-Module $modulePath -Force
 Import-Module $contractModulePath -Force
 $script:Compiled = Read-WduLifecycleContract -Path $canonicalPath
-$script:Projections = @($script:Compiled.Artifacts | ForEach-Object { New-WduLifecycleRawProjection -Compiled $script:Compiled -Artifact $_.Id })
+$script:ProjectionBindings = @(
+    foreach ($expectedArtifact in $script:Compiled.Artifacts) {
+        $projection = New-WduLifecycleRawProjection -Compiled $script:Compiled -Artifact $expectedArtifact.Id
+        [pscustomobject]@{ ExpectedArtifact = $expectedArtifact; Projection = $projection }
+    }
+)
+$script:Projections = @($script:ProjectionBindings | ForEach-Object { $_.Projection })
 $script:Passed = 0
 $script:Failed = 0
 
@@ -154,13 +196,30 @@ Invoke-Case 'compiles all fifteen artifacts deterministically and validates raw 
     Assert-True ($script:Compiled.Artifacts.Count -eq 15) 'compiler artifact count is 15'
     Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.Digest, 'ae3a77e28886485b49361d8836f040691e9f99228919cef87fac19b42e989d73')) 'compiler digest is exact'
     Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.AssignmentDigest, '20e329bd3aa4459a01f4ed3c6ec12cf365c86df3538b0323400639b90eeee877')) 'assignment digest is exact'
-    foreach ($projection in $script:Projections) {
-        $second = New-WduLifecycleRawProjection -Compiled $script:Compiled -Artifact $projection.Artifact
-        Assert-True ([Convert]::ToHexString($projection.Utf8Json.ToArray()) -ceq [Convert]::ToHexString($second.Utf8Json.ToArray())) "$($projection.Artifact) bytes are deterministic"
+    foreach ($binding in $script:ProjectionBindings) {
+        $expectedArtifact = $binding.ExpectedArtifact
+        $projection = $binding.Projection
+        $second = New-WduLifecycleRawProjection -Compiled $script:Compiled -Artifact $expectedArtifact.Id
+        Assert-True ([Convert]::ToHexString($projection.Utf8Json.ToArray()) -ceq [Convert]::ToHexString($second.Utf8Json.ToArray())) "$($expectedArtifact.Id) bytes are deterministic"
         $validated = Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json $projection.Utf8Json
-        Assert-True ([StringComparer]::Ordinal.Equals($validated.Artifact, $projection.Artifact)) "$($projection.Artifact) validates itself"
-        Assert-IndependentRawPayload $projection $script:Compiled
+        Assert-True ([StringComparer]::Ordinal.Equals($validated.Artifact, $expectedArtifact.Id)) "$($expectedArtifact.Id) validates itself"
     }
+    Assert-ExactProjectionBindings $script:ProjectionBindings $script:Compiled
+}
+
+Invoke-Case 'rejects replacement of all requested outputs with the first valid projection' {
+    $firstProjection = $script:ProjectionBindings[0].Projection
+    $replacedBindings = @(
+        foreach ($binding in $script:ProjectionBindings) {
+            [pscustomobject]@{ ExpectedArtifact = $binding.ExpectedArtifact; Projection = $firstProjection }
+        }
+    )
+    $expectedArtifactIds = @($script:Compiled.Artifacts | ForEach-Object { $_.Id })
+    $replacedArtifactIds = @($replacedBindings | ForEach-Object { $_.Projection.Artifact })
+    Assert-True ($replacedBindings.Count -eq 15) 'replacement reproducer contains fifteen outputs'
+    Assert-Fails { Assert-ReturnedArtifactBindings $replacedBindings } 'returned Artifact equals requested'
+    Assert-Fails { Assert-ExactArtifactOrder $replacedArtifactIds $expectedArtifactIds } 'returned artifact order'
+    Assert-Fails { Assert-UniqueArtifactIds $replacedArtifactIds } 'returned artifact IDs must be unique'
 }
 
 $baseline = $script:Projections[0]
