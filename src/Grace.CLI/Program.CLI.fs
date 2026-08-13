@@ -274,6 +274,13 @@ module GraceCommand =
 
         writeIntrospectionError parseResult message
 
+    /// Rejects execution projection selection for schema and examples requests before document rendering.
+    let private tryGetIntrospectionExecutionSelectorError (parseResult: ParseResult) =
+        if isOptionRequested Options.select parseResult then
+            Some "--select cannot be used with --schema or --examples."
+        else
+            None
+
     /// Coordinates the introspection request command path, including validation, service calls, and output.
     let private handleIntrospectionRequest (parseResult: ParseResult) kind =
         let identity = commandIdentityFromCommandResult parseResult.CommandResult
@@ -854,7 +861,7 @@ module GraceCommand =
         current
 
     /// Supplies the small set of host dependencies needed to construct and execute the production root graph.
-    type internal RootDependencies = { CreateCacheCommand: unit -> Command; InitializeExecution: unit -> unit }
+    type internal RootDependencies = { CreateCacheCommand: unit -> Command; InitializeExecution: unit -> unit; AfterCommandExit: int -> Task<unit> }
 
     /// Builds the Grace command graph from host dependencies shared by production and focused host tests.
     let internal createRoot (dependencies: RootDependencies) =
@@ -913,7 +920,12 @@ module GraceCommand =
         Common.resetLifecycleWarningSuppression ()
 
     /// Provides the production command factory and execution initialization for the retained root command value.
-    let private productionDependencies = { CreateCacheCommand = (fun () -> CacheCommand.Build); InitializeExecution = initializeProductionExecution }
+    let private productionDependencies =
+        {
+            CreateCacheCommand = (fun () -> CacheCommand.Build)
+            InitializeExecution = initializeProductionExecution
+            AfterCommandExit = (fun _ -> Task.FromResult(()))
+        }
 
     /// Retains the production root command graph for existing callers and parser tests.
     let rootCommand = createRoot productionDependencies
@@ -1213,7 +1225,9 @@ module GraceCommand =
                             if hasBlockingIntrospectionParseErrors parseResult then
                                 writeBlockingIntrospectionParseErrors parseResult
                             else
-                                handleIntrospectionRequest parseResult kind
+                                match tryGetIntrospectionExecutionSelectorError parseResult with
+                                | Some message -> writeIntrospectionError parseResult message
+                                | None -> handleIntrospectionRequest parseResult kind
 
                         raise (IntrospectionExit returnValue)
                     | Some (Error message) ->
@@ -1418,6 +1432,7 @@ module GraceCommand =
                     else if parseResult |> isGraceCacheStatus then
                         let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                         returnValue <- invokedReturnValue
+                        do! dependencies.AfterCommandExit returnValue
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
@@ -1461,6 +1476,7 @@ module GraceCommand =
                                 // Now we can invoke the command!
                                 let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                                 returnValue <- invokedReturnValue
+                                do! dependencies.AfterCommandExit returnValue
 
                                 // Stuff to do after the command has been invoked:
 
@@ -1524,6 +1540,7 @@ module GraceCommand =
                         if isAllowed then
                             let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                             returnValue <- invokedReturnValue
+                            do! dependencies.AfterCommandExit returnValue
                             ()
                         else
                             let message = getLocalizedString StringResourceName.GraceConfigFileNotFound
@@ -1551,7 +1568,7 @@ module GraceCommand =
                     return returnValue
                 with
                 | IntrospectionExit exitCode -> return exitCode
-                | :? OperationCanceledException ->
+                | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
                     let correlationId =
                         if isNull parseResult then
                             generateCorrelationId ()
@@ -1559,6 +1576,9 @@ module GraceCommand =
                             getCorrelationId parseResult
 
                     Common.writeJsonErrorStdout (GraceError.Create "The command was canceled." correlationId)
+                    returnValue <- -1
+                    return returnValue
+                | :? OperationCanceledException ->
                     returnValue <- -1
                     return returnValue
                 | ex ->

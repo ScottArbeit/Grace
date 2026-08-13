@@ -40,7 +40,22 @@ module ProgramCliHostTests =
 
     /// Builds the internal dependencies used by focused host tests.
     let private dependencies (initializer: unit -> unit) (handler: CancellationToken -> Task<int>) : GraceCommand.RootDependencies =
-        { CreateCacheCommand = (fun () -> createCacheCommand handler); InitializeExecution = initializer }
+        { CreateCacheCommand = (fun () -> createCacheCommand handler); InitializeExecution = initializer; AfterCommandExit = (fun _ -> Task.FromResult(())) }
+
+    /// Runs a synchronous test action while temporarily replacing selected process environment variables.
+    let private withEnvironmentVariables (updates: (string * string option) list) (action: unit -> unit) =
+        let originalValues =
+            updates
+            |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable(name))
+
+        try
+            for name, value in updates do
+                Environment.SetEnvironmentVariable(name, value |> Option.toObj)
+
+            action ()
+        finally
+            for name, value in originalValues do
+                Environment.SetEnvironmentVariable(name, value)
 
     /// Invokes the production root construction and run path while capturing root output.
     let private runWithCapturedOutput (dependencies: GraceCommand.RootDependencies) (args: string array) (cancellationToken: CancellationToken) =
@@ -105,6 +120,43 @@ module ProgramCliHostTests =
         Assert.That(exitCode, Is.Not.EqualTo(0))
         assertSingleRedactedCancellation output
 
+    /// Proves a rendered missing-credential result remains the only JSON output when no caller cancellation occurred.
+    [<Test>]
+    let ``run preserves the missing credential result without a second cancellation document`` () =
+        let initializer () = ()
+
+        let environmentToClear =
+            [
+                "GRACE_TOKEN", None
+                "GRACE_TOKEN_FILE", None
+                "GRACE_SERVER_URI", None
+                "grace__auth__oidc__authority", None
+                "grace__auth__oidc__audience", None
+                "grace__auth__oidc__m2m_client_id", None
+                "grace__auth__oidc__m2m_client_secret", None
+                "grace__auth__oidc__cli_client_id", None
+            ]
+
+        withEnvironmentVariables environmentToClear (fun () ->
+            let exitCode, output =
+                runWithCapturedOutput
+                    (dependencies initializer (fun _ -> Task.FromResult(0)))
+                    [|
+                        "--output"
+                        "Json"
+                        "authenticate"
+                        "token"
+                        "create"
+                        "--name"
+                        "missing-credential"
+                    |]
+                    CancellationToken.None
+
+            Assert.That(exitCode, Is.Not.EqualTo(0))
+            Assert.That(Regex.Matches(output, "\\\"Error\\\"").Count, Is.EqualTo(1))
+            Assert.That(output, Does.Contain("Authentication is not configured."))
+            Assert.That(output, Does.Not.Contain("The command was canceled.")))
+
     /// Proves cancellation after deterministic action entry returns one stable redacted nonzero root result.
     [<Test>]
     let ``run returns one redacted nonzero result after cache status action entry`` () =
@@ -140,20 +192,32 @@ module ProgramCliHostTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
-    /// Proves a token cancelled after action completion cannot overwrite the completed domain exit code.
+    /// Proves a caller cancellation after the root records domain exit cannot overwrite that exit code.
     [<Test>]
-    let ``run preserves a completed cache status exit when cancellation races after completion`` () =
-        let completed = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+    let ``run preserves a completed cache status exit after the root records it`` () =
+        let afterCommandExit = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        let releaseRoot = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
         let initializer () = Assert.Fail("Cache status must not initialize execution dependencies.")
 
-        let handler (_: CancellationToken) : Task<int> =
-            completed.TrySetResult() |> ignore
-            Task.FromResult(37)
+        let handler (_: CancellationToken) : Task<int> = Task.FromResult(37)
 
         use cancellation = new CancellationTokenSource()
-        let invocation = GraceCommand.run (dependencies initializer handler) [| "cache"; "status" |] cancellation.Token
-        completed.Task.GetAwaiter().GetResult()
+
+        let controlledDependencies =
+            { dependencies initializer handler with
+                AfterCommandExit =
+                    fun exitCode ->
+                        task {
+                            Assert.That(exitCode, Is.EqualTo(37))
+                            afterCommandExit.TrySetResult() |> ignore
+                            do! releaseRoot.Task
+                        }
+            }
+
+        let invocation = GraceCommand.run controlledDependencies [| "cache"; "status" |] cancellation.Token
+        afterCommandExit.Task.GetAwaiter().GetResult()
         cancellation.Cancel()
+        releaseRoot.TrySetResult() |> ignore
 
         let exitCode = invocation.GetAwaiter().GetResult()
         Assert.That(exitCode, Is.EqualTo(37))
@@ -186,8 +250,10 @@ module ProgramCliHostTests =
         Assert.That(handlerCalls, Is.EqualTo(0))
         Assert.That(output, Does.Contain("Registry"))
 
-    /// Proves introspection remains strict for mutually exclusive options, unknown options, and malformed values.
+    /// Proves introspection remains strict for mutually exclusive options, execution selectors, unknown options, and malformed values.
     [<TestCase("--schema", "--examples", "cache", "status")>]
+    [<TestCase("cache", "status", "--schema", "--select", "Enrollment")>]
+    [<TestCase("cache", "status", "--examples", "--select", "Enrollment")>]
     [<TestCase("cache", "status", "--schema", "--unknown")>]
     [<TestCase("--output", "not-an-output-mode", "cache", "status", "--schema")>]
     [<TestCase("--output", "not-an-output-mode", "--select", "Enrollment", "cache", "status", "--schema")>]
