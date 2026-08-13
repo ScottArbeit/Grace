@@ -1043,6 +1043,21 @@ type OperationsDbContextModelSnapshot() =
             "Charge",
             "ops",
             fun (table: TableBuilder<ChargeEntity>) ->
+                table.HasCheckConstraint(
+                    "CK_ops_Charge_Identity",
+                    "[ChargeId] <> '00000000-0000-0000-0000-000000000000' AND [OwnerId] <> '00000000-0000-0000-0000-000000000000' AND [OrganizationId] <> '00000000-0000-0000-0000-000000000000' AND [RepositoryId] <> '00000000-0000-0000-0000-000000000000' AND [BillingPeriodId] <> '00000000-0000-0000-0000-000000000000' AND [ChargePreviewLineId] <> '00000000-0000-0000-0000-000000000000'"
+                )
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_Charge_Quantity", "[UnitQuantity] > 0 AND [UnitPriceMicros] >= 0 AND [TotalQuantity] >= 0")
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_Charge_Provenance",
+                    "[PeriodFromUtc] < [PeriodToUtc] AND [PeriodFromUtc] <= [EffectiveFromUtc] AND [EffectiveFromUtc] < [EffectiveToUtc] AND [EffectiveToUtc] <= [PeriodToUtc] AND [FactKind] >= 0 AND [BillableUsageKind] >= 0 AND [BillableUsageKindMappingId] <> '00000000-0000-0000-0000-000000000000' AND [PricingAssignmentId] <> '00000000-0000-0000-0000-000000000000' AND [PricingPlanId] <> '00000000-0000-0000-0000-000000000000' AND [PricingRateId] <> '00000000-0000-0000-0000-000000000000' AND LEN(LTRIM(RTRIM([UnitName]))) > 0"
+                )
+                |> ignore
+
                 table.HasCheckConstraint("CK_ops_Charge_Amount", "[ChargeMicros] >= 0")
                 |> ignore
 
@@ -1068,15 +1083,46 @@ type OperationsDbContextModelSnapshot() =
             .ValueGeneratedNever()
         |> ignore
 
+        for name in
+            [
+                "OwnerId"
+                "OrganizationId"
+                "RepositoryId"
+                "BillingPeriodId"
+                "ChargePreviewLineId"
+                "BillableUsageKindMappingId"
+                "PricingAssignmentId"
+                "PricingPlanId"
+                "PricingRateId"
+            ] do
+            charge
+                .Property<Guid>(name)
+                .HasColumnType("uniqueidentifier")
+                .IsRequired()
+            |> ignore
+
+        for name in
+            [
+                "PeriodFromUtc"
+                "PeriodToUtc"
+                "EffectiveFromUtc"
+                "EffectiveToUtc"
+            ] do
+            charge
+                .Property<DateTime>(name)
+                .HasColumnType("datetime2(7)")
+                .IsRequired()
+            |> ignore
+
         charge
-            .Property<Guid>("BillingPeriodId")
-            .HasColumnType("uniqueidentifier")
+            .Property<int>("FactKind")
+            .HasColumnType("int")
             .IsRequired()
         |> ignore
 
         charge
-            .Property<Guid>("ChargePreviewLineId")
-            .HasColumnType("uniqueidentifier")
+            .Property<int>("BillableUsageKind")
+            .HasColumnType("int")
             .IsRequired()
         |> ignore
 
@@ -1090,10 +1136,25 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         charge
-            .Property<int64>("ChargeMicros")
-            .HasColumnType("bigint")
+            .Property<string>("UnitName")
+            .HasColumnType("nvarchar(64)")
+            .HasMaxLength(64)
+            .IsUnicode(true)
             .IsRequired()
         |> ignore
+
+        for name in
+            [
+                "UnitQuantity"
+                "UnitPriceMicros"
+                "TotalQuantity"
+                "ChargeMicros"
+            ] do
+            charge
+                .Property<int64>(name)
+                .HasColumnType("bigint")
+                .IsRequired()
+            |> ignore
 
         charge
             .Property<DateTime>("CreatedAtUtc")

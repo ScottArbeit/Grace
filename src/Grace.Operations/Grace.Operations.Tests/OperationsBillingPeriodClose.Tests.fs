@@ -43,9 +43,9 @@ module private BillingCloseSchema =
                      "ops.Charge"
                      "ops.BillingPeriodCloseEvidence" ]
 
-    /// Names tables that existed before the billing-close migration and are excluded from this leaf's live catalog slice.
+    /// Names the schema-qualified tables frozen before this migration and excluded from its live catalog remainder.
     let private priorTables =
-        "'__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine'"
+        "'ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine'"
 
     /// Forms the schema-qualified physical identity used by every catalog comparison facet.
     let private tableIdentity schema table = $"{schema}.{table}"
@@ -347,7 +347,7 @@ module private BillingCloseSchema =
             let! liveTables =
                 catalogSetAsync
                     connectionString
-                    $"SELECT CONCAT(s.name,'.',t.name) FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE s.name='ops' AND t.name NOT IN ({priorTables});"
+                    $"SELECT CONCAT(s.name,'.',t.name) FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE CONCAT(s.name,'.',t.name) NOT IN ({priorTables});"
 
             let! columns =
                 catalogSetAsync
@@ -364,7 +364,7 @@ FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.columns c ON c.object_id=t.object_id
 JOIN sys.types ty ON ty.user_type_id=c.user_type_id
-WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
+WHERE CONCAT(s.name,'.',t.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine');
 """
 
             let! keys =
@@ -377,7 +377,7 @@ JOIN sys.tables t ON t.object_id=kc.parent_object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.index_columns ic ON ic.object_id=kc.parent_object_id AND ic.index_id=kc.unique_index_id
 JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
-WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine')
+WHERE CONCAT(s.name,'.',t.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine')
 GROUP BY s.name,t.name,kc.name,kc.type;
 """
 
@@ -391,7 +391,7 @@ JOIN sys.tables t ON t.object_id=i.object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal > 0
 JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
-WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine') AND i.is_primary_key=0 AND i.is_unique_constraint=0
+WHERE CONCAT(s.name,'.',t.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine') AND i.is_primary_key=0 AND i.is_unique_constraint=0
 GROUP BY s.name,t.name,i.name,i.is_unique,i.filter_definition;
 """
 
@@ -408,7 +408,7 @@ JOIN sys.schemas principalSchema ON principalSchema.schema_id=parent.schema_id
 JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id=fk.object_id
 JOIN sys.columns childColumn ON childColumn.object_id=child.object_id AND childColumn.column_id=fkc.parent_column_id
 JOIN sys.columns parentColumn ON parentColumn.object_id=parent.object_id AND parentColumn.column_id=fkc.referenced_column_id
-WHERE childSchema.name='ops' AND child.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine')
+WHERE CONCAT(childSchema.name,'.',child.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine')
 GROUP BY childSchema.name,child.name,fk.name,principalSchema.name,parent.name,fk.delete_referential_action_desc;
 """
 
@@ -420,7 +420,7 @@ SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAUL
 FROM sys.check_constraints cc
 JOIN sys.tables t ON t.object_id=cc.parent_object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
-WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
+WHERE CONCAT(s.name,'.',t.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine');
 """
 
             let! defaults =
@@ -432,7 +432,7 @@ FROM sys.default_constraints dc
 JOIN sys.tables t ON t.object_id=dc.parent_object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.columns c ON c.object_id=t.object_id AND c.column_id=dc.parent_column_id
-WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
+WHERE CONCAT(s.name,'.',t.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine');
 """
 
             let! triggers =
@@ -443,7 +443,7 @@ SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAUL
 FROM sys.triggers tr
 JOIN sys.tables t ON t.object_id=tr.parent_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
-WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
+WHERE CONCAT(s.name,'.',t.name) NOT IN ('ops.__EFMigrationsHistory','ops.RawUsageFact','ops.UsageFactRejection','ops.UsageFactJournal','ops.UsageAggregateMinute','ops.PricingPlan','ops.BillableUsageKindMapping','ops.PricingRate','ops.PricingAssignment','ops.ChargePreviewLine');
 """
 
             return
@@ -593,7 +593,7 @@ ORDER BY 1;
             Assert.That<string list>(after, Is.EqualTo<string list>(before), $"{label} changed durable state after SQL rejected it.")
         }
 
-    /// Inserts one valid period, preview line, charge, and evidence without invoking any future close behavior.
+    /// Inserts complete valid immutable-posting inputs without invoking any future close behavior.
     let seedValidRowsAsync connectionString =
         executeAsync
             connectionString
@@ -603,7 +603,7 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
 VALUES (@PeriodId,NEWID(),NEWID(),NEWID(),'2026-06-01','2026-07-01',0,NULL,NULL);
 INSERT ops.ChargePreviewLine (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros)
 VALUES (@LineId,NEWID(),NEWID(),NEWID(),'2026-06-01','2026-07-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-06-01','2026-07-01',1,1);
-INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) VALUES (NEWID(),@PeriodId,@LineId,'USD',1);
+INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),@PeriodId,@LineId,'2026-06-01','2026-07-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-06-01','2026-07-01',1,1);
 INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance)
 VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-fixture');
 DECLARE @AmountPeriodId uniqueidentifier='22222222-2222-2222-2222-222222222222', @AmountLineId uniqueidentifier='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -679,13 +679,27 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
                 assertNoDrift "runtime-live" (BillingCloseSchema.compare runtime live false)
 
                 do! executeAsync connectionString "CREATE TABLE ops.UnexpectedPhysicalObject (UnexpectedId uniqueidentifier NOT NULL);"
+                do! executeAsync connectionString "CREATE TABLE dbo.UnexpectedPhysicalObject (UnexpectedId uniqueidentifier NOT NULL);"
                 let! liveWithUnexpectedObject = BillingCloseSchema.fromLiveSqlAsync connectionString
 
-                Assert.That(
-                    BillingCloseSchema.compare runtime liveWithUnexpectedObject false,
-                    Is.Not.Empty,
-                    "The live catalog extractor must report an unexpected physical table instead of prefiltering it away."
-                )
+                let unexpectedDrift =
+                    BillingCloseSchema.compare runtime liveWithUnexpectedObject false
+                    |> String.concat Environment.NewLine
+
+                Assert.That(unexpectedDrift, Does.Contain("ops.UnexpectedPhysicalObject"))
+                Assert.That(unexpectedDrift, Does.Contain("dbo.UnexpectedPhysicalObject"))
+                Assert.That(unexpectedDrift, Does.Contain("ops.UnexpectedPhysicalObject|UnexpectedId"))
+                Assert.That(unexpectedDrift, Does.Contain("dbo.UnexpectedPhysicalObject|UnexpectedId"))
+
+                do! executeAsync connectionString "ALTER SCHEMA dbo TRANSFER ops.Charge;"
+                let! liveWithMovedCharge = BillingCloseSchema.fromLiveSqlAsync connectionString
+
+                let movedDrift =
+                    BillingCloseSchema.compare runtime liveWithMovedCharge false
+                    |> String.concat Environment.NewLine
+
+                Assert.That(movedDrift, Does.Contain("tables missing: ops.Charge"))
+                Assert.That(movedDrift, Does.Contain("tables unexpected: dbo.Charge"))
             })
 
     /// Verifies five independent altered fixture representations all produce exact-set drift reports.
@@ -769,7 +783,7 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
 
     /// Exercises every #916 check, identity, foreign-key, and immutable-trigger rejection against one migrated SQL database.
     [<Test>]
-    member _.LivePhysicalRejectionMatrixRejectsFifteenNamedInvalidStatementsAndAllowsValidRows() =
+    member _.LivePhysicalRejectionMatrixRejectsEighteenNamedInvalidStatementsAndAllowsValidRows() =
         withDatabaseAsync (fun connectionString ->
             task {
                 do! seedValidRowsAsync connectionString
@@ -783,19 +797,25 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
                         "period diagnostic",
                         "INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'2026-06-01','2026-07-01',2,'retry',SYSUTCDATETIME());"
                         "charge amount",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) VALUES (NEWID(),'22222222-2222-2222-2222-222222222222','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','USD',-1);"
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'22222222-2222-2222-2222-222222222222','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','2026-07-01','2026-08-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-07-01','2026-08-01',1,-1);"
                         "charge currency",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) VALUES (NEWID(),'33333333-3333-3333-3333-333333333333','cccccccc-cccc-cccc-cccc-cccccccccccc','usd',1);"
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'33333333-3333-3333-3333-333333333333','cccccccc-cccc-cccc-cccc-cccccccccccc','2026-08-01','2026-09-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'usd','unit',1,1,'2026-08-01','2026-09-01',1,1);"
+                        "charge identity",
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES ('00000000-0000-0000-0000-000000000000',NEWID(),NEWID(),NEWID(),'22222222-2222-2222-2222-222222222222','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','2026-07-01','2026-08-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-07-01','2026-08-01',1,1);"
+                        "charge quantity",
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'33333333-3333-3333-3333-333333333333','cccccccc-cccc-cccc-cccc-cccccccccccc','2026-08-01','2026-09-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',0,1,'2026-08-01','2026-09-01',1,1);"
+                        "charge provenance",
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'33333333-3333-3333-3333-333333333333','cccccccc-cccc-cccc-cccc-cccccccccccc','2026-08-01','2026-09-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD',' ',1,1,'2026-08-01','2026-09-01',1,1);"
                         "evidence digest",
                         "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES ('44444444-4444-4444-4444-444444444444','bad',REPLICATE('A',64),SYSUTCDATETIME(),'x');"
                         "evidence provenance",
                         "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES ('55555555-5555-5555-5555-555555555555',REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),' ');"
                         "duplicate posting",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) SELECT NEWID(),BillingPeriodId,ChargePreviewLineId,'USD',1 FROM ops.Charge;"
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) SELECT NEWID(),OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros FROM ops.Charge;"
                         "charge period foreign key",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) SELECT NEWID(),NEWID(),ChargePreviewLineId,'USD',1 FROM ops.Charge;"
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) SELECT NEWID(),OwnerId,OrganizationId,RepositoryId,NEWID(),ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros FROM ops.Charge;"
                         "charge preview foreign key",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) SELECT NEWID(),BillingPeriodId,NEWID(),'USD',1 FROM ops.Charge;"
+                        "INSERT ops.Charge (ChargeId,OwnerId,OrganizationId,RepositoryId,BillingPeriodId,ChargePreviewLineId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) SELECT NEWID(),OwnerId,OrganizationId,RepositoryId,BillingPeriodId,NEWID(),PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros FROM ops.Charge;"
                         "evidence period foreign key",
                         "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES (NEWID(),REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'x');"
                         "charge update", "UPDATE ops.Charge SET ChargeMicros=2;"
@@ -804,7 +824,7 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
                         "evidence delete", "DELETE FROM ops.BillingPeriodCloseEvidence;"
                     ]
 
-                Assert.That(cases.Length, Is.EqualTo(15), "The physical rejection matrix must retain every named #916 case.")
+                Assert.That(cases.Length, Is.EqualTo(18), "The physical rejection matrix must retain every named #916 case.")
 
                 for label, sql in cases do
                     do! rejectAndPreserveAsync connectionString label sql

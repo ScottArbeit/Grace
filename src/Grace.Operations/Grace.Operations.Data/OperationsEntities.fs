@@ -371,9 +371,32 @@ type ChargeEntity() =
 
     /// Stores the deterministic posting identity.
     member val ChargeId = Guid.Empty with get, set
+
+    /// Stores the exact billing scope selected by the immutable preview line.
+    member val OwnerId = Guid.Empty with get, set
+    member val OrganizationId = Guid.Empty with get, set
+    member val RepositoryId = Guid.Empty with get, set
     member val BillingPeriodId = Guid.Empty with get, set
     member val ChargePreviewLineId = Guid.Empty with get, set
+
+    /// Stores the exact preview interval and usage-kind provenance copied at posting time.
+    member val PeriodFromUtc = DateTime.MinValue with get, set
+    member val PeriodToUtc = DateTime.MinValue with get, set
+    member val FactKind = 0 with get, set
+    member val BillableUsageKindMappingId = Guid.Empty with get, set
+    member val BillableUsageKind = 0 with get, set
+    member val PricingAssignmentId = Guid.Empty with get, set
+    member val PricingPlanId = Guid.Empty with get, set
+    member val PricingRateId = Guid.Empty with get, set
     member val CurrencyCode = String.Empty with get, set
+
+    /// Stores the immutable priced-unit and effective-rate provenance copied from the preview line.
+    member val UnitName = String.Empty with get, set
+    member val UnitQuantity = 0L with get, set
+    member val UnitPriceMicros = 0L with get, set
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+    member val EffectiveToUtc = DateTime.MinValue with get, set
+    member val TotalQuantity = 0L with get, set
     member val ChargeMicros = 0L with get, set
     member val CreatedAtUtc = DateTime.MinValue with get, set
 
