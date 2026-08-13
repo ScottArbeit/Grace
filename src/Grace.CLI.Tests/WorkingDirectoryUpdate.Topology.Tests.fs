@@ -154,6 +154,43 @@ module WorkingDirectoryUpdateTopologyTests =
         WorkingDirectoryUpdate.Topology.Requirement.expectedFinal requirement
         |> should equal (WorkingDirectoryUpdate.Topology.ExpectedEntry.File(hashes "new"))
 
+    /// Proves fresh reconciliation preserves accepted file and directory identities instead of treating their absence as safe creation.
+    [<Test>]
+    let ``fresh reconciliation rejects missing accepted tracked file and directory identities`` () =
+        let missingFile =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [] [
+                    trackedFile "accepted-file.txt" "accepted-old"
+                 ])
+                (manifest [ targetFile "accepted-file.txt" "target-new" ])
+                (snapshot [])
+
+        match missingFile with
+        | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+            WorkingDirectoryUpdate.Topology.Rejection.path rejection
+            |> should equal (RelativePath "accepted-file.txt")
+
+            WorkingDirectoryUpdate.Topology.Rejection.classification rejection
+            |> should equal WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+        | WorkingDirectoryUpdate.Topology.Reconciled _ -> Assert.Fail("A missing accepted file must not become an absent copy precondition.")
+
+        let missingDirectory =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [ "accepted-directory" ] [])
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "accepted-directory") ])
+                (snapshot [])
+
+        match missingDirectory with
+        | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+            WorkingDirectoryUpdate.Topology.Rejection.path rejection
+            |> should equal (RelativePath "accepted-directory")
+
+            WorkingDirectoryUpdate.Topology.Rejection.classification rejection
+            |> should equal WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+        | WorkingDirectoryUpdate.Topology.Reconciled _ -> Assert.Fail("A missing accepted directory must not become an absent create-directory precondition.")
+
     /// Proves matching tracked files and directories stay explicit assertions in a fresh plan.
     [<Test>]
     let ``fresh retained file and directory remain explicit needs-apply assertions`` () =
@@ -438,3 +475,48 @@ module WorkingDirectoryUpdateTopologyTests =
                         file "second.txt" "old-two"
                         file "keep.txt" "drift" ])
         |> should equal false
+
+    /// Proves a prefix comparison blocks newly created user content before a remaining recursive directory removal.
+    [<Test>]
+    let ``prefix comparison rejects a late undeclared descendant below a pending destructive directory`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+                (status [ "obsolete" ] [
+                    trackedFile "obsolete/tracked.txt" "old"
+                 ])
+                (manifest [])
+                (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "obsolete")
+                            file "obsolete/tracked.txt" "old" ])
+            |> planned
+
+        let removedFile =
+            WorkingDirectoryUpdate.Topology.Requirements.items requirements
+            |> List.head
+
+        let advanced =
+            WorkingDirectoryUpdate.Topology.Requirements.advance removedFile requirements
+            |> required
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            advanced
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "obsolete") ])
+        |> should equal true
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            advanced
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "obsolete")
+                        WorkingDirectoryUpdate.Topology.RelevantEntry.Untracked(RelativePath "obsolete/user.txt") ])
+        |> should equal false
+
+        [
+            WorkingDirectoryUpdate.Topology.RelevantEntry.Ignored(RelativePath "obsolete/ignored.txt")
+            WorkingDirectoryUpdate.Topology.RelevantEntry.ReparsePoint(RelativePath "obsolete/reparse")
+            file "obsolete/undeclared.txt" "ordinary-local-content"
+        ]
+        |> List.iter (fun lateDescendant ->
+            WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+                advanced
+                (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "obsolete")
+                            lateDescendant ])
+            |> should equal false)

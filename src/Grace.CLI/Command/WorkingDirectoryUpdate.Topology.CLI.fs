@@ -80,10 +80,10 @@ module internal WorkingDirectoryUpdate =
         /// Reads the failed path from a rejected result.
         module Rejection =
             /// Gets the path that made the immutable reconciliation unsafe.
-            let path rejection = rejection.Path
+            let path (rejection: Rejection) = rejection.Path
 
             /// Gets the classification that made the immutable reconciliation unsafe.
-            let classification rejection = rejection.Classification
+            let classification (rejection: Rejection) = rejection.Classification
 
         /// Builds and reads immutable input snapshots.
         module RelevantTopology =
@@ -172,7 +172,33 @@ module internal WorkingDirectoryUpdate =
 
                         path, selected.ExpectedCurrent)
 
+                let hasUndeclaredDestructiveDescendant =
+                    requirements
+                    |> List.exists (fun requirement ->
+                        requirement.State = NeedsApply
+                        && requirement.Role = RemoveDirectory
+                        && (entries
+                            |> List.exists (fun entry ->
+                                let path =
+                                    match entry with
+                                    | RelevantEntry.File (path, _, _)
+                                    | RelevantEntry.Directory path
+                                    | RelevantEntry.Ignored path
+                                    | RelevantEntry.Untracked path
+                                    | RelevantEntry.ReparsePoint path -> path
+
+                                let rootValue = string requirement.Path
+                                let pathValue = string path
+
+                                path <> requirement.Path
+                                && (String.Equals(rootValue, pathValue, StringComparison.OrdinalIgnoreCase)
+                                    || pathValue.StartsWith(rootValue + "/", StringComparison.OrdinalIgnoreCase))
+                                && (expectedByPath
+                                    |> List.exists (fun (expectedPath, _) -> String.Equals(expectedPath, string path, StringComparison.OrdinalIgnoreCase))
+                                    |> not))))
+
                 not ambiguous
+                && not hasUndeclaredDestructiveDescendant
                 && (expectedByPath
                     |> List.forall (fun (path, expected) ->
                         match expected, actual.TryGetValue(path) with
@@ -444,6 +470,7 @@ module internal WorkingDirectoryUpdate =
                         let trackedFile = trackedFiles.ContainsKey(key targetPath)
 
                         match targetActual with
+                        | Some ExpectedEntry.Absent when trackedDirectory -> rejection <- Some { Path = targetPath; Classification = IdentityDrift }
                         | Some ExpectedEntry.Absent ->
                             creates.Add(requirement targetPath ExpectedEntry.Absent ExpectedEntry.Directory CreateDirectory NeedsApply admissionMode)
                         | Some ExpectedEntry.Directory when trackedDirectory ->
@@ -461,7 +488,8 @@ module internal WorkingDirectoryUpdate =
                         let targetActual = actualAt actual targetPath
 
                         match targetActual, trackedFiles.TryGetValue(key targetPath), trackedDirectories.ContainsKey(key targetPath) with
-                        | Some ExpectedEntry.Absent, _, _ ->
+                        | Some ExpectedEntry.Absent, (true, _), _ -> rejection <- Some { Path = targetPath; Classification = IdentityDrift }
+                        | Some ExpectedEntry.Absent, (false, _), _ ->
                             copies.Add(requirement targetPath ExpectedEntry.Absent targetExpected Copy NeedsApply admissionMode)
                         | Some (ExpectedEntry.File _), (true, (_, oldSha256, oldBlake3)), _ when
                             oldSha256 = targetSha256
