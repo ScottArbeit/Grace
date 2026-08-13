@@ -399,6 +399,38 @@ ORDER BY 1;
             return Convert.ToInt32 count
         }
 
+    /// Reads every persisted aggregate key and quantity for one exact scope so duplicate acceptance cannot silently mutate a minute.
+    let usageAggregateMinuteProjectionAsync connectionString (scope: BillingCompletenessScope) =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT FactKind,StoragePoolId,BucketStartUtc,Quantity FROM ops.UsageAggregateMinute WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND BucketStartUtc>=@MonthStartUtc AND BucketStartUtc<@NextMonthStartUtc ORDER BY FactKind,StoragePoolId,BucketStartUtc;"
+
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@MonthStartUtc", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+
+            command.Parameters.Add("@NextMonthStartUtc", SqlDbType.DateTime2).Value <- (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let rows = ResizeArray<int * string * DateTime * int64>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then
+                    rows.Add(reader.GetInt32 0, reader.GetString 1, reader.GetDateTime 2, reader.GetInt64 3)
+
+            return rows |> Seq.toList
+        }
+
     /// Reads one exact journal state so failed Process and Repair attempts cannot masquerade as terminal acceptance.
     let journalStateAsync connectionString usageFactId =
         task {
@@ -1379,8 +1411,29 @@ ORDER BY 1;
                 let restartedScopes = ResizeArray<BillingCompletenessScope>()
                 let restartedStore = scopeRecordingStore connectionString restartedScopes
                 let! lateBFirst = restartedStore.StoreUsageFactAsync(lateB, payloadFor lateB, CancellationToken.None)
+
+                let expectedLateBAggregates =
+                    [
+                        (int UsageFactKind.RepositoryStorageBytesMinute, "billing-close-pool", (monthStart + Duration.FromDays 4).ToDateTimeUtc(), 11L)
+                        (int UsageFactKind.RepositoryStorageBytesMinute, "billing-close-pool", (monthStart + Duration.FromDays 5).ToDateTimeUtc(), 13L)
+                    ]
+
+                /// Validates that duplicate and replay paths preserve every independently derived aggregate row for scope B.
+                let assertLateBAggregates (stage: string) (actual: (int * string * DateTime * int64) list) =
+                    Assert.That<(int * string * DateTime * int64) list>(
+                        actual,
+                        Is.EqualTo<(int * string * DateTime * int64) list>(expectedLateBAggregates),
+                        $"{stage} must preserve the independently derived exact UsageAggregateMinute state."
+                    )
+
+                let! lateBAggregatesAfterFirst = usageAggregateMinuteProjectionAsync connectionString scopeB
+                assertLateBAggregates "First accepted late fact" lateBAggregatesAfterFirst
                 let! lateBDuplicate = restartedStore.StoreUsageFactAsync(lateB, payloadFor lateB, CancellationToken.None)
+                let! lateBAggregatesAfterDuplicate = usageAggregateMinuteProjectionAsync connectionString scopeB
+                assertLateBAggregates "Online duplicate" lateBAggregatesAfterDuplicate
                 let! lateBArchivedReplay = restartedStore.ReplayArchivedUsageFactAsync(lateB, payloadFor lateB, archivePointerFor lateB, CancellationToken.None)
+                let! lateBAggregatesAfterArchivedReplay = usageAggregateMinuteProjectionAsync connectionString scopeB
+                assertLateBAggregates "Archived replay" lateBAggregatesAfterArchivedReplay
 
                 let freshStore = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
                 let! seedAReplay = freshStore.ReplayArchivedUsageFactAsync(seedA, payloadFor seedA, archivePointerFor seedA, CancellationToken.None)
