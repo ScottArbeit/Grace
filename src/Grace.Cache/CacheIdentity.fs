@@ -53,6 +53,7 @@ type private CacheReadyRegistration =
 type internal CacheIdentityInspection =
     | Missing
     | AttemptPresent
+    | IncompleteAttempt
     | Ready
     | Invalid
     | Inaccessible
@@ -599,16 +600,22 @@ module internal CacheIdentity =
     let private inspectAttempt attempt =
         let identityPath = child attempt IdentityFileName
 
-        match inspectMode attempt directoryMode, inspectMode identityPath fileMode with
-        | Error CacheIdentityInspection.Inaccessible, _
-        | _, Error CacheIdentityInspection.Inaccessible -> CacheIdentityInspection.Inaccessible
-        | Error _, _
-        | _, Error _ -> CacheIdentityInspection.Invalid
-        | Ok (), Ok () ->
+        match inspectMode attempt directoryMode with
+        | Error CacheIdentityInspection.Inaccessible -> CacheIdentityInspection.Inaccessible
+        | Error _ -> CacheIdentityInspection.Invalid
+        | Ok () ->
             try
-                match File.ReadAllBytes(identityPath) |> tryImportP256 with
-                | Some _ -> CacheIdentityInspection.AttemptPresent
-                | None -> CacheIdentityInspection.Invalid
+                match Directory.GetFileSystemEntries(attempt) with
+                | [||] -> CacheIdentityInspection.IncompleteAttempt
+                | [| entry |] when String.Equals(entry, identityPath, StringComparison.Ordinal) ->
+                    match inspectMode identityPath fileMode with
+                    | Error CacheIdentityInspection.Inaccessible -> CacheIdentityInspection.Inaccessible
+                    | Error _ -> CacheIdentityInspection.Invalid
+                    | Ok () ->
+                        match File.ReadAllBytes(identityPath) |> tryImportP256 with
+                        | Some _ -> CacheIdentityInspection.AttemptPresent
+                        | None -> CacheIdentityInspection.Invalid
+                | _ -> CacheIdentityInspection.Invalid
             with
             | :? UnauthorizedAccessException -> CacheIdentityInspection.Inaccessible
             | :? IOException -> CacheIdentityInspection.Inaccessible
@@ -741,6 +748,7 @@ module internal CacheIdentity =
     type private CacheIdentityInspectionDetail =
         | Missing
         | AttemptPresent
+        | IncompleteAttempt
         | Ready of CacheReadyRegistration
         | Invalid
         | Inaccessible
@@ -804,6 +812,7 @@ module internal CacheIdentity =
                     | Ok true, Ok false ->
                         match inspectAttempt attempt with
                         | CacheIdentityInspection.AttemptPresent -> Ok CacheIdentityInspectionDetail.AttemptPresent
+                        | CacheIdentityInspection.IncompleteAttempt -> Ok CacheIdentityInspectionDetail.IncompleteAttempt
                         | CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspectionDetail.Inaccessible
                         | _ -> Ok CacheIdentityInspectionDetail.Invalid
                     | Ok false, Ok true -> Ok(inspectReady ready)
@@ -814,6 +823,7 @@ module internal CacheIdentity =
         |> Result.map (function
             | CacheIdentityInspectionDetail.Missing -> CacheIdentityInspection.Missing
             | CacheIdentityInspectionDetail.AttemptPresent -> CacheIdentityInspection.AttemptPresent
+            | CacheIdentityInspectionDetail.IncompleteAttempt -> CacheIdentityInspection.IncompleteAttempt
             | CacheIdentityInspectionDetail.Ready _ -> CacheIdentityInspection.Ready
             | CacheIdentityInspectionDetail.Invalid -> CacheIdentityInspection.Invalid
             | CacheIdentityInspectionDetail.Inaccessible -> CacheIdentityInspection.Inaccessible)
@@ -826,6 +836,7 @@ module internal CacheIdentity =
         match inspectDetail root with
         | Ok CacheIdentityInspectionDetail.Missing -> nonReady "notEnrolled" "missing"
         | Ok CacheIdentityInspectionDetail.AttemptPresent -> nonReady "notEnrolled" "available"
+        | Ok CacheIdentityInspectionDetail.IncompleteAttempt -> nonReady "notEnrolled" "missing"
         | Ok (CacheIdentityInspectionDetail.Ready registration) ->
             {
                 Class = "Grace.Cache.Status"

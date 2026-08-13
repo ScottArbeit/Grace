@@ -1175,6 +1175,48 @@ module CacheCliTests =
         runCancelled "before-claim"
         runCancelled "after-staging"
 
+    /// Proves an attempt created before its key write is reclaimed only after this root command holds the exclusive claim.
+    [<Test>]
+    let ``Linux cache enroll recovers an incomplete stale attempt only after its claim`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            let attempt = Path.Combine(root, "attempt")
+            Directory.CreateDirectory(attempt) |> ignore
+
+            File.SetUnixFileMode(
+                attempt,
+                UnixFileMode.UserRead
+                ||| UnixFileMode.UserWrite
+                ||| UnixFileMode.UserExecute
+            )
+
+            let mutable postCount = 0
+            let mutable attemptExistedBeforeClaim = false
+
+            let dependencies =
+                enrollmentDependencies
+                    root
+                    (fun _ -> Task.FromResult(Ok "stale-attempt-token"))
+                    (fun request _ _ _ _ ->
+                        postCount <- postCount + 1
+                        Task.FromResult(Accepted(acceptedResponse request)))
+                    (fun phase ->
+                        if phase = CacheCommand.EnrollmentPhase.CredentialResolved then
+                            attemptExistedBeforeClaim <- Directory.Exists(attempt)
+
+                        Task.FromResult(()))
+                    CacheIdentity.commitClaimedReady
+
+            let exitCode, output = runEnrollment dependencies enrollmentArguments CancellationToken.None
+            Assert.That(exitCode, Is.EqualTo(0), output)
+            Assert.That(attemptExistedBeforeClaim, Is.True, "Preflight deleted the incomplete attempt before its claim.")
+            Assert.That(postCount, Is.EqualTo(1))
+            Assert.That(Directory.Exists(attempt), Is.False)
+            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("enrolled"))
+            assertRedacted output (Array.append (protectedValues root) [| "stale-attempt-token" |]))
+
     /// Proves terminal definite and indeterminate transport outcomes do not retry or publish ready state.
     [<Test>]
     let ``Linux cache enroll preserves truthful state for rejected indeterminate and malformed responses`` () =
@@ -1611,7 +1653,7 @@ module CacheCliTests =
                         assertRedactedError exitCode output
                         assertRedacted output (Array.append (protectedValues root) [| "lost-claim-token" |]))))
 
-    /// Proves an actual protected local registration write failure remains non-ready and cleans only the staged attempt.
+    /// Proves a real claimed registration-file collision after acceptance stays non-ready and cleans only this staged attempt.
     [<Test>]
     let ``Linux cache enroll handles a real protected local write failure`` () =
         if not (OperatingSystem.IsLinux()) then
@@ -1639,7 +1681,9 @@ module CacheCliTests =
                                     CacheRegistration.Enroll(request, uri, bearer, correlationId, cancellationToken))
                                 (fun phase ->
                                     if phase = CacheCommand.EnrollmentPhase.BeforeReadyCommit then
-                                        File.SetUnixFileMode(Path.Combine(root, "attempt"), UnixFileMode.UserRead ||| UnixFileMode.UserExecute)
+                                        let registration = Path.Combine(root, "attempt", "registration.json")
+                                        File.WriteAllText(registration, "foreign-registration")
+                                        File.SetUnixFileMode(registration, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
 
                                     Task.FromResult(()))
                                 CacheIdentity.commitClaimedReady
@@ -1653,7 +1697,7 @@ module CacheCliTests =
                         Assert.That(request.Authorization, Is.EqualTo(Some "Bearer local-write-token"))
                         Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
                         Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
-                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                        Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False, "Best-effort cleanup did not remove the claimed attempt.")
                         assertRedactedError exitCode output
                         assertRedacted output (Array.append (protectedValues root) [| "local-write-token" |]))))
 
@@ -1720,7 +1764,7 @@ module CacheCliTests =
                         (fun () ->
                             let exitCode, output = runProductionEnrollment modeArguments
                             Assert.That(exitCode, Is.Not.EqualTo(0), output)
-                            Assert.That(output, Does.Contain("Machine-to-machine authentication failed."))
+                            Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
                             Assert.That(requests.Count, Is.EqualTo(1))
                             let request = requests.ToArray()[0]
                             Assert.That(request.Method, Is.EqualTo("POST"))
@@ -1952,8 +1996,8 @@ module CacheCliTests =
                                 let jsonExit, jsonOutput = runProductionEnrollment enrollmentArguments
                                 Assert.That(normalExit, Is.Not.EqualTo(0), normalOutput)
                                 Assert.That(jsonExit, Is.Not.EqualTo(0), jsonOutput)
-                                Assert.That(normalOutput, Does.Contain("Machine-to-machine authentication configuration is incomplete."))
-                                Assert.That(jsonOutput, Does.Contain("Machine-to-machine authentication configuration is incomplete."))
+                                Assert.That(normalOutput, Does.Contain("Cache enrollment credentials could not be resolved."))
+                                Assert.That(jsonOutput, Does.Contain("Cache enrollment credentials could not be resolved."))
                                 Assert.That(snapshot root = beforePartialM2m, Is.True)
 
                                 assertRedacted

@@ -56,7 +56,7 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | #904 | Superseded status issue. | It does not own current delivery work. |
 | PR #907 | Closed superseded status implementation. | Evidence only; do not reuse it wholesale. |
 | #913 / #914 | Current docs-only correction; planned pure local status follows. | #913 reconciles this record; #914 then owns status only. |
-| #905 | Planned one-shot enrollment after #913 and #914. | It owns enrollment only after the docs and status leaves complete. |
+| [#941](https://github.com/ScottArbeit/Grace/issues/941) / [PR #950](https://github.com/ScottArbeit/Grace/pull/950) | One-shot enrollment is under review and not merged. | Owns enrollment only after the docs and status leaves complete. |
 
 ### Enrollment ambiguity disposition
 
@@ -132,8 +132,8 @@ eventual cleanup. Grace Cache adds no automatic enrollment retry or reconciliati
 - **Completed proof:** Actor persistence failure cannot advance in-memory selection; raw JSON `Health` cannot make a new
   registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without mutation;
   Linux tests restore modified modes before cleanup. PR #888 merged the implementation and proof.
-- **Current sequence:** #913 owns the canonical completion record, #914 owns pure local status only, #905 owns one-shot
-  enrollment only after #913 and #914, #857 owns signed refreshes that remain `Unhealthy`, and #625 publishes `Healthy`
+- **Current sequence:** #913 owns the canonical completion record, #914 owns pure local status only, #941 / PR #950 owns one-shot
+  enrollment under review after #913 and #914, #857 owns signed refreshes that remain `Unhealthy`, and #625 publishes `Healthy`
   only after serving readiness is proven. R1A added no serving, rotation, reconciliation, non-Linux support, or
   CacheStore behavior.
 
@@ -208,7 +208,7 @@ npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementati
 git diff --check
 ```
 
-This completed proof does not claim #914 status, #905 enrollment, R2 liveness, serving, rotation, reconciliation,
+This completed proof does not claim #914 status, #941 / PR #950 enrollment (under review and not merged), R2 liveness, serving, rotation, reconciliation,
 non-Linux support, or CacheStore behavior.
 
 ## R1B enrollment implementation scope

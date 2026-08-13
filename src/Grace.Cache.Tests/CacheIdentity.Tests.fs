@@ -164,6 +164,18 @@ type CacheIdentityTests() =
         assertInvalidStagedKey (fun privateBytes -> privateBytes[0 .. (privateBytes.Length - 2)])
         assertInvalidStagedKey (fun privateBytes -> Array.append privateBytes [| 0uy |])
 
+    /// Verifies a process terminated before its staged key exists is distinct from malformed ready or staged state.
+    [<Test>]
+    member _.``inspect distinguishes an empty incomplete attempt from invalid identity state``() =
+        withLinuxRoot (fun root ->
+            let attempt = Path.Combine(root, "attempt")
+            Directory.CreateDirectory(attempt) |> ignore
+            File.SetUnixFileMode(attempt, directoryMode)
+
+            requireInspection CacheIdentityInspection.IncompleteAttempt (CacheIdentity.inspect root)
+            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+            Assert.That((CacheIdentity.status root).Key, Is.EqualTo("missing")))
+
     /// Verifies matching accepted facts publish one same-parent ready marker with protected key and configuration modes.
     [<Test>]
     member _.``commitReady publishes only a matching protected ready identity``() =

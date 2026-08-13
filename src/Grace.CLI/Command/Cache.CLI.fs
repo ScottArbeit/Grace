@@ -340,7 +340,8 @@ module CacheCommand =
                 | CacheIdentityInspection.Inaccessible) ->
                     return renderOutput parseResult (Error(GraceError.Create "The protected Grace Cache state root is invalid or inaccessible." correlationId))
                 | Ok (CacheIdentityInspection.Missing
-                | CacheIdentityInspection.AttemptPresent) ->
+                | CacheIdentityInspection.AttemptPresent
+                | CacheIdentityInspection.IncompleteAttempt) ->
                     try
                         let! bearerResult = dependencies.ResolveBearer cancellationToken
 
@@ -486,18 +487,18 @@ module CacheCommand =
             ResolveBearer =
                 fun cancellationToken ->
                     task {
-                        cancellationToken.ThrowIfCancellationRequested()
-                        let! bearer = Auth.tryGetAccessTokenForCacheEnrollment ()
-                        cancellationToken.ThrowIfCancellationRequested()
+                        try
+                            cancellationToken.ThrowIfCancellationRequested()
+                            let! bearer = Auth.tryGetAccessTokenForCacheEnrollment ()
+                            cancellationToken.ThrowIfCancellationRequested()
 
-                        let normalized: Result<string, string> =
-                            match bearer with
-                            | Ok (Some value) when not (String.IsNullOrWhiteSpace(value)) -> Result.Ok value
-                            | Error message -> Result.Error message
-                            | Ok (Some _) -> Result.Error "Authentication required. Run 'grace authenticate login' and try again."
-                            | Ok None -> Result.Error "Authentication required. Run 'grace authenticate login' and try again."
-
-                        return normalized
+                            return
+                                match bearer with
+                                | Ok (Some value) when not (String.IsNullOrWhiteSpace(value)) -> Result.Ok value
+                                | _ -> Result.Error "Cache enrollment credentials could not be resolved."
+                        with
+                        | :? OperationCanceledException -> return raise (OperationCanceledException())
+                        | _ -> return Result.Error "Cache enrollment credentials could not be resolved."
                     }
             SendEnrollment =
                 (fun request serverUri bearer correlationId cancellationToken ->
