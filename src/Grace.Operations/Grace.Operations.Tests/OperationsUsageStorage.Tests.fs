@@ -107,7 +107,7 @@ type private InMemoryOperationsUsageTransactionScope() =
                 let aggregates = Dictionary<UsageAggregateMinuteKey, int64>(state.Aggregates)
 
                 let transaction =
-                    { new IOperationsUsageTransaction with
+                    { new IAcceptedFactMutationTransaction with
                         member _.AcquireBillingCompletenessScopeAsync(_scope, lockCancellationToken) =
                             lockCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
@@ -116,38 +116,32 @@ type private InMemoryOperationsUsageTransactionScope() =
                             scopeCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
 
-                        member _.TryInsertRawUsageFactAsync(rawFact, insertCancellationToken) =
-                            insertCancellationToken.ThrowIfCancellationRequested()
+                        member _.AcceptUsageFactAsync(plan, _scope, rawInsertion, acceptedFactCancellationToken) =
+                            task {
+                                acceptedFactCancellationToken.ThrowIfCancellationRequested()
 
-                            if rawFacts.ContainsKey rawFact.UsageFactId then
-                                Task.FromResult false
-                            else
-                                rawFacts.Add(rawFact.UsageFactId, rawFact)
-                                Task.FromResult true
+                                if rawFacts.ContainsKey plan.RawFact.UsageFactId then
+                                    return ExistingSameScope
+                                else
+                                    let rawFact =
+                                        match rawInsertion with
+                                        | HotRawFact -> plan.RawFact
+                                        | ArchivedReplayRawFact _ -> { plan.RawFact with RawPayload = Array.empty }
 
-                        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, _pointer, insertCancellationToken) =
-                            insertCancellationToken.ThrowIfCancellationRequested()
+                                    rawFacts.Add(rawFact.UsageFactId, rawFact)
 
-                            if rawFacts.ContainsKey rawFact.UsageFactId then
-                                Task.FromResult false
-                            else
-                                rawFacts.Add(rawFact.UsageFactId, { rawFact with RawPayload = Array.empty })
-                                Task.FromResult true
+                                    if failNextAggregateUpdate then
+                                        failNextAggregateUpdate <- false
+                                        return raise (InvalidOperationException("forced aggregate failure"))
+                                    else
+                                        let current =
+                                            match aggregates.TryGetValue plan.Aggregate.Key with
+                                            | true, quantity -> quantity
+                                            | false, _ -> 0L
 
-                        member _.AddToUsageAggregateMinuteAsync(aggregate, updateCancellationToken) =
-                            updateCancellationToken.ThrowIfCancellationRequested()
-
-                            if failNextAggregateUpdate then
-                                failNextAggregateUpdate <- false
-                                Task.FromException(InvalidOperationException("forced aggregate failure"))
-                            else
-                                let current =
-                                    match aggregates.TryGetValue aggregate.Key with
-                                    | true, quantity -> quantity
-                                    | false, _ -> 0L
-
-                                aggregates[aggregate.Key] <- current + aggregate.Quantity
-                                Task.CompletedTask
+                                        aggregates[plan.Aggregate.Key] <- current + plan.Aggregate.Quantity
+                                        return InsertedIntoOpenPeriod
+                            }
 
                         member _.RecordScopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
                             rejectionCancellationToken.ThrowIfCancellationRequested()
@@ -155,10 +149,6 @@ type private InMemoryOperationsUsageTransactionScope() =
 
                         member _.RecordUnscopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
                             rejectionCancellationToken.ThrowIfCancellationRequested()
-                            Task.CompletedTask
-
-                        member _.ResolveScopedUsageFactRejectionAsync(_usageFactId, _scope, repairCancellationToken) =
-                            repairCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
 
                         member _.HasActiveScopedUsageFactRejectionAsync(_scope, readCancellationToken) =

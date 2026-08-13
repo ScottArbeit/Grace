@@ -7,12 +7,6 @@ open System.Data
 open System.Threading
 open System.Threading.Tasks
 
-/// Distinguishes a same-scope no-op from a newly staged fact before or after an exact billing-period close.
-type internal AcceptedFactMutationOutcome =
-    | ExistingSameScope
-    | InsertedIntoOpenPeriod
-    | InsertedIntoClosedPeriod
-
 /// Observes the single point after all accepted-fact SQL mutations have staged and before control returns to a caller.
 type internal IAcceptedFactMutationInterleaving =
     abstract AfterAcceptedFactMutationsStagedAsync: AcceptedFactMutationOutcome * CancellationToken -> Task
@@ -66,6 +60,26 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
 
+    /// Adds immutable raw-fact fields for archive replay, which deliberately keeps the hot SQL payload empty.
+    let addArchivedReplayRawFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
+        addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
+        addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
+        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+
+    /// Adds verified archive-pointer fields required by the replay-only raw fact command.
+    let addArchivedReplayPointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
+        addStringParameter command "@ArchiveBlobName" OperationsUsageSql.ArchiveBlobNameMaxLength pointer.BlobName
+        let checksum = command.Parameters.Add("@ArchiveChecksumSha256Hex", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
+        checksum.Value <- pointer.ChecksumSha256Hex
+        addParameter command "@ArchiveByteLength" SqlDbType.BigInt pointer.ByteLength
+        addParameter command "@ArchiveStateArchived" SqlDbType.Int (int RawUsageFactArchiveState.Archived)
+
     /// Adds exact owner, organization, repository, and UTC-month fields shared by identity and late-work staging.
     let addScopeParameters (command: SqlCommand) (scope: BillingCompletenessScope) =
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier scope.OwnerId
@@ -85,10 +99,19 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
         }
 
     /// Inserts raw fact truth only when its durable identity has not already been accepted.
-    let tryInsertRawFactAsync connection transaction rawFact cancellationToken =
+    let tryInsertRawFactAsync connection transaction rawFact rawInsertion cancellationToken =
         task {
-            use command = createCommand connection transaction OperationsUsageSql.TryInsertRawUsageFact
-            addRawFactParameters command rawFact
+            use command =
+                match rawInsertion with
+                | HotRawFact -> createCommand connection transaction OperationsUsageSql.TryInsertRawUsageFact
+                | ArchivedReplayRawFact _ -> createCommand connection transaction OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
+
+            match rawInsertion with
+            | HotRawFact -> addRawFactParameters command rawFact
+            | ArchivedReplayRawFact pointer ->
+                addArchivedReplayRawFactParameters command rawFact
+                addArchivedReplayPointerParameters command pointer
+
             let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
             return rowsAffected = 1
         }
@@ -162,6 +185,16 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
         if not matchesRawFact then
             invalidArg (nameof aggregate) "Accepted-fact mutation aggregate must exactly match the raw fact identity, UTC-minute bucket, and quantity."
 
+    /// Rejects an archive replay adapter whose pointer cannot preserve the immutable raw fact identity.
+    let validateRawInsertion (rawFact: RawUsageFact) rawInsertion =
+        match rawInsertion with
+        | HotRawFact -> ()
+        | ArchivedReplayRawFact pointer when pointer.UsageFactId = rawFact.UsageFactId -> ()
+        | ArchivedReplayRawFact pointer ->
+            invalidArg
+                (nameof rawInsertion)
+                $"Archive replay pointer UsageFactId '{pointer.UsageFactId}' does not match raw UsageFactId '{rawFact.UsageFactId}'."
+
     /// Stages raw fact, rejection repair, aggregate, and conditional Pending handoff using only the caller-owned transaction.
     member _.AcceptAsync
         (
@@ -169,6 +202,7 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
             transaction: SqlTransaction,
             plan: UsageFactPersistencePlan,
             scope: BillingCompletenessScope,
+            rawInsertion: AcceptedFactRawInsertion,
             cancellationToken: CancellationToken
         ) =
         task {
@@ -180,9 +214,10 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
 
             validateRawFactScope plan.RawFact scope
             validateAggregateMatchesRawFact plan.RawFact plan.Aggregate
+            validateRawInsertion plan.RawFact rawInsertion
 
             do! ensureRawIdentityAsync connection transaction plan.RawFact.UsageFactId scope cancellationToken
-            let! inserted = tryInsertRawFactAsync connection transaction plan.RawFact cancellationToken
+            let! inserted = tryInsertRawFactAsync connection transaction plan.RawFact rawInsertion cancellationToken
 
             if not inserted then
                 do! ensureRawIdentityAsync connection transaction plan.RawFact.UsageFactId scope cancellationToken
@@ -195,3 +230,14 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
                 do! interleaving.AfterAcceptedFactMutationsStagedAsync(outcome, cancellationToken)
                 return outcome
         }
+
+    /// Stages the ordinary hot-payload accepted fact shape retained by the #937 primitive contract.
+    member this.AcceptAsync
+        (
+            connection: SqlConnection,
+            transaction: SqlTransaction,
+            plan: UsageFactPersistencePlan,
+            scope: BillingCompletenessScope,
+            cancellationToken: CancellationToken
+        ) =
+        this.AcceptAsync(connection, transaction, plan, scope, HotRawFact, cancellationToken)

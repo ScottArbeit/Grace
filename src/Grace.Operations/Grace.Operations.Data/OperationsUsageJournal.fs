@@ -54,18 +54,16 @@ type UsageFactJournalRejectResult =
     | RejectJournalConflict
     | RejectAlreadyAccepted
 
-/// Pauses a ProcessAsync transaction only after its raw and aggregate mutations have been staged for deterministic rollback proof.
+/// Reuses the shared post-staging interleaving before a journal terminal transition can commit.
 type internal IOperationsUsageJournalTransactionInterleaving =
-
-    /// Observes the transaction-local point immediately before journal acceptance can commit.
-    abstract AfterRawAndAggregateStagedAsync: cancellationToken: CancellationToken -> Task
+    inherit IAcceptedFactMutationInterleaving
 
 /// Leaves production journal transactions uninterrupted when no deterministic proof interleaving is supplied.
 type private NoOperationsUsageJournalTransactionInterleaving() =
 
     interface IOperationsUsageJournalTransactionInterleaving with
 
-        member _.AfterRawAndAggregateStagedAsync(_cancellationToken) = Task.CompletedTask
+        member _.AfterAcceptedFactMutationsStagedAsync(_, _cancellationToken) = Task.CompletedTask
 
 /// Owns the internal Operations append, dispatch scan, and transactionally verified journal processing seam.
 type IOperationsUsageJournalStore =
@@ -90,6 +88,8 @@ type IOperationsUsageJournalStore =
 
 /// Stores immutable usage facts in the SQL journal and treats Service Bus delivery as a retryable signal only.
 type SqlOperationsUsageJournalStore private (connectionString: string, transactionInterleaving: IOperationsUsageJournalTransactionInterleaving) =
+
+    let acceptedFactMutation = SqlAcceptedFactMutation(transactionInterleaving :> IAcceptedFactMutationInterleaving)
 
     /// Opens the SQL connection used by one append, scan, or processing transaction.
     let openConnectionAsync cancellationToken =
@@ -226,30 +226,6 @@ VALUES
             return ()
         }
 
-    /// Adds the accepted fact to raw usage only when a prior durable raw identity does not already exist.
-    let tryInsertRawAsync (connection: SqlConnection) (transaction: SqlTransaction) (rawFact: RawUsageFact) (cancellationToken: CancellationToken) =
-        task {
-            use command = createCommand connection transaction OperationsUsageSql.TryInsertRawUsageFact
-            addFactParameters command rawFact
-            let! rows = command.ExecuteNonQueryAsync cancellationToken
-            return rows = 1
-        }
-
-    /// Adds the newly accepted quantity to the minute aggregate under the same journal processing transaction.
-    let addAggregateAsync (connection: SqlConnection) (transaction: SqlTransaction) (aggregate: UsageAggregateMinute) (cancellationToken: CancellationToken) =
-        task {
-            use command = createCommand connection transaction OperationsUsageSql.AddToUsageAggregateMinute
-            addParameter command "@FactKind" SqlDbType.Int (int aggregate.Key.FactKind)
-            addParameter command "@OwnerId" SqlDbType.UniqueIdentifier aggregate.Key.OwnerId
-            addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier aggregate.Key.OrganizationId
-            addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier aggregate.Key.RepositoryId
-            addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength aggregate.Key.StoragePoolId
-            addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
-            addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
-            let! _ = command.ExecuteNonQueryAsync cancellationToken
-            return ()
-        }
-
     /// Marks one still-unresolved matching journal row Accepted only after raw and aggregate persistence succeeded.
     let markAcceptedAsync (connection: SqlConnection) (transaction: SqlTransaction) (usageFactId: UsageFactId) (cancellationToken: CancellationToken) =
         task {
@@ -320,26 +296,6 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
 
             if not hasRow then
                 invalidOp "A Pending journal fact cannot become Rejected after accepted raw usage already exists."
-        }
-
-    /// Releases rejected completeness evidence only inside the same successful accepted processing transaction.
-    let resolveRejectionAsync
-        (connection: SqlConnection)
-        (transaction: SqlTransaction)
-        (usageFactId: UsageFactId)
-        (scope: BillingCompletenessScope)
-        (cancellationToken: CancellationToken)
-        =
-        task {
-            use command = createCommand connection transaction OperationsUsageSql.ResolveScopedUsageFactRejection
-            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
-            addParameter command "@OwnerId" SqlDbType.UniqueIdentifier scope.OwnerId
-            addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier scope.OrganizationId
-            addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier scope.RepositoryId
-            addParameter command "@MonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime scope.MonthStart)
-            addParameter command "@NextMonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime (BillingCompletenessScope.nextMonthStart scope))
-            let! _ = command.ExecuteNonQueryAsync cancellationToken
-            return ()
         }
 
     /// Rolls back a failed processing transaction without replacing its original error.
@@ -490,7 +446,7 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
                         }
         }
 
-    /// Processes only a matching journalled fact and atomically commits raw, aggregate, rejection repair, and Accepted.
+    /// Processes only a matching journalled fact and commits Accepted only after the shared mutation stages successfully.
     member _.ProcessAsync(fact: UsageFact, rawPayload: byte array, cancellationToken: CancellationToken) =
         task {
             match UsageFactPersistencePlan.tryCreateCanonical fact with
@@ -510,13 +466,8 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
                                 | Some entry when entry.State = UsageFactJournalState.Accepted -> return AlreadyAccepted
                                 | Some entry when entry.State = UsageFactJournalState.Rejected -> return UsageFactJournalProcessResult.AlreadyRejected
                                 | Some _ ->
-                                    let! inserted = tryInsertRawAsync connection transaction plan.RawFact operationCancellationToken
+                                    let! _ = acceptedFactMutation.AcceptAsync(connection, transaction, plan, scope, operationCancellationToken)
 
-                                    if inserted then
-                                        do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
-
-                                    do! transactionInterleaving.AfterRawAndAggregateStagedAsync(operationCancellationToken)
-                                    do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
                                     do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken
                                     return AcceptedFromJournal
                             })
@@ -543,12 +494,8 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
                                 | Some entry when entry.State = UsageFactJournalState.Accepted -> return AlreadyAccepted
                                 | Some entry when entry.State = UsageFactJournalState.Pending -> return JournalConflict
                                 | Some _ ->
-                                    let! inserted = tryInsertRawAsync connection transaction plan.RawFact operationCancellationToken
+                                    let! _ = acceptedFactMutation.AcceptAsync(connection, transaction, plan, scope, operationCancellationToken)
 
-                                    if inserted then
-                                        do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
-
-                                    do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
                                     do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken
                                     return AcceptedFromJournal
                             })

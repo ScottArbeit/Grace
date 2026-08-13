@@ -36,6 +36,7 @@
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
     <Compile Include="OperationsAcceptedFactMutation.fs" />
+    <Compile Include="OperationsAcceptedUsageStore.fs" />
     <Compile Include="OperationsBillingPeriod.fs" />
     <Compile Include="OperationsUsageJournal.fs" />
   </ItemGroup>
