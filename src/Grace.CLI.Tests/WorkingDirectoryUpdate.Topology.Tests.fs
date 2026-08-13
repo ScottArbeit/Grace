@@ -1,688 +1,440 @@
 namespace Grace.CLI.Tests
 
 open FsUnit
-open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
-open Grace.Shared.Client.Configuration
 open Grace.Shared.Constants
 open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic
-open System.IO
 open System.Security.Cryptography
 open System.Text
 
-/// Exercises the pure pre-mutation topology boundary against real temporary working trees.
+/// Exercises immutable Working Directory Update topology reconciliation without opening a local path.
 module WorkingDirectoryUpdateTopologyTests =
-    /// Extracts a successful private construction or reports its rejected reason.
+    /// Extracts a successful construction or makes the failing test report the rejected shape.
     let private required =
         function
         | Ok value -> value
         | Error error -> failwith error
 
-    /// Configures a disposable repository root so planner filesystem classification uses production configuration semantics.
-    let private configureForRoot (root: string) =
-        let configuration = GraceConfiguration()
-        configuration.OwnerId <- Guid.NewGuid()
-        configuration.OrganizationId <- Guid.NewGuid()
-        configuration.RepositoryId <- Guid.NewGuid()
-        configuration.RootDirectory <- root
-        configuration.StandardizedRootDirectory <- Grace.Shared.Utilities.normalizeFilePath root
-        configuration.GraceDirectory <- Path.Combine(root, GraceConfigDirectory)
-        configuration.ObjectDirectory <- Path.Combine(configuration.GraceDirectory, GraceObjectsDirectory)
-        configuration.GraceStatusFile <- Path.Combine(configuration.GraceDirectory, GraceLocalStateDbFileName)
-        configuration.GraceObjectCacheFile <- configuration.GraceStatusFile
-        configuration.ConfigurationDirectory <- configuration.GraceDirectory
+    /// Produces complete deterministic dual hashes for a declared file value.
+    let private hashes (value: string) =
+        let bytes = Encoding.UTF8.GetBytes(value)
 
-        Directory.CreateDirectory(configuration.ConfigurationDirectory)
-        |> ignore
+        SHA256.HashData(bytes)
+        |> Convert.ToHexString
+        |> fun sha256 -> Sha256Hash(sha256.ToLowerInvariant()), Blake3Hash(ContentAddress.computeBlake3Hex bytes)
 
-        saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, GraceConfigFileName)) configuration
-        resetConfiguration ()
-        Current()
-
-    /// Runs one topology scenario with isolated configuration and a temporary filesystem root.
-    let private withTempRepo action =
-        let root = Path.Combine(Path.GetTempPath(), $"grace-wdu-topology-{Guid.NewGuid():N}")
-        let originalDirectory = Environment.CurrentDirectory
-        let originalParseResult = Services.parseResult
-
-        try
-            Directory.CreateDirectory(root) |> ignore
-            Environment.CurrentDirectory <- root
-            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
-            let configuration = configureForRoot root
-            action root configuration
-        finally
-            Services.clearShouldIgnoreCache ()
-            Services.parseResult <- originalParseResult
-            Environment.CurrentDirectory <- originalDirectory
-            resetConfiguration ()
-
-            if Directory.Exists(root) then Directory.Delete(root, true)
-
-    /// Creates an exact target file entry whose declared hashes match the supplied prepared bytes.
-    let private targetFile (path: string) (bytes: byte array) =
-        let sha256Hash =
-            SHA256.HashData(bytes)
-            |> Convert.ToHexString
-            |> fun value -> Sha256Hash(value.ToLowerInvariant())
-
-        let blake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+    /// Declares a selected file using exact target bytes.
+    let private targetFile (path: string) (value: string) =
+        let sha256Hash, blake3Hash = hashes value
         WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath path, sha256Hash, blake3Hash)
 
-    /// Builds an immutable manifest or stops the test at the exact manifest validation failure.
+    /// Creates one normalized immutable selected manifest.
     let private manifest entries =
         WorkingDirectoryUpdateContracts.PreparedManifest.create entries
         |> required
 
-    /// Builds one tracked local file with deterministic current-status hashes for topology classification.
-    let private trackedFile (path: string) (bytes: byte array) =
-        let sha256Hash =
-            SHA256.HashData(bytes)
-            |> Convert.ToHexString
-            |> fun value -> Sha256Hash(value.ToLowerInvariant())
+    /// Creates one tracked file with the supplied accepted old identity.
+    let private trackedFile (path: string) (value: string) =
+        let sha256Hash, blake3Hash = hashes value
 
         LocalFileVersion.CreateWithHashes
             (RelativePath path)
             sha256Hash
-            (Blake3Hash(ContentAddress.computeBlake3Hex bytes))
+            blake3Hash
             false
-            (int64 bytes.Length)
+            (int64 value.Length)
             (Grace.Shared.Utilities.getCurrentInstant ())
             true
-            DateTime.UtcNow
+            DateTime.UnixEpoch
 
-    /// Returns the direct tracked parent path for one normalized local status path.
-    let private parentDirectoryPath path =
-        if path = Constants.RootDirectoryPath then
-            None
-        else
-            let separator = path.LastIndexOf('/')
-
-            if separator < 0 then
-                Some Constants.RootDirectoryPath
-            else
-                Some(path.Substring(0, separator))
-
-    /// Returns every directory needed to root one normalized tracked path.
-    let private directoryAncestors path =
-        let rec collect currentPath ancestors =
-            match parentDirectoryPath currentPath with
-            | Some parent -> collect parent (parent :: ancestors)
-            | None -> ancestors
-
-        collect path []
-
-    /// Builds a rooted, hash-complete production-valid status graph and checks it through the real complete-status validator.
+    /// Creates one complete accepted status whose index explicitly includes tracked directories and files.
     let private status (trackedDirectories: string list) (trackedFiles: LocalFileVersion list) =
-        let paths =
-            seq {
-                yield Constants.RootDirectoryPath
-
-                for directory in trackedDirectories do
-                    yield directory
-                    yield! directoryAncestors directory
-
-                for file in trackedFiles do
-                    yield! directoryAncestors (string file.RelativePath)
-            }
-            |> Seq.distinct
-            |> Seq.sortByDescending (fun path ->
-                if path = Constants.RootDirectoryPath then
-                    0
-                else
-                    path
-                        .Split(
-                            '/',
-                            StringSplitOptions.RemoveEmptyEntries
-                        )
-                        .Length)
-            |> Seq.toArray
-
-        let directoryIds = Dictionary<string, DirectoryVersionId>(StringComparer.Ordinal)
-
-        for path in paths do
-            directoryIds[path] <- Guid.NewGuid()
-
-        let filesByDirectory =
-            trackedFiles
-            |> Seq.groupBy (fun file ->
-                parentDirectoryPath (string file.RelativePath)
-                |> Option.get)
-            |> Seq.map (fun (path, files) -> path, files |> Seq.toArray)
-            |> dict
-
-        let directories = Dictionary<string, LocalDirectoryVersion>(StringComparer.Ordinal)
-        let lastWrite = DateTime(2025, 2, 3, 4, 5, 6, DateTimeKind.Utc)
-        let current = Current()
-
-        for path in paths do
-            let directChildren =
-                paths
-                |> Array.filter (fun candidate -> parentDirectoryPath candidate = Some path)
-                |> Array.map (fun childPath -> directories[childPath])
-
-            let directFiles =
-                match filesByDirectory.TryGetValue(path) with
-                | true, files -> files
-                | false, _ -> Array.empty
-
-            let entries =
-                seq {
-                    yield!
-                        directChildren
-                        |> Seq.map (fun child ->
-                            Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash)
-
-                    yield!
-                        directFiles
-                        |> Seq.map (fun file -> Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash)
-                }
-                |> Seq.toArray
-
-            let directory =
-                LocalDirectoryVersion.CreateWithHashes
-                    directoryIds[path]
-                    current.OwnerId
-                    current.OrganizationId
-                    current.RepositoryId
-                    (RelativePath path)
-                    (Services.computeSha256ForDirectoryEntries (RelativePath path) entries)
-                    (Services.computeBlake3ForDirectory (RelativePath path) entries)
-                    (List<DirectoryVersionId>(
-                        directChildren
-                        |> Array.map (fun child -> child.DirectoryVersionId)
-                    ))
-                    (List<LocalFileVersion>(directFiles))
-                    (entries |> Array.sumBy (fun entry -> entry.Size))
-                    lastWrite
-
-            directories[path] <- directory
-
-        let root = directories[Constants.RootDirectoryPath]
         let index = GraceIndex()
 
-        for directory in directories.Values do
-            index[directory.DirectoryVersionId] <- directory
+        trackedDirectories
+        |> List.iteri (fun indexValue path ->
+            let directory =
+                LocalDirectoryVersion.CreateWithHashes
+                    (Guid.NewGuid())
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    RepositoryId.Empty
+                    (RelativePath path)
+                    (Sha256Hash $"directory-{indexValue}")
+                    (Blake3Hash $"directory-{indexValue}")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>())
+                    0L
+                    DateTime.UnixEpoch
 
-        let completeStatus =
-            { GraceStatus.Default with
-                Index = index
-                RootDirectoryId = root.DirectoryVersionId
-                RootDirectorySha256Hash = root.Sha256Hash
-                RootDirectoryBlake3Hash = root.Blake3Hash
-            }
+            index[directory.DirectoryVersionId] <- directory)
 
-        match LocalStateDb.validateCompleteStatusTree completeStatus with
-        | Ok () -> completeStatus
-        | Error error -> invalidOp $"Topology test fixture must be a complete rooted Grace status graph: {error}"
+        if trackedFiles |> List.isEmpty |> not then
+            let root =
+                LocalDirectoryVersion.CreateWithHashes
+                    (Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"))
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    RepositoryId.Empty
+                    (RelativePath RootDirectoryPath)
+                    (Sha256Hash "root")
+                    (Blake3Hash "root")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>(trackedFiles))
+                    0L
+                    DateTime.UnixEpoch
 
-    /// Executes planning synchronously so each real-filesystem test has one stable assertion point.
-    let private plan currentStatus preparedManifest =
-        match LocalStateDb.validateCompleteStatusTree currentStatus with
-        | Ok () -> ()
-        | Error error -> invalidOp $"Topology planner tests require a production-valid complete status graph: {error}"
+            index[root.DirectoryVersionId] <- root
 
-        WorkingDirectoryUpdate.Topology.plan currentStatus preparedManifest
-        |> fun task -> task.GetAwaiter().GetResult()
+        { GraceStatus.Default with Index = index }
 
-    /// Captures every path kind and file byte sequence before a rejection proof.
-    let private snapshotTree root =
-        DirectoryInfo(root)
-            .GetFileSystemInfos("*", SearchOption.AllDirectories)
-        |> Array.map (fun entry ->
-            let path = Grace.Shared.Utilities.normalizeFilePath (Path.GetRelativePath(root, entry.FullName))
+    /// Declares an observed regular file with exact dual-hash evidence.
+    let private file (path: string) (value: string) =
+        let sha256Hash, blake3Hash = hashes value
+        WorkingDirectoryUpdate.Topology.RelevantEntry.File(RelativePath path, sha256Hash, blake3Hash)
 
-            let value =
-                if entry :? DirectoryInfo then
-                    "directory"
-                else
-                    Convert.ToHexString(File.ReadAllBytes(entry.FullName))
+    /// Creates one immutable, caller-captured relevant topology snapshot.
+    let private snapshot entries =
+        WorkingDirectoryUpdate.Topology.RelevantTopology.create entries
+        |> required
 
-            path, value)
-        |> Array.sort
+    /// Evaluates one pure topology input tuple.
+    let private reconcile admission accepted prepared actual = WorkingDirectoryUpdate.Topology.reconcile admission accepted prepared actual
 
-    /// Asserts a planning rejection leaves every working-tree path, kind, and byte sequence unchanged.
-    let private shouldRejectWithoutTreeChange root before result =
+    /// Extracts requirements from a successful reconciliation decision.
+    let private planned =
+        function
+        | WorkingDirectoryUpdate.Topology.Reconciled requirements -> requirements
+        | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+            failwith $"Expected reconciliation but received {WorkingDirectoryUpdate.Topology.Rejection.classification rejection}."
+
+    /// Asserts the evaluator rejects the complete immutable tuple.
+    let private rejected result =
         match result with
-        | WorkingDirectoryUpdate.Topology.Rejected _ -> snapshotTree root |> should equal before
-        | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("Expected a pre-mutation topology rejection.")
+        | WorkingDirectoryUpdate.Topology.Rejected _ -> ()
+        | WorkingDirectoryUpdate.Topology.Reconciled _ -> Assert.Fail("Expected pure topology reconciliation to reject.")
 
-    /// Proves ignored user bytes at a target file can never be planned for replacement.
+    /// Returns each requirement role and its convergence state in application order.
+    let private roles requirements =
+        requirements
+        |> WorkingDirectoryUpdate.Topology.Requirements.items
+        |> List.map (fun requirement ->
+            WorkingDirectoryUpdate.Topology.Requirement.role requirement, WorkingDirectoryUpdate.Topology.Requirement.state requirement)
+
+    /// Proves a fresh tracked replacement preserves the exact accepted old identity until its copy action.
     [<Test>]
-    let ``topology rejects ignored target file without changing distinct user bytes`` () =
-        withTempRepo (fun root configuration ->
-            let targetPath = Path.Combine(root, "protected.txt")
-            let userBytes = Encoding.UTF8.GetBytes("ignored user bytes must survive")
-            File.WriteAllBytes(targetPath, userBytes)
-            configuration.GraceFileIgnoreEntries <- [| "protected.txt" |]
-            Services.clearShouldIgnoreCache ()
+    let ``fresh tracked replacement carries old dual hashes and needs application`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [] [
+                    trackedFile "replace.txt" "old"
+                 ])
+                (manifest [ targetFile "replace.txt" "new" ])
+                (snapshot [ file "replace.txt" "old" ])
+            |> planned
 
-            let preparedManifest = manifest [ targetFile "protected.txt" (Encoding.UTF8.GetBytes("selected bytes")) ]
-            let before = snapshotTree root
-            let result = plan (status [] []) preparedManifest
+        let requirement =
+            WorkingDirectoryUpdate.Topology.Requirements.items requirements
+            |> List.exactlyOne
 
-            match result with
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                WorkingDirectoryUpdate.Topology.Rejection.path rejection
-                |> should equal (RelativePath "protected.txt")
-            | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("Ignored target bytes must reject before any mutation can be planned.")
+        WorkingDirectoryUpdate.Topology.Requirement.role requirement
+        |> should equal WorkingDirectoryUpdate.Topology.Role.Copy
 
-            File.ReadAllBytes(targetPath)
-            |> should equal userBytes
+        WorkingDirectoryUpdate.Topology.Requirement.state requirement
+        |> should equal WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
 
-            snapshotTree root |> should equal before)
+        WorkingDirectoryUpdate.Topology.Requirement.expectedCurrent requirement
+        |> should equal (WorkingDirectoryUpdate.Topology.ExpectedEntry.File(hashes "old"))
 
-    /// Proves absent targets and verified tracked matches make a complete materialization plan without destructive actions.
+        WorkingDirectoryUpdate.Topology.Requirement.expectedFinal requirement
+        |> should equal (WorkingDirectoryUpdate.Topology.ExpectedEntry.File(hashes "new"))
+
+    /// Proves matching tracked files and directories stay explicit assertions in a fresh plan.
     [<Test>]
-    let ``topology retains matching tracked files and plans absent files and directories`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            let matchingBytes = Encoding.UTF8.GetBytes("matching")
-            File.WriteAllBytes(Path.Combine(root, "matching.txt"), matchingBytes)
+    let ``fresh retained file and directory remain explicit needs-apply assertions`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [ "src" ] [
+                    trackedFile "src/keep.txt" "same"
+                 ])
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "src")
+                            targetFile "src/keep.txt" "same" ])
+                (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "src")
+                            file "src/keep.txt" "same" ])
+            |> planned
 
-            let currentStatus =
-                status [] [
-                    trackedFile "matching.txt" matchingBytes
-                ]
+        roles requirements
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.Retained, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.Retained, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
 
-            let preparedManifest =
-                manifest [ targetFile "matching.txt" matchingBytes
-                           WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "src")
-                           targetFile "src/new.txt" (Encoding.UTF8.GetBytes("new")) ]
-
-            match plan currentStatus preparedManifest with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> should
-                    equal
-                    [
-                        WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "src")
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "src/new.txt")
-                    ]
-            | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected a safe absent/matching plan."))
-
-    /// Proves tracked target files with a different verified version are copied without inventing a removal action.
+    /// Proves nested and empty selected directories are represented even when no filesystem action has happened yet.
     [<Test>]
-    let ``topology copies a tracked target file when its verified bytes differ`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            let localBytes = Encoding.UTF8.GetBytes("old tracked bytes")
-            let selectedBytes = Encoding.UTF8.GetBytes("selected replacement bytes")
-            File.WriteAllBytes(Path.Combine(root, "replace.txt"), localBytes)
+    let ``fresh absent nested and empty directories each require creation`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                GraceStatus.Default
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "empty")
+                            WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "src/nested") ])
+                (snapshot [])
+            |> planned
 
-            let currentStatus =
-                status [] [
-                    trackedFile "replace.txt" localBytes
-                ]
+        roles requirements
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.CreateDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.CreateDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.CreateDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
 
-            match plan currentStatus (manifest [ targetFile "replace.txt" selectedBytes ]) with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> should
-                    equal
-                    [
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "replace.txt")
-                    ]
-            | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected tracked file replacement plan."))
-
-    /// Proves tracked replacement and directory-to-file transitions name all tracked removals before copying target bytes.
+    /// Proves both file-directory transition families retain ordered, exact preconditions.
     [<Test>]
-    let ``topology orders tracked directory to file replacement deepest first`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
+    let ``type swaps remove the accepted tracked shape before creating the target shape`` () =
+        let directoryToFile =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [ "swap" ] [
+                    trackedFile "swap/old.txt" "old"
+                 ])
+                (manifest [ targetFile "swap" "new" ])
+                (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "swap")
+                            file "swap/old.txt" "old" ])
+            |> planned
 
-            Directory.CreateDirectory(Path.Combine(root, "replace", "nested"))
-            |> ignore
+        roles directoryToFile
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.RemoveFile, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.RemoveDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.Copy, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
 
-            File.WriteAllText(Path.Combine(root, "replace", "nested", "old.txt"), "old")
+        let fileToDirectory =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [] [ trackedFile "swap" "old" ])
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "swap") ])
+                (snapshot [ file "swap" "old" ])
+            |> planned
 
-            let currentStatus =
-                status [ "replace"; "replace/nested" ] [
-                    trackedFile "replace/nested/old.txt" (Encoding.UTF8.GetBytes("old"))
-                ]
+        roles fileToDirectory
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.RemoveFile, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.CreateDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
 
-            let preparedManifest = manifest [ targetFile "replace" (Encoding.UTF8.GetBytes("new file")) ]
-
-            match plan currentStatus preparedManifest with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> should
-                    equal
-                    [
-                        WorkingDirectoryUpdate.Topology.RemoveTrackedFile(RelativePath "replace/nested/old.txt")
-                        WorkingDirectoryUpdate.Topology.RemoveTrackedDirectory(RelativePath "replace/nested")
-                        WorkingDirectoryUpdate.Topology.RemoveTrackedDirectory(RelativePath "replace")
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "replace")
-                    ]
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                Assert.Fail(
-                    $"Expected tracked directory replacement plan; rejected {WorkingDirectoryUpdate.Topology.Rejection.path rejection} as {WorkingDirectoryUpdate.Topology.Rejection.classification rejection}."
-                ))
-
-    /// Proves directory targets replace tracked files before shallow directory creation.
+    /// Proves exact adoption converges files, removals, and directories only from exact local evidence.
     [<Test>]
-    let ``topology removes tracked file before creating target directory`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            File.WriteAllText(Path.Combine(root, "src"), "old file")
+    let ``exact adoption marks exact file removal and directory evidence already satisfied`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+                (status [ "ready" ] [
+                    trackedFile "gone.txt" "old"
+                 ])
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "ready")
+                            targetFile "adopted.txt" "new" ])
+                (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "ready")
+                            file "adopted.txt" "new" ])
+            |> planned
 
-            let currentStatus =
-                status [] [
-                    trackedFile "src" (Encoding.UTF8.GetBytes("old file"))
-                ]
+        roles requirements
+        |> List.forall (fun (_, state) -> state = WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied)
+        |> should equal true
 
-            let preparedManifest = manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "src") ]
-
-            match plan currentStatus preparedManifest with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> should
-                    equal
-                    [
-                        WorkingDirectoryUpdate.Topology.RemoveTrackedFile(RelativePath "src")
-                        WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "src")
-                    ]
-            | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected tracked file replacement plan."))
-
-    /// Proves an already tracked target directory remains in place and produces no deferred work.
+    /// Proves exact adoption can retain finished work while preserving exact old preconditions for the remainder.
     [<Test>]
-    let ``topology retains an existing tracked target directory`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
+    let ``mixed partial adoption skips only satisfied copy requirements`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+                (status [] [
+                    trackedFile "first.txt" "old-one"
+                    trackedFile "second.txt" "old-two"
+                 ])
+                (manifest [ targetFile "first.txt" "new-one"
+                            targetFile "second.txt" "new-two" ])
+                (snapshot [ file "first.txt" "new-one"
+                            file "second.txt" "old-two" ])
+            |> planned
 
-            Directory.CreateDirectory(Path.Combine(root, "retained"))
-            |> ignore
+        roles requirements
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.Copy, WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.Role.Copy, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
 
-            let currentStatus = status [ "retained" ] []
-
-            match plan currentStatus (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "retained") ]) with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> List.isEmpty
-                |> should equal true
-            | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected tracked target directory retention."))
-
-    /// Proves a late eligible descendant makes a retained target directory reject before another planned action can be returned.
+    /// Proves the negative collision, drift, malformed-manifest, root, and reparse families stay at the pure seam.
     [<Test>]
-    let ``topology rejects a late untracked descendant beneath a retained target directory without changing the full tree`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
+    let ``reconciliation rejects unsafe fresh drift occupations aliases root escape reparse and malformed manifests`` () =
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            (status [] [
+                trackedFile "replace.txt" "old"
+             ])
+            (manifest [ targetFile "replace.txt" "new" ])
+            (snapshot [ file "replace.txt" "new" ])
+        |> rejected
 
-            Directory.CreateDirectory(Path.Combine(root, "retained"))
-            |> ignore
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            (status [] [
+                trackedFile "replace.txt" "old"
+             ])
+            (manifest [ targetFile "replace.txt" "new" ])
+            (snapshot [ file "replace.txt" "drift" ])
+        |> rejected
 
-            let acceptedStatus = status [ "retained" ] []
-            let lateUserPath = Path.Combine(root, "retained", "late-user.txt")
-            File.WriteAllText(lateUserPath, "created after accepted status")
-            let before = snapshotTree root
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            GraceStatus.Default
+            (manifest [ targetFile "occupied.txt" "new" ])
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Untracked(RelativePath "occupied.txt") ])
+        |> rejected
 
-            let result =
-                plan
-                    acceptedStatus
-                    (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "retained")
-                                targetFile "other/new.txt" (Encoding.UTF8.GetBytes("would otherwise materialize")) ])
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            GraceStatus.Default
+            (manifest [ targetFile "ignored.txt" "new" ])
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Ignored(RelativePath "ignored.txt") ])
+        |> rejected
 
-            match result with
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                WorkingDirectoryUpdate.Topology.Rejection.path rejection
-                |> should equal (RelativePath "retained/late-user.txt")
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            (status [ "replace" ] [])
+            (manifest [ targetFile "replace" "new" ])
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "replace")
+                        WorkingDirectoryUpdate.Topology.RelevantEntry.Ignored(RelativePath "replace/user.txt") ])
+        |> rejected
 
-                WorkingDirectoryUpdate.Topology.Rejection.classification rejection
-                |> should equal WorkingDirectoryUpdate.Topology.Untracked
-            | WorkingDirectoryUpdate.Topology.Planned _ ->
-                Assert.Fail("A retained target directory with a late untracked descendant must reject before any later mutation can be planned.")
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            GraceStatus.Default
+            (manifest [ targetFile "safe.txt" "new" ])
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.ReparsePoint(RelativePath "safe.txt") ])
+        |> rejected
 
-            snapshotTree root |> should equal before)
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            GraceStatus.Default
+            (manifest [ targetFile "safe.txt" "new" ])
+            (snapshot [ file "safe.txt" "old"
+                        file "SAFE.txt" "old" ])
+        |> rejected
 
-    /// Proves a tracked file that became a directory cannot be silently omitted from the tracked removal plan.
-    [<Test>]
-    let ``topology rejects tracked file actual directory drift without changing the tree`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            GraceStatus.Default
+            (manifest [ targetFile "safe.txt" "new" ])
+            (snapshot [ WorkingDirectoryUpdate.Topology.RelevantEntry.Untracked(RelativePath "../escape") ])
+        |> rejected
 
-            Directory.CreateDirectory(Path.Combine(root, "former-file"))
-            |> ignore
-
-            let currentStatus =
-                status [] [
-                    trackedFile "former-file" (Encoding.UTF8.GetBytes("tracked file"))
-                ]
-
-            let before = snapshotTree root
-            let result = plan currentStatus (manifest [])
-
-            match result with
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                WorkingDirectoryUpdate.Topology.Rejection.path rejection
-                |> should equal (RelativePath "former-file")
-
-                WorkingDirectoryUpdate.Topology.Rejection.classification rejection
-                |> should equal WorkingDirectoryUpdate.Topology.Untracked
-            | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("A tracked file whose actual kind is directory must not be omitted from the plan.")
-
-            snapshotTree root |> should equal before)
-
-    /// Proves a tracked directory that became a file cannot be silently omitted from the tracked removal plan.
-    [<Test>]
-    let ``topology rejects tracked directory actual file drift without changing the tree`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-
-            File.WriteAllText(Path.Combine(root, "former-directory"), "actual file")
-            let currentStatus = status [ "former-directory" ] []
-            let before = snapshotTree root
-            let result = plan currentStatus (manifest [])
-
-            match result with
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                WorkingDirectoryUpdate.Topology.Rejection.path rejection
-                |> should equal (RelativePath "former-directory")
-
-                WorkingDirectoryUpdate.Topology.Rejection.classification rejection
-                |> should equal WorkingDirectoryUpdate.Topology.Untracked
-            | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("A tracked directory whose actual kind is file must not be omitted from the plan.")
-
-            snapshotTree root |> should equal before)
-
-    /// Proves an ignored descendant blocks a tracked directory-to-file replacement before any action is returned.
-    [<Test>]
-    let ``topology rejects a tracked directory target file with an ignored descendant`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- [| "replace/user.txt" |]
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-
-            Directory.CreateDirectory(Path.Combine(root, "replace", "nested"))
-            |> ignore
-
-            File.WriteAllText(Path.Combine(root, "replace", "nested", "tracked.txt"), "tracked")
-            File.WriteAllText(Path.Combine(root, "replace", "user.txt"), "ignored user bytes")
-
-            let currentStatus =
-                status [ "replace"; "replace/nested" ] [
-                    trackedFile "replace/nested/tracked.txt" (Encoding.UTF8.GetBytes("tracked"))
-                ]
-
-            let before = snapshotTree root
-
-            plan currentStatus (manifest [ targetFile "replace" (Encoding.UTF8.GetBytes("selected file")) ])
-            |> shouldRejectWithoutTreeChange root before)
-
-    /// Proves untracked target files and nested ignored descendants reject without changing local user content.
-    [<Test>]
-    let ``topology rejects untracked blockers and ignored directory descendants without mutation`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- [| "ignored.txt" |]
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            let untrackedPath = Path.Combine(root, "untracked.txt")
-            File.WriteAllText(untrackedPath, "untracked")
-            let untrackedBefore = snapshotTree root
-            let untracked = plan (status [] []) (manifest [ targetFile "untracked.txt" (Encoding.UTF8.GetBytes("selected")) ])
-            shouldRejectWithoutTreeChange root untrackedBefore untracked
-
-            File.Delete(untrackedPath)
-
-            Directory.CreateDirectory(Path.Combine(root, "replace"))
-            |> ignore
-
-            File.WriteAllText(Path.Combine(root, "replace", "ignored.txt"), "preserve")
-            let ignoredBefore = snapshotTree root
-            let currentStatus = status [ "replace" ] []
-            let ignored = plan currentStatus (manifest [ targetFile "replace" (Encoding.UTF8.GetBytes("selected")) ])
-            shouldRejectWithoutTreeChange root ignoredBefore ignored)
-
-    /// Proves target directories reject both ignored and untracked file blockers without deleting user bytes.
-    [<Test>]
-    let ``topology rejects ignored and untracked files where target directories are required`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- [| "ignored-directory-target" |]
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            let ignoredPath = Path.Combine(root, "ignored-directory-target")
-            File.WriteAllText(ignoredPath, "ignored user bytes")
-            let ignoredBefore = snapshotTree root
-
-            plan (status [] []) (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "ignored-directory-target") ])
-            |> shouldRejectWithoutTreeChange root ignoredBefore
-
-            File.Delete(ignoredPath)
-            let untrackedPath = Path.Combine(root, "untracked-directory-target")
-            File.WriteAllText(untrackedPath, "untracked user bytes")
-            let untrackedBefore = snapshotTree root
-
-            plan (status [] []) (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "untracked-directory-target") ])
-            |> shouldRejectWithoutTreeChange root untrackedBefore)
-
-    /// Proves an untracked target-file blocker produces a stable rejected path and preserves its exact user bytes.
-    [<Test>]
-    let ``topology rejects an untracked target file without changing its bytes`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            let targetPath = Path.Combine(root, "untracked.txt")
-            let userBytes = Encoding.UTF8.GetBytes("untracked user bytes must survive")
-            File.WriteAllBytes(targetPath, userBytes)
-            let before = snapshotTree root
-            let result = plan (status [] []) (manifest [ targetFile "untracked.txt" (Encoding.UTF8.GetBytes("selected")) ])
-
-            match result with
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                WorkingDirectoryUpdate.Topology.Rejection.path rejection
-                |> should equal (RelativePath "untracked.txt")
-
-                WorkingDirectoryUpdate.Topology.Rejection.classification rejection
-                |> should equal WorkingDirectoryUpdate.Topology.Untracked
-            | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("Expected untracked target-file rejection.")
-
-            File.ReadAllBytes(targetPath)
-            |> should equal userBytes
-
-            snapshotTree root |> should equal before)
-
-    /// Proves implicit directory ancestors are planned shallowest first before later verified file copies.
-    [<Test>]
-    let ``topology plans implicit target directories shallowest first`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-            let preparedManifest = manifest [ targetFile "one/two/three.txt" (Encoding.UTF8.GetBytes("selected")) ]
-
-            match plan (status [] []) preparedManifest with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> should
-                    equal
-                    [
-                        WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "one")
-                        WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "one/two")
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "one/two/three.txt")
-                    ]
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                Assert.Fail(
-                    $"Expected implicit target directory plan; rejected {WorkingDirectoryUpdate.Topology.Rejection.path rejection} as {WorkingDirectoryUpdate.Topology.Rejection.classification rejection}."
-                ))
-
-    /// Proves obsolete tracked empty directories are listed deepest first and user descendants prohibit removal.
-    [<Test>]
-    let ``topology removes obsolete tracked empty directories and rejects unsafe descendants`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- Array.empty
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-
-            Directory.CreateDirectory(Path.Combine(root, "obsolete", "nested"))
-            |> ignore
-
-            let currentStatus = status [ "obsolete"; "obsolete/nested" ] []
-
-            match plan currentStatus (manifest []) with
-            | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
-                WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
-                |> should
-                    equal
-                    [
-                        WorkingDirectoryUpdate.Topology.RemoveTrackedDirectory(RelativePath "obsolete/nested")
-                        WorkingDirectoryUpdate.Topology.RemoveTrackedDirectory(RelativePath "obsolete")
-                    ]
-            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
-                Assert.Fail(
-                    $"Expected obsolete empty tracked directory removal; rejected {WorkingDirectoryUpdate.Topology.Rejection.path rejection} as {WorkingDirectoryUpdate.Topology.Rejection.classification rejection}."
-                )
-
-            File.WriteAllText(Path.Combine(root, "obsolete", "nested", "user.txt"), "user")
-            let before = snapshotTree root
-
-            plan currentStatus (manifest [])
-            |> shouldRejectWithoutTreeChange root before)
-
-    /// Proves an ignored descendant blocks obsolete tracked-directory removal and preserves the whole subtree.
-    [<Test>]
-    let ``topology rejects obsolete tracked directory removal with an ignored descendant`` () =
-        withTempRepo (fun root configuration ->
-            configuration.GraceFileIgnoreEntries <- [| "obsolete/user.txt" |]
-            configuration.GraceDirectoryIgnoreEntries <- Array.empty
-
-            Directory.CreateDirectory(Path.Combine(root, "obsolete", "nested"))
-            |> ignore
-
-            File.WriteAllText(Path.Combine(root, "obsolete", "nested", "tracked.txt"), "tracked")
-            File.WriteAllText(Path.Combine(root, "obsolete", "user.txt"), "ignored user bytes")
-
-            let currentStatus =
-                status [ "obsolete"; "obsolete/nested" ] [
-                    trackedFile "obsolete/nested/tracked.txt" (Encoding.UTF8.GetBytes("tracked"))
-                ]
-
-            let before = snapshotTree root
-            let result = plan currentStatus (manifest [])
-            shouldRejectWithoutTreeChange root before result)
-
-    /// Proves manifest collision and escape validation reject before the planner can receive ambiguous Windows shapes.
-    [<Test>]
-    let ``prepared manifest rejects case collisions file directory conflicts and normalized escapes`` () =
-        let bytes = Encoding.UTF8.GetBytes("content")
-
-        manifest [ targetFile "safe.txt" bytes ] |> ignore
-
-        WorkingDirectoryUpdateContracts.PreparedManifest.create [ targetFile "Case.txt" bytes
-                                                                  targetFile "case.txt" bytes ]
+        WorkingDirectoryUpdateContracts.PreparedManifest.create [ targetFile "case.txt" "one"
+                                                                  targetFile "CASE.txt" "two" ]
         |> Result.isError
         |> should equal true
 
-        WorkingDirectoryUpdateContracts.PreparedManifest.create [ targetFile "node" bytes
-                                                                  WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "node/child") ]
-        |> Result.isError
+    /// Proves irrelevant user content is excluded while a tracked removal and a zero-action assertion stay represented.
+    [<Test>]
+    let ``unrelated user content is excluded but tracked removals and zero-action assertions remain relevant`` () =
+        let removal =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [ "retained" ] [
+                    trackedFile "gone.txt" "old"
+                 ])
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "retained") ])
+                (snapshot [ file "gone.txt" "old"
+                            WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "retained")
+                            WorkingDirectoryUpdate.Topology.RelevantEntry.Ignored(RelativePath "notes.txt")
+                            WorkingDirectoryUpdate.Topology.RelevantEntry.Untracked(RelativePath "retained/user.txt") ])
+            |> planned
+
+        roles removal
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.RemoveFile, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Role.Retained, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            removal
+            (snapshot [ file "gone.txt" "old"
+                        WorkingDirectoryUpdate.Topology.RelevantEntry.Directory(RelativePath "retained")
+                        WorkingDirectoryUpdate.Topology.RelevantEntry.Ignored(RelativePath "notes.txt")
+                        WorkingDirectoryUpdate.Topology.RelevantEntry.Untracked(RelativePath "retained/user.txt") ])
         |> should equal true
 
-        WorkingDirectoryUpdateContracts.PreparedManifest.create [ targetFile "../escape.txt" bytes ]
-        |> Result.isError
+    /// Proves prefix advancement changes only the next owned action and makes later topology drift observable.
+    [<Test>]
+    let ``prefix advancement advances one action and rejects any remaining or retained drift`` () =
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+                (status [] [
+                    trackedFile "first.txt" "old-one"
+                    trackedFile "second.txt" "old-two"
+                    trackedFile "keep.txt" "same"
+                 ])
+                (manifest [ targetFile "first.txt" "new-one"
+                            targetFile "second.txt" "new-two"
+                            targetFile "keep.txt" "same" ])
+                (snapshot [ file "first.txt" "old-one"
+                            file "second.txt" "old-two"
+                            file "keep.txt" "same" ])
+            |> planned
+
+        let first =
+            WorkingDirectoryUpdate.Topology.Requirements.items requirements
+            |> List.head
+
+        let advanced =
+            WorkingDirectoryUpdate.Topology.Requirements.advance first requirements
+            |> required
+
+        roles advanced
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Role.Copy, WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.Role.Retained, WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.Role.Copy, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            advanced
+            (snapshot [ file "first.txt" "new-one"
+                        file "second.txt" "old-two"
+                        file "keep.txt" "same" ])
         |> should equal true
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            advanced
+            (snapshot [ file "first.txt" "new-one"
+                        file "second.txt" "drift"
+                        file "keep.txt" "same" ])
+        |> should equal false
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            advanced
+            (snapshot [ file "first.txt" "new-one"
+                        file "second.txt" "old-two"
+                        file "keep.txt" "drift" ])
+        |> should equal false
