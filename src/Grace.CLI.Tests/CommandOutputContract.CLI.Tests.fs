@@ -238,16 +238,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 206
+        |> should equal 207
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 197
+        |> should equal 198
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 185
+        |> should equal 186
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -289,7 +289,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 185
+        jsonReady |> should equal 186
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -466,12 +466,13 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 186
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
             | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto) -> ()
+            | RequiresCliDto
+            | NoServerDto) -> ()
             | other -> Assert.Fail($"Expected existing Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             entry.Features.Select
@@ -484,7 +485,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 186
 
         let parserInvalidEntries =
             commonEntries
@@ -515,7 +516,8 @@ module CommandOutputContractRegistryTests =
 
             match entry.EnvelopeContract with
             | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto) -> ()
+            | RequiresCliDto
+            | NoServerDto) -> ()
             | other -> Assert.Fail($"Expected central Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
