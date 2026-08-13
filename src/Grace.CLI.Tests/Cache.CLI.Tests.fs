@@ -146,6 +146,35 @@ module CacheCliTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Runs the production credential resolver through a fresh Cache factory and the only root-command entry point.
+    let private runProductionEnrollmentWithCredentialDependencies
+        (credentialDependencies: Auth.CacheEnrollmentCredentialDependencies)
+        (args: string array)
+        (cancellationToken: CancellationToken)
+        =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+
+            let rootDependencies: GraceCommand.RootDependencies =
+                {
+                    CreateCacheCommand = (fun () -> CacheCommand.create (CacheCommand.productionDependencies (Some credentialDependencies)))
+                    InitializeExecution = (fun () -> ())
+                    AfterCommandExit = (fun _ -> Task.FromResult(()))
+                }
+
+            let exitCode =
+                GraceCommand.run rootDependencies args cancellationToken
+                |> fun invocation -> invocation.GetAwaiter().GetResult()
+
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
     /// Reads a complete loopback HTTP request including fixed-length and chunked request bodies.
     let private readEnrollmentRequest (client: TcpClient) =
         task {
@@ -1128,7 +1157,7 @@ module CacheCliTests =
         if not (OperatingSystem.IsLinux()) then
             Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
 
-        let runCancelled phase =
+        let runCancelled phase arguments =
             withRoot (fun root _ ->
                 use cancellation = new CancellationTokenSource()
                 let before = snapshot root
@@ -1164,16 +1193,198 @@ module CacheCliTests =
 
                 if phase = "credential" then cancellation.Cancel()
 
-                let exitCode, output = runEnrollment dependencies enrollmentArguments cancellation.Token
+                let exitCode, output = runEnrollment dependencies arguments cancellation.Token
                 Assert.That(exitCode, Is.Not.EqualTo(0), output)
                 Assert.That(output, Does.Contain("cancelled"))
                 Assert.That(postCount, Is.EqualTo(0))
                 Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
                 Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False))
 
-        runCancelled "credential"
-        runCancelled "before-claim"
-        runCancelled "after-staging"
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            runCancelled "credential" arguments
+            runCancelled "before-claim" arguments
+            runCancelled "after-staging" arguments
+
+    /// Proves a credential result completed after caller cancellation cannot reach the claim or enrollment transport.
+    [<Test>]
+    let ``Linux cache enroll rejects delayed credential completion after caller cancellation`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            withRoot (fun root _ ->
+                use cancellation = new CancellationTokenSource()
+                let before = snapshot root
+                let credentialEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let credential = TaskCompletionSource<Result<string, string>>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let mutable postCount = 0
+
+                let dependencies =
+                    enrollmentDependencies
+                        root
+                        (fun _ ->
+                            credentialEntered.TrySetResult(()) |> ignore
+                            credential.Task)
+                        (fun _ _ _ _ _ ->
+                            postCount <- postCount + 1
+                            Task.FromResult(Rejected(GraceError.Create "Unexpected enrollment POST." "cache-test")))
+                        (fun _ -> Task.FromResult(()))
+                        CacheIdentity.commitClaimedReady
+
+                let invocation = Task.Run(Func<int * string>(fun () -> runEnrollment dependencies arguments cancellation.Token))
+                credentialEntered.Task.GetAwaiter().GetResult()
+                cancellation.Cancel()
+                credential.SetResult(Ok "delayed-credential-secret")
+                let exitCode, output = invocation.GetAwaiter().GetResult()
+                Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                Assert.That(output, Does.Contain("cancelled"))
+                Assert.That(postCount, Is.EqualTo(0))
+                Assert.That(snapshot root = before, Is.True, "Delayed credentials changed the protected root.")
+                Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                assertRedacted output (Array.append (protectedValues root) [| "delayed-credential-secret" |])
+
+                if arguments = enrollmentArguments then assertRedactedError exitCode output)
+
+    /// Proves a credential producer cancellation without caller cancellation remains a redacted credential failure before local effects.
+    [<Test>]
+    let ``Linux cache enroll classifies provider cancellation as a credential failure`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let normalArguments = enrollmentArguments[2..]
+
+        for arguments in [ normalArguments; enrollmentArguments ] do
+            withRoot (fun root _ ->
+                let before = snapshot root
+                let mutable postCount = 0
+                let providerSecret = "provider-cancellation-secret"
+
+                let dependencies =
+                    enrollmentDependencies
+                        root
+                        (fun _ -> Task.FromException<Result<string, string>>(TaskCanceledException(providerSecret)))
+                        (fun _ _ _ _ _ ->
+                            postCount <- postCount + 1
+                            Task.FromResult(Rejected(GraceError.Create "Unexpected enrollment POST." "cache-test")))
+                        (fun _ -> Task.FromResult(()))
+                        CacheIdentity.commitClaimedReady
+
+                let exitCode, output = runEnrollment dependencies arguments CancellationToken.None
+                Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
+                Assert.That(postCount, Is.EqualTo(0))
+                Assert.That(snapshot root = before, Is.True, "Credential failure changed the protected root.")
+                Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                assertRedacted output (Array.append (protectedValues root) [| providerSecret |])
+
+                if arguments = enrollmentArguments then assertRedactedError exitCode output)
+
+    /// Proves malformed enrollment operands and invalid selected-server configuration do not reach credential or local-effect phases.
+    [<Test>]
+    let ``Linux cache enroll rejects invalid grammar before credentials or protected effects`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let without optionName values =
+            let index =
+                values
+                |> Array.findIndex (fun value -> value = optionName)
+
+            Array.append values[0 .. index - 1] values[index + 2 ..]
+
+        let replace optionName replacement values =
+            let index =
+                values
+                |> Array.findIndex (fun value -> value = optionName)
+
+            let copy = Array.copy values
+            copy[index + 1] <- replacement
+            copy
+
+        let cases =
+            [
+                "missing owner", without "--owner-id" enrollmentArguments, Some "https://grace.example.test"
+                "malformed owner", replace "--owner-id" "not-a-guid" enrollmentArguments, Some "https://grace.example.test"
+                "malformed organization", replace "--organization-id" "not-a-guid" enrollmentArguments, Some "https://grace.example.test"
+                "empty organization", replace "--organization-id" " " enrollmentArguments, Some "https://grace.example.test"
+                "malformed repository", replace "--repository" "not-a-repository" enrollmentArguments, Some "https://grace.example.test"
+                "missing endpoint", without "--endpoint" enrollmentArguments, Some "https://grace.example.test"
+                "HTTP endpoint without allow-http",
+                enrollmentArguments
+                |> Array.filter (fun value -> value <> "--allow-http"),
+                Some "https://grace.example.test"
+                "invalid server URI", enrollmentArguments, Some "not-an-absolute-uri"
+            ]
+
+        for name, arguments, serverUri in cases do
+            withRoot (fun root _ ->
+                withEnv Constants.EnvironmentVariables.GraceServerUri serverUri (fun () ->
+                    let before = snapshot root
+                    let mutable credentialCount = 0
+                    let mutable postCount = 0
+
+                    let dependencies =
+                        enrollmentDependencies
+                            root
+                            (fun _ ->
+                                credentialCount <- credentialCount + 1
+                                Task.FromResult(Ok "unexpected-credential"))
+                            (fun _ _ _ _ _ ->
+                                postCount <- postCount + 1
+                                Task.FromResult(Rejected(GraceError.Create "Unexpected enrollment POST." "cache-test")))
+                            (fun _ -> Task.FromResult(()))
+                            CacheIdentity.commitClaimedReady
+
+                    let exitCode, output = runEnrollment dependencies arguments CancellationToken.None
+                    Assert.That(exitCode, Is.Not.EqualTo(0), $"{name}: {output}")
+                    Assert.That(credentialCount, Is.EqualTo(0), $"{name} reached credential resolution.")
+                    Assert.That(postCount, Is.EqualTo(0), $"{name} reached enrollment transport.")
+                    Assert.That(snapshot root = before, Is.True, $"{name} changed the protected root.")
+                    Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                    Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                    assertRedacted output (Array.append (protectedValues root) [| "unexpected-credential" |])))
+
+    /// Proves an invalid existing ready state is terminal before credential resolution and cannot publish another enrollment.
+    [<Test>]
+    let ``Linux cache enroll keeps an invalid ready state fail closed through the root graph`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            createInvalid root
+            let before = snapshot root
+            let mutable credentialCount = 0
+            let mutable postCount = 0
+
+            let dependencies =
+                enrollmentDependencies
+                    root
+                    (fun _ ->
+                        credentialCount <- credentialCount + 1
+                        Task.FromResult(Ok "unexpected-credential"))
+                    (fun _ _ _ _ _ ->
+                        postCount <- postCount + 1
+                        Task.FromResult(Rejected(GraceError.Create "Unexpected enrollment POST." "cache-test")))
+                    (fun _ -> Task.FromResult(()))
+                    CacheIdentity.commitClaimedReady
+
+            let exitCode, output = runEnrollment dependencies enrollmentArguments CancellationToken.None
+            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+            Assert.That(credentialCount, Is.EqualTo(0))
+            Assert.That(postCount, Is.EqualTo(0))
+            Assert.That(snapshot root = before, Is.True)
+            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("invalid"))
+            assertRedacted output (Array.append (protectedValues root) [| "unexpected-credential" |]))
 
     /// Proves an attempt created before its key write is reclaimed only after this root command holds the exclusive claim.
     [<Test>]
@@ -1565,14 +1776,29 @@ module CacheCliTests =
         if not (OperatingSystem.IsLinux()) then
             Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
 
-        let cases =
+        let registration (node: JsonNode) =
+            let result = node[ "ReturnValue" ].AsObject()
+            result[ "Registration" ].AsObject()
+
+        let cases: (string * (JsonNode -> unit)) list =
             [
-                "display name", "DisplayName", JsonValue.Create("different-cache") :> JsonNode
-                "endpoint", "Endpoint", JsonValue.Create("https://different.example.test") :> JsonNode
-                "protocol", "ProtocolVersion", JsonValue.Create("v2") :> JsonNode
+                "outer result class", (fun node -> node[ "ReturnValue" ].AsObject()["Class"] <- JsonValue.Create("UnexpectedResult"))
+                "returned enrollment status", (fun node -> node[ "ReturnValue" ].AsObject()["Status"] <- JsonValue.Create("NotEnrolled"))
+                "public key",
+                fun node ->
+                    let publicKeyNode = (registration node)["PublicKey"]
+                    let publicKey = publicKeyNode.AsObject()
+                    publicKey["PublicKeyX"] <- JsonValue.Create("different-public-key")
+                "owner", (fun node -> (registration node)["OwnerId"] <- JsonValue.Create("99999999-9999-9999-9999-999999999999"))
+                "organization", (fun node -> (registration node)["OrganizationId"] <- JsonValue.Create("99999999-9999-9999-9999-999999999999"))
+                "repository scopes", (fun node -> (registration node)["RepositoryScopes"] <- JsonArray())
+                "endpoint", (fun node -> (registration node)["Endpoint"] <- JsonValue.Create("https://different.example.test"))
+                "display name", (fun node -> (registration node)["DisplayName"] <- JsonValue.Create("different-cache"))
+                "software version", (fun node -> (registration node)["SoftwareVersion"] <- JsonValue.Create("different-version"))
+                "protocol version", (fun node -> (registration node)["ProtocolVersion"] <- JsonValue.Create("v2"))
             ]
 
-        for name, field, replacement in cases do
+        for name, mutate in cases do
             withRoot (fun root _ ->
                 withSingleEnrollmentServer
                     (fun request client ->
@@ -1583,9 +1809,7 @@ module CacheCliTests =
                                 |> fun response -> JsonSerializer.Serialize(response, Constants.JsonSerializerOptions)
                                 |> JsonNode.Parse
 
-                            let result = node[ "ReturnValue" ].AsObject()
-                            let registration = result[ "Registration" ].AsObject()
-                            registration[field] <- replacement.DeepClone()
+                            mutate node
                             do! writeEnrollmentResponse client 200 (node.ToJsonString(Constants.JsonSerializerOptions))
                         })
                     (fun serverUri requests ->
@@ -1653,6 +1877,40 @@ module CacheCliTests =
                         assertRedactedError exitCode output
                         assertRedacted output (Array.append (protectedValues root) [| "lost-claim-token" |]))))
 
+    /// Proves replacement of the staged key cannot be mistaken for this invocation's identity during ready publication.
+    [<Test>]
+    let ``Linux cache enroll does not publish a replaced staged key`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            let mutable postCount = 0
+
+            let dependencies =
+                enrollmentDependencies
+                    root
+                    (fun _ -> Task.FromResult(Ok "replaced-key-token"))
+                    (fun request _ _ _ _ ->
+                        postCount <- postCount + 1
+                        Task.FromResult(Accepted(acceptedResponse request)))
+                    (fun phase ->
+                        if phase = CacheCommand.EnrollmentPhase.BeforeReadyCommit then
+                            let keyPath = Path.Combine(root, "attempt", "identity.pk8")
+                            File.WriteAllBytes(keyPath, [| 1uy; 2uy; 3uy |])
+                            File.SetUnixFileMode(keyPath, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+
+                        Task.FromResult(()))
+                    CacheIdentity.commitClaimedReady
+
+            let exitCode, output = runEnrollment dependencies enrollmentArguments CancellationToken.None
+            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+            Assert.That(postCount, Is.EqualTo(1))
+            Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
+            Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
+            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.True, "Cleanup deleted the replaced staged key.")
+            assertRedactedError exitCode output
+            assertRedacted output (Array.append (protectedValues root) [| "replaced-key-token" |]))
+
     /// Proves a real claimed registration-file collision after acceptance stays non-ready and cleans only this staged attempt.
     [<Test>]
     let ``Linux cache enroll handles a real protected local write failure`` () =
@@ -1698,6 +1956,7 @@ module CacheCliTests =
                         Assert.That((CacheIdentity.status root).Enrollment, Is.Not.EqualTo("enrolled"))
                         Assert.That(Directory.Exists(Path.Combine(root, "ready")), Is.False)
                         Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False, "Best-effort cleanup did not remove the claimed attempt.")
+                        Assert.That(output, Does.Contain("Cache enrollment was accepted but local ready state could not be committed."))
                         assertRedactedError exitCode output
                         assertRedacted output (Array.append (protectedValues root) [| "local-write-token" |]))))
 
@@ -1786,6 +2045,54 @@ module CacheCliTests =
 
         runFailedM2m normalArguments
         runFailedM2m enrollmentArguments
+
+    /// Proves an invalid configured PAT is terminal and cannot fall through to a usable lower-priority M2M producer.
+    [<Test>]
+    let ``Linux cache enroll preserves invalid PAT precedence over machine credentials`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            withRoot (fun root _ ->
+                withProductionEnrollmentServer (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, Some "invalid-pat-secret"
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, Some "lower-priority-m2m-client"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, Some "lower-priority-m2m-secret"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, Some "cache.enroll"
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+                        ]
+                        (fun () ->
+                            let before = snapshot root
+                            let exitCode, output = runProductionEnrollment arguments
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                            Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(requests.Count, Is.EqualTo(0), "Invalid PAT fell through to M2M or enrollment transport.")
+                            Assert.That(snapshot root = before, Is.True)
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+
+                            assertRedacted
+                                output
+                                (Array.append
+                                    (protectedValues root)
+                                    [|
+                                        "invalid-pat-secret"
+                                        "lower-priority-m2m-client"
+                                        "lower-priority-m2m-secret"
+                                    |])
+
+                            if arguments = enrollmentArguments then assertRedactedError exitCode output)))
 
     /// Proves PAT and M2M credential producers each supply one bearer to the selected server through the production root graph.
     [<Test>]
@@ -1946,6 +2253,265 @@ module CacheCliTests =
 
                 if File.Exists(signalPath) then File.Delete(signalPath))
 
+    /// Proves a provider-side M2M cancellation is a redacted credential failure when the root caller did not cancel.
+    [<Test>]
+    let ``Linux cache enroll maps an M2M provider TaskCanceledException without caller cancellation`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            withRoot (fun root _ ->
+                withProductionEnrollmentServer (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, None
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, Some "timeout-m2m-client"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, Some "timeout-m2m-secret"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+                        ]
+                        (fun () ->
+                            let before = snapshot root
+                            use callerCancellation = new CancellationTokenSource()
+                            let mutable providerSawCallerCancellation = true
+                            let mutable providerCalls = 0
+                            let productionDependencies = Auth.cacheEnrollmentCredentialDependencies ()
+
+                            let credentialDependencies =
+                                { productionDependencies with
+                                    PostFormAsync =
+                                        fun _ _ ->
+                                            providerCalls <- providerCalls + 1
+                                            providerSawCallerCancellation <- callerCancellation.IsCancellationRequested
+
+                                            Task.FromException<Result<string, string>>(
+                                                TaskCanceledException("provider timeout must not become caller cancellation")
+                                            )
+                                }
+
+                            let exitCode, output = runProductionEnrollmentWithCredentialDependencies credentialDependencies arguments callerCancellation.Token
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                            Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(providerCalls, Is.EqualTo(1))
+                            Assert.That(providerSawCallerCancellation, Is.False)
+                            Assert.That(requests.Count, Is.EqualTo(0), "Credential failure reached cache enrollment transport.")
+                            Assert.That(snapshot root = before, Is.True, "Credential failure changed the protected root.")
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+
+                            assertRedacted
+                                output
+                                (Array.append
+                                    (protectedValues root)
+                                    [|
+                                        "timeout-m2m-client"
+                                        "timeout-m2m-secret"
+                                    |])
+
+                            if arguments = enrollmentArguments then assertRedactedError exitCode output)))
+
+    /// Proves an expired real-keyring credential maps a refresh-provider failure before Cache enrollment effects.
+    [<Test>]
+    let ``Linux cache enroll maps expired GNOME keyring refresh failure without fallback`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        if
+            Environment.GetEnvironmentVariable("GRACE_TEST_LINUX_KEYRING")
+            <> "1"
+        then
+            Assert.Ignore("This proof requires the D-Bus and GNOME keyring session configured by validate.yml.")
+
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            withRoot (fun root _ ->
+                withProductionEnrollmentServer (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, None
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, Some "cache-expired-interactive-client"
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, Some "openid offline_access"
+                        ]
+                        (fun () ->
+                            let loginExit, loginOutput =
+                                runProductionEnrollment [| "authenticate"
+                                                           "login"
+                                                           "--auth"
+                                                           "device" |]
+
+                            Assert.That(loginExit, Is.EqualTo(0), loginOutput)
+                            let before = snapshot root
+                            let requestCountBeforeEnrollment = requests.Count
+                            let mutable refreshCalls = 0
+                            let productionDependencies = Auth.cacheEnrollmentCredentialDependencies ()
+
+                            let credentialDependencies =
+                                { productionDependencies with
+                                    CurrentInstant =
+                                        fun () ->
+                                            SystemClock
+                                                .Instance
+                                                .GetCurrentInstant()
+                                                .Plus(Duration.FromHours(2.0))
+                                    PostFormAsync =
+                                        fun _ formValues ->
+                                            refreshCalls <- refreshCalls + 1
+
+                                            Assert.That(
+                                                formValues
+                                                |> List.contains ("grant_type", "refresh_token"),
+                                                Is.True
+                                            )
+
+                                            Task.FromException<Result<string, string>>(TaskCanceledException("expired interactive refresh provider timeout"))
+                                }
+
+                            let exitCode, output = runProductionEnrollmentWithCredentialDependencies credentialDependencies arguments CancellationToken.None
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                            Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(refreshCalls, Is.EqualTo(1))
+                            Assert.That(requests.Count, Is.EqualTo(requestCountBeforeEnrollment), "Refresh failure reached cache enrollment transport.")
+                            Assert.That(snapshot root = before, Is.True, "Credential failure changed the protected root.")
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                            assertRedacted output (protectedValues root)
+
+                            if arguments = enrollmentArguments then assertRedactedError exitCode output)))
+
+    /// Proves secure-store persistence verification failure is redacted before a Cache enrollment claim or request.
+    [<Test>]
+    let ``Linux cache enroll maps secure-store verification failure before local effects`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        if
+            Environment.GetEnvironmentVariable("GRACE_TEST_LINUX_KEYRING")
+            <> "1"
+        then
+            Assert.Ignore("This proof requires the D-Bus and GNOME keyring session configured by validate.yml.")
+
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            withRoot (fun root _ ->
+                withProductionEnrollmentServer (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, None
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, Some "cache-secure-store-client"
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, Some "openid offline_access"
+                        ]
+                        (fun () ->
+                            let before = snapshot root
+                            let productionDependencies = Auth.cacheEnrollmentCredentialDependencies ()
+
+                            let credentialDependencies =
+                                { productionDependencies with
+                                    VerifyPersistence = fun _ -> raise (InvalidOperationException("secure-store verification failure"))
+                                }
+
+                            let exitCode, output = runProductionEnrollmentWithCredentialDependencies credentialDependencies arguments CancellationToken.None
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                            Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(requests.Count, Is.EqualTo(0), "Secure-store failure reached cache enrollment transport.")
+                            Assert.That(snapshot root = before, Is.True, "Credential failure changed the protected root.")
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+
+                            assertRedacted
+                                output
+                                (Array.append
+                                    (protectedValues root)
+                                    [|
+                                        "secure-store verification failure"
+                                    |])
+
+                            if arguments = enrollmentArguments then assertRedactedError exitCode output)))
+
+    /// Proves token-lock failure is redacted before a Cache enrollment claim or request.
+    [<Test>]
+    let ``Linux cache enroll maps token-lock failure before local effects`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        if
+            Environment.GetEnvironmentVariable("GRACE_TEST_LINUX_KEYRING")
+            <> "1"
+        then
+            Assert.Ignore("This proof requires the D-Bus and GNOME keyring session configured by validate.yml.")
+
+        for arguments in
+            [
+                enrollmentArguments[2..]
+                enrollmentArguments
+            ] do
+            withRoot (fun root _ ->
+                withProductionEnrollmentServer (fun serverUri requests ->
+                    withCredentialEnvironment
+                        [
+                            Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceToken, None
+                            Constants.EnvironmentVariables.GraceTokenFile, None
+                            Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                            Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliClientId, Some "cache-token-lock-client"
+                            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                            Constants.EnvironmentVariables.GraceAuthOidcCliScopes, Some "openid offline_access"
+                        ]
+                        (fun () ->
+                            let before = snapshot root
+                            let productionDependencies = Auth.cacheEnrollmentCredentialDependencies ()
+
+                            let credentialDependencies =
+                                { productionDependencies with
+                                    WithTokenLock = fun _ _ -> Task.FromException<Result<string option, string>>(IOException("token-lock persistence failure"))
+                                }
+
+                            let exitCode, output = runProductionEnrollmentWithCredentialDependencies credentialDependencies arguments CancellationToken.None
+                            Assert.That(exitCode, Is.Not.EqualTo(0), output)
+                            Assert.That(output, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(requests.Count, Is.EqualTo(0), "Token-lock failure reached cache enrollment transport.")
+                            Assert.That(snapshot root = before, Is.True, "Credential failure changed the protected root.")
+                            Assert.That((CacheIdentity.status root).Enrollment, Is.EqualTo("notEnrolled"))
+                            Assert.That(Directory.Exists(Path.Combine(root, "attempt")), Is.False)
+                            assertRedacted output (Array.append (protectedValues root) [| "token-lock persistence failure" |])
+
+                            if arguments = enrollmentArguments then assertRedactedError exitCode output)))
+
     /// Proves the Linux libsecret-backed interactive credential is read from the real GNOME keyring before one enrollment POST.
     [<Test>]
     let ``Linux cache enroll uses the real GNOME keyring interactive credential once`` () =
@@ -1985,6 +2551,28 @@ module CacheCliTests =
 
                         let beforePartialM2m = snapshot root
                         let normalArguments = enrollmentArguments[2..]
+
+                        withEnv Constants.EnvironmentVariables.GraceToken (Some "invalid-pat-with-keyring-secret") (fun () ->
+                            let normalExit, normalOutput = runProductionEnrollment normalArguments
+                            let jsonExit, jsonOutput = runProductionEnrollment enrollmentArguments
+                            Assert.That(normalExit, Is.Not.EqualTo(0), normalOutput)
+                            Assert.That(jsonExit, Is.Not.EqualTo(0), jsonOutput)
+                            Assert.That(normalOutput, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(jsonOutput, Does.Contain("Cache enrollment credentials could not be resolved."))
+                            Assert.That(snapshot root = beforePartialM2m, Is.True)
+
+                            Assert.That(
+                                (requests.ToArray()
+                                 |> Array.map (fun request -> request.Path) = [|
+                                    "/oauth/device/code"
+                                    "/oauth/token"
+                                |]),
+                                Is.True,
+                                "Invalid PAT fell through to the real interactive credential or enrollment transport."
+                            )
+
+                            assertRedacted normalOutput (Array.append (protectedValues root) [| "invalid-pat-with-keyring-secret" |])
+                            assertRedacted jsonOutput (Array.append (protectedValues root) [| "invalid-pat-with-keyring-secret" |]))
 
                         withCredentialEnvironment
                             [

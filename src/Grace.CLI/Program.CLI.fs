@@ -923,7 +923,7 @@ module GraceCommand =
     /// Creates fresh production root collaborators for the one supported Grace command graph.
     let internal productionDependencies () =
         {
-            CreateCacheCommand = (fun () -> CacheCommand.create (CacheCommand.productionDependencies ()))
+            CreateCacheCommand = (fun () -> CacheCommand.create (CacheCommand.productionDependencies None))
             InitializeExecution = initializeProductionExecution
             AfterCommandExit = (fun _ -> Task.FromResult(()))
         }

@@ -343,7 +343,15 @@ module CacheCommand =
                 | CacheIdentityInspection.AttemptPresent
                 | CacheIdentityInspection.IncompleteAttempt) ->
                     try
-                        let! bearerResult = dependencies.ResolveBearer cancellationToken
+                        let! bearerResult =
+                            task {
+                                try
+                                    return! dependencies.ResolveBearer cancellationToken
+                                with
+                                | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
+                                    return raise (OperationCanceledException(cancellationToken))
+                                | :? OperationCanceledException -> return Result.Error "Cache enrollment credentials could not be resolved."
+                            }
 
                         match bearerResult with
                         | Error message -> return renderOutput parseResult (Error(GraceError.Create message correlationId))
@@ -481,7 +489,7 @@ module CacheCommand =
             enrollTransition dependencies parseResult cancellationToken
 
     /// Creates the production collaborators for a fresh Cache command graph.
-    let internal productionDependencies () =
+    let internal productionDependencies (credentialDependencies: Auth.CacheEnrollmentCredentialDependencies option) =
         {
             StateRoot = stateRoot
             ResolveBearer =
@@ -489,7 +497,12 @@ module CacheCommand =
                     task {
                         try
                             cancellationToken.ThrowIfCancellationRequested()
-                            let! bearer = Auth.tryGetAccessTokenForCacheEnrollment ()
+
+                            let dependencies =
+                                credentialDependencies
+                                |> Option.defaultWith Auth.cacheEnrollmentCredentialDependencies
+
+                            let! bearer = Auth.tryGetAccessTokenForCacheEnrollmentWith dependencies
                             cancellationToken.ThrowIfCancellationRequested()
 
                             return
@@ -497,7 +510,9 @@ module CacheCommand =
                                 | Ok (Some value) when not (String.IsNullOrWhiteSpace(value)) -> Result.Ok value
                                 | _ -> Result.Error "Cache enrollment credentials could not be resolved."
                         with
-                        | :? OperationCanceledException -> return raise (OperationCanceledException())
+                        | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
+                            return raise (OperationCanceledException(cancellationToken))
+                        | :? OperationCanceledException -> return Result.Error "Cache enrollment credentials could not be resolved."
                         | _ -> return Result.Error "Cache enrollment credentials could not be resolved."
                     }
             SendEnrollment =
@@ -525,4 +540,4 @@ module CacheCommand =
         cache
 
     /// Retains a production Cache graph for existing parser-focused callers.
-    let Build = create (productionDependencies ())
+    let Build = create (productionDependencies None)

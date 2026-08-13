@@ -79,6 +79,16 @@ module Auth =
     /// Defines structured data exchanged by CLI helpers.
     type TokenStore = { Helper: MsalCacheHelper; StorageProperties: StorageCreationProperties; LockFilePath: string; InProcessLock: SemaphoreSlim }
 
+    /// Supplies the private credential operations used by Cache enrollment while keeping production wiring and root-dispatch tests aligned.
+    type internal CacheEnrollmentCredentialDependencies =
+        {
+            PostFormAsync: string -> (string * string) list -> Task<Result<string, string>>
+            GetTokenStoreAsync: OidcCliConfig -> Task<TokenStore>
+            VerifyPersistence: TokenStore -> unit
+            WithTokenLock: TokenStore -> (unit -> Task<Result<string option, string>>) -> Task<Result<string option, string>>
+            CurrentInstant: unit -> Instant
+        }
+
     /// Defines structured data exchanged by CLI helpers.
     type AuthStatusGraceTokenSource = { Present: bool option; Valid: bool option; Error: string option }
 
@@ -443,6 +453,17 @@ module Auth =
             | ex -> return Error $"Secure token storage is unavailable: {ex.Message}"
         }
 
+    /// Verifies interactive secure storage through the dependencies selected for Cache enrollment root-dispatch proof.
+    let private verifyCacheEnrollmentSecureStoreAsync (dependencies: CacheEnrollmentCredentialDependencies) (config: OidcCliConfig) =
+        task {
+            try
+                let! store = dependencies.GetTokenStoreAsync config
+                dependencies.VerifyPersistence store
+                return Ok store
+            with
+            | ex -> return Error $"Secure token storage is unavailable: {ex.Message}"
+        }
+
     /// Updates CLI authentication state for with token lock while keeping token handling centralized.
     let private withTokenLock (store: TokenStore) (action: unit -> Task<'T>) =
         task {
@@ -587,6 +608,16 @@ module Auth =
                 else
                     let message = tryReadOAuthError body |> Option.defaultValue body
                     return Error message
+        }
+
+    /// Supplies production credential dependencies without changing the established HTTP, secure-store, lock, or clock behavior.
+    let internal cacheEnrollmentCredentialDependencies () : CacheEnrollmentCredentialDependencies =
+        {
+            PostFormAsync = postFormAsync
+            GetTokenStoreAsync = getTokenStoreAsync
+            VerifyPersistence = fun store -> store.Helper.VerifyPersistence()
+            WithTokenLock = withTokenLock
+            CurrentInstant = getCurrentInstant
         }
 
     /// Tries to map launch browser and returns a GraceError instead of throwing on unsupported input.
@@ -906,7 +937,7 @@ module Auth =
         }
 
     /// Tries to map refresh token async and returns a GraceError instead of throwing on unsupported input.
-    let private tryRefreshTokenAsync (config: OidcCliConfig) (bundle: TokenBundle) =
+    let private tryRefreshTokenAsync (dependencies: CacheEnrollmentCredentialDependencies) (config: OidcCliConfig) (bundle: TokenBundle) =
         task {
             if String.IsNullOrWhiteSpace bundle.RefreshToken then
                 return Error "Refresh token missing. Run 'grace authenticate login' again."
@@ -921,7 +952,7 @@ module Auth =
                         "audience", config.Audience
                     ]
 
-                let! response = postFormAsync endpoint formValues
+                let! response = dependencies.PostFormAsync endpoint formValues
 
                 match response with
                 | Error message -> return Error message
@@ -929,7 +960,7 @@ module Auth =
                     match parseTokenResponse json with
                     | Error message -> return Error message
                     | Ok refreshed ->
-                        let now = getCurrentInstant ()
+                        let now = dependencies.CurrentInstant()
                         let updated = applyRefreshToken bundle refreshed now
                         return Ok updated
         }
@@ -937,25 +968,25 @@ module Auth =
     let private safetyWindow = Duration.FromSeconds(90.0)
 
     /// Tries to map get interactive token async and returns a GraceError instead of throwing on unsupported input.
-    let private tryGetInteractiveTokenAsync (config: OidcCliConfig) =
+    let private tryGetInteractiveTokenAsync (dependencies: CacheEnrollmentCredentialDependencies) (config: OidcCliConfig) =
         task {
-            let! storeResult = verifySecureStoreAsync config
+            let! storeResult = verifyCacheEnrollmentSecureStoreAsync dependencies config
 
             match storeResult with
             | Error message -> return Error message
             | Ok store ->
                 return!
-                    withTokenLock store (fun () ->
+                    dependencies.WithTokenLock store (fun () ->
                         task {
                             match tryLoadTokenBundle store with
                             | None -> return Ok None
                             | Some bundle ->
-                                let now = getCurrentInstant ()
+                                let now = dependencies.CurrentInstant()
 
                                 if bundle.AccessTokenExpiresAt > now.Plus(safetyWindow) then
                                     return Ok(Some bundle.AccessToken)
                                 else
-                                    let! refreshResult = tryRefreshTokenAsync config bundle
+                                    let! refreshResult = tryRefreshTokenAsync dependencies config bundle
 
                                     match refreshResult with
                                     | Ok updated ->
@@ -1018,13 +1049,13 @@ module Auth =
                                 Error
                                     $"Authentication is not configured. Set {Constants.EnvironmentVariables.GraceAuthOidcAuthority}, {Constants.EnvironmentVariables.GraceAuthOidcAudience}, and {Constants.EnvironmentVariables.GraceAuthOidcCliClientId} (or provide GRACE_TOKEN / M2M credentials)."
                         | Ok (Some cliConfig) ->
-                            let! tokenResult = tryGetInteractiveTokenAsync cliConfig
+                            let! tokenResult = tryGetInteractiveTokenAsync (cacheEnrollmentCredentialDependencies ()) cliConfig
                             return tokenResult
                         | Error error -> return Error error.Error
         }
 
     /// Resolves Cache enrollment credentials without allowing partial M2M settings to fall through to interactive state.
-    let internal tryGetAccessTokenForCacheEnrollment () =
+    let internal tryGetAccessTokenForCacheEnrollmentWith (dependencies: CacheEnrollmentCredentialDependencies) =
         task {
             match tryGetGraceTokenFromEnv () with
             | Error message -> return Error message
@@ -1057,7 +1088,7 @@ module Auth =
                                         "scope", String.Join(" ", m2mConfig.Scopes)
                                     ]
 
-                        let! response = postFormAsync endpoint formValues
+                        let! response = dependencies.PostFormAsync endpoint formValues
 
                         match response with
                         | Ok json ->
@@ -1074,9 +1105,12 @@ module Auth =
                             return
                                 Error
                                     $"Authentication is not configured. Set {Constants.EnvironmentVariables.GraceAuthOidcAuthority}, {Constants.EnvironmentVariables.GraceAuthOidcAudience}, and {Constants.EnvironmentVariables.GraceAuthOidcCliClientId} (or provide GRACE_TOKEN / M2M credentials)."
-                        | Ok (Some cliConfig) -> return! tryGetInteractiveTokenAsync cliConfig
+                        | Ok (Some cliConfig) -> return! tryGetInteractiveTokenAsync dependencies cliConfig
                         | Error error -> return Error error.Error
         }
+
+    /// Resolves Cache enrollment credentials through the established production auth collaborators.
+    let internal tryGetAccessTokenForCacheEnrollment () = tryGetAccessTokenForCacheEnrollmentWith (cacheEnrollmentCredentialDependencies ())
 
     /// Tries to map get access token for sdk and returns a GraceError instead of throwing on unsupported input.
     let private tryGetAccessTokenForSdk () =
