@@ -89,7 +89,7 @@ type private DatabaseBillingPeriodCloseClock(transactionInterleaving: IBillingPe
                 if not hasRow then
                     invalidOp "SQL Server did not return a billing-period close clock value."
 
-                let sessionId = reader.GetInt32 0
+                let sessionId = Convert.ToInt32(reader.GetValue 0, CultureInfo.InvariantCulture)
                 let databaseUtcNow = reader.GetDateTime 1
                 do! transactionInterleaving.AfterDatabaseClockReadAsync(sessionId, databaseUtcNow, cancellationToken)
                 return databaseUtcNow
@@ -218,7 +218,7 @@ WHERE NOT EXISTS (SELECT 1 FROM ops.BillingPeriod WITH (UPDLOCK,HOLDLOCK) WHERE 
             if not exists then
                 invalidOp "The exact billing period could not be materialized under its scope lock."
 
-            return reader.GetGuid 0, enum<BillingPeriodState> (reader.GetInt32 1)
+            return reader.GetGuid 0, enum<BillingPeriodState> (Convert.ToInt32(reader.GetValue 1, CultureInfo.InvariantCulture))
         }
 
     /// Returns the first committed exact-scope blocker while the shared lock prevents a close race.
@@ -313,13 +313,13 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
                         facts.Add
                             {
                                 UsageFactId = reader.GetGuid 0
-                                FactKind = reader.GetInt32 1
+                                FactKind = Convert.ToInt32(reader.GetValue 1, CultureInfo.InvariantCulture)
                                 Quantity = reader.GetInt64 2
                                 ObservedAtUtc = reader.GetDateTime 3
                                 PricingAssignmentId = reader.GetGuid 4
                                 PricingPlanId = reader.GetGuid 6
                                 BillableUsageKindMappingId = reader.GetGuid 7
-                                BillableUsageKind = reader.GetInt32 8
+                                BillableUsageKind = Convert.ToInt32(reader.GetValue 8, CultureInfo.InvariantCulture)
                                 PricingRateId = reader.GetGuid 9
                                 CurrencyCode = reader.GetString 10
                                 UnitName = reader.GetString 11
@@ -422,7 +422,9 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
                 reading <- hasRow
 
                 if hasRow then
-                    values.Add($"{reader.GetGuid(0):D}|{reader.GetInt32(1)}|{reader.GetInt64(2)}|{reader.GetDateTime(3).Ticks}")
+                    values.Add(
+                        $"{reader.GetGuid(0):D}|{Convert.ToInt32(reader.GetValue(1), CultureInfo.InvariantCulture)}|{reader.GetInt64(2)}|{reader.GetDateTime(3).Ticks}"
+                    )
 
             return values |> Seq.toList |> digest
         }

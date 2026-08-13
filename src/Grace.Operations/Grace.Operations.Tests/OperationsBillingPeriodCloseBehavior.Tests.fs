@@ -8,6 +8,7 @@ open NUnit.Framework
 open NodaTime
 open System
 open System.Data
+open System.Globalization
 open System.Security.Cryptography
 open System.Text
 open System.Threading
@@ -114,7 +115,7 @@ type private StageCancellationInterleaving(stage: string, cancellation: Cancella
         member _.AfterCloseEvidenceStagedAsync _ = cancelAt "evidence"
 
 /// Proves the exact database-time policy boundary independently of the production SQL clock source.
-[<TestFixture>]
+[<TestFixture; NonParallelizable>]
 type OperationsBillingPeriodCloseBehaviorTests() =
 
     /// Names the isolated SQL connection needed by the retained real-SQL production-clock proof.
@@ -227,13 +228,14 @@ type OperationsBillingPeriodCloseBehaviorTests() =
     /// Adds one complete pricing grain through the live Operations SQL schema.
     let addPricingAsync connectionString (scope: BillingCompletenessScope) =
         task {
-            let planId, mappingId, rateId, assignmentId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+            let planId, rateId, assignmentId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+            let mappingId = Guid.Parse "47a4d91d-43e7-450b-8800-917000000001"
             use connection = new SqlConnection(connectionString)
             do! connection.OpenAsync CancellationToken.None
             use command = connection.CreateCommand()
 
             command.CommandText <-
-                "INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc) VALUES (@PlanId,@PlanCode,@DisplayName,@EffectiveFrom); INSERT INTO ops.BillableUsageKindMapping (BillableUsageKindMappingId,FactKind,BillableUsageKind,DisplayName,EffectiveFromUtc) VALUES (@MappingId,1,101,@MappingName,@EffectiveFrom); INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc) VALUES (@RateId,@PlanId,101,'USD','byte-minute',1,2,@EffectiveFrom); INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc) VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveFrom);"
+                "INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc) VALUES (@PlanId,@PlanCode,@DisplayName,@EffectiveFrom); IF NOT EXISTS (SELECT 1 FROM ops.BillableUsageKindMapping WHERE FactKind=1 AND EffectiveFromUtc=@EffectiveFrom) INSERT INTO ops.BillableUsageKindMapping (BillableUsageKindMappingId,FactKind,BillableUsageKind,DisplayName,EffectiveFromUtc) VALUES (@MappingId,1,101,@MappingName,@EffectiveFrom); INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc) VALUES (@RateId,@PlanId,101,'USD','byte-minute',1,2,@EffectiveFrom); INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc) VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveFrom);"
 
             command.Parameters.Add("@PlanId", SqlDbType.UniqueIdentifier).Value <- planId
             command.Parameters.Add("@PlanCode", SqlDbType.NVarChar, 80).Value <- $"close-{planId:N}"
@@ -258,7 +260,7 @@ type OperationsBillingPeriodCloseBehaviorTests() =
             use command = connection.CreateCommand()
 
             command.CommandText <-
-                "SELECT CONCAT(request_status,'|',request_mode,'|',request_session_id,'|',resource_description) FROM sys.dm_tran_locks WHERE resource_type='APPLICATION' AND resource_database_id=DB_ID() AND request_session_id IN (@FirstSessionId,@SecondSessionId) ORDER BY request_session_id,request_status;"
+                "SELECT CONCAT(request_status,'|',request_mode,'|',request_session_id,'|',RTRIM(resource_description)) FROM sys.dm_tran_locks WHERE resource_type='APPLICATION' AND resource_database_id=DB_ID() AND request_session_id IN (@FirstSessionId,@SecondSessionId) ORDER BY request_session_id,request_status;"
 
             command.Parameters.Add("@FirstSessionId", SqlDbType.Int).Value <- firstSessionId
             command.Parameters.Add("@SecondSessionId", SqlDbType.Int).Value <- secondSessionId
@@ -272,6 +274,29 @@ type OperationsBillingPeriodCloseBehaviorTests() =
                 if hasRow then rows.Add(reader.GetString 0)
 
             return rows |> Seq.toList
+        }
+
+    /// Derives SQL Server's exact DMV description for one supplied application-lock resource before contention begins.
+    let applicationLockDmvDescriptionAsync connectionString resource =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use transaction = connection.BeginTransaction()
+            use acquireCommand = connection.CreateCommand()
+            acquireCommand.Transaction <- transaction
+            acquireCommand.CommandText <- OperationsUsageSql.AcquireBillingCompletenessScopeLock
+            acquireCommand.Parameters.Add("@BillingCompletenessLockResource", SqlDbType.NVarChar, 255).Value <- resource
+            acquireCommand.Parameters.Add("@BillingCompletenessLockTimeoutMilliseconds", SqlDbType.Int).Value <- 0
+            let! _ = acquireCommand.ExecuteNonQueryAsync CancellationToken.None
+            use descriptionCommand = connection.CreateCommand()
+            descriptionCommand.Transaction <- transaction
+
+            descriptionCommand.CommandText <-
+                "SELECT TOP(1) RTRIM(resource_description) FROM sys.dm_tran_locks WHERE resource_type='APPLICATION' AND resource_database_id=DB_ID() AND request_session_id=@@SPID AND request_status='GRANT';"
+
+            let! description = descriptionCommand.ExecuteScalarAsync CancellationToken.None
+            do! transaction.RollbackAsync CancellationToken.None
+            return Convert.ToString(description, CultureInfo.InvariantCulture)
         }
 
     /// Counts the exact durable rows that must converge after competing close calls.
@@ -315,12 +340,23 @@ ORDER BY 1;
         }
 
     /// Recomputes the fact-evidence digest from independent persisted raw facts.
-    let acceptedFactDigestAsync connectionString =
+    let acceptedFactDigestAsync connectionString (scope: BillingCompletenessScope) =
         task {
             use connection = new SqlConnection(connectionString)
             do! connection.OpenAsync CancellationToken.None
             use command = connection.CreateCommand()
-            command.CommandText <- "SELECT UsageFactId,FactKind,Quantity,ObservedAtUtc FROM ops.RawUsageFact ORDER BY ObservedAtUtc,UsageFactId;"
+
+            command.CommandText <-
+                "SELECT UsageFactId,FactKind,Quantity,ObservedAtUtc FROM ops.RawUsageFact WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@MonthStartUtc AND ObservedAtUtc<@NextMonthStartUtc ORDER BY ObservedAtUtc,UsageFactId;"
+
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@MonthStartUtc", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+
+            command.Parameters.Add("@NextMonthStartUtc", SqlDbType.DateTime2).Value <- (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
             use! reader = command.ExecuteReaderAsync CancellationToken.None
             let values = ResizeArray<string>()
             let mutable reading = true
@@ -330,10 +366,82 @@ ORDER BY 1;
                 reading <- hasRow
 
                 if hasRow then
-                    values.Add($"{reader.GetGuid(0):D}|{reader.GetInt32(1)}|{reader.GetInt64(2)}|{reader.GetDateTime(3).Ticks}")
+                    values.Add(
+                        $"{reader.GetGuid(0):D}|{Convert.ToInt32(reader.GetValue(1), CultureInfo.InvariantCulture)}|{reader.GetInt64(2)}|{reader.GetDateTime(3).Ticks}"
+                    )
 
             return
                 values
+                |> String.concat "\n"
+                |> Encoding.UTF8.GetBytes
+                |> SHA256.HashData
+                |> Convert.ToHexString
+        }
+
+    /// Rebuilds the full pricing-preview evidence digest from persisted rows without calling the closer's digest helper.
+    let pricingPreviewDigestAsync connectionString =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros FROM ops.ChargePreviewLine;"
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let lines = ResizeArray<Guid * string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then
+                    let lineId = reader.GetGuid 0
+
+                    let canonical =
+                        String.Join(
+                            "|",
+                            [|
+                                lineId.ToString "D"
+                                (reader.GetGuid 1).ToString "D"
+                                (reader.GetGuid 2).ToString "D"
+                                (reader.GetGuid 3).ToString "D"
+                                (reader.GetDateTime 4)
+                                    .Ticks.ToString CultureInfo.InvariantCulture
+                                (reader.GetDateTime 5)
+                                    .Ticks.ToString CultureInfo.InvariantCulture
+                                (Convert.ToInt32(reader.GetValue 6, CultureInfo.InvariantCulture))
+                                    .ToString CultureInfo.InvariantCulture
+                                (reader.GetGuid 7).ToString "D"
+                                (Convert.ToInt32(reader.GetValue 8, CultureInfo.InvariantCulture))
+                                    .ToString CultureInfo.InvariantCulture
+                                (reader.GetGuid 9).ToString "D"
+                                (reader.GetGuid 10).ToString "D"
+                                (reader.GetGuid 11).ToString "D"
+                                reader.GetString 12
+                                reader.GetString 13
+                                (reader.GetInt64 14)
+                                    .ToString CultureInfo.InvariantCulture
+                                (reader.GetInt64 15)
+                                    .ToString CultureInfo.InvariantCulture
+                                (reader.GetDateTime 16)
+                                    .Ticks.ToString CultureInfo.InvariantCulture
+                                (reader.GetDateTime 17)
+                                    .Ticks.ToString CultureInfo.InvariantCulture
+                                (reader.GetInt64 18)
+                                    .ToString CultureInfo.InvariantCulture
+                                (reader.GetInt64 19)
+                                    .ToString CultureInfo.InvariantCulture
+                            |]
+                        )
+
+                    lines.Add(lineId, canonical)
+
+            return
+                lines
+                |> Seq.sortBy fst
+                |> Seq.map snd
                 |> String.concat "\n"
                 |> Encoding.UTF8.GetBytes
                 |> SHA256.HashData
@@ -417,6 +525,8 @@ ORDER BY 1;
                 let firstInterleaving = ContentionInterleaving(true)
                 let secondInterleaving = ContentionInterleaving(false)
                 let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/two-session-contention/v1" }
+                let expectedResource = BillingCompletenessScope.databaseLockIdentity scope
+                let! expectedDmvResource = applicationLockDmvDescriptionAsync connectionString expectedResource
 
                 let firstCloser =
                     SqlBillingPeriodCloser.CreateForTest(connectionString, firstInterleaving :> IBillingPeriodCloseTransactionInterleaving)
@@ -438,19 +548,20 @@ ORDER BY 1;
                             Assert.That(first.IsCompleted, Is.False)
                             Assert.That(second.IsCompleted, Is.False)
                             Assert.That(firstSessionId, Is.Not.EqualTo(secondSessionId))
-                            Assert.That(firstResource, Is.EqualTo(BillingCompletenessScope.databaseLockIdentity scope))
-                            Assert.That(secondResource, Is.EqualTo(firstResource))
+                            Assert.That(firstResource, Is.EqualTo(expectedResource))
+                            Assert.That(secondResource, Is.EqualTo(expectedResource))
+                            Assert.That(expectedDmvResource, Is.Not.Empty)
 
                             Assert.That(
                                 locks
-                                |> List.exists (fun row -> row.StartsWith($"GRANT|X|{firstSessionId}|", StringComparison.Ordinal)),
+                                |> List.exists (fun row -> row = $"GRANT|X|{firstSessionId}|{expectedDmvResource}"),
                                 Is.True,
                                 $"Expected first session grant; rows: {locks}"
                             )
 
                             Assert.That(
                                 locks
-                                |> List.exists (fun row -> row.StartsWith($"WAIT|X|{secondSessionId}|", StringComparison.Ordinal)),
+                                |> List.exists (fun row -> row = $"WAIT|X|{secondSessionId}|{expectedDmvResource}"),
                                 Is.True,
                                 $"Expected second session wait; rows: {locks}"
                             ))
@@ -509,7 +620,8 @@ ORDER BY 1;
                         return value :?> DateTime
                     }
 
-                let! expectedFactDigest = acceptedFactDigestAsync connectionString
+                let! expectedFactDigest = acceptedFactDigestAsync connectionString scope
+                let! expectedPreviewDigest = pricingPreviewDigestAsync connectionString
                 use connection = new SqlConnection(connectionString)
                 do! connection.OpenAsync CancellationToken.None
                 use command = connection.CreateCommand()
@@ -534,7 +646,7 @@ ORDER BY 1;
                         Assert.That(reader.GetInt64 1, Is.EqualTo(14L))
                         Assert.That(reader.GetInt64 2, Is.EqualTo(14L))
                         Assert.That(reader.GetString 3, Is.EqualTo(expectedFactDigest))
-                        Assert.That(reader.GetString 4, Is.Not.EqualTo(expectedFactDigest))
+                        Assert.That(reader.GetString 4, Is.EqualTo(expectedPreviewDigest))
                         Assert.That(reader.GetDateTime 5, Is.GreaterThanOrEqualTo(beforeClose))
                         Assert.That(reader.GetDateTime 5, Is.LessThanOrEqualTo(afterClose))
                         Assert.That(reader.GetString 6, Is.EqualTo("operations-tests/close-evidence/v1")))
@@ -718,7 +830,7 @@ ORDER BY 1;
                 let closer =
                     SqlBillingPeriodCloser.CreateForTest(connectionString, interleaving :> IBillingPeriodCloseTransactionInterleaving) :> IBillingPeriodCloser
 
-                Assert.ThrowsAsync<OperationCanceledException>(Func<Task>(fun () -> closer.CloseAsync(request, cancellation.Token) :> Task))
+                Assert.CatchAsync<OperationCanceledException>(Func<Task>(fun () -> closer.CloseAsync(request, cancellation.Token) :> Task))
                 |> ignore
 
                 let! after = closeProjectionAsync connectionString

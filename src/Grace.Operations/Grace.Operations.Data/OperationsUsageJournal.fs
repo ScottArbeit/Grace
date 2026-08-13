@@ -6,6 +6,7 @@ open Microsoft.Data.SqlClient
 open NodaTime
 open System
 open System.Data
+open System.Globalization
 open System.Threading
 open System.Threading.Tasks
 
@@ -179,14 +180,14 @@ WHERE UsageFactId = @UsageFactId;
                             UsageFactId = reader.GetGuid 0
                             RawPayload = reader.GetFieldValue<byte array> 1
                             CorrelationId = reader.GetString 2
-                            FactKind = enum<UsageFactKind> (reader.GetInt32 3)
+                            FactKind = enum<UsageFactKind> (Convert.ToInt32(reader.GetValue 3, CultureInfo.InvariantCulture))
                             OwnerId = reader.GetGuid 4
                             OrganizationId = reader.GetGuid 5
                             RepositoryId = reader.GetGuid 6
                             StoragePoolId = reader.GetString 7
                             Quantity = reader.GetInt64 8
                             ObservedAt = reader.GetDateTime 9 |> toInstant
-                            State = enum<UsageFactJournalState> (reader.GetInt32 10)
+                            State = enum<UsageFactJournalState> (Convert.ToInt32(reader.GetValue 10, CultureInfo.InvariantCulture))
                         }
         }
 
@@ -435,14 +436,14 @@ ORDER BY CreatedAtUtc ASC, UsageFactId ASC;
                             UsageFactId = reader.GetGuid 0
                             RawPayload = reader.GetFieldValue<byte array> 1
                             CorrelationId = reader.GetString 2
-                            FactKind = enum<UsageFactKind> (reader.GetInt32 3)
+                            FactKind = enum<UsageFactKind> (Convert.ToInt32(reader.GetValue 3, CultureInfo.InvariantCulture))
                             OwnerId = reader.GetGuid 4
                             OrganizationId = reader.GetGuid 5
                             RepositoryId = reader.GetGuid 6
                             StoragePoolId = reader.GetString 7
                             Quantity = reader.GetInt64 8
                             ObservedAt = reader.GetDateTime 9 |> toInstant
-                            State = enum<UsageFactJournalState> (reader.GetInt32 10)
+                            State = enum<UsageFactJournalState> (Convert.ToInt32(reader.GetValue 10, CultureInfo.InvariantCulture))
                         }
                     )
                 else
@@ -478,14 +479,14 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
                             UsageFactId = reader.GetGuid 0
                             RawPayload = reader.GetFieldValue<byte array> 1
                             CorrelationId = reader.GetString 2
-                            FactKind = enum<UsageFactKind> (reader.GetInt32 3)
+                            FactKind = enum<UsageFactKind> (Convert.ToInt32(reader.GetValue 3, CultureInfo.InvariantCulture))
                             OwnerId = reader.GetGuid 4
                             OrganizationId = reader.GetGuid 5
                             RepositoryId = reader.GetGuid 6
                             StoragePoolId = reader.GetString 7
                             Quantity = reader.GetInt64 8
                             ObservedAt = reader.GetDateTime 9 |> toInstant
-                            State = enum<UsageFactJournalState> (reader.GetInt32 10)
+                            State = enum<UsageFactJournalState> (Convert.ToInt32(reader.GetValue 10, CultureInfo.InvariantCulture))
                         }
         }
 
