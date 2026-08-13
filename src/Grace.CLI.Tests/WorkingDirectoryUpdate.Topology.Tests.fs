@@ -348,6 +348,137 @@ module WorkingDirectoryUpdateTopologyTests =
         |> rejected
 
     [<Test>]
+    let ``exact adoption type swaps retain every old absent and final tuple with dual hashes`` () =
+        let oldSha256, oldBlake3 = hashes "old"
+        let finalSha256, finalBlake3 = hashes "new"
+        let oldIdentity = WorkingDirectoryUpdate.Topology.ExpectedEntry.File(oldSha256, oldBlake3)
+        let finalIdentity = WorkingDirectoryUpdate.Topology.ExpectedEntry.File(finalSha256, finalBlake3)
+        let fileToDirectory = status [] [ trackedFile "swap" "old" ]
+
+        let directoryToFile =
+            status [ "swap" ] [
+                trackedFile "swap/old.txt" "old"
+            ]
+
+        let fileToDirectoryTarget = manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "swap") ]
+        let directoryToFileTarget = manifest [ targetFile "swap" "new" ]
+        let mode = WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+        let tuple (path: string) current final role state = RelativePath path, current, final, role, state, mode
+
+        let fileToDirectoryExpected current removalState createCurrent createState =
+            [
+                tuple "swap" current WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent WorkingDirectoryUpdate.Topology.Role.RemoveFile removalState
+                tuple
+                    "swap"
+                    createCurrent
+                    WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory
+                    WorkingDirectoryUpdate.Topology.Role.CreateDirectory
+                    createState
+            ]
+
+        reconcile mode fileToDirectory fileToDirectoryTarget [ file "swap" "old" ]
+        |> planned
+        |> details
+        |> should
+            equal
+            (fileToDirectoryExpected
+                oldIdentity
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply)
+
+        reconcile mode fileToDirectory fileToDirectoryTarget []
+        |> planned
+        |> details
+        |> should
+            equal
+            (fileToDirectoryExpected
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply)
+
+        reconcile mode fileToDirectory fileToDirectoryTarget [ directory "swap" ]
+        |> planned
+        |> details
+        |> should
+            equal
+            (fileToDirectoryExpected
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied)
+
+        let directoryToFileExpected childCurrent childState directoryCurrent directoryState copyCurrent copyState =
+            [
+                tuple
+                    "swap/old.txt"
+                    childCurrent
+                    WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                    WorkingDirectoryUpdate.Topology.Role.RemoveFile
+                    childState
+                tuple
+                    "swap"
+                    directoryCurrent
+                    WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                    WorkingDirectoryUpdate.Topology.Role.RemoveDirectory
+                    directoryState
+                tuple "swap" copyCurrent finalIdentity WorkingDirectoryUpdate.Topology.Role.Copy copyState
+            ]
+
+        reconcile
+            mode
+            directoryToFile
+            directoryToFileTarget
+            [
+                directory "swap"
+                file "swap/old.txt" "old"
+            ]
+        |> planned
+        |> details
+        |> should
+            equal
+            (directoryToFileExpected
+                oldIdentity
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply)
+
+        reconcile mode directoryToFile directoryToFileTarget []
+        |> planned
+        |> details
+        |> should
+            equal
+            (directoryToFileExpected
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply)
+
+        reconcile mode directoryToFile directoryToFileTarget [ file "swap" "new" ]
+        |> planned
+        |> details
+        |> should
+            equal
+            (directoryToFileExpected
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                finalIdentity
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                finalIdentity
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied)
+
+        reconcile mode fileToDirectory fileToDirectoryTarget [ file "swap" "wrong" ]
+        |> rejectedAs "swap" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+        reconcile mode directoryToFile directoryToFileTarget [ file "swap" "wrong" ]
+        |> rejectedAs "swap" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+    [<Test>]
     let ``fresh matrix covers absent create removal same-kind replacement and zero-action assertions`` () =
         let empty = status [] []
 
@@ -516,6 +647,17 @@ module WorkingDirectoryUpdateTopologyTests =
                 WorkingDirectoryUpdate.Topology.Role.RemoveDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
                 WorkingDirectoryUpdate.Topology.Role.RemoveDirectory, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
                 WorkingDirectoryUpdate.Topology.Role.Copy, WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
+
+        details directoryToFile
+        |> List.map (fun (path, _, _, role, _, _) -> path, role)
+        |> should
+            equal
+            [
+                RelativePath "swap/nested/old.txt", WorkingDirectoryUpdate.Topology.Role.RemoveFile
+                RelativePath "swap/nested", WorkingDirectoryUpdate.Topology.Role.RemoveDirectory
+                RelativePath "swap", WorkingDirectoryUpdate.Topology.Role.RemoveDirectory
+                RelativePath "swap", WorkingDirectoryUpdate.Topology.Role.Copy
             ]
 
         let nestedAndEmpty =
@@ -714,6 +856,56 @@ module WorkingDirectoryUpdateTopologyTests =
 
         WorkingDirectoryUpdate.Topology.Requirements.matchesExpected requirements (snapshot [ file "Case.txt" "same" ])
         |> should equal false
+
+    [<Test>]
+    let ``derived selected ancestors retain ordinal spelling and reject every case alias before reconciliation`` () =
+        let accepted = status [] []
+
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            accepted
+            (manifest [ targetFile "Folder/a.txt" "a"
+                        targetFile "folder/b.txt" "b" ])
+            []
+        |> rejectedAs "folder" WorkingDirectoryUpdate.Topology.RejectionClassification.AmbiguousTarget
+
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            accepted
+            (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "Folder")
+                        targetFile "folder/b.txt" "b" ])
+            []
+        |> rejectedAs "folder" WorkingDirectoryUpdate.Topology.RejectionClassification.AmbiguousTarget
+
+    [<Test>]
+    let ``consistent derived ancestor spelling reaches one exact final prefix after each action advances`` () =
+        let selected =
+            manifest [ targetFile "folder/a.txt" "a"
+                       targetFile "folder/b.txt" "b" ]
+
+        let requirements =
+            reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption (status [] []) selected []
+            |> planned
+
+        let fullyAdvanced =
+            requirements
+            |> WorkingDirectoryUpdate.Topology.Requirements.items
+            |> List.filter (fun item ->
+                WorkingDirectoryUpdate.Topology.Requirement.state item = WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                && WorkingDirectoryUpdate.Topology.Requirement.role item
+                   <> WorkingDirectoryUpdate.Topology.Role.Retained)
+            |> List.fold
+                (fun current item ->
+                    WorkingDirectoryUpdate.Topology.Requirements.advance item current
+                    |> required)
+                requirements
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected
+            fullyAdvanced
+            (snapshot [ directory "folder"
+                        file "folder/a.txt" "a"
+                        file "folder/b.txt" "b" ])
+        |> should equal true
 
     [<Test>]
     let ``requirements have deterministic normalized path ordering and retain all assertion fields`` () =

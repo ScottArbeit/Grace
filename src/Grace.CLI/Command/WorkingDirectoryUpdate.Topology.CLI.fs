@@ -311,8 +311,12 @@ module internal WorkingDirectoryUpdate =
 
                 if files.ContainsKey directoryKey then
                     rejection <- Some { Path = path; Classification = AmbiguousTarget }
-                elif not (directories.ContainsKey directoryKey) then
-                    directories[directoryKey] <- path
+                else
+                    match directories.TryGetValue directoryKey with
+                    | true, existing when not (String.Equals(string existing, string path, StringComparison.Ordinal)) ->
+                        rejection <- Some { Path = path; Classification = AmbiguousTarget }
+                    | true, _ -> ()
+                    | false, _ -> directories[directoryKey] <- path
 
             let addParents path =
                 let segments =
@@ -549,12 +553,6 @@ module internal WorkingDirectoryUpdate =
                             creates.Add(requirement path ExpectedEntry.Directory ExpectedEntry.Directory CreateDirectory AlreadySatisfied admissionMode)
                         | Some (ExpectedEntry.File _) when acceptedFile ->
                             creates.Add(requirement path ExpectedEntry.Absent ExpectedEntry.Directory CreateDirectory NeedsApply admissionMode)
-                        | Some ExpectedEntry.Directory when
-                            not acceptedFile
-                            && not acceptedDirectory
-                            && admissionMode = ExactAdoption
-                            ->
-                            rejection <- Some { Path = path; Classification = RejectionClassification.Untracked }
                         | _ -> rejection <- Some { Path = path; Classification = IdentityDrift })
 
                 targetFiles.Values
