@@ -210,3 +210,16 @@ git diff --check
 
 This completed proof does not claim #914 status, #905 enrollment, R2 liveness, serving, rotation, reconciliation,
 non-Linux support, or CacheStore behavior.
+
+## R1B enrollment implementation scope
+
+Issue #905 adds the bounded one-shot enrollment transition after the completed protected identity and local status
+foundations. Its proof boundary is one parsed repository-independent command, one resolved existing bearer, one
+root-local claim, one staged P-256 identity, one selected-server nonredirecting request, strict response comparison,
+and one same-parent ready publication. It does not change server enrollment semantics, durable registration shapes,
+OpenAPI, generated clients, selection, rotation, liveness, listeners, artifacts, retries, or durable pending state.
+
+The required release evidence includes the normal solution-build claim holder, Linux service-account command proof for
+PAT, M2M, and interactive libsecret credentials, zero-request pre-effect failures, strict acceptance failures, cleanup
+ordering, and redacted shared-renderer output. Windows runs may compile and exercise parser/metadata proof but cannot
+replace the Linux root, D-Bus/GNOME keyring, claim-holder, or protected-filesystem evidence.

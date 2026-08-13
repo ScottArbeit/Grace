@@ -467,3 +467,33 @@ type CacheIdentityTests() =
             CacheIdentity.discardAttempt root
             requireInspection CacheIdentityInspection.Missing (CacheIdentity.inspect root)
             Assert.DoesNotThrow(Action(fun () -> CacheIdentity.discardAttempt root)))
+
+    /// Verifies a live root claim blocks a second process-equivalent owner and safely releases for a later enrollment attempt.
+    [<Test>]
+    member _.``enrollment claim serializes staging and releases for retry``() =
+        withLinuxRoot (fun root ->
+            let first =
+                CacheIdentity.tryAcquireEnrollmentClaim root
+                |> requireOk
+
+            try
+                CacheIdentity.tryAcquireEnrollmentClaim root
+                |> requireStateUnavailable
+
+                let publicKey =
+                    CacheIdentity.createClaimedAttempt first root
+                    |> requireOk
+
+                CacheIdentity.validateClaimedAttempt first root publicKey
+                |> requireOk
+
+                CacheIdentity.discardClaimedAttempt first root (Some publicKey)
+                requireInspection CacheIdentityInspection.Missing (CacheIdentity.inspect root)
+            finally
+                CacheIdentity.releaseEnrollmentClaim first
+
+            let retry =
+                CacheIdentity.tryAcquireEnrollmentClaim root
+                |> requireOk
+
+            CacheIdentity.releaseEnrollmentClaim retry)

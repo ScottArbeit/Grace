@@ -17,7 +17,8 @@
 	</PropertyGroup>
 	<ItemGroup>
         <None Include="instructions.md" />
-        <Compile Include="ClientIdentity.SDK.fs" />
+		<Compile Include="ClientIdentity.SDK.fs" />
+		<Compile Include="CacheRegistration.SDK.fs" />
         <Compile Include="Auth.SDK.fs" />
         <Compile Include="Common.SDK.fs" />
         <Compile Include="PersonalAccessToken.SDK.fs" />

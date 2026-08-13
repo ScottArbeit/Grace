@@ -488,6 +488,40 @@ include cross-repository selection, stale or revoked registration, stale grant, 
 route, incomplete local artifact, and CacheRequired attempted Direct fallback. A successful cache hit alone is not
 proof of a safe cache path.
 
+## R1B enrollment operation
+
+The supported Product V1 enrollment profile is Linux x64 under systemd, using one system-managed service account and
+the fixed protected root `/var/lib/grace-cache`. From an administrator shell for that service account, set the selected
+server URI and use one explicit repository assignment for every repository served by the installation:
+
+```powershell
+$env:GRACE_SERVER_URI = "https://grace.example.test/api"
+grace cache enroll --owner-id <owner-guid> --repository <organization-guid>/<repository-guid> --endpoint <https-endpoint>
+```
+
+```bash
+export GRACE_SERVER_URI="https://grace.example.test/api"
+grace cache enroll --owner-id <owner-guid> --repository <organization-guid>/<repository-guid> --endpoint <https-endpoint>
+```
+
+Repeat `--repository` for additional assignments. Add `--organization-id <organization-guid>` to select the
+Organization boundary. The display name defaults to `Grace Cache`. HTTP endpoints require `--allow-http`; HTTPS does
+not. The command derives `Grace.Cache` and protocol `v1`, and it accepts an absolute server URI and endpoint URI that
+include a path.
+
+The command resolves one existing Grace credential before touching cache state: a valid `GRACE_TOKEN` PAT, complete
+M2M configuration, or the existing interactive credential. `GRACE_TOKEN_FILE` is rejected. After credential success,
+one root-local claim recovers only stale staging, creates one P-256 identity, rechecks it immediately before one
+nonredirecting enrollment request, and publishes ready state only after strict server acceptance and flushed private
+files followed by same-parent atomic rename.
+
+Failures, cancellation, redirects, timeouts, and lost responses never claim success, retry, or reconcile automatically.
+The invocation removes only its own staged attempt on a best-effort basis without hiding the primary error. A server may
+retain an inactive enrollment after an unknown outcome; it is not selected, does not block a fresh manual enrollment,
+and expires under the server lifecycle rule. Reset and re-enrollment remain the explicit operator workflow: revoke the
+server registration, remove the protected local identity as the service account, then invoke `grace cache enroll` again.
+Both success and failure output remain redacted; no private key, bearer, filesystem path, or attempt detail is emitted.
+
 ## 13. Requirements traceability ledger
 
 | ID | Requirement | Status | Likely implementation seam | Proof seam | Planning owner | Residual risk |

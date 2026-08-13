@@ -3,18 +3,31 @@ namespace Grace.CLI.Tests
 open Grace.Cache
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.Shared
+open Grace.Types.CacheRegistration
+open Grace.Types.Common
+open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Concurrent
+open System.Collections.Generic
+open System.Diagnostics
 open System.IO
 open System.Net
 open System.Net.Sockets
+open System.Text
 open System.Text.Json
+open System.Threading
+open System.Threading.Tasks
 
 /// Covers serialized root-command behavior for pure local Cache status.
 [<TestFixture>]
 [<NonParallelizable>]
 module CacheCliTests =
+
+    /// Captures one loopback request made by a production credential or enrollment path.
+    type private ReceivedRequest = { Method: string; Path: string; Authorization: string option; Body: string }
 
     /// Sets AnsiConsole output for root-command tests that capture stdout.
     let private setAnsiConsoleOutput writer =
@@ -47,6 +60,264 @@ module CacheCliTests =
             action ()
         finally
             Environment.SetEnvironmentVariable(name, original)
+
+    /// Applies a complete isolated credential environment for one root-command test.
+    let private withEnvironment (values: (string * string option) list) (action: unit -> 'T) =
+        let rec apply remaining =
+            match remaining with
+            | [] -> action ()
+            | (name, value) :: tail -> withEnv name value (fun () -> apply tail)
+
+        apply values
+
+    /// Reads one complete HTTP/1.1 request from the loopback credential responder.
+    let private readRequest (client: TcpClient) =
+        task {
+            let stream = client.GetStream()
+            use reader = new StreamReader(stream, Encoding.UTF8, false, 4096, true)
+            let! requestLine = reader.ReadLineAsync()
+
+            if String.IsNullOrWhiteSpace(requestLine) then
+                return { Method = String.Empty; Path = String.Empty; Authorization = None; Body = String.Empty }
+            else
+                let requestParts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                let headers = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                let mutable headerLine = reader.ReadLine()
+
+                while not (String.IsNullOrEmpty(headerLine)) do
+                    let separator = headerLine.IndexOf(':')
+
+                    if separator > 0 then
+                        headers[headerLine.Substring(0, separator).Trim()] <- headerLine.Substring(separator + 1).Trim()
+
+                    headerLine <- reader.ReadLine()
+
+                let contentLength =
+                    match headers.TryGetValue("Content-Length") with
+                    | true, value ->
+                        match Int32.TryParse(value) with
+                        | true, parsed when parsed > 0 -> parsed
+                        | _ -> 0
+                    | false, _ -> 0
+
+                let readCharacters count =
+                    task {
+                        let characters = Array.zeroCreate<char> count
+                        let mutable offset = 0
+
+                        while offset < count do
+                            let! read = reader.ReadAsync(characters, offset, count - offset)
+
+                            if read = 0 then
+                                failwith "The loopback responder received an incomplete HTTP request body."
+                            else
+                                offset <- offset + read
+
+                        return String(characters)
+                    }
+
+                let readChunkedBody () =
+                    task {
+                        let body = StringBuilder()
+                        let mutable finished = false
+
+                        while not finished do
+                            let! sizeLine = reader.ReadLineAsync()
+
+                            if String.IsNullOrWhiteSpace(sizeLine) then
+                                failwith "The loopback responder received an incomplete chunked HTTP request body."
+
+                            let sizeText = sizeLine.Split(';', 2)[0]
+
+                            match Int32.TryParse(sizeText, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture) with
+                            | true, size when size > 0 ->
+                                let! chunk = readCharacters size
+                                body.Append(chunk) |> ignore
+                                let! terminator = reader.ReadLineAsync()
+
+                                if not (String.IsNullOrEmpty(terminator)) then
+                                    failwith "The loopback responder received an invalid chunk terminator."
+                            | true, 0 ->
+                                let! terminator = reader.ReadLineAsync()
+
+                                if not (String.IsNullOrEmpty(terminator)) then
+                                    failwith "The loopback responder received unsupported HTTP chunk trailers."
+
+                                finished <- true
+                            | _ -> failwith $"The loopback responder received an invalid HTTP chunk size '{sizeText}'."
+
+                        return body.ToString()
+                    }
+
+                let isChunked =
+                    match headers.TryGetValue("Transfer-Encoding") with
+                    | true, value -> value.Contains("chunked", StringComparison.OrdinalIgnoreCase)
+                    | false, _ -> false
+
+                let! body =
+                    if contentLength > 0 then readCharacters contentLength
+                    elif isChunked then readChunkedBody ()
+                    else Task.FromResult(String.Empty)
+
+                let authorization =
+                    match headers.TryGetValue("Authorization") with
+                    | true, value -> Some value
+                    | false, _ -> None
+
+                return
+                    {
+                        Method = if requestParts.Length > 0 then requestParts[0] else String.Empty
+                        Path = if requestParts.Length > 1 then requestParts[1] else String.Empty
+                        Authorization = authorization
+                        Body = body
+                    }
+        }
+
+    /// Writes one compact JSON response from the loopback credential responder.
+    let private writeResponse (client: TcpClient) (statusCode: int) (body: string) =
+        task {
+            use stream = client.GetStream()
+            let bodyBytes = Encoding.UTF8.GetBytes(body)
+            let reasonPhrase = if statusCode = 200 then "OK" else "Not Found"
+
+            let headers =
+                $"HTTP/1.1 {statusCode} {reasonPhrase}\r\nContent-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n"
+                |> Encoding.ASCII.GetBytes
+
+            do! stream.WriteAsync(headers, 0, headers.Length)
+            do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length)
+        }
+
+    /// Constructs a strictly accepted enrollment response from the exact production request sent by the CLI.
+    let private acceptedEnrollmentResponse (request: ReceivedRequest) =
+        let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
+        Assert.That(enrollment, Is.Not.Null, "The enrollment responder received an invalid request body.")
+        let now = SystemClock.Instance.GetCurrentInstant()
+
+        let registration =
+            {
+                Class = nameof CacheRegistration
+                CacheId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+                DisplayName = enrollment.DisplayName
+                BoundaryKind = enrollment.BoundaryKind
+                OwnerId = enrollment.OwnerId
+                OrganizationId = enrollment.OrganizationId
+                RepositoryScopes = enrollment.RepositoryScopes |> Seq.toArray
+                PublicKey = enrollment.PublicKey
+                Endpoint = enrollment.Endpoint
+                AllowHttpEndpoint = enrollment.AllowHttpEndpoint
+                Health = CacheHealthStatus.Unhealthy
+                SoftwareVersion = enrollment.SoftwareVersion
+                ProtocolVersion = enrollment.ProtocolVersion
+                PrefetchSupported = enrollment.PrefetchSupported
+                EnrolledBy = "test-admin"
+                EnrolledAt = now
+                LastRefreshedAt = now
+                RefreshAfter = now.Plus(Duration.FromHours(1))
+                ExpiresAt = now.Plus(Duration.FromHours(2))
+                RevokedAt = None
+            }
+
+        CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Enrolled, Some registration, "enrolled")
+        |> fun result -> GraceReturnValue.Create result "test-correlation"
+        |> fun result -> JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
+
+    /// Hosts local OAuth and enrollment endpoints used to prove real credential producers through root command dispatch.
+    let private withEnrollmentResponder (action: Uri -> ConcurrentQueue<ReceivedRequest> -> unit) =
+        use listener = new TcpListener(IPAddress.Loopback, 0)
+        use cancellation = new CancellationTokenSource()
+        let requests = ConcurrentQueue<ReceivedRequest>()
+        listener.Start()
+        let port = (listener.LocalEndpoint :?> IPEndPoint).Port
+        let authority = Uri($"http://127.0.0.1:{port}")
+
+        let deviceCodeResponse =
+            "{\"device_code\":\"device-code\",\"user_code\":\"ABCD\",\"verification_uri\":\""
+            + authority.AbsoluteUri
+            + "\",\"expires_in\":120,\"interval\":1}"
+
+        let rec serve () =
+            task {
+                if not cancellation.IsCancellationRequested then
+                    try
+                        let! client =
+                            listener
+                                .AcceptTcpClientAsync(cancellation.Token)
+                                .AsTask()
+
+                        use client = client
+                        let! request = readRequest client
+                        requests.Enqueue(request)
+
+                        let response =
+                            match request.Path with
+                            | "/oauth/device/code" -> 200, deviceCodeResponse
+                            | "/oauth/token" when request.Body.Contains("urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code") ->
+                                200,
+                                "{\"access_token\":\"interactive-access-token\",\"refresh_token\":\"interactive-refresh-token\",\"expires_in\":3600,\"scope\":\"openid offline_access\",\"token_type\":\"Bearer\"}"
+                            | "/oauth/token" -> 200, "{\"access_token\":\"m2m-access-token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}"
+                            | "/cache/enroll" -> 200, acceptedEnrollmentResponse request
+                            | _ -> 404, "{\"error\":\"not_found\"}"
+
+                        do! writeResponse client (fst response) (snd response)
+                        return! serve ()
+                    with
+                    | :? OperationCanceledException -> return ()
+                    | :? ObjectDisposedException -> return ()
+            }
+
+        let serverTask = Task.Run(Func<Task>(fun () -> serve ()))
+
+        try
+            action authority requests
+        finally
+            cancellation.Cancel()
+            listener.Stop()
+
+            if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
+                Assert.Fail("Timed out waiting for the local OAuth/enrollment responder to stop.")
+
+    /// Supplies the closed Product V1 enrollment grammar with one Linux HTTP test endpoint.
+    let private enrollmentArguments =
+        [|
+            "--output"
+            "Json"
+            "cache"
+            "enroll"
+            "--owner-id"
+            "22222222-2222-2222-2222-222222222222"
+            "--organization-id"
+            "33333333-3333-3333-3333-333333333333"
+            "--repository"
+            "33333333-3333-3333-3333-333333333333/44444444-4444-4444-4444-444444444444"
+            "--endpoint"
+            "http://cache.example.test"
+            "--allow-http"
+        |]
+
+    /// Checks the shared redacted ready-status result and the one exact authenticated enrollment effect.
+    let private assertSuccessfulEnrollment (expectedBearer: string) (root: string) (requests: ConcurrentQueue<ReceivedRequest>) =
+        let enrollmentRequests =
+            requests.ToArray()
+            |> Array.filter (fun request -> request.Path = "/cache/enroll")
+
+        Assert.That(enrollmentRequests.Length, Is.EqualTo(1), "The supported producer must make exactly one enrollment POST.")
+        let request = enrollmentRequests[0]
+        Assert.That(request.Method, Is.EqualTo("POST"))
+        Assert.That(request.Authorization, Is.EqualTo(Some(String.Concat("Bearer ", expectedBearer))))
+
+        match CacheIdentity.status root with
+        | status when
+            status.Enrollment = "enrolled"
+            && status.Key = "available"
+            ->
+            ()
+        | status -> Assert.Fail($"Enrollment did not publish ready protected state: {status.Enrollment}/{status.Key}.")
+
+    /// Verifies a credential producer made the expected ordered local OAuth and enrollment requests.
+    let private assertRequestPaths (expected: string array) (actual: string array) =
+        Assert.That(actual.Length, Is.EqualTo(expected.Length))
+        Assert.That(Array.forall2 (=) expected actual, Is.True)
 
     /// Captures a file's existence and immutable-on-read metadata without reading its contents.
     let private snapshotFile (path: string) =
@@ -602,3 +873,183 @@ module CacheCliTests =
                     .GetArrayLength(),
                 Is.GreaterThanOrEqualTo(3)
             ))
+
+    /// Verifies the normal-build holder directly owns the production root claim until its exact process is terminated and joined.
+    [<Test>]
+    let ``Linux claim holder blocks then releases the production enrollment claim`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Claim-holder process proof requires Linux protected-root semantics.")
+
+        withRoot (fun root _ ->
+            let holder =
+                Path.GetFullPath(
+                    Path.Combine(
+                        AppContext.BaseDirectory,
+                        "..",
+                        "..",
+                        "..",
+                        "..",
+                        "Grace.CLI.CacheEnrollment.ClaimHolder",
+                        "bin",
+                        "Release",
+                        "net10.0",
+                        "Grace.CLI.CacheEnrollment.ClaimHolder.dll"
+                    )
+                )
+
+            Assert.That(File.Exists(holder), Is.True, "The normal solution build did not produce the enrollment claim holder.")
+            let signalPath = Path.Combine(Path.GetTempPath(), $"grace-cache-claim-holder-{Guid.NewGuid():N}")
+            use holderProcess = new Process()
+            holderProcess.StartInfo.FileName <- "dotnet"
+            holderProcess.StartInfo.UseShellExecute <- false
+            holderProcess.StartInfo.CreateNoWindow <- true
+            holderProcess.StartInfo.ArgumentList.Add(holder)
+            holderProcess.StartInfo.ArgumentList.Add(root)
+            holderProcess.StartInfo.ArgumentList.Add(signalPath)
+
+            try
+                Assert.That(holderProcess.Start(), Is.True)
+                let deadline = DateTime.UtcNow.AddSeconds(10.0)
+
+                while not (File.Exists(signalPath))
+                      && DateTime.UtcNow < deadline do
+                    Thread.Sleep(50)
+
+                Assert.That(File.Exists(signalPath), Is.True, "The holder did not report its acquired production claim.")
+
+                match CacheIdentity.tryAcquireEnrollmentClaim root with
+                | Error CacheIdentityError.StateUnavailable -> ()
+                | Error error -> Assert.Fail($"Expected a conflicting claim to fail safely, received {error}.")
+                | Ok claim ->
+                    CacheIdentity.releaseEnrollmentClaim claim
+                    Assert.Fail("A second holder acquired the production claim while the direct holder was alive.")
+
+                holderProcess.Kill()
+                Assert.That(holderProcess.WaitForExit(10000), Is.True, "The exact direct claim holder did not exit after termination.")
+
+                let retry =
+                    CacheIdentity.tryAcquireEnrollmentClaim root
+                    |> requireOk
+
+                CacheIdentity.releaseEnrollmentClaim retry
+            finally
+                if not holderProcess.HasExited then
+                    holderProcess.Kill()
+                    holderProcess.WaitForExit(10000) |> ignore
+
+                if File.Exists(signalPath) then File.Delete(signalPath))
+
+    /// Verifies GRACE_TOKEN resolves before root effects and completes one authenticated enrollment POST.
+    [<Test>]
+    let ``Linux cache enroll dispatches a PAT through the selected server once`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let pat = Grace.Types.PersonalAccessToken.formatToken "cache-test-user" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withRoot (fun root _ ->
+            withEnrollmentResponder (fun serverUri requests ->
+                withEnvironment
+                    [
+                        Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                        Constants.EnvironmentVariables.GraceToken, Some pat
+                        Constants.EnvironmentVariables.GraceTokenFile, None
+                        Constants.EnvironmentVariables.GraceAuthOidcAuthority, None
+                        Constants.EnvironmentVariables.GraceAuthOidcAudience, None
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+                    ]
+                    (fun () ->
+                        let exitCode, output = run enrollmentArguments
+                        Assert.That(exitCode, Is.EqualTo(0), output)
+                        assertSuccessfulEnrollment pat root requests)))
+
+    /// Verifies the existing M2M client-credential producer resolves once before root effects and completes enrollment.
+    [<Test>]
+    let ``Linux cache enroll dispatches M2M through the selected server once`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            withEnrollmentResponder (fun serverUri requests ->
+                withEnvironment
+                    [
+                        Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                        Constants.EnvironmentVariables.GraceToken, None
+                        Constants.EnvironmentVariables.GraceTokenFile, None
+                        Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                        Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, Some "cache-m2m-client"
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, Some "cache-m2m-secret"
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, Some "cache.enroll"
+                        Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+                    ]
+                    (fun () ->
+                        let exitCode, output = run enrollmentArguments
+                        Assert.That(exitCode, Is.EqualTo(0), output)
+                        assertSuccessfulEnrollment "m2m-access-token" root requests
+
+                        let requestPaths =
+                            requests.ToArray()
+                            |> Array.map (fun request -> request.Path)
+
+                        assertRequestPaths [| "/oauth/token"; "/cache/enroll" |] requestPaths)))
+
+    /// Verifies a real Linux libsecret-backed interactive token is written, loaded, and dispatched through cache enrollment.
+    [<Test>]
+    let ``Linux cache enroll dispatches the real GNOME keyring interactive credential once`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        if
+            Environment.GetEnvironmentVariable("GRACE_TEST_LINUX_KEYRING")
+            <> "1"
+        then
+            Assert.Ignore("This proof requires the D-Bus and GNOME keyring session configured by validate.yml.")
+
+        withRoot (fun root _ ->
+            withEnrollmentResponder (fun serverUri requests ->
+                withEnvironment
+                    [
+                        Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                        Constants.EnvironmentVariables.GraceToken, None
+                        Constants.EnvironmentVariables.GraceTokenFile, None
+                        Constants.EnvironmentVariables.GraceAuthOidcAuthority, Some serverUri.AbsoluteUri
+                        Constants.EnvironmentVariables.GraceAuthOidcAudience, Some "https://grace.test/api"
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                        Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliClientId, Some "cache-interactive-client"
+                        Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                        Constants.EnvironmentVariables.GraceAuthOidcCliScopes, Some "openid offline_access"
+                    ]
+                    (fun () ->
+                        let loginExit, loginOutput =
+                            run [| "authenticate"
+                                   "login"
+                                   "--auth"
+                                   "device" |]
+
+                        Assert.That(loginExit, Is.EqualTo(0), loginOutput)
+
+                        let exitCode, output = run enrollmentArguments
+                        Assert.That(exitCode, Is.EqualTo(0), output)
+                        assertSuccessfulEnrollment "interactive-access-token" root requests
+
+                        let requestPaths =
+                            requests.ToArray()
+                            |> Array.map (fun request -> request.Path)
+
+                        assertRequestPaths
+                            [|
+                                "/oauth/device/code"
+                                "/oauth/token"
+                                "/cache/enroll"
+                            |]
+                            requestPaths)))

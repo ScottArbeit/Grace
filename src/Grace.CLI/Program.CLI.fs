@@ -1019,8 +1019,8 @@ module GraceCommand =
         else
             false
 
-    /// Checks whether the parsed command is the pure local Cache status leaf.
-    let isGraceCacheStatus (parseResult: ParseResult) =
+    /// Checks whether the parsed command belongs to the repository-independent Cache command group.
+    let isGraceCache (parseResult: ParseResult) =
         if isNull parseResult then
             false
         else
@@ -1030,7 +1030,6 @@ module GraceCommand =
                 |> Set.ofSeq
 
             Set.contains "cache" commands
-            && Set.contains "status" commands
 
     /// Models feedback section values passed between the parser and program handlers.
     type FeedbackSection(action: HelpAction) =
@@ -1178,11 +1177,10 @@ module GraceCommand =
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
 
-                    if not (parseResult |> isGraceCacheStatus) then
-                        Auth.configureSdkAuth ()
-                        Services.configureSdkClientIdentity ()
-                        Services.resetInvocationCorrelationId ()
-                        Common.resetLifecycleWarningSuppression ()
+                    Auth.configureSdkAuth ()
+                    Services.configureSdkClientIdentity ()
+                    Services.resetInvocationCorrelationId ()
+                    Common.resetLifecycleWarningSuppression ()
 
                     match introspectionRequestFromTokens argvToParse with
                     | Some (Ok kind) ->
@@ -1220,7 +1218,7 @@ module GraceCommand =
 
                         if
                             not (parseResult |> isGraceDoctor)
-                            && not (parseResult |> isGraceCacheStatus)
+                            && not (parseResult |> isGraceCache)
                         then
                             LocalStateDb.setVerbose (parseResult |> verbose)
 
@@ -1392,7 +1390,7 @@ module GraceCommand =
 
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
-                    else if parseResult |> isGraceCacheStatus then
+                    else if parseResult |> isGraceCache then
                         let! invokedReturnValue = parseResult.InvokeAsync()
                         returnValue <- invokedReturnValue
                     else if parseResult |> isGraceDoctor then
@@ -1548,7 +1546,7 @@ module GraceCommand =
                 if
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
-                    && not (parseResult |> isGraceCacheStatus)
+                    && not (parseResult |> isGraceCache)
                 then
                     HistoryStorage.tryRecordInvocation
                         {
