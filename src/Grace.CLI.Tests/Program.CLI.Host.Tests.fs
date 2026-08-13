@@ -1,6 +1,7 @@
 namespace Grace.CLI.Tests
 
 open Grace.CLI
+open Grace.Types.Common
 open NUnit.Framework
 open Spectre.Console
 open System
