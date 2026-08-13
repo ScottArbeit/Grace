@@ -66,7 +66,7 @@ module internal WorkingDirectoryUpdateContracts =
         abstract member OpenReadAsync: RelativePath * CancellationToken -> Task<Stream>
 
     /// Represents immutable dual-hash-verified bytes for a future update engine.
-    type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref
+    type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref * disposalCount: int ref
 
     /// Seals the no-Save Branch admission facts that must survive immutable target preparation unchanged.
     type AcceptedBranchPhase = private AcceptedBranchPhase of localStatusRevision: int64 * statusFingerprint: string * actionToken: CancellationToken
@@ -532,13 +532,13 @@ module internal WorkingDirectoryUpdateContracts =
 
                             match byteError with
                             | Some error -> return Error error
-                            | None -> return Ok(PreparedContent(manifest, bytesByPath, ref false))
+                            | None -> return Ok(PreparedContent(manifest, bytesByPath, ref false, ref 0))
                     finally
                         reader.Dispose()
             }
 
         /// Opens a read-only stream over verified bytes for one declared file.
-        let openRead (PreparedContent (_, bytesByPath, disposed)) path =
+        let openRead (PreparedContent (_, bytesByPath, disposed, _)) path =
             match normalizeRelativePath path with
             | Error error -> Error error
             | Ok path when disposed.Value -> Error "Prepared-content has already been disposed."
@@ -548,16 +548,20 @@ module internal WorkingDirectoryUpdateContracts =
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
         /// Returns the immutable manifest that is the sole topology input to the collision-safe planner.
-        let manifest (PreparedContent (manifest, _, _)) = manifest
+        let manifest (PreparedContent (manifest, _, _, _)) = manifest
+
+        /// Returns the exact number of effective byte-buffer disposals for direct lifecycle proofs.
+        let internal disposalCount (PreparedContent (_, _, _, disposalCount)) = disposalCount.Value
 
         /// Clears verified bytes when the owning update operation reaches a terminal path.
-        let dispose (PreparedContent (_, bytesByPath, disposed)) =
+        let dispose (PreparedContent (_, bytesByPath, disposed, disposalCount)) =
             if not disposed.Value then
                 bytesByPath.Values
                 |> Seq.iter (fun bytes -> Array.Clear(bytes, 0, bytes.Length))
 
                 bytesByPath.Clear()
                 disposed.Value <- true
+                disposalCount.Value <- disposalCount.Value + 1
 
     /// Supplies the sole construction and internal consumption path for accepted Branch admission facts.
     module AcceptedBranchPhase =

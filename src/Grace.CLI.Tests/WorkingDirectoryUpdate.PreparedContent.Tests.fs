@@ -360,10 +360,6 @@ module WorkingDirectoryUpdatePreparedContentTests =
             |> required
 
         WorkingDirectoryUpdate.Operation.value first
-        |> should
-            not'
-            (equal (
-                WorkingDirectoryUpdate.Operation.value second
-            ))
+        |> should not' (equal (WorkingDirectoryUpdate.Operation.value second))
 
         WorkingDirectoryUpdate.PreparedContent.dispose preparedContent

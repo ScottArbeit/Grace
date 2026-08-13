@@ -582,6 +582,8 @@ module internal WorkingDirectoryUpdate =
         let mutable private afterLeaseAcquired: (unit -> unit) option = None
         let mutable private afterObjectPublication: (unit -> unit) option = None
         let mutable private beforeFinalPlanning: (unit -> unit) option = None
+        let mutable private beforeFinalGlobalFactGate: (unit -> unit) option = None
+        let mutable private afterFinalGlobalFactGate: (unit -> unit) option = None
         let mutable private beforeFirstMutation: (unit -> unit) option = None
         let mutable private afterFirstMutationBegan: (unit -> unit) option = None
         let mutable private afterPlannedActions: (unit -> unit) option = None
@@ -592,6 +594,8 @@ module internal WorkingDirectoryUpdate =
             afterLeaseAcquired <- None
             afterObjectPublication <- None
             beforeFinalPlanning <- None
+            beforeFinalGlobalFactGate <- None
+            afterFinalGlobalFactGate <- None
             beforeFirstMutation <- None
             afterFirstMutationBegan <- None
             afterPlannedActions <- None
@@ -607,6 +611,12 @@ module internal WorkingDirectoryUpdate =
 
         /// Installs one action immediately before final planning begins.
         let installBeforeFinalPlanning action = beforeFinalPlanning <- Some action
+
+        /// Installs one action after final planning and immediately before the final global-fact reread.
+        let installBeforeFinalGlobalFactGate action = beforeFinalGlobalFactGate <- Some action
+
+        /// Installs one action after the final global-fact gate and before an action-time precondition is reread.
+        let installAfterFinalGlobalFactGate action = afterFinalGlobalFactGate <- Some action
 
         /// Installs one action between the final cancellation check and the first possible working-tree mutation.
         let installBeforeFirstMutation action = beforeFirstMutation <- Some action
@@ -645,6 +655,18 @@ module internal WorkingDirectoryUpdate =
         let beforeFinalPlanningNow () =
             let hook = beforeFinalPlanning
             beforeFinalPlanning <- None
+            invoke hook
+
+        /// Executes the pre-final-global-fact test action once.
+        let beforeFinalGlobalFactGateNow () =
+            let hook = beforeFinalGlobalFactGate
+            beforeFinalGlobalFactGate <- None
+            invoke hook
+
+        /// Executes the post-final-global-fact test action once.
+        let afterFinalGlobalFactGateNow () =
+            let hook = afterFinalGlobalFactGate
+            afterFinalGlobalFactGate <- None
             invoke hook
 
         /// Executes the pre-first-mutation test action once.
@@ -941,7 +963,93 @@ module internal WorkingDirectoryUpdate =
                 else
                     invalidOp $"Working Directory Update plan path escapes the local root: {path}"
 
-        /// Applies one preplanned action using only already-verified immutable objects.
+        /// Finds the exact tracked file identity for a planned removal from the last complete local status reread.
+        let private trackedFile (status: GraceStatus) path =
+            status.Index.Values
+            |> Seq.collect (fun directory -> directory.Files)
+            |> Seq.tryFind (fun file -> pathKey file.RelativePath = pathKey path)
+
+        /// Finds whether the last complete local status reread contains a tracked directory at the planned path.
+        let private hasTrackedDirectory (status: GraceStatus) path =
+            status.Index.Values
+            |> Seq.exists (fun directory -> pathKey directory.RelativePath = pathKey path)
+
+        /// Rereads the exact action-time filesystem fact that made one immutable plan action safe.
+        let private verifyActionPrecondition root (currentStatus: GraceStatus) action =
+            let fullPath path = workingPath root path
+
+            match action with
+            | Topology.RemoveTrackedFile path ->
+                match trackedFile currentStatus path with
+                | Some expected when
+                    File.Exists(fullPath path)
+                    && hasExpectedBytes (fullPath path) expected.Sha256Hash expected.Blake3Hash
+                    ->
+                    Ok()
+                | _ -> Error $"Tracked file '{path}' changed before its planned removal."
+            | Topology.RemoveTrackedDirectory path ->
+                let candidate = fullPath path
+
+                if
+                    Directory.Exists(candidate)
+                    && not (
+                        Directory
+                            .EnumerateFileSystemEntries(candidate)
+                            .GetEnumerator()
+                            .MoveNext()
+                    )
+                then
+                    Ok()
+                else
+                    Error $"Tracked directory '{path}' changed before its planned removal."
+            | Topology.EnsureDirectory path ->
+                let candidate = fullPath path
+
+                if hasTrackedDirectory currentStatus path then
+                    if Directory.Exists(candidate) then
+                        Ok()
+                    else
+                        Error $"Tracked directory '{path}' changed before it could be retained."
+                elif
+                    not
+                        (
+                            File.Exists(candidate)
+                            || Directory.Exists(candidate)
+                        )
+                then
+                    Ok()
+                else
+                    Error $"New directory '{path}' appeared or changed kind before it could be created."
+            | Topology.CopyVerifiedFile path ->
+                let candidate = fullPath path
+
+                if
+                    not
+                        (
+                            File.Exists(candidate)
+                            || Directory.Exists(candidate)
+                        )
+                then
+                    Ok()
+                else
+                    Error $"New file '{path}' appeared or changed kind before immutable bytes could be copied."
+
+        /// Rereads the source object before the mutation boundary so a corrupt or replaced object remains pre-mutation.
+        let private verifyActionObject objectDirectory (objectHashes: Dictionary<string, Sha256Hash * Blake3Hash>) =
+            function
+            | Topology.CopyVerifiedFile path ->
+                match objectHashes.TryGetValue(pathKey path) with
+                | true, (sha256Hash, blake3Hash) when hasExpectedBytes (objectPath objectDirectory path sha256Hash blake3Hash) sha256Hash blake3Hash -> Ok()
+                | _ -> Error $"Immutable object bytes are corrupt or were replaced for '{path}'."
+            | _ -> Ok()
+
+        /// Identifies whether a conditionally validated action will issue a filesystem call that can partially succeed.
+        let private actionCanMutate (currentStatus: GraceStatus) =
+            function
+            | Topology.EnsureDirectory path when hasTrackedDirectory currentStatus path -> false
+            | _ -> true
+
+        /// Applies one action only after its filesystem and immutable-object facts were reread at the mutation boundary.
         let private applyAction root objectDirectory (objectHashes: Dictionary<string, Sha256Hash * Blake3Hash>) =
             function
             | Topology.RemoveTrackedFile path ->
@@ -979,13 +1087,10 @@ module internal WorkingDirectoryUpdate =
                 | true, (sha256Hash, blake3Hash) ->
                     let objectFile = objectPath objectDirectory path sha256Hash blake3Hash
 
-                    if not (hasExpectedBytes objectFile sha256Hash blake3Hash) then
-                        invalidOp $"Immutable object bytes are corrupt or were replaced for '{path}'."
-
                     let finalPath = workingPath root path
                     let directory = Path.GetDirectoryName(finalPath)
                     Directory.CreateDirectory(directory) |> ignore
-                    File.Copy(objectFile, finalPath, true)
+                    File.Copy(objectFile, finalPath, false)
                     LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
 
@@ -1128,12 +1233,57 @@ module internal WorkingDirectoryUpdate =
             WorkingDirectoryUpdateContracts.Failure.create reason
             |> Result.map WorkingDirectoryUpdateContracts.Outcome.Rejected
             |> Result.defaultWith invalidOp
+            |> Error
 
         /// Produces a classified incomplete outcome after actual working-tree mutation begins.
         let private incomplete reason =
             WorkingDirectoryUpdateContracts.Failure.create reason
             |> Result.map WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete
             |> Result.defaultWith invalidOp
+            |> Error
+
+        /// Rereads every global admission fact after final planning and immediately before the first working-tree action.
+        let private verifyFinalGlobalFacts dbPath sealedConfiguration acceptedPhase targetStatus manifest scope target operation attempt =
+            task {
+                match CanonicalConfiguration.loadFresh () with
+                | Error error -> return Error error
+                | Ok currentConfiguration when not (CanonicalConfiguration.matches sealedConfiguration currentConfiguration) ->
+                    return Error "Local configuration changed after final planning."
+                | Ok currentConfiguration ->
+                    let! revision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                    let! statusResult =
+                        LocalStateDb.readCompleteStatusSnapshotReadOnly
+                            dbPath
+                            currentConfiguration.OwnerId
+                            currentConfiguration.OrganizationId
+                            currentConfiguration.RepositoryId
+
+                    let currentStatus =
+                        match statusResult with
+                        | Ok status -> status
+                        | Error error -> invalidOp error
+
+                    let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
+                    let! marker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                    let! markerAttempt = WorkingDirectoryUpdateCoordination.Marker.inspectExactAttempt scope target operation attempt
+
+                    if
+                        revision
+                        <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
+                        || statusFingerprint currentStatus
+                           <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase
+                        || Option.isSome pending
+                        || marker
+                           <> WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                        || not markerAttempt
+                        || not (graphMatchesManifest targetStatus manifest)
+                    then
+                        return Error "Working Directory Update facts changed after final planning."
+                    else
+                        return Ok currentConfiguration
+            }
 
         /// Applies the only Branch five-input local transaction through verified pending SQLite completion.
         let private runCore
@@ -1357,49 +1507,105 @@ module internal WorkingDirectoryUpdate =
                                                                             objectHashes[pathKey path] <- (sha256Hash, blake3Hash)
                                                                         | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory _ -> ())
 
-                                                                    actions
-                                                                    |> Array.iter (fun action ->
-                                                                        if not mutationStarted then
-                                                                            actionToken.ThrowIfCancellationRequested()
-                                                                            LocalTransactionTesting.beforeFirstMutationNow ()
-                                                                            actionToken.ThrowIfCancellationRequested()
-                                                                            mutationStarted <- true
+                                                                    LocalTransactionTesting.beforeFinalGlobalFactGateNow ()
 
-                                                                        applyAction
-                                                                            finalConfiguration.RootDirectory
-                                                                            finalConfiguration.ObjectDirectory
-                                                                            objectHashes
-                                                                            action
-                                                                        |> ignore)
+                                                                    let! globalFacts =
+                                                                        verifyFinalGlobalFacts
+                                                                            dbPath
+                                                                            sealedConfiguration
+                                                                            acceptedPhase
+                                                                            targetStatus
+                                                                            manifest
+                                                                            scope
+                                                                            target
+                                                                            operation
+                                                                            attempt
 
-                                                                    LocalTransactionTesting.afterPlannedActionsNow ()
+                                                                    match globalFacts with
+                                                                    | Error error ->
+                                                                        let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
 
-                                                                    if
-                                                                        not
-                                                                            (
-                                                                                verifyCompleteTargetRoot
-                                                                                    finalConfiguration.RootDirectory
-                                                                                    finalConfiguration.GraceDirectory
-                                                                                    targetStatus
-                                                                            )
-                                                                    then
                                                                         return
-                                                                            incomplete
-                                                                                $"[{correlationValue}] Complete target-root verification failed after working-tree mutation."
-                                                                    else
-                                                                        let! _ =
-                                                                            LocalStateDb.commitWorkingDirectoryUpdateCompletion
-                                                                                dbPath
-                                                                                targetStatus
-                                                                                (targetStatus.Index.Values :> IEnumerable<LocalDirectoryVersion>)
-                                                                                completionDetails
-                                                                                target
-                                                                                operation
+                                                                            match cleanup with
+                                                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                                rejected $"[{correlationValue}] {error}"
+                                                                            | _ -> rejected $"[{correlationValue}] {error}; exact marker cleanup failed."
+                                                                    | Ok executionConfiguration ->
+                                                                        LocalTransactionTesting.afterFinalGlobalFactGateNow ()
 
-                                                                        match WorkingDirectoryUpdateContracts.Receipt.create target operation mutationStarted
-                                                                            with
-                                                                        | Ok receipt -> return WorkingDirectoryUpdateContracts.Outcome.Updated receipt
-                                                                        | Error error -> return incomplete $"[{correlationValue}] {error}"
+                                                                        let mutable actionFailure = None
+                                                                        let mutable index = 0
+
+                                                                        while index < actions.Length
+                                                                              && Option.isNone actionFailure do
+                                                                            let action = actions[index]
+
+                                                                            match verifyActionPrecondition
+                                                                                      executionConfiguration.RootDirectory
+                                                                                      finalStatus
+                                                                                      action,
+                                                                                  verifyActionObject executionConfiguration.ObjectDirectory objectHashes action
+                                                                                with
+                                                                            | Ok (), Ok () ->
+                                                                                let actionMutates = actionCanMutate finalStatus action
+
+                                                                                if not mutationStarted && actionMutates then
+                                                                                    actionToken.ThrowIfCancellationRequested()
+                                                                                    LocalTransactionTesting.beforeFirstMutationNow ()
+                                                                                    actionToken.ThrowIfCancellationRequested()
+
+                                                                                if actionMutates then mutationStarted <- true
+
+                                                                                applyAction
+                                                                                    executionConfiguration.RootDirectory
+                                                                                    executionConfiguration.ObjectDirectory
+                                                                                    objectHashes
+                                                                                    action
+                                                                                |> ignore
+                                                                            | Error error, _
+                                                                            | _, Error error -> actionFailure <- Some error
+
+                                                                            index <- index + 1
+
+                                                                        match actionFailure with
+                                                                        | Some error when mutationStarted -> return incomplete $"[{correlationValue}] {error}"
+                                                                        | Some error ->
+                                                                            let! cleanup =
+                                                                                WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+                                                                            return
+                                                                                match cleanup with
+                                                                                | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                                                | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                                    rejected $"[{correlationValue}] {error}"
+                                                                                | _ -> rejected $"[{correlationValue}] {error}; exact marker cleanup failed."
+                                                                        | None ->
+                                                                            LocalTransactionTesting.afterPlannedActionsNow ()
+
+                                                                            if
+                                                                                not
+                                                                                    (
+                                                                                        verifyCompleteTargetRoot
+                                                                                            executionConfiguration.RootDirectory
+                                                                                            executionConfiguration.GraceDirectory
+                                                                                            targetStatus
+                                                                                    )
+                                                                            then
+                                                                                return
+                                                                                    incomplete
+                                                                                        $"[{correlationValue}] Complete target-root verification failed after working-tree mutation."
+                                                                            else
+                                                                                let! _ =
+                                                                                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                                                                                        dbPath
+                                                                                        targetStatus
+                                                                                        (targetStatus.Index.Values :> IEnumerable<LocalDirectoryVersion>)
+                                                                                        completionDetails
+                                                                                        target
+                                                                                        operation
+
+                                                                                return Ok(LocalCompletion(target, operation))
                 with
                 | :? OperationCanceledException when mutationStarted ->
                     return incomplete $"[{correlationValue}] Cancellation arrived after the first working-tree mutation."
@@ -1432,7 +1638,8 @@ module internal WorkingDirectoryUpdate =
         /// Disposes immutable prepared bytes exactly once after every five-input transaction path completes.
         let run acceptedPhase selection resolvedGraph preparedContent correlation =
             task {
-                let! outcome = runCore acceptedPhase selection resolvedGraph preparedContent correlation
-                WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
-                return outcome
+                try
+                    return! runCore acceptedPhase selection resolvedGraph preparedContent correlation
+                finally
+                    WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
             }

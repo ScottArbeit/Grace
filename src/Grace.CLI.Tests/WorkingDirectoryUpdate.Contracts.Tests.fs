@@ -344,6 +344,7 @@ module WorkingDirectoryUpdateContractsTests =
     [<Test>]
     let ``Branch and Connect bind requests and receipts to their complete selected target`` () =
         let selectedTarget = selectedTarget ()
+
         let branchOperation =
             WorkingDirectoryUpdate.Operation.branchSwitch
                 (Guid.Parse("2c461ab1-72a0-42c3-9c2e-ea9c0c3b83de"))

@@ -277,6 +277,15 @@ module WorkingDirectoryUpdateLocalTransactionTests =
 
         acquired |> should not' (be Null)
 
+    /// Proves the five-input owner clears one prepared-content buffer exactly once after every terminal local result.
+    let private assertPreparedDisposed prepared path =
+        WorkingDirectoryUpdateContracts.PreparedContent.disposalCount prepared
+        |> should equal 1
+
+        WorkingDirectoryUpdateContracts.PreparedContent.openRead prepared path
+        |> Result.isError
+        |> should equal true
+
     /// Builds the resolved target tuple required by the production five-input transaction for one complete status graph.
     let private targetGraphForStatus repositoryId branchId status =
         let target =
@@ -347,8 +356,16 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
-            | _ -> Assert.Fail($"Expected verified pending completion, got {outcome}.")
+            | Ok completion ->
+                WorkingDirectoryUpdate.LocalCompletion.target completion
+                |> should equal target
+
+                WorkingDirectoryUpdate.LocalCompletion.operation completion
+                |> should
+                    equal
+                    (WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection currentBranchId selection target
+                     |> required)
+            | Error result -> Assert.Fail($"Expected verified pending completion, got {result}.")
 
             File.ReadAllText(Path.Combine(root, "nested", "target.txt"))
             |> should equal "selected target bytes"
@@ -360,7 +377,9 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 persistedTarget |> should equal target
                 previousBranchId |> should equal currentBranchId
                 persistedSelection |> should equal selection
-            | _ -> Assert.Fail("Expected one typed pending Branch finalization after verified local completion."))
+            | _ -> Assert.Fail("Expected one typed pending Branch finalization after verified local completion.")
+
+            assertPreparedDisposed prepared (RelativePath "nested/target.txt"))
 
     /// Proves a stale accepted revision rejects before object or working-tree mutation and disposes immutable prepared bytes.
     [<Test>]
@@ -396,7 +415,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
             | _ -> Assert.Fail($"Expected stale phase rejection, got {outcome}.")
 
             File.Exists(Path.Combine(root, "selected.txt"))
@@ -416,8 +435,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal None
 
-            WorkingDirectoryUpdateContracts.PreparedContent.openRead prepared (RelativePath "selected.txt")
-            |> ignore)
+            assertPreparedDisposed prepared (RelativePath "selected.txt"))
 
     /// Proves graph/manifest topology disagreement rejects before #898 planning, objects, or working bytes change.
     [<Test>]
@@ -448,7 +466,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
             | _ -> Assert.Fail($"Expected graph/manifest mismatch rejection, got {outcome}.")
 
             File.Exists(Path.Combine(root, "selected.txt"))
@@ -510,13 +528,14 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             let outcome = running.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
             | _ -> Assert.Fail($"Expected fresh configuration rejection, got {outcome}.")
 
             File.Exists(Path.Combine(root, "selected.txt"))
             |> should equal false
 
             assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "selected.txt")
             assertLeaseReacquirable repositoryId root)
 
     /// Proves final pre-mutation validation rereads disk configuration after object publication instead of trusting a cached object.
@@ -552,13 +571,14 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
             | _ -> Assert.Fail($"Expected final fresh configuration rejection, got {outcome}.")
 
             File.Exists(Path.Combine(root, "selected.txt"))
             |> should equal false
 
             assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "selected.txt")
             assertLeaseReacquirable repositoryId root)
 
     /// Proves independent final-root verification requires nested empty directories and leaves no completion after their loss.
@@ -598,7 +618,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _) -> ()
             | _ -> Assert.Fail($"Expected incomplete topology verification, got {outcome}.")
 
             Directory.Exists(Path.Combine(root, "nested", "empty"))
@@ -608,6 +628,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             |> should equal true
 
             assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "nested/target.txt")
             assertLeaseReacquirable repositoryId root)
 
     /// Proves an injected failure immediately before the first mutable filesystem call remains a clean pre-mutation rejection.
@@ -628,24 +649,27 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
             WorkingDirectoryUpdate.LocalTransactionTesting.installBeforeFirstMutation (fun () -> raise (IOException("before first mutation")))
 
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
             let outcome =
                 WorkingDirectoryUpdate.LocalTransaction.run
                     (acceptedPhase current CancellationToken.None)
                     selection
                     graph
-                    (preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes")))
+                    prepared
                     (WorkingDirectoryUpdate.DiagnosticCorrelation.create "before-first-mutation"
                      |> required)
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
             | _ -> Assert.Fail($"Expected pre-mutation rejection, got {outcome}.")
 
             File.Exists(Path.Combine(root, "nested", "target.txt"))
             |> should equal false
 
             assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "nested/target.txt")
             assertLeaseReacquirable repositoryId root)
 
     /// Proves a failure after a filesystem action begins preserves marker evidence and reports incomplete without completion.
@@ -671,24 +695,27 @@ module WorkingDirectoryUpdateLocalTransactionTests =
 
             WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFirstMutationBegan (fun () -> raise (IOException("after first mutation began")))
 
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
             let outcome =
                 WorkingDirectoryUpdate.LocalTransaction.run
                     (acceptedPhase current CancellationToken.None)
                     selection
                     graph
-                    (preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes")))
+                    prepared
                     (WorkingDirectoryUpdate.DiagnosticCorrelation.create "after-first-mutation"
                      |> required)
                 |> fun task -> task.GetAwaiter().GetResult()
 
             match outcome with
-            | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+            | Error (WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _) -> ()
             | _ -> Assert.Fail($"Expected post-mutation incomplete outcome, got {outcome}.")
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal true
 
             assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "nested/target.txt")
             assertLeaseReacquirable repositoryId root)
 
     /// Proves cancellation during final planning remains pre-mutation, while cancellation after the first action begins remains incomplete.
@@ -726,23 +753,25 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                         cancellation.Cancel()
                         raise (OperationCanceledException(cancellation.Token)))
 
+                let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
                 let outcome =
                     WorkingDirectoryUpdate.LocalTransaction.run
                         (acceptedPhase current cancellation.Token)
                         selection
                         graph
-                        (preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes")))
+                        prepared
                         (WorkingDirectoryUpdate.DiagnosticCorrelation.create "cancellation-boundary"
                          |> required)
                     |> fun task -> task.GetAwaiter().GetResult()
 
                 if expectedIncomplete then
                     match outcome with
-                    | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+                    | Error (WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _) -> ()
                     | _ -> Assert.Fail($"Expected post-mutation incomplete cancellation outcome, got {outcome}.")
                 else
                     match outcome with
-                    | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                    | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
                     | _ -> Assert.Fail($"Expected pre-mutation rejected cancellation outcome, got {outcome}.")
 
                 if expectedIncomplete then
@@ -750,8 +779,98 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                     |> should equal true
 
                 assertNoCompletion current target branchId selection
+                assertPreparedDisposed prepared (RelativePath "nested/target.txt")
                 assertLeaseReacquirable repositoryId root)
 
         runCase true false false false
         runCase false true false false
         runCase false false true true
+
+    /// Proves a file that appears after final planning cannot be overwritten by a previously safe absent-target copy.
+    [<Test>]
+    let ``five-input transaction preserves late untracked target bytes at the action boundary`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFinalGlobalFactGate (fun () ->
+                File.WriteAllText(Path.Combine(root, "target.txt"), "late untracked bytes"))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "late-target"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
+            | _ -> Assert.Fail($"Expected action-time target rejection, got {outcome}.")
+
+            File.ReadAllText(Path.Combine(root, "target.txt"))
+            |> should equal "late untracked bytes"
+
+            assertNoCompletion current target branchId WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+            assertPreparedDisposed prepared (RelativePath "target.txt")
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves a source object replaced after publication rejects before the first filesystem mutation and cleans owned evidence.
+    [<Test>]
+    let ``five-input transaction rejects a replaced source object before mutation`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterObjectPublication (fun () ->
+                let objectFile =
+                    Path.Combine(
+                        current.ObjectDirectory,
+                        string selected.RelativePath,
+                        Services.getLocalObjectCacheFileName selected.RelativePath selected.Sha256Hash selected.Blake3Hash
+                    )
+
+                File.WriteAllText(objectFile, "replaced object bytes"))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "replaced-object"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
+            | _ -> Assert.Fail($"Expected pre-mutation object rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "target.txt"))
+            |> should equal false
+
+            assertNoCompletion current target branchId WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+            assertPreparedDisposed prepared (RelativePath "target.txt")
+            assertLeaseReacquirable repositoryId root)
