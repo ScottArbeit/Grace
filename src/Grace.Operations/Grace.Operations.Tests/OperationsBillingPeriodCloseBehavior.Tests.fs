@@ -114,6 +114,72 @@ type private StageCancellationInterleaving(stage: string, cancellation: Cancella
         member _.AfterChargeInsertionAsync _ = cancelAt "charge"
         member _.AfterCloseEvidenceStagedAsync _ = cancelAt "evidence"
 
+/// Retains the exact pricing identities and immutable values inserted for one close-proof scope.
+type private SeededPricing =
+    {
+        PricingPlanId: Guid
+        PricingRateId: Guid
+        PricingAssignmentId: Guid
+        BillableUsageKindMappingId: Guid
+        BillableUsageKind: int
+        CurrencyCode: string
+        UnitName: string
+        UnitQuantity: int64
+        UnitPriceMicros: int64
+        EffectiveFromUtc: DateTime
+        EffectiveToUtc: DateTime
+    }
+
+/// Represents every immutable preview or posting field that the direct-close tuple must preserve.
+type private ImmutableClosePricing =
+    {
+        OwnerId: Guid
+        OrganizationId: Guid
+        RepositoryId: Guid
+        PeriodFromUtc: DateTime
+        PeriodToUtc: DateTime
+        FactKind: int
+        BillableUsageKindMappingId: Guid
+        BillableUsageKind: int
+        PricingAssignmentId: Guid
+        PricingPlanId: Guid
+        PricingRateId: Guid
+        CurrencyCode: string
+        UnitName: string
+        UnitQuantity: int64
+        UnitPriceMicros: int64
+        EffectiveFromUtc: DateTime
+        EffectiveToUtc: DateTime
+        TotalQuantity: int64
+        ChargeMicros: int64
+    }
+
+/// Captures independently derived deterministic identities and immutable evidence expected from one seeded close.
+type private SeededCloseExpectation =
+    {
+        BillingPeriodId: Guid
+        ChargePreviewLineId: Guid
+        ChargeId: Guid
+        ImmutablePricing: ImmutableClosePricing
+        AcceptedFactDigestSha256Hex: string
+        PricingPreviewDigestSha256Hex: string
+        ScheduledOperationProvenance: string
+    }
+
+/// Represents the complete immutable row set observed for one owner/repository close scope.
+type private ClosedScopeProjection =
+    {
+        BillingPeriodId: Guid
+        ChargePreviewLineId: Guid
+        Preview: ImmutableClosePricing
+        ChargeId: Guid
+        Charge: ImmutableClosePricing
+        AcceptedFactDigestSha256Hex: string
+        PricingPreviewDigestSha256Hex: string
+        ClosedAtUtc: DateTime
+        ScheduledOperationProvenance: string
+    }
+
 /// Proves the exact database-time policy boundary independently of the production SQL clock source.
 [<TestFixture; NonParallelizable>]
 type OperationsBillingPeriodCloseBehaviorTests() =
@@ -230,6 +296,17 @@ type OperationsBillingPeriodCloseBehaviorTests() =
         task {
             let planId, rateId, assignmentId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
             let mappingId = Guid.Parse "47a4d91d-43e7-450b-8800-917000000001"
+            let effectiveFromUtc = scope.MonthStart.ToDateTimeUtc()
+
+            let effectiveToUtc =
+                (BillingCompletenessScope.nextMonthStart scope)
+                    .ToDateTimeUtc()
+
+            let billableUsageKind = 101
+            let currencyCode = "USD"
+            let unitName = "byte-minute"
+            let unitQuantity = 1L
+            let unitPriceMicros = 2L
             use connection = new SqlConnection(connectionString)
             do! connection.OpenAsync CancellationToken.None
             use command = connection.CreateCommand()
@@ -247,10 +324,290 @@ type OperationsBillingPeriodCloseBehaviorTests() =
             command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
             command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
             command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
-            command.Parameters.Add("@EffectiveFrom", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+            command.Parameters.Add("@EffectiveFrom", SqlDbType.DateTime2).Value <- effectiveFromUtc
             let! _ = command.ExecuteNonQueryAsync CancellationToken.None
-            return ()
+
+            return
+                {
+                    PricingPlanId = planId
+                    PricingRateId = rateId
+                    PricingAssignmentId = assignmentId
+                    BillableUsageKindMappingId = mappingId
+                    BillableUsageKind = billableUsageKind
+                    CurrencyCode = currencyCode
+                    UnitName = unitName
+                    UnitQuantity = unitQuantity
+                    UnitPriceMicros = unitPriceMicros
+                    EffectiveFromUtc = effectiveFromUtc
+                    EffectiveToUtc = effectiveToUtc
+                }
         }
+
+    /// Derives the deterministic GUID format used by the direct-close and preview-line contracts from seeded input only.
+    let deterministicGuid (canonical: string) =
+        Guid(
+            SHA256
+                .HashData(Encoding.UTF8.GetBytes canonical)
+                .AsSpan(0, 16)
+        )
+
+    /// Hashes independent canonical evidence records with the production uppercase SHA-256 representation.
+    let digestCanonical (values: string list) =
+        values
+        |> String.concat "\n"
+        |> Encoding.UTF8.GetBytes
+        |> SHA256.HashData
+        |> Convert.ToHexString
+
+    /// Derives the expected period, preview, charge, and evidence tuple without reading a persisted preview or posting.
+    let seededCloseExpectation
+        (scope: BillingCompletenessScope)
+        (usageFactId: Guid)
+        (usageFactObservedAt: Instant)
+        (totalQuantity: int64)
+        (pricing: SeededPricing)
+        (provenance: string)
+        : SeededCloseExpectation
+        =
+        let periodFromUtc = scope.MonthStart.ToDateTimeUtc()
+
+        let periodToUtc =
+            (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
+        let factKind = 1
+
+        let periodId =
+            String.Join(
+                "|",
+                [|
+                    "Grace.Operations.BillingPeriod.v1"
+                    scope.OwnerId.ToString("D")
+                    scope.OrganizationId.ToString("D")
+                    scope.RepositoryId.ToString("D")
+                    periodFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    periodToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                |]
+            )
+            |> deterministicGuid
+
+        let immutablePricing =
+            {
+                OwnerId = scope.OwnerId
+                OrganizationId = scope.OrganizationId
+                RepositoryId = scope.RepositoryId
+                PeriodFromUtc = periodFromUtc
+                PeriodToUtc = periodToUtc
+                FactKind = factKind
+                BillableUsageKindMappingId = pricing.BillableUsageKindMappingId
+                BillableUsageKind = pricing.BillableUsageKind
+                PricingAssignmentId = pricing.PricingAssignmentId
+                PricingPlanId = pricing.PricingPlanId
+                PricingRateId = pricing.PricingRateId
+                CurrencyCode = pricing.CurrencyCode
+                UnitName = pricing.UnitName
+                UnitQuantity = pricing.UnitQuantity
+                UnitPriceMicros = pricing.UnitPriceMicros
+                EffectiveFromUtc = pricing.EffectiveFromUtc
+                EffectiveToUtc = pricing.EffectiveToUtc
+                TotalQuantity = totalQuantity
+                ChargeMicros =
+                    totalQuantity * pricing.UnitPriceMicros
+                    / pricing.UnitQuantity
+            }
+
+        let previewLineId =
+            String.Join(
+                "|",
+                [|
+                    immutablePricing.OwnerId.ToString("D")
+                    immutablePricing.OrganizationId.ToString("D")
+                    immutablePricing.RepositoryId.ToString("D")
+                    immutablePricing.PeriodFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.PeriodToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.FactKind.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.BillableUsageKindMappingId.ToString("D")
+                    immutablePricing.BillableUsageKind.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.PricingAssignmentId.ToString("D")
+                    immutablePricing.PricingPlanId.ToString("D")
+                    immutablePricing.PricingRateId.ToString("D")
+                    immutablePricing.CurrencyCode
+                    immutablePricing.UnitName
+                    immutablePricing.UnitQuantity.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.UnitPriceMicros.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.EffectiveFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.EffectiveToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                |]
+            )
+            |> deterministicGuid
+
+        let previewCanonical =
+            String.Join(
+                "|",
+                [|
+                    previewLineId.ToString("D")
+                    immutablePricing.OwnerId.ToString("D")
+                    immutablePricing.OrganizationId.ToString("D")
+                    immutablePricing.RepositoryId.ToString("D")
+                    immutablePricing.PeriodFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.PeriodToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.FactKind.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.BillableUsageKindMappingId.ToString("D")
+                    immutablePricing.BillableUsageKind.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.PricingAssignmentId.ToString("D")
+                    immutablePricing.PricingPlanId.ToString("D")
+                    immutablePricing.PricingRateId.ToString("D")
+                    immutablePricing.CurrencyCode
+                    immutablePricing.UnitName
+                    immutablePricing.UnitQuantity.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.UnitPriceMicros.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.EffectiveFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.EffectiveToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.TotalQuantity.ToString(CultureInfo.InvariantCulture)
+                    immutablePricing.ChargeMicros.ToString(CultureInfo.InvariantCulture)
+                |]
+            )
+
+        {
+            BillingPeriodId = periodId
+            ChargePreviewLineId = previewLineId
+            ChargeId = deterministicGuid $"Grace.Operations.InitialCharge.v1|{periodId:D}|{previewLineId:D}"
+            ImmutablePricing = immutablePricing
+            AcceptedFactDigestSha256Hex =
+                digestCanonical [ $"{usageFactId:D}|{factKind}|{totalQuantity}|{usageFactObservedAt
+                                                                                    .ToDateTimeUtc()
+                                                                                    .Ticks.ToString(CultureInfo.InvariantCulture)}" ]
+            PricingPreviewDigestSha256Hex = digestCanonical [ previewCanonical ]
+            ScheduledOperationProvenance = provenance
+        }
+
+    /// Reads every immutable direct-close field for one exact owner, repository, and month scope.
+    let readClosedScopeProjectionAsync connectionString (scope: BillingCompletenessScope) =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT period.BillingPeriodId,preview.ChargePreviewLineId,preview.OwnerId,preview.OrganizationId,preview.RepositoryId,preview.PeriodFromUtc,preview.PeriodToUtc,preview.FactKind,preview.BillableUsageKindMappingId,preview.BillableUsageKind,preview.PricingAssignmentId,preview.PricingPlanId,preview.PricingRateId,preview.CurrencyCode,preview.UnitName,preview.UnitQuantity,preview.UnitPriceMicros,preview.EffectiveFromUtc,preview.EffectiveToUtc,preview.TotalQuantity,preview.ChargeMicros,charge.ChargeId,charge.OwnerId,charge.OrganizationId,charge.RepositoryId,charge.PeriodFromUtc,charge.PeriodToUtc,charge.FactKind,charge.BillableUsageKindMappingId,charge.BillableUsageKind,charge.PricingAssignmentId,charge.PricingPlanId,charge.PricingRateId,charge.CurrencyCode,charge.UnitName,charge.UnitQuantity,charge.UnitPriceMicros,charge.EffectiveFromUtc,charge.EffectiveToUtc,charge.TotalQuantity,charge.ChargeMicros,evidence.AcceptedFactDigestSha256Hex,evidence.PricingPreviewDigestSha256Hex,evidence.ClosedAtUtc,evidence.ScheduledOperationProvenance FROM ops.BillingPeriod AS period INNER JOIN ops.ChargePreviewLine AS preview ON preview.OwnerId=period.OwnerId AND preview.OrganizationId=period.OrganizationId AND preview.RepositoryId=period.RepositoryId AND preview.PeriodFromUtc=period.MonthStartUtc AND preview.PeriodToUtc=period.NextMonthStartUtc INNER JOIN ops.Charge AS charge ON charge.BillingPeriodId=period.BillingPeriodId AND charge.ChargePreviewLineId=preview.ChargePreviewLineId INNER JOIN ops.BillingPeriodCloseEvidence AS evidence ON evidence.BillingPeriodId=period.BillingPeriodId WHERE period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId AND period.MonthStartUtc=@MonthStartUtc AND period.NextMonthStartUtc=@NextMonthStartUtc;"
+
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@MonthStartUtc", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+
+            command.Parameters.Add("@NextMonthStartUtc", SqlDbType.DateTime2).Value <- (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let rows = ResizeArray<ClosedScopeProjection>()
+
+            let pricing offset =
+                {
+                    OwnerId = reader.GetGuid offset
+                    OrganizationId = reader.GetGuid(offset + 1)
+                    RepositoryId = reader.GetGuid(offset + 2)
+                    PeriodFromUtc = reader.GetDateTime(offset + 3)
+                    PeriodToUtc = reader.GetDateTime(offset + 4)
+                    FactKind = Convert.ToInt32(reader.GetValue(offset + 5), CultureInfo.InvariantCulture)
+                    BillableUsageKindMappingId = reader.GetGuid(offset + 6)
+                    BillableUsageKind = Convert.ToInt32(reader.GetValue(offset + 7), CultureInfo.InvariantCulture)
+                    PricingAssignmentId = reader.GetGuid(offset + 8)
+                    PricingPlanId = reader.GetGuid(offset + 9)
+                    PricingRateId = reader.GetGuid(offset + 10)
+                    CurrencyCode = reader.GetString(offset + 11)
+                    UnitName = reader.GetString(offset + 12)
+                    UnitQuantity = reader.GetInt64(offset + 13)
+                    UnitPriceMicros = reader.GetInt64(offset + 14)
+                    EffectiveFromUtc = reader.GetDateTime(offset + 15)
+                    EffectiveToUtc = reader.GetDateTime(offset + 16)
+                    TotalQuantity = reader.GetInt64(offset + 17)
+                    ChargeMicros = reader.GetInt64(offset + 18)
+                }
+
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then
+                    rows.Add(
+                        {
+                            BillingPeriodId = reader.GetGuid 0
+                            ChargePreviewLineId = reader.GetGuid 1
+                            Preview = pricing 2
+                            ChargeId = reader.GetGuid 21
+                            Charge = pricing 22
+                            AcceptedFactDigestSha256Hex = reader.GetString 41
+                            PricingPreviewDigestSha256Hex = reader.GetString 42
+                            ClosedAtUtc = reader.GetDateTime 43
+                            ScheduledOperationProvenance = reader.GetString 44
+                        }
+                    )
+
+            return rows |> Seq.toList
+        }
+
+    /// Reads the independently scoped accepted-fact count and quantity before comparing close records.
+    let acceptedScopeFactSummaryAsync connectionString (scope: BillingCompletenessScope) =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT COUNT(*),COALESCE(SUM(Quantity),0) FROM ops.RawUsageFact WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@MonthStartUtc AND ObservedAtUtc<@NextMonthStartUtc;"
+
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@MonthStartUtc", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+
+            command.Parameters.Add("@NextMonthStartUtc", SqlDbType.DateTime2).Value <- (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let! hasRow = reader.ReadAsync CancellationToken.None
+            Assert.That(hasRow, Is.True)
+            return reader.GetInt32(0), reader.GetInt64(1)
+        }
+
+    /// Asserts one scope's independently seeded fact, exact identities, immutable provenance, and evidence tuple.
+    let assertSeededScopeClose
+        (scopeName: string)
+        (expected: SeededCloseExpectation)
+        (expectedFactQuantity: int64)
+        (actualFactCount: int)
+        (actualFactQuantity: int64)
+        (projections: ClosedScopeProjection list)
+        =
+        Assert.That(actualFactCount, Is.EqualTo(1), $"{scopeName} must retain exactly one accepted source fact.")
+        Assert.That(actualFactQuantity, Is.EqualTo(expectedFactQuantity), $"{scopeName} must retain its own seeded quantity.")
+        Assert.That(projections.Length, Is.EqualTo(1), $"{scopeName} must have exactly one period, preview, charge, and evidence tuple.")
+        let actual = projections |> List.exactlyOne
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(actual.BillingPeriodId, Is.EqualTo(expected.BillingPeriodId), $"{scopeName} period identity")
+                Assert.That(actual.ChargePreviewLineId, Is.EqualTo(expected.ChargePreviewLineId), $"{scopeName} preview identity")
+                Assert.That(actual.ChargeId, Is.EqualTo(expected.ChargeId), $"{scopeName} posting identity")
+                Assert.That(actual.Preview, Is.EqualTo(expected.ImmutablePricing), $"{scopeName} immutable preview provenance")
+                Assert.That(actual.Charge, Is.EqualTo(expected.ImmutablePricing), $"{scopeName} immutable posting provenance")
+                Assert.That(actual.AcceptedFactDigestSha256Hex, Is.EqualTo(expected.AcceptedFactDigestSha256Hex), $"{scopeName} accepted-fact digest")
+
+                Assert.That(
+                    actual.PricingPreviewDigestSha256Hex,
+                    Is.EqualTo(expected.PricingPreviewDigestSha256Hex),
+                    $"{scopeName} independent pricing-preview digest"
+                )
+
+                Assert.That(
+                    actual.ScheduledOperationProvenance,
+                    Is.EqualTo(expected.ScheduledOperationProvenance),
+                    $"{scopeName} scheduled-operation provenance"
+                ))
+        )
 
     /// Reads application-lock rows only for the two captured production sessions from this contention test.
     let applicationLocksAsync connectionString firstSessionId secondSessionId =
@@ -476,7 +833,7 @@ ORDER BY 1;
                 let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
                 let scope = scopeFor ownerId organizationId repositoryId
                 do! acceptAsync connectionString ownerId organizationId repositoryId
-                do! addPricingAsync connectionString scope
+                let! _ = addPricingAsync connectionString scope
                 let interleaving = ClockOrderingInterleaving()
                 let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/database-clock-ordering/v1" }
 
@@ -521,7 +878,7 @@ ORDER BY 1;
                 let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
                 let scope = scopeFor ownerId organizationId repositoryId
                 do! acceptAsync connectionString ownerId organizationId repositoryId
-                do! addPricingAsync connectionString scope
+                let! _ = addPricingAsync connectionString scope
                 let firstInterleaving = ContentionInterleaving(true)
                 let secondInterleaving = ContentionInterleaving(false)
                 let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/two-session-contention/v1" }
@@ -591,10 +948,14 @@ ORDER BY 1;
                 let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
                 let scope = scopeFor ownerId organizationId repositoryId
                 let nextMonthStart = BillingCompletenessScope.nextMonthStart scope
-                do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId scope.MonthStart 7L)
-                do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId nextMonthStart 11L)
-                do! addPricingAsync connectionString scope
-                let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/close-evidence/v1" }
+                let inPeriodFactId = Guid.NewGuid()
+                let nextPeriodFactId = Guid.NewGuid()
+                do! acceptFactAsync connectionString (usageFact inPeriodFactId ownerId organizationId repositoryId scope.MonthStart 7L)
+                do! acceptFactAsync connectionString (usageFact nextPeriodFactId ownerId organizationId repositoryId nextMonthStart 11L)
+                let! pricing = addPricingAsync connectionString scope
+                let provenance = "operations-tests/close-evidence/v1"
+                let expected = seededCloseExpectation scope inPeriodFactId scope.MonthStart 7L pricing provenance
+                let request = { Scope = scope; ScheduledOperationProvenance = provenance }
 
                 let! beforeClose =
                     task {
@@ -620,18 +981,10 @@ ORDER BY 1;
                         return value :?> DateTime
                     }
 
-                let! expectedFactDigest = acceptedFactDigestAsync connectionString scope
-                let! expectedPreviewDigest = pricingPreviewDigestAsync connectionString
-                use connection = new SqlConnection(connectionString)
-                do! connection.OpenAsync CancellationToken.None
-                use command = connection.CreateCommand()
-
-                command.CommandText <-
-                    "SELECT TotalQuantity,ChargeMicros,(SELECT ChargeMicros FROM ops.Charge),AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance FROM ops.ChargePreviewLine CROSS JOIN ops.BillingPeriodCloseEvidence;"
-
-                use! reader = command.ExecuteReaderAsync CancellationToken.None
-                let! hasRow = reader.ReadAsync CancellationToken.None
-                Assert.That(hasRow, Is.True)
+                let! factCount, factQuantity = acceptedScopeFactSummaryAsync connectionString scope
+                let! projections = readClosedScopeProjectionAsync connectionString scope
+                assertSeededScopeClose "close-evidence scope" expected 7L factCount factQuantity projections
+                let persisted = projections |> List.exactlyOne
 
                 Assert.Multiple(
                     Action (fun () ->
@@ -642,14 +995,8 @@ ORDER BY 1;
                             Is.True
                         )
 
-                        Assert.That(reader.GetInt64 0, Is.EqualTo(7L))
-                        Assert.That(reader.GetInt64 1, Is.EqualTo(14L))
-                        Assert.That(reader.GetInt64 2, Is.EqualTo(14L))
-                        Assert.That(reader.GetString 3, Is.EqualTo(expectedFactDigest))
-                        Assert.That(reader.GetString 4, Is.EqualTo(expectedPreviewDigest))
-                        Assert.That(reader.GetDateTime 5, Is.GreaterThanOrEqualTo(beforeClose))
-                        Assert.That(reader.GetDateTime 5, Is.LessThanOrEqualTo(afterClose))
-                        Assert.That(reader.GetString 6, Is.EqualTo("operations-tests/close-evidence/v1")))
+                        Assert.That(persisted.ClosedAtUtc, Is.GreaterThanOrEqualTo(beforeClose))
+                        Assert.That(persisted.ClosedAtUtc, Is.LessThanOrEqualTo(afterClose)))
                 )
             })
 
@@ -692,7 +1039,7 @@ ORDER BY 1;
                     ()
                 | value -> invalidArg (nameof blocker) value
 
-                do! addPricingAsync connectionString scope
+                let! _ = addPricingAsync connectionString scope
                 let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/blockers/v1" }
 
                 let! result =
@@ -739,7 +1086,7 @@ ORDER BY 1;
                 let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
 
                 if overflows then
-                    do! addPricingAsync connectionString scope
+                    let! _ = addPricingAsync connectionString scope
                     use setOverflow = new SqlConnection(connectionString)
                     do! setOverflow.OpenAsync CancellationToken.None
                     use command = setOverflow.CreateCommand()
@@ -759,7 +1106,8 @@ ORDER BY 1;
                     let! _ = command.ExecuteNonQueryAsync CancellationToken.None
                     ()
                 else
-                    do! addPricingAsync connectionString scope
+                    let! _ = addPricingAsync connectionString scope
+                    ()
 
                 let! repaired = closer.CloseAsync(request, CancellationToken.None)
                 let! replay = closer.CloseAsync(request, CancellationToken.None)
@@ -804,7 +1152,7 @@ ORDER BY 1;
                 let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
                 let scope = scopeFor ownerId organizationId repositoryId
                 do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 4) 9L)
-                do! addPricingAsync connectionString scope
+                let! _ = addPricingAsync connectionString scope
 
                 let nextMonthStartUtc =
                     (BillingCompletenessScope.nextMonthStart scope)
@@ -854,15 +1202,21 @@ ORDER BY 1;
                 let scopeB = scopeFor ownerB organizationId repositoryA
                 let siblingScope = scopeFor ownerA organizationId repositoryB
                 let zeroFactScope = scopeFor zeroFactOwner organizationId repositoryA
-                do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerA organizationId repositoryA (monthStart + Duration.FromDays 5) 1L)
-                do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerB organizationId repositoryA (monthStart + Duration.FromDays 5) 2L)
-                do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerA organizationId repositoryB (monthStart + Duration.FromDays 5) 3L)
-                do! addPricingAsync connectionString scopeA
-                do! addPricingAsync connectionString scopeB
-                do! addPricingAsync connectionString siblingScope
+                let factAId, factBId, siblingFactId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let observedAt = monthStart + Duration.FromDays 5
+                do! acceptFactAsync connectionString (usageFact factAId ownerA organizationId repositoryA observedAt 1L)
+                do! acceptFactAsync connectionString (usageFact factBId ownerB organizationId repositoryA observedAt 2L)
+                do! acceptFactAsync connectionString (usageFact siblingFactId ownerA organizationId repositoryB observedAt 3L)
+                let! pricingA = addPricingAsync connectionString scopeA
+                let! pricingB = addPricingAsync connectionString scopeB
+                let! siblingPricing = addPricingAsync connectionString siblingScope
+                let provenance = "operations-tests/isolation-replay/v1"
+                let expectedA = seededCloseExpectation scopeA factAId observedAt 1L pricingA provenance
+                let expectedB = seededCloseExpectation scopeB factBId observedAt 2L pricingB provenance
+                let expectedSibling = seededCloseExpectation siblingScope siblingFactId observedAt 3L siblingPricing provenance
 
                 let close scope =
-                    let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/isolation-replay/v1" }
+                    let request = { Scope = scope; ScheduledOperationProvenance = provenance }
 
                     (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
                         .CloseAsync(request, CancellationToken.None)
@@ -873,6 +1227,16 @@ ORDER BY 1;
                 let! periods = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2;"
                 let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
                 let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! factCountA, factQuantityA = acceptedScopeFactSummaryAsync connectionString scopeA
+                let! factCountB, factQuantityB = acceptedScopeFactSummaryAsync connectionString scopeB
+                let! siblingFactCount, siblingFactQuantity = acceptedScopeFactSummaryAsync connectionString siblingScope
+                let! projectionsA = readClosedScopeProjectionAsync connectionString scopeA
+                let! projectionsB = readClosedScopeProjectionAsync connectionString scopeB
+                let! siblingProjections = readClosedScopeProjectionAsync connectionString siblingScope
+
+                assertSeededScopeClose "owner A/repository A" expectedA 1L factCountA factQuantityA projectionsA
+                assertSeededScopeClose "owner B/repository A" expectedB 2L factCountB factQuantityB projectionsB
+                assertSeededScopeClose "owner A/repository B" expectedSibling 3L siblingFactCount siblingFactQuantity siblingProjections
 
                 let! zeroFactPending =
                     countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1) AND RetryDiagnostic='ZeroFactCoveragePending';"

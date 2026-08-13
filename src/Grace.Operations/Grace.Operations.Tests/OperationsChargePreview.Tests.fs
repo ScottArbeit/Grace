@@ -226,7 +226,7 @@ type OperationsChargePreviewTests() =
             Assert.That(sql, Does.Contain("fact.ObservedAtUtc >= @PeriodFromUtc"))
             Assert.That(sql, Does.Contain("fact.ObservedAtUtc < @PeriodToUtc"))
             Assert.That(sql, Does.Contain("assignment.EffectiveFromUtc"))
-            Assert.That(sql, Does.Contain("plan.EffectiveFromUtc"))
+            Assert.That(sql, Does.Contain("pricingPlan.EffectiveFromUtc"))
             Assert.That(sql, Does.Contain("mapping.EffectiveFromUtc"))
             Assert.That(sql, Does.Contain("rate.EffectiveFromUtc"))
             Assert.That(sql, Does.Contain("MAX(boundary.EffectiveFromUtc)"))
