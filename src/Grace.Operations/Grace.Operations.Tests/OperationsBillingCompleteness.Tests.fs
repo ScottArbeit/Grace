@@ -81,12 +81,12 @@ type private ObservedOperationsUsageTransactionScope
                 cancellationToken
             )
 
-/// Pauses a real ProcessAsync transaction after raw and aggregate SQL writes have been staged, then lets cancellation abort it.
+/// Pauses a real ProcessAsync transaction after all accepted-fact SQL writes have been staged, then lets cancellation abort it.
 type private CancellationAfterJournalStageInterleaving() =
     let staged = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
     let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-    /// Completes only after the transaction owns staged raw and aggregate mutations.
+    /// Completes only after the transaction owns staged accepted-fact mutations.
     member _.Staged = staged.Task
 
     /// Releases a non-cancelled test path without retaining any durable state.
@@ -94,7 +94,7 @@ type private CancellationAfterJournalStageInterleaving() =
 
     interface IOperationsUsageJournalTransactionInterleaving with
 
-        member _.AfterRawAndAggregateStagedAsync(cancellationToken) =
+        member _.AfterAcceptedFactMutationsStagedAsync(cancellationToken) =
             task {
                 staged.TrySetResult(()) |> ignore
                 do! release.Task.WaitAsync(cancellationToken)
@@ -902,6 +902,19 @@ VALUES
                 let acceptedFirstB = fact factIdAcceptedFirst ownerId organizationId repositoryBId observedAt
                 let scopeA = scopeFor ownerId organizationId repositoryAId observedAt
                 let scopeB = scopeFor ownerId organizationId repositoryBId observedAt
+                let billingPeriodAId = Guid.NewGuid()
+                let billingPeriodBId = Guid.NewGuid()
+
+                do!
+                    executeNonQueryAsync
+                        connectionString
+                        $"""
+INSERT INTO ops.BillingPeriod
+    (BillingPeriodId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc, State)
+VALUES
+    ('{billingPeriodAId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryAId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 2),
+    ('{billingPeriodBId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryBId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 2);
+"""
 
                 let! accepted = store.StoreUsageFactAsync(acceptedFirstA, payloadFor acceptedFirstA, CancellationToken.None)
 
@@ -967,10 +980,22 @@ VALUES
                         connectionString
                         $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{factIdAcceptedFirst:D}' AND IsActive = 1;"
 
+                let! lateWorkAAfterConflicts =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodAId:D}' AND UsageFactId = '{factIdAcceptedFirst:D}';"
+
+                let! lateWorkBAfterConflicts =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodBId:D}' AND UsageFactId = '{factIdAcceptedFirst:D}';"
+
                 Assert.Multiple(
                     Action (fun () ->
                         Assert.That(acceptedFirstRawCount, Is.EqualTo(1))
-                        Assert.That(acceptedFirstBlockerCount, Is.EqualTo(1)))
+                        Assert.That(acceptedFirstBlockerCount, Is.EqualTo(1))
+                        Assert.That(lateWorkAAfterConflicts, Is.EqualTo(1))
+                        Assert.That(lateWorkBAfterConflicts, Is.Zero))
                 )
 
                 let factIdRejectedFirst = Guid.NewGuid()
@@ -1575,6 +1600,72 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                         Assert.That(completeAfterRepair, Is.EqualTo(Complete))
                         Assert.That(activeRejectionCount, Is.Zero)
                         Assert.That(acceptedJournalCount, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves journal processing and explicit repair stage one Pending handoff only after each newly inserted raw fact enters a closed exact period.
+    [<Test>]
+    member _.JournalProcessingAndRepairStageLateWorkOnlyForNewRawFactsInClosedPeriods() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 7, 15, 12, 0)
+                let billingPeriodId = Guid.NewGuid()
+                let processedFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+                let repairedFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
+
+                do!
+                    executeNonQueryAsync
+                        connectionString
+                        $"""
+INSERT INTO ops.BillingPeriod
+    (BillingPeriodId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc, State)
+VALUES
+    ('{billingPeriodId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryId:D}', '2026-07-01T00:00:00', '2026-08-01T00:00:00', 2);
+"""
+
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! appendedProcessed = journal.AppendAsync(processedFact, CancellationToken.None)
+                let! processed = journal.ProcessAsync(processedFact, payloadFor processedFact, CancellationToken.None)
+                let! replayed = journal.ProcessAsync(processedFact, payloadFor processedFact, CancellationToken.None)
+                let! appendedRepaired = journal.AppendAsync(repairedFact, CancellationToken.None)
+
+                let! rejected = journal.RejectAsync(repairedFact, payloadFor repairedFact, "deterministic repair proof", CancellationToken.None)
+
+                let! repaired = journal.RepairAsync(repairedFact, CancellationToken.None)
+
+                let! processedLateWork =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodId:D}' AND UsageFactId = '{processedFact.UsageFactId:D}';"
+
+                let! repairedLateWork =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodId:D}' AND UsageFactId = '{repairedFact.UsageFactId:D}';"
+
+                let! totalLateWork =
+                    executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodId:D}';"
+
+                match appendedProcessed with
+                | Ok AppendedPending -> ()
+                | _ -> Assert.Fail($"Unexpected journal append result: {appendedProcessed}.")
+
+                match appendedRepaired with
+                | Ok AppendedPending -> ()
+                | _ -> Assert.Fail($"Unexpected journal append result: {appendedRepaired}.")
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(processed, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(replayed, Is.EqualTo(AlreadyAccepted))
+                        Assert.That(rejected, Is.EqualTo(RejectedFromJournal))
+                        Assert.That(repaired, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(processedLateWork, Is.EqualTo(1))
+                        Assert.That(repairedLateWork, Is.EqualTo(1))
+                        Assert.That(totalLateWork, Is.EqualTo(2)))
                 )
             })
 

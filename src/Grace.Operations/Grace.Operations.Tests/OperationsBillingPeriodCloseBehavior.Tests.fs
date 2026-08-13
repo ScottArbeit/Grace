@@ -114,6 +114,23 @@ type private StageCancellationInterleaving(stage: string, cancellation: Cancella
         member _.AfterChargeInsertionAsync _ = cancelAt "charge"
         member _.AfterCloseEvidenceStagedAsync _ = cancelAt "evidence"
 
+/// Pauses journal acceptance after late-work staging so a real cancelled token can prove the entire transaction rolls back.
+type private CancellationAfterJournalLateWorkInterleaving() =
+    let staged = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Completes only after the production transaction has staged its raw, aggregate, and late-work mutations.
+    member _.Staged = staged.Task
+
+    interface IOperationsUsageJournalTransactionInterleaving with
+
+        member _.AfterAcceptedFactMutationsStagedAsync(cancellationToken) =
+            task {
+                staged.TrySetResult() |> ignore
+                do! release.Task.WaitAsync(cancellationToken)
+            }
+            :> Task
+
 /// Retains the exact pricing identities and immutable values inserted for one close-proof scope.
 type private SeededPricing =
     {
@@ -696,6 +713,40 @@ ORDER BY 1;
             return rows |> Seq.toList
         }
 
+    /// Reads the full durable close and acceptance projection so cancellation can prove no staged mutation survives.
+    let closeAndAcceptanceProjectionAsync connectionString =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                """
+SELECT CONCAT('BillingPeriod|',(SELECT * FROM ops.BillingPeriod ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('ChargePreviewLine|',(SELECT * FROM ops.ChargePreviewLine ORDER BY ChargePreviewLineId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('Charge|',(SELECT * FROM ops.Charge ORDER BY ChargeId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodCloseEvidence|',(SELECT * FROM ops.BillingPeriodCloseEvidence ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('RawUsageFact|',(SELECT * FROM ops.RawUsageFact ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageAggregateMinute|',(SELECT * FROM ops.UsageAggregateMinute ORDER BY OwnerId,OrganizationId,RepositoryId,StoragePoolId,BucketStartUtc FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactRejection|',(SELECT * FROM ops.UsageFactRejection ORDER BY RejectionId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactJournal|',(SELECT * FROM ops.UsageFactJournal ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodLateWork|',(SELECT * FROM ops.BillingPeriodLateWork ORDER BY BillingPeriodId,UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+ORDER BY 1;
+"""
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let rows = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then rows.Add(reader.GetString 0)
+
+            return rows |> Seq.toList
+        }
+
     /// Recomputes the fact-evidence digest from independent persisted raw facts.
     let acceptedFactDigestAsync connectionString (scope: BillingCompletenessScope) =
         task {
@@ -997,6 +1048,116 @@ ORDER BY 1;
 
                         Assert.That(persisted.ClosedAtUtc, Is.GreaterThanOrEqualTo(beforeClose))
                         Assert.That(persisted.ClosedAtUtc, Is.LessThanOrEqualTo(afterClose)))
+                )
+            })
+
+    /// Proves acceptance committed before the production closer is included in its initial close without creating late work.
+    [<Test>]
+    member _.AcceptanceBeforeCloseIsIncludedWithoutLateWork() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let usageFactId = Guid.NewGuid()
+                let acceptedFact = usageFact usageFactId ownerId organizationId repositoryId (scope.MonthStart + Duration.FromDays 1) 13L
+                do! acceptFactAsync connectionString acceptedFact
+                let! pricing = addPricingAsync connectionString scope
+                let provenance = "operations-tests/acceptance-before-close/v1"
+                let expected = seededCloseExpectation scope usageFactId acceptedFact.ObservedAt 13L pricing provenance
+                let request = { Scope = scope; ScheduledOperationProvenance = provenance }
+
+                let! closeResult =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(request, CancellationToken.None)
+
+                let! factCount, factQuantity = acceptedScopeFactSummaryAsync connectionString scope
+                let! projections = readClosedScopeProjectionAsync connectionString scope
+                let! lateWork = countAsync connectionString $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE UsageFactId = '{usageFactId:D}';"
+                assertSeededScopeClose "acceptance-before-close" expected 13L factCount factQuantity projections
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match closeResult with
+                             | BillingPeriodCloseResult.Closed (_, 1) -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(lateWork, Is.Zero))
+                )
+            })
+
+    /// Proves cancellation after real post-close late-work staging leaves every close and acceptance row byte-for-byte unchanged.
+    [<Test>]
+    member _.CancellationAfterPostCloseLateWorkStagingRollsBackTheWholeAcceptanceTransaction() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let includedFact = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (scope.MonthStart + Duration.FromDays 1) 17L
+                do! acceptFactAsync connectionString includedFact
+                let! _ = addPricingAsync connectionString scope
+                let closeRequest = { Scope = scope; ScheduledOperationProvenance = "operations-tests/cancel-late-work/v1" }
+
+                let! closeResult =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(closeRequest, CancellationToken.None)
+
+                Assert.That(
+                    (match closeResult with
+                     | BillingPeriodCloseResult.Closed (_, 1) -> true
+                     | _ -> false),
+                    Is.True
+                )
+
+                let lateFact = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (scope.MonthStart + Duration.FromDays 2) 19L
+                let interleaving = CancellationAfterJournalLateWorkInterleaving()
+                let journal = SqlOperationsUsageJournalStore.CreateForTest(connectionString, interleaving :> IOperationsUsageJournalTransactionInterleaving)
+                let! appended = journal.AppendAsync(lateFact, CancellationToken.None)
+
+                match appended with
+                | Ok AppendedPending -> ()
+                | _ -> Assert.Fail($"Unexpected journal append result: {appended}.")
+
+                let! before = closeAndAcceptanceProjectionAsync connectionString
+                use cancellation = new CancellationTokenSource()
+                let processing = journal.ProcessAsync(lateFact, Array.empty, cancellation.Token)
+                do! interleaving.Staged.WaitAsync CancellationToken.None
+                cancellation.Cancel()
+
+                let! cancelled =
+                    task {
+                        try
+                            let! _ = processing
+                            return false
+                        with
+                        | :? OperationCanceledException -> return true
+                    }
+
+                let! after = closeAndAcceptanceProjectionAsync connectionString
+
+                let! lateRawCount = countAsync connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{lateFact.UsageFactId:D}';"
+
+                let! lateAggregateCount =
+                    countAsync
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND RepositoryId = '{repositoryId:D}' AND BucketStartUtc = '2026-06-03T00:00:00';"
+
+                let! pendingJournalCount =
+                    countAsync connectionString $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{lateFact.UsageFactId:D}' AND State = 0;"
+
+                let! lateWorkCount =
+                    countAsync connectionString $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE UsageFactId = '{lateFact.UsageFactId:D}';"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(cancelled, Is.True)
+                        Assert.That((after = before), Is.True)
+                        Assert.That(lateRawCount, Is.Zero)
+                        Assert.That(lateAggregateCount, Is.Zero)
+                        Assert.That(pendingJournalCount, Is.EqualTo(1))
+                        Assert.That(lateWorkCount, Is.Zero))
                 )
             })
 

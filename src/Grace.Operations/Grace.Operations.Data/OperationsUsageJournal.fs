@@ -54,18 +54,18 @@ type UsageFactJournalRejectResult =
     | RejectJournalConflict
     | RejectAlreadyAccepted
 
-/// Pauses a ProcessAsync transaction only after its raw and aggregate mutations have been staged for deterministic rollback proof.
+/// Pauses a ProcessAsync transaction only after raw, aggregate, and any closed-period late-work mutations have been staged for deterministic rollback proof.
 type internal IOperationsUsageJournalTransactionInterleaving =
 
     /// Observes the transaction-local point immediately before journal acceptance can commit.
-    abstract AfterRawAndAggregateStagedAsync: cancellationToken: CancellationToken -> Task
+    abstract AfterAcceptedFactMutationsStagedAsync: cancellationToken: CancellationToken -> Task
 
 /// Leaves production journal transactions uninterrupted when no deterministic proof interleaving is supplied.
 type private NoOperationsUsageJournalTransactionInterleaving() =
 
     interface IOperationsUsageJournalTransactionInterleaving with
 
-        member _.AfterRawAndAggregateStagedAsync(_cancellationToken) = Task.CompletedTask
+        member _.AfterAcceptedFactMutationsStagedAsync(_cancellationToken) = Task.CompletedTask
 
 /// Owns the internal Operations append, dispatch scan, and transactionally verified journal processing seam.
 type IOperationsUsageJournalStore =
@@ -153,6 +153,14 @@ type SqlOperationsUsageJournalStore private (connectionString: string, transacti
     let scopeFor (rawFact: RawUsageFact) : BillingCompletenessScope =
         BillingCompletenessScope.tryCreate rawFact.OwnerId rawFact.OrganizationId rawFact.RepositoryId rawFact.ObservedAt
         |> Result.defaultWith (fun errors -> invalidOp (String.Join("; ", errors)))
+
+    /// Adds the exact owner, organization, repository, and UTC-month scope required by shared late-work staging SQL.
+    let addBillingCompletenessScopeParameters (command: SqlCommand) (scope: BillingCompletenessScope) =
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier scope.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier scope.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier scope.RepositoryId
+        addParameter command "@MonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime scope.MonthStart)
+        addParameter command "@NextMonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime (BillingCompletenessScope.nextMonthStart scope))
 
     /// Reads a full journal row while an append or worker transaction keeps update locks on its identity.
     let readJournalForUpdateAsync (connection: SqlConnection) (transaction: SqlTransaction) (usageFactId: UsageFactId) (cancellationToken: CancellationToken) =
@@ -246,6 +254,22 @@ VALUES
             addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength aggregate.Key.StoragePoolId
             addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
             addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
+    /// Stages late work through the same exact-period SQL command used by ordinary and archived acceptance.
+    let recordClosedPeriodLateWorkAsync
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (rawFact: RawUsageFact)
+        (scope: BillingCompletenessScope)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use command = createCommand connection transaction OperationsUsageSql.RecordClosedPeriodLateWork
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+            addBillingCompletenessScopeParameters command scope
             let! _ = command.ExecuteNonQueryAsync cancellationToken
             return ()
         }
@@ -514,8 +538,9 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
 
                                     if inserted then
                                         do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
+                                        do! recordClosedPeriodLateWorkAsync connection transaction plan.RawFact scope operationCancellationToken
 
-                                    do! transactionInterleaving.AfterRawAndAggregateStagedAsync(operationCancellationToken)
+                                    do! transactionInterleaving.AfterAcceptedFactMutationsStagedAsync(operationCancellationToken)
                                     do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
                                     do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken
                                     return AcceptedFromJournal
@@ -547,6 +572,7 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
 
                                     if inserted then
                                         do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
+                                        do! recordClosedPeriodLateWorkAsync connection transaction plan.RawFact scope operationCancellationToken
 
                                     do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
                                     do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken

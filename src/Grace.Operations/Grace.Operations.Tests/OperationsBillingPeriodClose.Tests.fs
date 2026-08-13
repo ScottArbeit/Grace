@@ -365,13 +365,19 @@ module private BillingCloseSchema =
 
                 entity.GetProperties()
                 |> Seq.choose (fun property ->
-                    let definition = property.GetDefaultValueSql()
+                    let definition =
+                        match property.GetDefaultValueSql() with
+                        | value when not (String.IsNullOrWhiteSpace value) -> Some(normalizeDefinition value)
+                        | _ ->
+                            match property.FindAnnotation(RelationalAnnotationNames.DefaultValue) with
+                            | null -> None
+                            | annotation when isNull annotation.Value -> None
+                            | annotation -> Some(Convert.ToString(annotation.Value, Globalization.CultureInfo.InvariantCulture))
 
-                    if String.IsNullOrWhiteSpace definition then
-                        None
-                    else
+                    definition
+                    |> Option.map (fun value ->
                         let storeObject = StoreObjectIdentifier.Table(tableName, entity.GetSchema())
-                        Some $"{table}|{property.GetColumnName(&storeObject)}|{property.GetDefaultConstraintName()}|{normalizeDefinition definition}"))
+                        $"{table}|{property.GetColumnName(&storeObject)}|{property.GetDefaultConstraintName()}|{value}")))
             |> Set.ofSeq
 
         let triggers =

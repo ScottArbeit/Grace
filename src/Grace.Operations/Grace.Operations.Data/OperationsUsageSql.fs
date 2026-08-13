@@ -250,6 +250,28 @@ WHERE NOT EXISTS
 );
 """
 
+    /// Stages the minimal Pending late-work handoff only for a newly accepted fact in the exact closed billing period.
+    [<Literal>]
+    let RecordClosedPeriodLateWork =
+        """
+INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId, UsageFactId, State)
+SELECT period.BillingPeriodId, @UsageFactId, 0
+FROM ops.BillingPeriod AS period WITH (UPDLOCK, HOLDLOCK)
+WHERE period.OwnerId = @OwnerId
+  AND period.OrganizationId = @OrganizationId
+  AND period.RepositoryId = @RepositoryId
+  AND period.MonthStartUtc = @MonthStartUtc
+  AND period.NextMonthStartUtc = @NextMonthStartUtc
+  AND period.State = 2
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM ops.BillingPeriodLateWork AS existing
+      WHERE existing.BillingPeriodId = period.BillingPeriodId
+        AND existing.UsageFactId = @UsageFactId
+  );
+"""
+
     /// Selects hot facts and partially verified facts that need archive processing or cleanup.
     [<Literal>]
     let SelectRawUsageFactsForArchive =

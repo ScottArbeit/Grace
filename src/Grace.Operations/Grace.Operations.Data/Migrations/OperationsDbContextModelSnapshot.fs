@@ -1299,7 +1299,7 @@ type OperationsDbContextModelSnapshot() =
         lateWork
             .Property<int>("State")
             .HasColumnType("int")
-            .HasDefaultValue(0)
+            .HasDefaultValue(0, "DF_ops_BillingPeriodLateWork_State")
             .IsRequired()
         |> ignore
 

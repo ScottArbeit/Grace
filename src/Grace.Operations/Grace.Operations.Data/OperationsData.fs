@@ -816,26 +816,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
     /// Inserts the minimal late-work row only for the closed period in the already locked exact scope.
     let recordClosedPeriodLateWorkAsync (rawFact: RawUsageFact) (scope: BillingCompletenessScope) cancellationToken =
         task {
-            use command =
-                createCommand
-                    """
-INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId, UsageFactId, State)
-SELECT period.BillingPeriodId, @UsageFactId, 0
-FROM ops.BillingPeriod AS period WITH (UPDLOCK, HOLDLOCK)
-WHERE period.OwnerId = @OwnerId
-  AND period.OrganizationId = @OrganizationId
-  AND period.RepositoryId = @RepositoryId
-  AND period.MonthStartUtc = @MonthStartUtc
-  AND period.NextMonthStartUtc = @NextMonthStartUtc
-  AND period.State = 2
-  AND NOT EXISTS
-  (
-      SELECT 1
-      FROM ops.BillingPeriodLateWork AS existing
-      WHERE existing.BillingPeriodId = period.BillingPeriodId
-        AND existing.UsageFactId = @UsageFactId
-  );
-"""
+            use command = createCommand OperationsUsageSql.RecordClosedPeriodLateWork
 
             addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
             addBillingCompletenessScopeParameters command scope
