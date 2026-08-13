@@ -107,7 +107,7 @@ type private InMemoryOperationsUsageTransactionScope() =
                 let aggregates = Dictionary<UsageAggregateMinuteKey, int64>(state.Aggregates)
 
                 let transaction =
-                    { new IOperationsUsageTransaction with
+                    { new IAcceptedFactMutationTransaction with
                         member _.AcquireBillingCompletenessScopeAsync(_scope, lockCancellationToken) =
                             lockCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
@@ -115,6 +115,33 @@ type private InMemoryOperationsUsageTransactionScope() =
                         member _.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(_usageFactId, _scope, scopeCancellationToken) =
                             scopeCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
+
+                        member _.AcceptUsageFactAsync(plan, _scope, rawInsertion, acceptedFactCancellationToken) =
+                            task {
+                                acceptedFactCancellationToken.ThrowIfCancellationRequested()
+
+                                if rawFacts.ContainsKey plan.RawFact.UsageFactId then
+                                    return ExistingSameScope
+                                else
+                                    let rawFact =
+                                        match rawInsertion with
+                                        | HotRawFact -> plan.RawFact
+                                        | ArchivedReplayRawFact _ -> { plan.RawFact with RawPayload = Array.empty }
+
+                                    rawFacts.Add(rawFact.UsageFactId, rawFact)
+
+                                    if failNextAggregateUpdate then
+                                        failNextAggregateUpdate <- false
+                                        return raise (InvalidOperationException("forced aggregate failure"))
+                                    else
+                                        let current =
+                                            match aggregates.TryGetValue plan.Aggregate.Key with
+                                            | true, quantity -> quantity
+                                            | false, _ -> 0L
+
+                                        aggregates[plan.Aggregate.Key] <- current + plan.Aggregate.Quantity
+                                        return InsertedIntoOpenPeriod
+                            }
 
                         member _.TryInsertRawUsageFactAsync(rawFact, insertCancellationToken) =
                             insertCancellationToken.ThrowIfCancellationRequested()

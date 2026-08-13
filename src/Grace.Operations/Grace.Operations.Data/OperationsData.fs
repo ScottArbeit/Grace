@@ -682,6 +682,30 @@ module UsageFactPersistencePlan =
         let rawPayload = JsonSerializer.SerializeToUtf8Bytes<UsageFact>(fact, Constants.JsonSerializerOptions)
         tryCreate fact rawPayload
 
+/// Distinguishes a same-scope accepted-fact replay from a new fact staged before or after its exact billing-period close.
+type internal AcceptedFactMutationOutcome =
+    | ExistingSameScope
+    | InsertedIntoOpenPeriod
+    | InsertedIntoClosedPeriod
+
+/// Selects the one raw-row shape the shared accepted-fact mutation must persist without exposing SQL to a caller.
+type internal AcceptedFactRawInsertion =
+    | HotRawFact
+    | ArchivedReplayRawFact of RawUsageFactArchivePointer
+
+/// Invokes the merged accepted-fact mutation through a caller-owned SQL connection and transaction.
+type internal IAcceptedFactMutationExecutor =
+
+    /// Stages accepted raw, rejection repair, aggregate, and conditional Pending work without committing the caller transaction.
+    abstract AcceptAsync:
+        connection: SqlConnection *
+        transaction: SqlTransaction *
+        plan: UsageFactPersistencePlan *
+        scope: BillingCompletenessScope *
+        rawInsertion: AcceptedFactRawInsertion *
+        cancellationToken: CancellationToken ->
+            Task<AcceptedFactMutationOutcome>
+
 /// Represents the commands available inside one durable operations usage transaction.
 type IOperationsUsageTransaction =
 
@@ -717,6 +741,15 @@ type IOperationsUsageTransaction =
     /// Reads exact-scope Pending or Rejected journal rows while the caller holds the central scope lock.
     abstract HasUnresolvedUsageFactJournalAsync: scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task<bool>
 
+/// Extends the existing transaction with the internal shared-mutation adapter required by accepted-fact callers.
+type internal IAcceptedFactMutationTransaction =
+    inherit IOperationsUsageTransaction
+
+    /// Stages the one shared accepted-fact mutation through the caller's current transaction.
+    abstract AcceptUsageFactAsync:
+        plan: UsageFactPersistencePlan * scope: BillingCompletenessScope * rawInsertion: AcceptedFactRawInsertion * cancellationToken: CancellationToken ->
+            Task<AcceptedFactMutationOutcome>
+
 /// Runs operations usage mutations inside one storage transaction boundary.
 type IOperationsUsageTransactionScope =
 
@@ -724,7 +757,7 @@ type IOperationsUsageTransactionScope =
     abstract ExecuteAsync<'T> : operation: (IOperationsUsageTransaction -> CancellationToken -> Task<'T>) * cancellationToken: CancellationToken -> Task<'T>
 
 /// Executes operations usage SQL commands through an already-open SQL connection and transaction.
-type private SqlOperationsUsageTransaction(connection: SqlConnection, transaction: SqlTransaction) =
+type internal SqlOperationsUsageTransaction(connection: SqlConnection, transaction: SqlTransaction, acceptedFactMutationExecutor: IAcceptedFactMutationExecutor) =
 
     /// Adds a SQL parameter and assigns either the supplied value or database null.
     let addParameter (command: SqlCommand) name sqlDbType value =
@@ -858,12 +891,15 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
             IsActive = reader.GetBoolean(reader.GetOrdinal("IsActive"))
         }
 
-    interface IOperationsUsageTransaction with
+    interface IAcceptedFactMutationTransaction with
 
         member _.AcquireBillingCompletenessScopeAsync(scope, cancellationToken) = acquireBillingCompletenessScopeAsync scope cancellationToken
 
         member _.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(usageFactId, scope, cancellationToken) =
             ensureUsageFactIdMatchesBillingCompletenessScopeAsync usageFactId scope cancellationToken
+
+        member _.AcceptUsageFactAsync(plan, scope, rawInsertion, cancellationToken) =
+            acceptedFactMutationExecutor.AcceptAsync(connection, transaction, plan, scope, rawInsertion, cancellationToken)
 
         member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) =
             task {
@@ -987,45 +1023,6 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
                 addParameter command "@RejectedState" SqlDbType.Int 2
                 let! result = command.ExecuteScalarAsync cancellationToken
                 return Convert.ToBoolean result
-            }
-
-/// Runs operations usage mutations inside a concrete Azure SQL transaction boundary.
-type SqlOperationsUsageTransactionScope(connectionString: string) =
-
-    /// Opens a SQL connection for one operations usage transaction.
-    let openConnectionAsync cancellationToken =
-        task {
-            let connection = new SqlConnection(connectionString)
-            do! connection.OpenAsync cancellationToken
-            return connection
-        }
-
-    /// Rolls back a failed transaction while preserving the original failure when rollback also fails.
-    let rollbackIgnoringFailuresAsync (transaction: SqlTransaction) =
-        task {
-            try
-                do! transaction.RollbackAsync CancellationToken.None
-            with
-            | _ -> ()
-        }
-
-    interface IOperationsUsageTransactionScope with
-
-        member _.ExecuteAsync(operation, cancellationToken) =
-            task {
-                use! connection = openConnectionAsync cancellationToken
-                let! dbTransaction = connection.BeginTransactionAsync cancellationToken
-                use transaction = dbTransaction :?> SqlTransaction
-                let operationsTransaction = SqlOperationsUsageTransaction(connection, transaction)
-
-                try
-                    let! result = operation operationsTransaction cancellationToken
-                    do! transaction.CommitAsync cancellationToken
-                    return result
-                with
-                | ex ->
-                    do! rollbackIgnoringFailuresAsync transaction
-                    return raise ex
             }
 
 /// Lists and updates archive state through reviewed SQL commands that preserve Blob authority ordering.
@@ -1787,117 +1784,3 @@ type OperationsUsageSchemaInitializationBarrier(schema: IOperationsUsageSchemaIn
     interface IOperationsUsageSchemaInitializer with
 
         member this.EnsureCreatedAsync(cancellationToken) = this.EnsureCreatedAsync cancellationToken
-
-/// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
-type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
-
-    /// Acquires the central scope lock derived from accepted fact data before any completeness-affecting mutation.
-    let acquireScopeAsync (transaction: IOperationsUsageTransaction) (rawFact: RawUsageFact) cancellationToken =
-        task {
-            match BillingCompletenessScope.tryCreate rawFact.OwnerId rawFact.OrganizationId rawFact.RepositoryId rawFact.ObservedAt with
-            | Error errors -> return invalidOp (String.Join("; ", errors))
-            | Ok scope ->
-                do! transaction.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
-                return scope
-        }
-
-    /// Stores a usage fact exactly once by durable `UsageFactId` and projects aggregates only for newly accepted facts.
-    member _.StoreUsageFactAsync(fact: UsageFact, rawPayload: byte array, cancellationToken: CancellationToken) =
-        task {
-            match UsageFactPersistencePlan.tryCreate fact rawPayload with
-            | Error errors -> return Error errors
-            | Ok plan ->
-                let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
-                    task {
-                        let! scope = acquireScopeAsync transaction plan.RawFact operationCancellationToken
-                        do! transaction.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(plan.RawFact.UsageFactId, scope, operationCancellationToken)
-                        do! transaction.ResolveScopedUsageFactRejectionAsync(plan.RawFact.UsageFactId, scope, operationCancellationToken)
-                        let! accepted = transaction.TryInsertRawUsageFactAsync(plan.RawFact, operationCancellationToken)
-
-                        if accepted then
-                            do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
-
-                            return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
-                        else
-                            return { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = plan.RawFact.UsageFactId; Aggregate = None }
-                    }
-
-                let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
-                return Ok result
-        }
-
-    /// Replays an archived usage fact into raw index and aggregate state without restoring hot SQL payload bytes.
-    member _.ReplayArchivedUsageFactAsync(fact: UsageFact, rawPayload: byte array, pointer: RawUsageFactArchivePointer, cancellationToken: CancellationToken) =
-        task {
-            if pointer.UsageFactId <> fact.UsageFactId then
-                return Error [ $"Replay pointer UsageFactId '{pointer.UsageFactId}' does not match payload UsageFactId '{fact.UsageFactId}'." ]
-            else
-                match UsageFactPersistencePlan.tryCreate fact rawPayload with
-                | Error errors -> return Error errors
-                | Ok plan ->
-                    let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
-                        task {
-                            let! scope = acquireScopeAsync transaction plan.RawFact operationCancellationToken
-                            do! transaction.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(plan.RawFact.UsageFactId, scope, operationCancellationToken)
-                            do! transaction.ResolveScopedUsageFactRejectionAsync(plan.RawFact.UsageFactId, scope, operationCancellationToken)
-                            let! accepted = transaction.TryInsertReplayedArchivedUsageFactAsync(plan.RawFact, pointer, operationCancellationToken)
-
-                            if accepted then
-                                do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
-
-                                return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
-                            else
-                                return { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = plan.RawFact.UsageFactId; Aggregate = None }
-                        }
-
-                    let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
-                    return Ok result
-        }
-
-    /// Records a scoped blocker under the same lock as accepted usage, or preserves partial evidence without a scope.
-    member _.RecordUsageFactRejectionAsync(rejection: UsageFactRejection, cancellationToken: CancellationToken) =
-        task {
-            match UsageFactRejection.validate rejection with
-            | Error errors -> return Error errors
-            | Ok validRejection ->
-                let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
-                    task {
-                        match validRejection.Scope with
-                        | Some scope ->
-                            do! transaction.AcquireBillingCompletenessScopeAsync(scope, operationCancellationToken)
-
-                            do!
-                                transaction.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(
-                                    validRejection.UsageFactId.Value,
-                                    scope,
-                                    operationCancellationToken
-                                )
-
-                            return! transaction.RecordScopedUsageFactRejectionAsync(validRejection, operationCancellationToken)
-                        | None ->
-                            do! transaction.RecordUnscopedUsageFactRejectionAsync(validRejection, operationCancellationToken)
-                            return None
-                    }
-
-                let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
-                return Ok result
-        }
-
-    /// Reads completeness after acquiring the same transaction-owned lock used by mutations for the exact scope.
-    member _.EvaluateBillingCompletenessAsync(scope: BillingCompletenessScope, cancellationToken: CancellationToken) =
-        match BillingCompletenessScope.validate scope with
-        | Error errors -> Task.FromException<BillingCompletenessResult>(ArgumentException(String.Join("; ", errors), nameof scope))
-        | Ok validScope ->
-            let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
-                task {
-                    do! transaction.AcquireBillingCompletenessScopeAsync(validScope, operationCancellationToken)
-                    let! blocked = transaction.HasActiveScopedUsageFactRejectionAsync(validScope, operationCancellationToken)
-                    let! journalBlocked = transaction.HasUnresolvedUsageFactJournalAsync(validScope, operationCancellationToken)
-
-                    return
-                        if blocked then BlockedByActiveScopedRejection
-                        elif journalBlocked then BlockedByUnresolvedUsageFactJournal
-                        else Complete
-                }
-
-            transactionScope.ExecuteAsync(operation, cancellationToken)
