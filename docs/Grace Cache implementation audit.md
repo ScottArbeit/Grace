@@ -41,11 +41,27 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0 static-contract pruning. | Required predecessor completed. |
-| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886 and #887 R1 sequence. | Do not resume its mixed server, command, and status scope. |
-| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is implemented on the current PR head; focused proof and current-head Linux validation remain required before merge. | Owns only static enrollment state, protected local identity, and their focused proof. |
-| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) | Open R1B follow-on for repository-independent cache enrollment and status commands. | Starts after #886 integrates; owns no R1A implementation detail. |
+| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded; the current R1 tracker record replaces its mixed scope. | Do not resume it. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
+
+### Current R1 tracker record
+
+| Tracker | Current classification | Scope and sequence |
+| --- | --- | --- |
+| #886 | Implemented and proven; completed evidence. | R1A static enrollment identity is complete. |
+| PR #888 | Merged implementation and proof for #886. | Records the completed R1A implementation and focused proof. |
+| #887 | Superseded mixed enrollment/status issue. | It does not own current delivery work. |
+| PR #896 | Closed superseded mixed enrollment/status implementation. | Evidence only; do not reuse it wholesale. |
+| #904 | Superseded status issue. | It does not own current delivery work. |
+| PR #907 | Closed superseded status implementation. | Evidence only; do not reuse it wholesale. |
+| #913 / #914 | Current docs-only correction; planned pure local status follows. | #913 reconciles this record; #914 then owns status only. |
+| #905 | Planned one-shot enrollment after #913 and #914. | It owns enrollment only after the docs and status leaves complete. |
+
+### Enrollment ambiguity disposition
+
+An inactive accepted server enrollment is unselectable. Fresh manual enrollment is allowed. Server expiry performs
+eventual cleanup. Grace Cache adds no automatic enrollment retry or reconciliation.
 
 ## Implemented and proven server foundations
 
@@ -84,8 +100,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
   PR #706 recorded the server-foundation validation.
 - **Status classification:** `implemented and proven` for the server foundation.
-- **Residual risk:** The static server foundation still requires the separate R1A identity and R2 liveness leaves before
-  a cache can safely participate in the later runtime path. Artifact-grant validation-key rollover remains separate.
+- **Residual risk:** The completed R1A identity foundation and planned R2 liveness leaf still precede later runtime
+  participation. Artifact-grant validation-key rollover remains separate.
 
 ### Direct materialization
 
@@ -108,17 +124,18 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R1A: static enrollment identity foundation (#886)
 
-- **Status classification:** `implementation leaf`.
-- **Required result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration before
+- **Status classification:** `implemented and proven`.
+- **Completed result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration before
   success, and existing selection excludes it. The internal Linux-only identity primitive stages one `0700` attempt
   directory with a flushed `0600` PKCS#8 P-256 key, then publishes `0700` ready only after a flushed `0600`
   registration configuration matches the derived base64url SHA-256 `X || Y` fingerprint.
-- **Proof:** Actor persistence failure cannot advance authoritative in-memory selection; raw JSON `Health` cannot make
-  a new registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without
-  mutation; Linux tests restore modified modes before cleanup.
-- **Deferred:** #887 owns HTTP, credentials, command output, accepted/rejected/unknown orchestration, and cleanup calls;
-  #857 owns signed refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
-  R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
+- **Completed proof:** Actor persistence failure cannot advance in-memory selection; raw JSON `Health` cannot make a new
+  registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without mutation;
+  Linux tests restore modified modes before cleanup. PR #888 merged the implementation and proof.
+- **Current sequence:** #913 owns the canonical completion record, #914 owns pure local status only, #905 owns one-shot
+  enrollment only after #913 and #914, #857 owns signed refreshes that remain `Unhealthy`, and #625 publishes `Healthy`
+  only after serving readiness is proven. R1A added no serving, rotation, reconciliation, non-Linux support, or
+  CacheStore behavior.
 
 ### R2: registration liveness (#857)
 
@@ -177,18 +194,19 @@ The final Epic #597 release candidate requires all of the following:
 5. Current-head validation and a fresh review complete for every relevant pull request.
 6. The final `epic/597` to `main` pull request receives explicit maintainer approval at that reviewed, validated head.
 
-## R1A validation status
+## R1A completed proof
 
-The R1A source, contract, generated-artifact, and focused-proof changes are in PR #888. Its required evidence is
+PR #888 merged the R1A source, contract, generated-artifact, and focused-proof changes. Its completed evidence includes
 targeted F# formatting, affected Release builds and tests, OpenAPI/generated freshness, MarkdownLint, `git diff --check`,
-and a passing current-head GitHub `Validate` run that executes the Linux permission and inaccessible-state cases.
-Windows focused identity proof skips those Linux-only cases, so it cannot replace hosted Linux evidence.
+and a passing current-head GitHub `Validate` run with Linux permission and inaccessible-state cases. Windows focused
+identity proof skipped Linux-only cases and was supplemented by the hosted Linux evidence.
 
-The following documentation checks remain part of that focused proof:
+The following documentation checks remain part of the current canonical-record proof:
 
 ```powershell
 npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementation audit.md"
 git diff --check
 ```
 
-This status does not claim R1B commands, R2 liveness, serving, rotation, reconciliation, non-Linux support, or CacheStore behavior.
+This completed proof does not claim #914 status, #905 enrollment, R2 liveness, serving, rotation, reconciliation,
+non-Linux support, or CacheStore behavior.
