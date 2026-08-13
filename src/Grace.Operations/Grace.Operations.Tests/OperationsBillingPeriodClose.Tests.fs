@@ -41,7 +41,8 @@ module private BillingCloseSchema =
     let private tables =
         Set.ofList [ "ops.BillingPeriod"
                      "ops.Charge"
-                     "ops.BillingPeriodCloseEvidence" ]
+                     "ops.BillingPeriodCloseEvidence"
+                     "ops.BillingPeriodLateWork" ]
 
     /// Names the schema-qualified tables frozen before this migration and excluded from its live catalog remainder.
     let private priorTables =
@@ -683,6 +684,7 @@ SELECT CONCAT('BillingPeriod|',(SELECT * FROM ops.BillingPeriod ORDER BY Billing
 UNION ALL SELECT CONCAT('ChargePreviewLine|',(SELECT * FROM ops.ChargePreviewLine ORDER BY ChargePreviewLineId FOR JSON PATH, INCLUDE_NULL_VALUES))
 UNION ALL SELECT CONCAT('Charge|',(SELECT * FROM ops.Charge ORDER BY ChargeId FOR JSON PATH, INCLUDE_NULL_VALUES))
 UNION ALL SELECT CONCAT('BillingPeriodCloseEvidence|',(SELECT * FROM ops.BillingPeriodCloseEvidence ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodLateWork|',(SELECT * FROM ops.BillingPeriodLateWork ORDER BY BillingPeriodId,UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
 ORDER BY 1;
 """
 
@@ -734,6 +736,10 @@ DECLARE @CurrencyPeriodId uniqueidentifier='33333333-3333-3333-3333-333333333333
 INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State) VALUES (@CurrencyPeriodId,NEWID(),NEWID(),NEWID(),'2026-08-01','2026-09-01',0);
 INSERT ops.ChargePreviewLine (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (@CurrencyLineId,NEWID(),NEWID(),NEWID(),'2026-08-01','2026-09-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-08-01','2026-09-01',1,1);
 INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State) VALUES ('44444444-4444-4444-4444-444444444444',NEWID(),NEWID(),NEWID(),'2026-09-01','2026-10-01',0),('55555555-5555-5555-5555-555555555555',NEWID(),NEWID(),NEWID(),'2026-10-01','2026-11-01',0);
+DECLARE @LatePeriodId uniqueidentifier='66666666-6666-6666-6666-666666666666', @LateFactId uniqueidentifier='dddddddd-dddd-dddd-dddd-dddddddddddd';
+INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State) VALUES (@LatePeriodId,NEWID(),NEWID(),NEWID(),'2026-11-01','2026-12-01',2);
+INSERT ops.RawUsageFact (UsageFactId,RawPayload,CorrelationId,FactKind,OwnerId,OrganizationId,RepositoryId,StoragePoolId,Quantity,ObservedAtUtc,ArchiveState) VALUES (@LateFactId,0x01,'late-work-fixture',1,NEWID(),NEWID(),NEWID(),'pool',1,'2026-11-01',0);
+INSERT ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId,State) VALUES (@LatePeriodId,@LateFactId,0);
 """
 
     /// Proves the one SQL Server diagnostic rendering normalizes without erasing quoted check-literal data.
@@ -815,6 +821,26 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
         let drift = BillingCloseSchema.compare runtime incomplete false
         Assert.That(drift, Is.Not.Empty)
 
+    /// Proves runtime, frozen target, and independently declared snapshot agree before the disposable SQL gate runs.
+    [<Test>]
+    member _.RuntimeTargetAndIndependentSnapshotAgreeForLateWork() =
+        use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingLateWorkModel;Integrated Security=true;"
+
+        let runtime =
+            context.GetService<IDesignTimeModel>().Model
+            |> BillingCloseSchema.fromModel
+
+        let target =
+            AddBillingPeriodLateWork().TargetModel
+            |> BillingCloseSchema.fromModel
+
+        let snapshot =
+            OperationsDbContextModelSnapshot().Model
+            |> BillingCloseSchema.fromModel
+
+        assertNoDrift "runtime-target" (BillingCloseSchema.compare runtime target true)
+        assertNoDrift "runtime-snapshot" (BillingCloseSchema.compare runtime snapshot true)
+
     /// Compares runtime, independently frozen migration target, independently declared snapshot, and migrated SQL catalog exactly.
     [<Test>]
     member _.RuntimeTargetSnapshotAndLiveSqlPhysicalSchemasAgreeExactly() =
@@ -830,7 +856,7 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
                     |> BillingCloseSchema.fromModelWithDatabaseDefault databaseDefaultCollation
 
                 let target =
-                    AddBillingPeriodClose().TargetModel
+                    AddBillingPeriodLateWork().TargetModel
                     |> BillingCloseSchema.fromModelWithDatabaseDefault databaseDefaultCollation
 
                 let snapshot =
@@ -975,7 +1001,7 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
         let source = IO.File.ReadAllText sourcePath
         Assert.That(source, Does.Not.Contain("BillingPeriodCloseFrozenTarget.apply"))
 
-    /// Exercises every #916 check, identity, foreign-key, and immutable-trigger rejection against one migrated SQL database.
+    /// Exercises every close and late-work physical rejection while preserving a complete valid durable snapshot.
     [<Test>]
     member _.LivePhysicalRejectionMatrixRejectsEighteenNamedInvalidStatementsAndAllowsValidRows() =
         withDatabaseAsync (fun connectionString ->
@@ -1016,9 +1042,17 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
                         "charge delete", "DELETE FROM ops.Charge;"
                         "evidence update", "UPDATE ops.BillingPeriodCloseEvidence SET ScheduledOperationProvenance='tampered';"
                         "evidence delete", "DELETE FROM ops.BillingPeriodCloseEvidence;"
+                        "late work duplicate",
+                        "INSERT ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId,State) VALUES ('66666666-6666-6666-6666-666666666666','dddddddd-dddd-dddd-dddd-dddddddddddd',0);"
+                        "late work period foreign key",
+                        "INSERT ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId,State) VALUES (NEWID(),'dddddddd-dddd-dddd-dddd-dddddddddddd',0);"
+                        "late work raw fact foreign key",
+                        "INSERT ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId,State) VALUES ('66666666-6666-6666-6666-666666666666',NEWID(),0);"
+                        "late work state",
+                        "INSERT ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId,State) VALUES ('66666666-6666-6666-6666-666666666666','dddddddd-dddd-dddd-dddd-dddddddddddd',1);"
                     ]
 
-                Assert.That(cases.Length, Is.EqualTo(18), "The physical rejection matrix must retain every named #916 case.")
+                Assert.That(cases.Length, Is.EqualTo(22), "The physical rejection matrix must retain every named close and late-work case.")
 
                 for label, sql in cases do
                     do! rejectAndPreserveAsync connectionString label sql

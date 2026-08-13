@@ -702,6 +702,9 @@ type IOperationsUsageTransaction =
     /// Adds the accepted raw fact quantity to the derived minute aggregate.
     abstract AddToUsageAggregateMinuteAsync: aggregate: UsageAggregateMinute * cancellationToken: CancellationToken -> Task
 
+    /// Stages one Pending handoff when a newly inserted fact belongs to an already closed exact period.
+    abstract RecordClosedPeriodLateWorkAsync: rawFact: RawUsageFact * scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task
+
     /// Records the canonical scoped rejection unless accepted durable usage has already won.
     abstract RecordScopedUsageFactRejectionAsync: rejection: UsageFactRejection * cancellationToken: CancellationToken -> Task<UsageFactRejection option>
 
@@ -810,6 +813,36 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addParameter command "@MonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime scope.MonthStart)
         addParameter command "@NextMonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime (BillingCompletenessScope.nextMonthStart scope))
 
+    /// Inserts the minimal late-work row only for the closed period in the already locked exact scope.
+    let recordClosedPeriodLateWorkAsync (rawFact: RawUsageFact) (scope: BillingCompletenessScope) cancellationToken =
+        task {
+            use command =
+                createCommand
+                    """
+INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId, UsageFactId, State)
+SELECT period.BillingPeriodId, @UsageFactId, 0
+FROM ops.BillingPeriod AS period WITH (UPDLOCK, HOLDLOCK)
+WHERE period.OwnerId = @OwnerId
+  AND period.OrganizationId = @OrganizationId
+  AND period.RepositoryId = @RepositoryId
+  AND period.MonthStartUtc = @MonthStartUtc
+  AND period.NextMonthStartUtc = @NextMonthStartUtc
+  AND period.State = 2
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM ops.BillingPeriodLateWork AS existing
+      WHERE existing.BillingPeriodId = period.BillingPeriodId
+        AND existing.UsageFactId = @UsageFactId
+  );
+"""
+
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+            addBillingCompletenessScopeParameters command scope
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
     /// Acquires the shared transaction-owned SQL lock after rejecting malformed scope input.
     let acquireBillingCompletenessScopeAsync (scope: BillingCompletenessScope) cancellationToken =
         task {
@@ -889,6 +922,8 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
                 let! _ = command.ExecuteNonQueryAsync cancellationToken
                 return ()
             }
+
+        member _.RecordClosedPeriodLateWorkAsync(rawFact, scope, cancellationToken) = recordClosedPeriodLateWorkAsync rawFact scope cancellationToken
 
         member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) =
             task {
@@ -1816,6 +1851,7 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
                         if accepted then
                             do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
+                            do! transaction.RecordClosedPeriodLateWorkAsync(plan.RawFact, scope, operationCancellationToken)
 
                             return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
                         else
@@ -1844,6 +1880,7 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
                             if accepted then
                                 do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
+                                do! transaction.RecordClosedPeriodLateWorkAsync(plan.RawFact, scope, operationCancellationToken)
 
                                 return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
                             else

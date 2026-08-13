@@ -149,6 +149,10 @@ type private InMemoryOperationsUsageTransactionScope() =
                                 aggregates[aggregate.Key] <- current + aggregate.Quantity
                                 Task.CompletedTask
 
+                        member _.RecordClosedPeriodLateWorkAsync(_rawFact, _scope, lateWorkCancellationToken) =
+                            lateWorkCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
+
                         member _.RecordScopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
                             rejectionCancellationToken.ThrowIfCancellationRequested()
                             Task.FromResult(None)

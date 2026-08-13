@@ -18,6 +18,7 @@
     <Compile Include="OperationsEntities.fs" />
     <Compile Include="OperationsChargePreview.fs" />
     <Compile Include="OperationsBillingPeriodModel.fs" />
+    <Compile Include="OperationsBillingPeriodLateWorkModel.fs" />
     <Compile Include="OperationsDbContext.fs" />
     <Compile Include="Migrations\20260705234500_InitialOperationsSchema.fs" />
     <Compile Include="Migrations\20260707000000_AddRawUsageFactPayload.fs" />
@@ -31,6 +32,7 @@
     <Compile Include="Migrations\20260812090000_AddBillingCompletenessCoordination.fs" />
     <Compile Include="Migrations\20260812110000_AddUsageFactJournal.fs" />
     <Compile Include="Migrations\20260812130000_AddBillingPeriodClose.fs" />
+    <Compile Include="Migrations\20260812140000_AddBillingPeriodLateWork.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
     <Compile Include="OperationsBillingPeriod.fs" />

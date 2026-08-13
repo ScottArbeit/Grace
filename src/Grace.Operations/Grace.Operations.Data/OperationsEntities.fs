@@ -410,3 +410,19 @@ type BillingPeriodCloseEvidenceEntity() =
     member val PricingPreviewDigestSha256Hex = String.Empty with get, set
     member val ClosedAtUtc = DateTime.MinValue with get, set
     member val ScheduledOperationProvenance = String.Empty with get, set
+
+/// Represents one unprocessed accepted fact that arrived after its exact billing period closed.
+[<AllowNullLiteral>]
+type BillingPeriodLateWorkEntity() =
+
+    /// Identifies the already closed period that owns the later correction decision.
+    member val BillingPeriodId = Guid.Empty with get, set
+
+    /// Identifies the newly accepted raw fact without copying its payload.
+    member val UsageFactId = Guid.Empty with get, set
+
+    /// Stores the only handoff state supported by this leaf: Pending.
+    member val State = 0 with get, set
+
+    /// Stores the SQL-created UTC timestamp for the durable handoff.
+    member val CreatedAtUtc = DateTime.MinValue with get, set

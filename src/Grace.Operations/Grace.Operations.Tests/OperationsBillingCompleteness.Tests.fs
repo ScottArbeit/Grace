@@ -47,6 +47,8 @@ type private ObservedOperationsUsageTransaction
                 do! afterUsageAggregateAsync aggregate cancellationToken
             }
 
+        member _.RecordClosedPeriodLateWorkAsync(rawFact, scope, cancellationToken) = inner.RecordClosedPeriodLateWorkAsync(rawFact, scope, cancellationToken)
+
         member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken)
 
         member _.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken)
