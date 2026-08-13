@@ -224,6 +224,55 @@ function Assert-VerifiedRootCorrection {
     Assert-CorrectionAction $completionFailure 'WDU-LC-007' 'retainExactMarkerEvidence'
 }
 
+function Assert-EphemeralBytesChangedTerminalization {
+    param([Collections.Generic.Dictionary[string, object]] $RowsById, [string] $SourcePath)
+
+    function Get-BytesChangedRow {
+        param([string] $RowId)
+        if (-not $RowsById.ContainsKey($RowId)) {
+            Fail-Contract $SourcePath "missing required bytesChanged terminal row '$RowId'"
+        }
+        return $RowsById[$RowId]
+    }
+
+    function Assert-BytesChangedTerminal {
+        param([object] $Row, [string] $RowId, [string] $Trigger, [string] $Marker, [string] $Outcome)
+        if (-not (Test-OrdinalStringEquals $Row['match']['invocation']['value'] 'initial') -or
+            -not (Test-OrdinalStringEquals $Row['match']['selectionState']['value'] 'directoryVersion') -or
+            -not (Test-OrdinalStringEquals $Row['match']['trigger']['value'] $Trigger) -or
+            -not (Test-OrdinalStringEquals $Row['match']['marker']['value'] $Marker) -or
+            -not (Test-OrdinalStringEquals $Row['outcome'] $Outcome)) {
+            Fail-Contract $SourcePath "row '$RowId' must be the DirectoryVersion '$Trigger' '$Marker' terminal with outcome '$Outcome'"
+        }
+        if (-not (Test-OrdinalStringInCollection @($Row['requiredActions']) 'recordTerminal')) {
+            Fail-Contract $SourcePath "row '$RowId' must require 'recordTerminal'"
+        }
+    }
+
+    $changedMissing = Get-BytesChangedRow 'WDU-LC-026'
+    $unchangedMissing = Get-BytesChangedRow 'WDU-LC-028'
+    $changedExact = Get-BytesChangedRow 'WDU-LC-036'
+    $unchangedExact = Get-BytesChangedRow 'WDU-LC-038'
+    Assert-BytesChangedTerminal $changedMissing 'WDU-LC-026' 'afterSqliteLocalCompletionBytesChanged' 'missing' 'Updated'
+    Assert-BytesChangedTerminal $unchangedMissing 'WDU-LC-028' 'afterSqliteLocalCompletionBytesUnchanged' 'missing' 'Unchanged'
+    Assert-BytesChangedTerminal $changedExact 'WDU-LC-036' 'afterSqliteLocalCompletionBytesChanged' 'exact' 'Updated'
+    Assert-BytesChangedTerminal $unchangedExact 'WDU-LC-038' 'afterSqliteLocalCompletionBytesUnchanged' 'exact' 'Unchanged'
+
+    $completion = Get-BytesChangedRow 'WDU-LC-006'
+    foreach ($target in @('WDU-LC-026', 'WDU-LC-028', 'WDU-LC-036', 'WDU-LC-038')) {
+        if (-not (Test-OrdinalStringInCollection @($completion['nextRows']) $target)) {
+            Fail-Contract $SourcePath "row 'WDU-LC-006' must route to '$target'"
+        }
+    }
+
+    foreach ($referenceRowId in @('WDU-LC-020', 'WDU-LC-023', 'WDU-LC-025', 'WDU-LC-030', 'WDU-LC-033', 'WDU-LC-035')) {
+        $referenceRow = Get-BytesChangedRow $referenceRowId
+        if (-not (Test-OrdinalStringEquals $referenceRow['match']['trigger']['value'] 'afterSqliteLocalCompletion')) {
+            Fail-Contract $SourcePath "Reference row '$referenceRowId' must remain on afterSqliteLocalCompletion"
+        }
+    }
+}
+
 function Read-WduLifecycleContract {
     param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $Path)
 
@@ -367,6 +416,7 @@ function Read-WduLifecycleContract {
         }
     }
     Assert-VerifiedRootCorrection $rowsById $sourcePath
+    Assert-EphemeralBytesChangedTerminalization $rowsById $sourcePath
     $digestBytes = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))
     return [pscustomobject]@{ Digest = [Convert]::ToHexString($digestBytes).ToLowerInvariant(); RowIds = @($rowIds); ApplicabilityKeys = @($keyOwners.Keys); RowsById = $rowsById }
 }

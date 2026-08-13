@@ -81,10 +81,10 @@ try {
         $copy = Join-Path $directory 'canonical lifecycle.md'
         [IO.File]::Copy($canonicalPath, $copy, $true)
         $contract = Read-WduLifecycleContract -Path $copy
-        Assert-True ($contract.RowIds.Count -eq 68) 'the canonical lifecycle has 68 rows'
-        Assert-True ($contract.RowsById.Count -eq 68) 'the row index has one exact entry for every parsed row'
+        Assert-True ($contract.RowIds.Count -eq 70) 'the canonical lifecycle has 70 rows'
+        Assert-True ($contract.RowsById.Count -eq 70) 'the row index has one exact entry for every parsed row'
         Assert-True ($contract.RowIds.Count -eq $contract.RowsById.Count) 'the returned row IDs and row index have equal cardinality'
-        Assert-True ($contract.ApplicabilityKeys.Count -eq 258) 'the canonical lifecycle has 258 disjoint applicability keys'
+        Assert-True ($contract.ApplicabilityKeys.Count -eq 260) 'the canonical lifecycle has 260 disjoint applicability keys'
         Assert-True ($contract.Digest -match '^[0-9a-f]{64}$') 'the normalized digest is lowercase SHA-256'
     }
 
@@ -102,7 +102,7 @@ try {
         Set-TestText $copy (Replace-Once (Get-TestText $copy) 'retainMarkerEvidence' 'retainedMarkerEvidence')
         $changed = Read-WduLifecycleContract $copy
         Assert-True ($changed.Digest -cne $original.Digest) 'semantic data change changes the digest'
-        Assert-True ($changed.RowIds.Count -eq 68) 'semantic data change remains structurally compilable'
+        Assert-True ($changed.RowIds.Count -eq 70) 'semantic data change remains structurally compilable'
     }
 
     Invoke-Case 'ignores unrelated fenced JSON values and malformed samples' {
@@ -114,7 +114,7 @@ try {
         )
         Set-TestText $copy ((Get-TestText $copy) + "`n# Unicode outside block: é`n" + ($samples -join "`n"))
         $contract = Read-WduLifecycleContract $copy
-        Assert-True ($contract.ApplicabilityKeys.Count -eq 258) 'unrelated JSON never participates in object parsing'
+        Assert-True ($contract.ApplicabilityKeys.Count -eq 260) 'unrelated JSON never participates in object parsing'
     }
 
     Invoke-Case 'makes fresh and adopted reconciliation plus zero-action routes structurally reachable' {
@@ -138,6 +138,31 @@ try {
         $mutated = Replace-Once -Text (Get-TestText $copy) -Old '"workingFiles":"verifiedRelevantTarget","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"UpdateIncomplete","exitClass":"nonzero","doctorGuidance":false},' -New '"workingFiles":"verifiedRelevantTarget","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":false},'
         Set-TestText $copy $mutated
         Assert-Fails { Read-WduLifecycleContract $copy } "row 'WDU-LC-007' must classify post-VerifiedLocalRoot completion failure"
+    }
+
+    Invoke-Case 'maps ephemeral bytesChanged to distinct DirectoryVersion terminals while Reference remains unambiguous' {
+        $contract = Read-WduLifecycleContract $canonicalPath
+        Assert-True ($contract.RowsById['WDU-LC-026'].outcome -ceq 'Updated') 'missing-marker bytesChanged terminal is Updated'
+        Assert-True ($contract.RowsById['WDU-LC-028'].outcome -ceq 'Unchanged') 'missing-marker bytesUnchanged terminal is Unchanged'
+        Assert-True ($contract.RowsById['WDU-LC-036'].outcome -ceq 'Updated') 'exact-marker bytesChanged terminal is Updated'
+        Assert-True ($contract.RowsById['WDU-LC-038'].outcome -ceq 'Unchanged') 'exact-marker bytesUnchanged terminal is Unchanged'
+        Assert-True ($contract.RowsById['WDU-LC-020'].match.trigger.value -ceq 'afterSqliteLocalCompletion') 'Reference previous retains its ordinary completion trigger'
+        Assert-True ($contract.RowsById['WDU-LC-033'].match.trigger.value -ceq 'afterSqliteLocalCompletion') 'Reference selected retains its ordinary completion trigger'
+    }
+
+    Invoke-Case 'rejects collapsing the ephemeral bytesChanged discriminator' {
+        $copy = New-CanonicalCopy 'collapsed-bytes-changed-discriminator'
+        $old = '"id":"WDU-LC-028","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletionBytesUnchanged"}'
+        $new = '"id":"WDU-LC-028","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletionBytesChanged"}'
+        Set-TestText $copy (Replace-Once (Get-TestText $copy) $old $new)
+        Assert-Fails { Read-WduLifecycleContract $copy } 'duplicate applicability key'
+    }
+
+    Invoke-Case 'rejects deleting the ephemeral bytesChanged false terminal' {
+        $copy = New-CanonicalCopy 'missing-bytes-unchanged-terminal'
+        $mutated = [regex]::Replace((Get-TestText $copy), '(?m)^    \{"id":"WDU-LC-028".*\r?\n', '', 1)
+        Set-TestText $copy $mutated
+        Assert-Fails { Read-WduLifecycleContract $copy } 'dangling nextRows target'
     }
 
     Invoke-Case 'leaves input bytes unchanged on success and failure' {

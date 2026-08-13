@@ -28,8 +28,10 @@ The accepted, Plan-ready design for a Grace-controlled operation that will chang
 durable local state to match one selected server root, then commit caller-specific progress only after verifying that
 match. After implementation, Branch switching, Watch current-Reference replay, and Connect retrieval will use this
 shared operation while retaining their own admission and presentation policies.
-Its canonical lifecycle rows and fifteen generated consumer projections are checked as one exact offline packet before
-later implementation starts.
+Its 19 requirements, canonical lifecycle rows, and fifteen generated consumer projections are checked as one exact
+offline packet before later implementation starts. After `VerifiedLocalRoot`, ephemeral `bytesChanged` selects explicit
+DirectoryVersion `Updated` or `Unchanged` terminal rows without adding persisted state; Reference uses its own ordinary
+post-completion rows.
 _Avoid_: WorkingDirectoryMaterialization, exact materialization, caller-owned filesystem transaction
 
 **FileManifest**:

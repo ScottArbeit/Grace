@@ -123,11 +123,11 @@ try {
     $planNegativeCases = @(
             @{ Name = 'duplicate artifact assignment'; Old = '"artifact":"issue-843"'; New = '"artifact":"issue-842"'; Reason = 'duplicate artifact' },
             @{ Name = 'duplicate assignment row ID'; Old = '"rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-101","WDU-LC-103"]'; New = '"rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-100","WDU-LC-103"]'; Reason = 'duplicate row ID' },
-            @{ Name = 'unknown assignment row ID'; Old = '"WDU-LC-027","WDU-LC-036","WDU-LC-037","WDU-LC-100"'; New = '"WDU-LC-027","WDU-LC-036","WDU-LC-999","WDU-LC-100"'; Reason = 'unknown row ID' },
+            @{ Name = 'unknown assignment row ID'; Old = '"WDU-LC-027","WDU-LC-028","WDU-LC-036","WDU-LC-037"'; New = '"WDU-LC-027","WDU-LC-028","WDU-LC-036","WDU-LC-999"'; Reason = 'unknown row ID' },
             @{ Name = 'blank assignment proof'; Old = '"proof":"Consume the completed Branch lifecycle while deferring the first real Watch producer and retry proof to this issue."'; New = '"proof":""'; Reason = 'must be a nonblank' },
-            @{ Name = 'malformed assignment digest'; Old = 'd0c2bbdd1d9b9ad6d147e2e6dc17c35b0fc92aa1a4cce0724d750119de7d107d'; New = '901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7'; Reason = 'lowercase SHA-256' },
+            @{ Name = 'malformed assignment digest'; Old = 'aca9d1bb256f0ce7e9c93c2ed6ec9afd263faaa261632ed254dd7d28acc097e5'; New = '901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7'; Reason = 'lowercase SHA-256' },
             @{ Name = 'unknown assignment property'; Old = '"schema": "grace.wdu.lifecycle-projection-plan/v1",'; New = '"schema": "grace.wdu.lifecycle-projection-plan/v1", "extra": true,'; Reason = 'unknown property' },
-            @{ Name = 'incomplete assignment row coverage'; Old = ',"WDU-LC-037","WDU-LC-100"'; New = ',"WDU-LC-100"'; Reason = 'does not cover canonical row ID' }
+            @{ Name = 'incomplete assignment row coverage'; Old = ',"WDU-LC-037","WDU-LC-038","WDU-LC-100"'; New = ',"WDU-LC-038","WDU-LC-100"'; Reason = 'does not cover canonical row ID' }
         )
     $planNegativeSelected = if ($Group -eq 'PlanNegativeA') { @($planNegativeCases[0..2]) }
     elseif ($Group -eq 'PlanNegativeB') { @($planNegativeCases[3..5]) }
@@ -202,7 +202,7 @@ try {
 
     if ($Group -in @('All', 'DriftA', 'DriftB', 'DriftC')) {
     $driftCases = @(
-            @{ Name = 'stale projection digest'; Old = 'd0c2bbdd1d9b9ad6d147e2e6dc17c35b0fc92aa1a4cce0724d750119de7d107d'; New = '001fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7'; Reason = 'does not equal' },
+            @{ Name = 'stale projection digest'; Old = 'aca9d1bb256f0ce7e9c93c2ed6ec9afd263faaa261632ed254dd7d28acc097e5'; New = '001fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7'; Reason = 'does not equal' },
             @{ Name = 'wrong projection artifact'; Old = '"artifact": "issue-842"'; New = '"artifact": "unexpected"'; Reason = 'unexpected artifact' },
             @{ Name = 'wrong projection anchor'; Old = 'docs/Working Directory Update.md#normative-branch-lifecycle-table'; New = 'docs/Working Directory Update.md#wrong-anchor'; Reason = 'does not equal' },
             @{ Name = 'changed projection proof'; Old = 'Prove Branch-only Doctor retry, refusal, cancellation boundaries, terminal replay, and no working-file mutation.'; New = 'changed proof'; Reason = 'does not equal' },

@@ -65,7 +65,7 @@ justify three local-integrity implementations.
 The active exact-root packet is serial. #920 owns the lifecycle correction; #921 owns reconciliation; #922 owns
 held-lease application through opaque `VerifiedLocalRoot`; #923 owns the real five-input transaction through pending
 SQLite completion; #900 owns DirectoryVersion terminalization and filesystem-free retry; and #901 owns hash-selected
-Branch wiring. #898 remains the collision-safe topology predecessor. Closed #870, superseded #899, and PR #895 are
+Branch wiring. #898 remains the collision-safe topology predecessor. Closed predecessor records and PR #895 are
 historical evidence, not active delivery, dependency, or projection artifacts.
 
 Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
@@ -78,7 +78,9 @@ SQLite terminal completion is decisive durable truth. Marker and sidecar evidenc
 replace it. For DirectoryVersion retry, fresh evidence selects exact-marker cleanup when an exact marker exists or
 terminal SQLite recording when it is missing; cancellation is observed immediately before that selected first write
 only. After it begins, durable evidence determines the result. Direct production-runtime proof uses the five-input
-operation and persisted retry entry with real filesystem and SQLite facts.
+operation and persisted retry entry with real filesystem and SQLite facts. For DirectoryVersion, ephemeral
+`bytesChanged` selects distinct changed and unchanged terminal rows; Reference remains on its ordinary
+post-completion row without inferring that DirectoryVersion-only discriminator.
 
 The complete requirements, state model, propagation map, and proof contract are in
 [Working Directory Update](../Working%20Directory%20Update.md).
@@ -91,7 +93,7 @@ The complete requirements, state model, propagation map, and proof contract are 
   "schema": "grace.wdu.lifecycle-projection/v1",
   "artifact": "adr-0011",
   "canonical": "docs/Working Directory Update.md#normative-branch-lifecycle-table",
-  "canonicalContentDigest": "d0c2bbdd1d9b9ad6d147e2e6dc17c35b0fc92aa1a4cce0724d750119de7d107d",
+  "canonicalContentDigest": "aca9d1bb256f0ce7e9c93c2ed6ec9afd263faaa261632ed254dd7d28acc097e5",
   "rowIds": [
     "WDU-LC-200",
     "WDU-LC-201",
@@ -110,10 +112,12 @@ The complete requirements, state model, propagation map, and proof contract are 
     "WDU-LC-023",
     "WDU-LC-025",
     "WDU-LC-026",
+    "WDU-LC-028",
     "WDU-LC-030",
     "WDU-LC-033",
     "WDU-LC-035",
     "WDU-LC-036",
+    "WDU-LC-038",
     "WDU-LC-100",
     "WDU-LC-101",
     "WDU-LC-103",
