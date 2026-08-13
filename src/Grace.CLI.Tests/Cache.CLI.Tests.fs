@@ -20,6 +20,25 @@ open System.Text.Json.Nodes
 [<NonParallelizable>]
 module CacheCliTests =
 
+    /// Locates repository-root documentation from this test project without relying on the process current directory.
+    let private repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", ".."))
+
+    /// Identifies the canonical cache completion audit that records the current status-leaf split.
+    let private cacheImplementationAuditPath = Path.Combine(repoRoot, "docs", "Grace Cache implementation audit.md")
+
+    /// Extracts one audit section so its status language is checked independently of other planned leaves.
+    let private auditSection (heading: string) (markdown: string) =
+        let sectionStart = markdown.IndexOf(heading, StringComparison.Ordinal)
+        Assert.That(sectionStart, Is.GreaterThanOrEqualTo(0), $"Expected audit heading {heading}.")
+
+        let headingPrefix = heading[.. (heading.IndexOf(' ') - 1)]
+        let nextSectionStart = markdown.IndexOf($"\n{headingPrefix} ", sectionStart + heading.Length, StringComparison.Ordinal)
+
+        if nextSectionStart < 0 then
+            markdown[sectionStart..]
+        else
+            markdown[sectionStart .. (nextSectionStart - 1)]
+
     /// Sets AnsiConsole output for root-command tests that capture stdout.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
@@ -505,6 +524,40 @@ module CacheCliTests =
             Assert.That(root.GetProperty("Kind").GetString(), Is.EqualTo(expectedKind))
             Assert.That(registry.GetProperty("Schema").GetString(), Is.EqualTo("ExistingBehavior"))
             Assert.That(registry.GetProperty("Examples").GetString(), Is.EqualTo("ExistingBehavior"))
+
+    /// Verifies the canonical audit retains one completed R1A classification and the current R1B leaf split.
+    [<Test>]
+    let ``cache implementation audit keeps R1 completion ownership current`` () =
+        let audit = File.ReadAllText(cacheImplementationAuditPath)
+        let r1a = auditSection "### R1A: static enrollment identity foundation (#886)" audit
+        let r1aValidation = auditSection "## R1A completed validation history" audit
+
+        [
+            "| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886, #904, and #905 R1 sequence."
+            "| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | Implemented and proven R1A static enrollment identity foundation."
+            "| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | Superseded mixed R1B status/enrollment evidence."
+            "| [Issue #904](https://github.com/ScottArbeit/Grace/issues/904) | Current pure local redacted cache status leaf."
+            "| [Issue #905](https://github.com/ScottArbeit/Grace/issues/905) | Planned one-shot manual cache enrollment leaf."
+            "- **Status classification:** `implemented and proven`."
+            "- **R1B split:** #904 is the current pure local redacted status leaf, including its closed schema and examples. #905 is"
+            "## R1A completed validation history"
+        ]
+        |> List.iter (fun landmark -> Assert.That(audit, Does.Contain(landmark)))
+
+        [
+            "implementation leaf"
+            "still requires the separate R1A identity"
+            "**Required result:**"
+            "**Proof:**"
+        ]
+        |> List.iter (fun obsolete -> Assert.That(r1a, Does.Not.Contain(obsolete)))
+
+        [
+            "required evidence"
+            "remain part of that focused proof"
+            "pending"
+        ]
+        |> List.iter (fun pending -> Assert.That(r1aValidation, Does.Not.Contain(pending)))
 
     /// Verifies the published Cache status schema closes every production state pair and ready-only field boundary.
     [<Test>]

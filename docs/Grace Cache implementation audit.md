@@ -41,10 +41,10 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0 static-contract pruning. | Required predecessor completed. |
-| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886 and #887 R1 sequence. | Do not resume its mixed server, command, and status scope. |
-| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | Complete R1A static enrollment identity foundation. | Owns the completed protected local identity and server selection proof. |
-| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | Superseded mixed status/enrollment evidence. | Do not resume or reuse behavioral commits wholesale. |
-| [Issue #904](https://github.com/ScottArbeit/Grace/issues/904) | Active pure local redacted cache status leaf. | Owns status, schema/examples, and canonical-document reconciliation. |
+| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886, #904, and #905 R1 sequence. | Do not resume its mixed server, command, and status scope. |
+| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | Implemented and proven R1A static enrollment identity foundation. | Owns the completed protected local identity and server selection proof. |
+| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | Superseded mixed R1B status/enrollment evidence. | Do not resume or reuse behavioral commits wholesale. |
+| [Issue #904](https://github.com/ScottArbeit/Grace/issues/904) | Current pure local redacted cache status leaf. | Owns status, schema/examples, and canonical-document reconciliation. |
 | [Issue #905](https://github.com/ScottArbeit/Grace/issues/905) | Planned one-shot manual cache enrollment leaf. | Owns credentials, local staging, one server request, and cleanup. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
@@ -86,8 +86,9 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
   PR #706 recorded the server-foundation validation.
 - **Status classification:** `implemented and proven` for the server foundation.
-- **Residual risk:** The static server foundation still requires the separate R1A identity and R2 liveness leaves before
-  a cache can safely participate in the later runtime path. Artifact-grant validation-key rollover remains separate.
+- **Residual risk:** The static server foundation depends on the completed R1A identity and still requires the planned
+  R2 liveness leaf before a cache can safely participate in the later runtime path. Artifact-grant validation-key
+  rollover remains separate.
 
 ### Direct materialization
 
@@ -110,18 +111,18 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R1A: static enrollment identity foundation (#886)
 
-- **Status classification:** `implementation leaf`.
-- **Required result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration before
-  success, and existing selection excludes it. The internal Linux-only identity primitive stages one `0700` attempt
-  directory with a flushed `0600` PKCS#8 P-256 key, then publishes `0700` ready only after a flushed `0600`
+- **Status classification:** `implemented and proven`.
+- **Implemented result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration
+  before success, and existing selection excludes it. The internal Linux-only identity primitive stages one `0700`
+  attempt directory with a flushed `0600` PKCS#8 P-256 key, then publishes `0700` ready only after a flushed `0600`
   registration configuration matches the derived base64url SHA-256 `X || Y` fingerprint.
-- **Proof:** Actor persistence failure cannot advance authoritative in-memory selection; raw JSON `Health` cannot make
-  a new registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without
-  mutation; Linux tests restore modified modes before cleanup.
-- **Completed:** #904 owns the pure local redacted status command and its closed output contract.
-- **Deferred:** #905 owns HTTP, credentials, accepted/rejected/unknown orchestration, and cleanup calls; #857 owns signed
-  refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
-  R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
+- **Completed proof:** Actor persistence failure cannot advance in-memory selection; raw JSON `Health` cannot make a new
+  registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without mutation;
+  Linux tests restore modified modes before cleanup.
+- **R1B split:** #904 is the current pure local redacted status leaf, including its closed schema and examples. #905 is
+  the planned one-shot manual enrollment leaf for credentials, local staging, one server request, and cleanup. #857 owns
+  signed refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
+- **Scope boundary:** R1A added neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
 
 ### R2: registration liveness (#857)
 
@@ -180,18 +181,20 @@ The final Epic #597 release candidate requires all of the following:
 5. Current-head validation and a fresh review complete for every relevant pull request.
 6. The final `epic/597` to `main` pull request receives explicit maintainer approval at that reviewed, validated head.
 
-## R1A validation status
+## R1A completed validation history
 
-The R1A source, contract, generated-artifact, and focused-proof changes are in PR #888. Its required evidence is
-targeted F# formatting, affected Release builds and tests, OpenAPI/generated freshness, MarkdownLint, `git diff --check`,
-and a passing current-head GitHub `Validate` run that executes the Linux permission and inaccessible-state cases.
-Windows focused identity proof skips those Linux-only cases, so it cannot replace hosted Linux evidence.
+PR #888 merged R1A at `3161d4a694440c4cb2c7d3a46a57a015c2ba186b` after its reviewed head
+`f4a4c02f378d5103c63cb5285544dff963a63ed7` completed targeted F# formatting, affected Release builds and tests,
+OpenAPI/generated freshness, MarkdownLint, `git diff --check`, and GitHub `Validate` run `31622352526`. That Linux
+evidence executed the permission and inaccessible-state cases; Windows focused identity proof skipped those Linux-only
+cases and was not used as a substitute.
 
-The following documentation checks remain part of that focused proof:
+The following documentation checks passed as part of that completed evidence:
 
 ```powershell
 npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementation audit.md"
 git diff --check
 ```
 
-This status does not claim R1B commands, R2 liveness, serving, rotation, reconciliation, non-Linux support, or CacheStore behavior.
+This completed R1A history does not extend #904's current status scope or #905's planned enrollment scope. It does not
+claim R2 liveness, serving, rotation, reconciliation, non-Linux support, or CacheStore behavior.
