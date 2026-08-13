@@ -12,6 +12,9 @@ schema is intentionally narrow:
 - `ops.BillingPeriod`, `ops.Charge`, and `ops.BillingPeriodCloseEvidence` preserve one exact monthly scope, immutable
   initial postings, and immutable close evidence. The literal migration owns their SQL checks, keys, defaults,
   foreign keys, and append-only triggers; it does not implement close behavior.
+- `ops.BillingPeriodLateWork` records one `Pending` handoff for a fact newly accepted after its exact period closed.
+  Its period-and-fact identity is unique, it retains only provenance and SQL creation time, and later correction
+  processing remains outside this migration boundary.
 - The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
   operations schema.
 
