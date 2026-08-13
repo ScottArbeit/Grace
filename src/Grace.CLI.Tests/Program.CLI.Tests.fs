@@ -2297,6 +2297,10 @@ module RootHelpGroupingTests =
 
             localUtilities |> should contain "cache"
 
+            if otherStart >= 0 then
+                output.Substring(otherStart)
+                |> should not' (contain "cache")
+
             administration
             |> should not' (contain $"{Environment.NewLine}    access "))
 
