@@ -12,6 +12,7 @@
   <Project Path="Grace.Aspire.AppHost/Grace.Aspire.AppHost.fsproj" />
   <Project Path="Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" />
   <Project Path="Grace.CLI.Tests/Grace.CLI.Tests.fsproj" />
+  <Project Path="Grace.CLI.CacheEnrollment.ClaimHolder/Grace.CLI.CacheEnrollment.ClaimHolder.fsproj" />
   <Project Path="Grace.CLI/Grace.CLI.fsproj" />
   <Project Path="Grace.Cache.Tests/Grace.Cache.Tests.fsproj" />
   <Project Path="Grace.Cache/Grace.Cache.fsproj" />

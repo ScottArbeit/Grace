@@ -488,6 +488,29 @@ include cross-repository selection, stale or revoked registration, stale grant, 
 route, incomplete local artifact, and CacheRequired attempted Direct fallback. A successful cache hit alone is not
 proof of a safe cache path.
 
+## R1B enrollment operation
+
+The supported Product V1 enrollment profile is Linux x64 under systemd, using one system-managed service account and the
+fixed protected root `/var/lib/grace-cache`. Set the selected server URI and provide one repository assignment for every
+repository served by the installation.
+
+```powershell
+$env:GRACE_SERVER_URI = "https://grace.example.test/api"
+grace cache enroll --owner-id <owner-guid> --repository <organization-guid>/<repository-guid> --endpoint <https-endpoint>
+```
+
+```bash
+export GRACE_SERVER_URI="https://grace.example.test/api"
+grace cache enroll --owner-id <owner-guid> --repository <organization-guid>/<repository-guid> --endpoint <https-endpoint>
+```
+
+Repeat `--repository` for additional assignments. `--organization-id` selects the Organization boundary. The display name
+defaults to `Grace Cache`; HTTP endpoints require `--allow-http`. The command resolves one existing PAT, M2M, or
+interactive credential before local effects, stages one protected P-256 identity, sends one nonredirecting request, and
+publishes ready state only after strict server acceptance. Failure, cancellation, timeout, or response loss never retries,
+reconciles, or publishes ready state. Output is redacted and never includes private key material, bearer credentials,
+protected paths, or attempt details.
+
 ## 13. Requirements traceability ledger
 
 | ID | Requirement | Status | Likely implementation seam | Proof seam | Planning owner | Residual risk |

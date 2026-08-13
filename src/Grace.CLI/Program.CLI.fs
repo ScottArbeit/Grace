@@ -920,15 +920,16 @@ module GraceCommand =
         Common.resetLifecycleWarningSuppression ()
 
     /// Provides the production command factory and execution initialization for the retained root command value.
-    let private productionDependencies =
+    /// Creates fresh production root collaborators for the one supported Grace command graph.
+    let internal productionDependencies () =
         {
-            CreateCacheCommand = (fun () -> CacheCommand.Build)
+            CreateCacheCommand = (fun () -> CacheCommand.create (CacheCommand.productionDependencies ()))
             InitializeExecution = initializeProductionExecution
             AfterCommandExit = (fun _ -> Task.FromResult(()))
         }
 
     /// Retains the production root command graph for existing callers and parser tests.
-    let rootCommand = createRoot productionDependencies
+    let rootCommand = createRoot (productionDependencies ())
 
     ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
     //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
@@ -1060,6 +1061,18 @@ module GraceCommand =
 
             Set.contains "cache" commands
             && Set.contains "status" commands
+
+    /// Checks whether the parsed command belongs to the repository-independent Cache command group.
+    let isGraceCacheCommand (parseResult: ParseResult) =
+        if isNull parseResult then
+            false
+        else
+            let commands =
+                Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
+                |> Seq.map (fun command -> command.Name)
+                |> Set.ofSeq
+
+            Set.contains "cache" commands
 
     /// Invokes an asynchronous command action through the configured root exception boundary.
     let private invokeAsync (parseResult: ParseResult) (invocationConfiguration: InvocationConfiguration) (cancellationToken: CancellationToken) =
@@ -1257,7 +1270,7 @@ module GraceCommand =
 
                         if
                             not (parseResult |> isGraceDoctor)
-                            && not (parseResult |> isGraceCacheStatus)
+                            && not (parseResult |> isGraceCacheCommand)
                         then
                             LocalStateDb.setVerbose (parseResult |> verbose)
 
@@ -1429,7 +1442,7 @@ module GraceCommand =
 
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
-                    else if parseResult |> isGraceCacheStatus then
+                    else if parseResult |> isGraceCacheCommand then
                         let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                         returnValue <- invokedReturnValue
                         do! dependencies.AfterCommandExit returnValue
@@ -1601,7 +1614,7 @@ module GraceCommand =
                 if
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
-                    && not (parseResult |> isGraceCacheStatus)
+                    && not (parseResult |> isGraceCacheCommand)
                 then
                     HistoryStorage.tryRecordInvocation
                         {
@@ -1624,5 +1637,5 @@ module GraceCommand =
     /// Starts the production root graph with process cancellation handled by System.CommandLine invocation configuration.
     [<EntryPoint>]
     let main args =
-        run productionDependencies args CancellationToken.None
+        run (productionDependencies ()) args CancellationToken.None
         |> fun invocation -> invocation.GetAwaiter().GetResult()

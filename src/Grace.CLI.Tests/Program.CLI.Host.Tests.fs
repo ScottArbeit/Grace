@@ -1,6 +1,7 @@
 namespace Grace.CLI.Tests
 
 open Grace.CLI
+open Grace.CLI.Command
 open Grace.Types.Common
 open NUnit.Framework
 open Spectre.Console
@@ -358,3 +359,30 @@ module ProgramCliHostTests =
         Assert.That(output, Does.Not.Contain("Registry"))
         Assert.That(initializerCalls, Is.EqualTo(0))
         Assert.That(handlerCalls, Is.EqualTo(0))
+
+    /// Requires enrollment introspection to use the production root graph without execution initialization or local effects.
+    [<TestCase("--schema")>]
+    [<TestCase("--examples")>]
+    let ``cache enroll introspection is inert through the production root graph`` introspectionOption =
+        let mutable initializerCalls = 0
+
+        let dependencies: GraceCommand.RootDependencies =
+            {
+                CreateCacheCommand = (fun () -> CacheCommand.Build)
+                InitializeExecution = (fun () -> initializerCalls <- initializerCalls + 1)
+                AfterCommandExit = (fun _ -> Task.FromResult(()))
+            }
+
+        let exitCode, output =
+            runWithCapturedOutput
+                dependencies
+                [|
+                    "cache"
+                    "enroll"
+                    introspectionOption
+                |]
+                CancellationToken.None
+
+        Assert.That(exitCode, Is.EqualTo(0))
+        Assert.That(initializerCalls, Is.EqualTo(0))
+        Assert.That(output, Does.Contain("cache.enroll"))

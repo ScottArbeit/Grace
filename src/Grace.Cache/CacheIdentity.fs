@@ -94,6 +94,9 @@ module internal CacheIdentity =
     [<Literal>]
     let private RegistrationFileName = "registration.json"
 
+    [<Literal>]
+    let private EnrollmentClaimFileName = "enrollment.claim"
+
     let private directoryMode =
         UnixFileMode.UserRead
         ||| UnixFileMode.UserWrite
@@ -696,6 +699,44 @@ module internal CacheIdentity =
                 with
                 | _ -> Error CacheIdentityError.StateUnavailable
 
+    /// Holds the exclusive root-local file handle for one complete Cache enrollment attempt.
+    type internal CacheEnrollmentClaim = private { Root: string; Stream: FileStream }
+
+    /// Acquires the protected root-local claim that serializes stale cleanup, staging, ready publication, and cleanup.
+    let tryAcquireEnrollmentClaim root =
+        match validateRoot root with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                let claimPath = child root EnrollmentClaimFileName
+                let stream = new FileStream(claimPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+                File.SetUnixFileMode(claimPath, fileMode)
+
+                match inspectMode claimPath fileMode with
+                | Ok () -> Ok { Root = root; Stream = stream }
+                | Error _ ->
+                    stream.Dispose()
+                    Error CacheIdentityError.StateUnavailable
+            with
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Releases the claim after all effects owned by this enrollment invocation are complete.
+    let releaseEnrollmentClaim claim =
+        if not (isNull (box claim)) then
+            try
+                claim.Stream.Dispose()
+            with
+            | _ -> ()
+
+    /// Confirms that a live claim still belongs to this root immediately before a protected transition.
+    let private validateEnrollmentClaim claim root =
+        if isNull (box claim)
+           || not (String.Equals(claim.Root, root, StringComparison.Ordinal))
+           || claim.Stream.SafeFileHandle.IsClosed then
+            Error CacheIdentityError.StateUnavailable
+        else
+            validateRoot root
+
     /// Keeps the private parsed ready registration with its opaque inspection classification for one read-only inspection.
     type private CacheIdentityInspectionDetail =
         | Missing
@@ -809,5 +850,81 @@ module internal CacheIdentity =
                 let attempt = child root AttemptDirectoryName
 
                 if Directory.Exists(attempt) then Directory.Delete(attempt, true)
+            with
+            | _ -> ()
+
+    /// Inspects enrollment state only after validating the supported protected-root requirements.
+    let inspectEnrollmentRoot root =
+        match validateRoot root with
+        | Error error -> Error error
+        | Ok () -> inspect root
+
+    /// Removes one stale attempt while retaining the exclusive claim that prevents foreign cleanup.
+    let discardStaleAttempt claim root =
+        match validateEnrollmentClaim claim root with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                let attempt = child root AttemptDirectoryName
+
+                if Directory.Exists(attempt) then Directory.Delete(attempt, true)
+
+                match inspect root with
+                | Ok CacheIdentityInspection.Missing -> Ok()
+                | _ -> Error CacheIdentityError.StateUnavailable
+            with
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Stages one P-256 identity while the caller owns the claim for its full enrollment lifecycle.
+    let createClaimedAttempt claim root =
+        match validateEnrollmentClaim claim root with
+        | Error error -> Error error
+        | Ok () -> createAttempt root
+
+    /// Rechecks the live claim and exact staged P-256 key before external or ready-publication effects.
+    let validateClaimedAttempt claim root (expectedPublicKey: CacheIdentityPublicKey) =
+        match validateEnrollmentClaim claim root with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                let identityPath = child (child root AttemptDirectoryName) IdentityFileName
+
+                match File.ReadAllBytes(identityPath) |> tryImportP256 with
+                | Some (x, y) when
+                    String.Equals(base64Url x, expectedPublicKey.PublicKeyX, StringComparison.Ordinal)
+                    && String.Equals(base64Url y, expectedPublicKey.PublicKeyY, StringComparison.Ordinal)
+                    ->
+                    Ok()
+                | _ -> Error CacheIdentityError.StateUnavailable
+            with
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Publishes ready state only while this invocation still owns the validated staged identity.
+    let commitClaimedReady claim root configuration =
+        match validateClaimedAttempt claim root configuration.PublicKey with
+        | Error error -> Error error
+        | Ok () -> commitReady root configuration
+
+    /// Best-effort cleanup removes only the claimed invocation's matching staged identity.
+    let discardClaimedAttempt claim root (expectedPublicKey: CacheIdentityPublicKey option) =
+        match validateEnrollmentClaim claim root with
+        | Error _ -> ()
+        | Ok () ->
+            try
+                let attempt = child root AttemptDirectoryName
+                let identityPath = child attempt IdentityFileName
+
+                let matchesExpected =
+                    match expectedPublicKey with
+                    | None -> true
+                    | Some expected ->
+                        match File.ReadAllBytes(identityPath) |> tryImportP256 with
+                        | Some (x, y) ->
+                            String.Equals(base64Url x, expected.PublicKeyX, StringComparison.Ordinal)
+                            && String.Equals(base64Url y, expected.PublicKeyY, StringComparison.Ordinal)
+                        | None -> false
+
+                if Directory.Exists(attempt) && matchesExpected then
+                    Directory.Delete(attempt, true)
             with
             | _ -> ()

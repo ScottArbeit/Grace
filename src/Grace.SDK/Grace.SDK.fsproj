@@ -20,6 +20,7 @@
         <Compile Include="ClientIdentity.SDK.fs" />
         <Compile Include="Auth.SDK.fs" />
         <Compile Include="Common.SDK.fs" />
+        <Compile Include="CacheRegistration.SDK.fs" />
         <Compile Include="PersonalAccessToken.SDK.fs" />
         <Compile Include="LocalPlanner.SDK.fs" />
         <Compile Include="Storage.SDK.fs" />

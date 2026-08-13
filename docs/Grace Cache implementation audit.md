@@ -210,3 +210,11 @@ git diff --check
 
 This completed proof does not claim #914 status, #905 enrollment, R2 liveness, serving, rotation, reconciliation,
 non-Linux support, or CacheStore behavior.
+
+## R1B enrollment implementation scope
+
+Issue #941 adds the bounded one-shot enrollment transition after the protected identity and local status foundations.
+The transition has one parsed repository-independent command, one resolved bearer, one root-local claim, one staged P-256
+identity, one selected-server nonredirecting request, strict response comparison, and one same-parent ready publication.
+It does not add server enrollment semantics, registration-shape changes, generated clients, selection, rotation, liveness,
+listeners, artifacts, retries, or durable pending state.

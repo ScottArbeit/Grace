@@ -134,12 +134,27 @@ module CommandOutputContractRegistryTests =
     let private auditParseArgs (entry: CommandContractEntry) =
         let commandPath = entry.Identity.CommandPath |> List.toArray
 
-        [|
-            yield "--output"
-            yield "Json"
-            yield! commandPath
-            yield! auditPlaceholderArgs entry
-        |]
+        match entry.Identity.CommandId with
+        | "cache.enroll" ->
+            [|
+                "--output"
+                "Json"
+                "cache"
+                "enroll"
+                "--owner-id"
+                "11111111-1111-1111-1111-111111111111"
+                "--repository"
+                "22222222-2222-2222-2222-222222222222/33333333-3333-3333-3333-333333333333"
+                "--endpoint"
+                "https://cache.example.test"
+            |]
+        | _ ->
+            [|
+                yield "--output"
+                yield "Json"
+                yield! commandPath
+                yield! auditPlaceholderArgs entry
+            |]
 
     /// Counts by for test assertions.
     let private countBy behavior =
@@ -239,16 +254,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 207
+        |> should equal 208
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 198
+        |> should equal 199
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 186
+        |> should equal 187
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -290,7 +305,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 186
+        jsonReady |> should equal 187
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -467,7 +482,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 186
+        commonEntries.Length |> should equal 187
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -486,7 +501,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 186
+        commonEntries.Length |> should equal 187
 
         let parserInvalidEntries =
             commonEntries

@@ -705,14 +705,16 @@ module CommandOutputContract =
     /// Builds command-output contract metadata for return value contract for so automation can rely on stable JSON shapes.
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match identity.CommandId, envelopeContract with
-        | "cache.status", ExistingGraceResultEnvelope NoServerDto ->
+        | ("cache.enroll"
+          | "cache.status"),
+          ExistingGraceResultEnvelope _ ->
             supportedReturnValueContract
                 "CacheStatusDto"
                 "Grace.CLI.Command.CacheCommand"
                 cacheStatusSchema
                 cacheStatusExample
                 [
-                    "The command reads local protected identity state without a repository, server request, credential lookup, or mutation."
+                    "The command never exposes private key material, filesystem paths, or enrollment attempt details."
                     "CacheId, Endpoint, BoundaryKind, and RepositoryCount are present only when Enrollment is enrolled."
                 ]
         | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
@@ -1057,6 +1059,7 @@ module CommandOutputContract =
                 if
                     identity.CommandId.Equals("doctor", StringComparison.Ordinal)
                     || identity.CommandId.Equals("cache.status", StringComparison.Ordinal)
+                    || identity.CommandId.Equals("cache.enroll", StringComparison.Ordinal)
                 then
                     { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
                 else
@@ -1186,6 +1189,7 @@ module CommandOutputContract =
             row [ "branch" ] "switch" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "branch" ] "tag" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "update-parent-branch" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "cache" ] "enroll" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "cache" ] "status" true false common_renderOutput_envelope read_list_search local_client NoServerDto
             row [ "candidate" ] "attestations" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "cancel" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
