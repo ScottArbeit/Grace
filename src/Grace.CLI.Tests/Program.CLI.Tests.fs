@@ -2288,7 +2288,29 @@ module RootHelpGroupingTests =
             administration |> should contain "authorize"
 
             administration
-            |> should not' (contain $"{Environment.NewLine}    access "))
+            |> should not' (contain $"{Environment.NewLine}    access ")
+
+            let otherStart = output.IndexOf("Other:", StringComparison.Ordinal)
+
+            let localUtilities =
+                if otherStart >= 0 then
+                    sliceBetween output "Local utilities:" "Other:"
+                else
+                    output.Substring(output.IndexOf("Local utilities:", StringComparison.Ordinal))
+
+            localUtilities |> should contain "cache"
+
+            let cacheIsOutsideOther =
+                if otherStart < 0 then
+                    true
+                else
+                    not (
+                        output
+                            .Substring(otherStart)
+                            .Contains($"{Environment.NewLine}    cache ", StringComparison.Ordinal)
+                    )
+
+            Assert.That(cacheIsOutsideOther, Is.True, "cache must not appear under Other."))
 
     /// Verifies that subcommand help is not grouped.
     [<Test>]

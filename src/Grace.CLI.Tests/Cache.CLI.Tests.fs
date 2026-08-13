@@ -40,6 +40,30 @@ module CacheCliTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Captures history files and metadata so a Cache status root command cannot create or change either history path.
+    let private snapshotHistoryFile path =
+        if File.Exists(path) then
+            Some(File.ReadAllBytes(path), File.GetUnixFileMode(path), File.GetLastWriteTimeUtc(path))
+        else
+            None
+
+    /// Captures the actual global invocation-history file and lock paths used by the root command.
+    let private snapshotInvocationHistory () =
+        let historyPath = HistoryStorage.getHistoryFilePath ()
+        let historyLockPath = HistoryStorage.getHistoryLockPath ()
+        historyPath, snapshotHistoryFile historyPath, historyLockPath, snapshotHistoryFile historyLockPath
+
+    /// Runs Cache status and proves the actual global history file and lock remain absent or byte-for-byte unchanged.
+    let private runStatusWithoutHistoryMutation (args: string array) =
+        let historyPath, historyBefore, historyLockPath, historyLockBefore = snapshotInvocationHistory ()
+        let result = runWithCapturedStdout args
+
+        Assert.That(snapshotHistoryFile historyPath, Is.EqualTo(historyBefore), "Cache status must not create or mutate the invocation history file.")
+
+        Assert.That(snapshotHistoryFile historyLockPath, Is.EqualTo(historyLockBefore), "Cache status must not create or mutate the invocation history lock.")
+
+        result
+
     /// Executes an action outside a repository while restoring current directory and Cache root overrides.
     let private withTemporaryRoots action =
         let cwd = Path.Combine(Path.GetTempPath(), $"grace-cache-cli-tests-{Guid.NewGuid():N}")
@@ -112,6 +136,48 @@ module CacheCliTests =
         ]
         |> List.iter (fun name -> Assert.That(hasProperty name status, Is.False, $"Non-ready status must omit {name}."))
 
+    /// Verifies human root-command output exposes only approved redacted facts for one status classification.
+    let private assertHumanStatus (enrollment: string) (key: string) (ready: bool) (root: string) (output: string) =
+        [
+            $"Class: Grace.Cache.Status"
+            $"Enrollment: {enrollment}"
+            $"Key: {key}"
+        ]
+        |> List.iter (fun expected -> Assert.That(output, Does.Contain(expected)))
+
+        let readyFacts =
+            [
+                "CacheId: 11111111-1111-1111-1111-111111111111"
+                "Endpoint: http://127.0.0.1:"
+                "BoundaryKind: Organization"
+                "RepositoryCount: 1"
+            ]
+
+        if ready then
+            readyFacts
+            |> List.iter (fun expected -> Assert.That(output, Does.Contain(expected)))
+        else
+            readyFacts
+            |> List.iter (fun expected -> Assert.That(output, Does.Not.Contain(expected)))
+
+        [
+            root
+            "identity.pk8"
+            "registration.json"
+            "PrivateKey"
+            "PublicKey"
+            "Fingerprint"
+            "KeyReference"
+            "Token"
+            "Path:"
+            "Reference"
+            "Error:"
+            "Exception"
+            "IOException"
+            "UnauthorizedAccessException"
+        ]
+        |> List.iter (fun forbidden -> Assert.That(output, Does.Not.Contain(forbidden), $"Human status must not expose {forbidden}."))
+
     /// Requires a protected identity operation to succeed in root-command test setup.
     let private requireOk =
         function
@@ -145,10 +211,10 @@ module CacheCliTests =
 
         withTemporaryRoots (fun cwd _ ->
             let exitCode, output =
-                runWithCapturedStdout [| "--output"
-                                         "Json"
-                                         "cache"
-                                         "status" |]
+                runStatusWithoutHistoryMutation [| "--output"
+                                                   "Json"
+                                                   "cache"
+                                                   "status" |]
 
             Assert.That(exitCode, Is.EqualTo(1))
             Assert.That(Directory.Exists(Path.Combine(cwd, ".grace")), Is.False)
@@ -189,11 +255,20 @@ module CacheCliTests =
             withTemporaryRoots (fun _ root ->
                 let before = snapshotState root
 
+                let missingHumanExitCode, missingHumanOutput =
+                    runStatusWithoutHistoryMutation [| "cache"
+                                                       "status" |]
+
+                assertStateUnchanged root before
+                assertNoRequest ()
+                Assert.That(missingHumanExitCode, Is.EqualTo(1))
+                assertHumanStatus "notEnrolled" "missing" false root missingHumanOutput
+
                 let stagingExitCode, stagingOutput =
-                    runWithCapturedStdout [| "--output"
-                                             "Json"
-                                             "cache"
-                                             "status" |]
+                    runStatusWithoutHistoryMutation [| "--output"
+                                                       "Json"
+                                                       "cache"
+                                                       "status" |]
 
                 assertStateUnchanged root before
                 assertNoRequest ()
@@ -211,10 +286,10 @@ module CacheCliTests =
                 let attemptBefore = snapshotState root
 
                 let attemptExitCode, attemptOutput =
-                    runWithCapturedStdout [| "--output"
-                                             "Json"
-                                             "cache"
-                                             "status" |]
+                    runStatusWithoutHistoryMutation [| "--output"
+                                                       "Json"
+                                                       "cache"
+                                                       "status" |]
 
                 assertStateUnchanged root attemptBefore
                 assertNoRequest ()
@@ -232,10 +307,10 @@ module CacheCliTests =
                 let readyBefore = snapshotState root
 
                 let readyExitCode, readyOutput =
-                    runWithCapturedStdout [| "--output"
-                                             "Json"
-                                             "cache"
-                                             "status" |]
+                    runStatusWithoutHistoryMutation [| "--output"
+                                                       "Json"
+                                                       "cache"
+                                                       "status" |]
 
                 assertStateUnchanged root readyBefore
                 assertNoRequest ()
@@ -259,6 +334,17 @@ module CacheCliTests =
                     Is.EqualTo(1)
                 )
 
+                let readyHumanBefore = snapshotState root
+
+                let readyHumanExitCode, readyHumanOutput =
+                    runStatusWithoutHistoryMutation [| "cache"
+                                                       "status" |]
+
+                assertStateUnchanged root readyHumanBefore
+                assertNoRequest ()
+                Assert.That(readyHumanExitCode, Is.EqualTo(0))
+                assertHumanStatus "enrolled" "available" true root readyHumanOutput
+
                 let registrationPath = Path.Combine(root, "ready", "registration.json")
                 let registrationBytes = File.ReadAllBytes(registrationPath)
 
@@ -267,10 +353,10 @@ module CacheCliTests =
                     let invalidBefore = snapshotState root
 
                     let invalidExitCode, invalidOutput =
-                        runWithCapturedStdout [| "--output"
-                                                 "Json"
-                                                 "cache"
-                                                 "status" |]
+                        runStatusWithoutHistoryMutation [| "--output"
+                                                           "Json"
+                                                           "cache"
+                                                           "status" |]
 
                     assertStateUnchanged root invalidBefore
                     assertNoRequest ()
@@ -290,10 +376,10 @@ module CacheCliTests =
                     let inaccessibleBefore = snapshotState root
 
                     let inaccessibleExitCode, inaccessibleOutput =
-                        runWithCapturedStdout [| "--output"
-                                                 "Json"
-                                                 "cache"
-                                                 "status" |]
+                        runStatusWithoutHistoryMutation [| "--output"
+                                                           "Json"
+                                                           "cache"
+                                                           "status" |]
 
                     assertStateUnchanged root inaccessibleBefore
                     assertNoRequest ()
@@ -362,6 +448,21 @@ module CacheCliTests =
         extra["Endpoint"] <- JsonValue.Create("https://cache.example.test")
         let invalidPair = status "notEnrolled" "inaccessible" false
         let incompleteReady = status "enrolled" "available" false
+        let unknownClass = status "notEnrolled" "missing" false
+        unknownClass["Class"] <- JsonValue.Create("Grace.Cache.Unknown")
+        let unknownEnrollment = status "unknown" "missing" false
+        let unknownKey = status "notEnrolled" "unknown" false
+        let unknownBoundaryKind = status "enrolled" "available" true
+        unknownBoundaryKind["BoundaryKind"] <- JsonValue.Create("Unknown")
 
-        for value in [ extra; invalidPair; incompleteReady ] do
+        for value in
+            [
+                extra
+                invalidPair
+                incompleteReady
+                unknownClass
+                unknownEnrollment
+                unknownKey
+                unknownBoundaryKind
+            ] do
             Assert.That(validates value, Is.False, $"Expected schema to reject {value}")

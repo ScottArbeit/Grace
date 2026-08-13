@@ -551,6 +551,7 @@ module GraceCommand =
                         "history"
                         "maintenance"
                         "alias"
+                        "cache"
                     ]
             }
         ]
