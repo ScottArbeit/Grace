@@ -293,205 +293,204 @@ module internal WorkingDirectoryUpdate =
 
             visit rootDirectory relativePath
 
+        /// Classifies every target and removable tracked blocker without entering the asynchronous transaction workflow.
+        let private planSynchronously (currentStatus: GraceStatus) manifest =
+            let scanInput = currentScanInput ()
+            let classifier = classifierInput scanInput
+            let trackedRejection, trackedFiles, trackedDirectories = trackedTopology currentStatus
+            let targetRejection, targetFiles, targetDirectories = targetTopology manifest
+
+            match trackedRejection, targetRejection with
+            | Some rejection, _
+            | _, Some rejection -> Rejected rejection
+            | None, None ->
+                let mutable rejection = None
+                let removals = Dictionary<string, Action>(StringComparer.Ordinal)
+                let creates = Dictionary<string, Action>(StringComparer.Ordinal)
+                let copies = Dictionary<string, Action>(StringComparer.Ordinal)
+
+                let addRemoval path action = removals[pathKey path] <- action
+                let addCreate path = creates[pathKey path] <- EnsureDirectory path
+                let addCopy path = copies[pathKey path] <- CopyVerifiedFile path
+
+                for targetDirectory in orderedTargetDirectories targetDirectories.Values do
+                    if Option.isNone rejection
+                       && string targetDirectory
+                          <> Constants.RootDirectoryPath then
+                        match fullPathUnderRoot scanInput.RootDirectory targetDirectory with
+                        | Error value -> rejection <- Some value
+                        | Ok fullPath ->
+                            match actualKind fullPath with
+                            | Missing -> addCreate targetDirectory
+                            | File ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory File with
+                                | Error value -> rejection <- Some value
+                                | Ok "tracked-file" ->
+                                    addRemoval targetDirectory (RemoveTrackedFile targetDirectory)
+                                    addCreate targetDirectory
+                                | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
+                            | Directory ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory Directory with
+                                | Error value -> rejection <- Some value
+                                | Ok "tracked-directory" ->
+                                    match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory with
+                                    | Some value -> rejection <- Some value
+                                    | None -> ()
+                                | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
+
+                for targetFile in orderedTargetFiles targetFiles.Values do
+                    if Option.isNone rejection then
+                        let _, _, targetPath = targetFile
+
+                        match fullPathUnderRoot scanInput.RootDirectory targetPath with
+                        | Error value -> rejection <- Some value
+                        | Ok fullPath ->
+                            match actualKind fullPath with
+                            | Missing -> addCopy targetPath
+                            | File ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath targetPath File with
+                                | Error value -> rejection <- Some value
+                                | Ok "tracked-file" ->
+                                    let targetSha256, targetBlake3, _ = targetFile
+                                    let tracked = trackedFiles[pathKey targetPath]
+
+                                    if
+                                        tracked.Sha256Hash <> targetSha256
+                                        || tracked.Blake3Hash <> targetBlake3
+                                        || not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3)
+                                    then
+                                        addCopy targetPath
+                                | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
+                            | Directory ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath targetPath Directory with
+                                | Error value -> rejection <- Some value
+                                | Ok "tracked-directory" ->
+                                    match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetPath with
+                                    | Some value -> rejection <- Some value
+                                    | None ->
+                                        for directoryVersion in orderedTrackedDirectories trackedDirectories.Values do
+                                            let directoryPath = directoryVersion.RelativePath
+
+                                            if string directoryPath
+                                               <> Constants.RootDirectoryPath
+                                               && (pathKey directoryPath = pathKey targetPath
+                                                   || (string directoryPath)
+                                                       .StartsWith(string targetPath + "/", StringComparison.OrdinalIgnoreCase)) then
+                                                addRemoval directoryPath (RemoveTrackedDirectory directoryPath)
+
+                                        for fileVersion in orderedTrackedFiles trackedFiles.Values do
+                                            let filePath = fileVersion.RelativePath
+
+                                            if (string filePath)
+                                                .StartsWith(string targetPath + "/", StringComparison.OrdinalIgnoreCase) then
+                                                addRemoval filePath (RemoveTrackedFile filePath)
+
+                                        addCopy targetPath
+                                | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
+
+                for fileVersion in orderedTrackedFiles trackedFiles.Values do
+                    if
+                        Option.isNone rejection
+                        && not (targetFiles.ContainsKey(pathKey fileVersion.RelativePath))
+                    then
+                        match fullPathUnderRoot scanInput.RootDirectory fileVersion.RelativePath with
+                        | Error value -> rejection <- Some value
+                        | Ok fullPath ->
+                            match actualKind fullPath with
+                            | Missing -> ()
+                            | File ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath File with
+                                | Ok "tracked-file" -> addRemoval fileVersion.RelativePath (RemoveTrackedFile fileVersion.RelativePath)
+                                | Error value -> rejection <- Some value
+                                | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
+                            | Directory ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath Directory with
+                                | Error value -> rejection <- Some value
+                                | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
+
+                for directoryVersion in orderedTrackedDirectories trackedDirectories.Values do
+                    let directoryPath = directoryVersion.RelativePath
+
+                    if
+                        Option.isNone rejection
+                        && string directoryPath
+                           <> Constants.RootDirectoryPath
+                        && not (targetDirectories.ContainsKey(pathKey directoryPath))
+                    then
+                        match fullPathUnderRoot scanInput.RootDirectory directoryPath with
+                        | Error value -> rejection <- Some value
+                        | Ok fullPath ->
+                            match actualKind fullPath with
+                            | Missing -> ()
+                            | Directory ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath Directory with
+                                | Error value -> rejection <- Some value
+                                | Ok "tracked-directory" ->
+                                    match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath directoryPath with
+                                    | Some value -> rejection <- Some value
+                                    | None -> addRemoval directoryPath (RemoveTrackedDirectory directoryPath)
+                                | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
+                            | File ->
+                                match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath File with
+                                | Error value -> rejection <- Some value
+                                | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
+
+                match rejection with
+                | Some value -> Rejected value
+                | None ->
+                    let orderedRemovals =
+                        removals.Values
+                        |> Seq.sortWith (fun left right ->
+                            let leftPath =
+                                match left with
+                                | RemoveTrackedFile path
+                                | RemoveTrackedDirectory path -> path
+                                | _ -> RelativePath Constants.RootDirectoryPath
+
+                            let rightPath =
+                                match right with
+                                | RemoveTrackedFile path
+                                | RemoveTrackedDirectory path -> path
+                                | _ -> RelativePath Constants.RootDirectoryPath
+
+                            let byDepth = compare (depth rightPath) (depth leftPath)
+                            if byDepth <> 0 then byDepth else comparePaths leftPath rightPath)
+                        |> Seq.toList
+
+                    let orderedCreates =
+                        creates.Values
+                        |> Seq.sortWith (fun left right ->
+                            let leftPath =
+                                match left with
+                                | EnsureDirectory path -> path
+                                | _ -> RelativePath Constants.RootDirectoryPath
+
+                            let rightPath =
+                                match right with
+                                | EnsureDirectory path -> path
+                                | _ -> RelativePath Constants.RootDirectoryPath
+
+                            let byDepth = compare (depth leftPath) (depth rightPath)
+                            if byDepth <> 0 then byDepth else comparePaths leftPath rightPath)
+                        |> Seq.toList
+
+                    let orderedCopies =
+                        copies.Values
+                        |> Seq.sortWith (fun left right ->
+                            let leftPath =
+                                match left with
+                                | CopyVerifiedFile path -> path
+                                | _ -> RelativePath Constants.RootDirectoryPath
+
+                            let rightPath =
+                                match right with
+                                | CopyVerifiedFile path -> path
+                                | _ -> RelativePath Constants.RootDirectoryPath
+
+                            comparePaths leftPath rightPath)
+                        |> Seq.toList
+
+                    Planned(Plan(orderedRemovals @ orderedCreates @ orderedCopies))
+
         /// Produces one complete pre-mutation action list after classifying every target and removable tracked blocker.
-        let plan (currentStatus: GraceStatus) manifest =
-            task {
-                let scanInput = currentScanInput ()
-                let classifier = classifierInput scanInput
-                let trackedRejection, trackedFiles, trackedDirectories = trackedTopology currentStatus
-                let targetRejection, targetFiles, targetDirectories = targetTopology manifest
-
-                match trackedRejection, targetRejection with
-                | Some rejection, _
-                | _, Some rejection -> return Rejected rejection
-                | None, None ->
-                    let mutable rejection = None
-                    let removals = Dictionary<string, Action>(StringComparer.Ordinal)
-                    let creates = Dictionary<string, Action>(StringComparer.Ordinal)
-                    let copies = Dictionary<string, Action>(StringComparer.Ordinal)
-
-                    let addRemoval path action = removals[pathKey path] <- action
-                    let addCreate path = creates[pathKey path] <- EnsureDirectory path
-                    let addCopy path = copies[pathKey path] <- CopyVerifiedFile path
-
-                    for targetDirectory in orderedTargetDirectories targetDirectories.Values do
-                        if Option.isNone rejection
-                           && string targetDirectory
-                              <> Constants.RootDirectoryPath then
-                            match fullPathUnderRoot scanInput.RootDirectory targetDirectory with
-                            | Error value -> rejection <- Some value
-                            | Ok fullPath ->
-                                match actualKind fullPath with
-                                | Missing -> addCreate targetDirectory
-                                | File ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory File with
-                                    | Error value -> rejection <- Some value
-                                    | Ok "tracked-file" ->
-                                        addRemoval targetDirectory (RemoveTrackedFile targetDirectory)
-                                        addCreate targetDirectory
-                                    | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
-                                | Directory ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory Directory with
-                                    | Error value -> rejection <- Some value
-                                    | Ok "tracked-directory" ->
-                                        match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory
-                                            with
-                                        | Some value -> rejection <- Some value
-                                        | None -> ()
-                                    | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
-
-                    for targetFile in orderedTargetFiles targetFiles.Values do
-                        if Option.isNone rejection then
-                            let _, _, targetPath = targetFile
-
-                            match fullPathUnderRoot scanInput.RootDirectory targetPath with
-                            | Error value -> rejection <- Some value
-                            | Ok fullPath ->
-                                match actualKind fullPath with
-                                | Missing -> addCopy targetPath
-                                | File ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath targetPath File with
-                                    | Error value -> rejection <- Some value
-                                    | Ok "tracked-file" ->
-                                        let targetSha256, targetBlake3, _ = targetFile
-                                        let tracked = trackedFiles[pathKey targetPath]
-
-                                        if
-                                            tracked.Sha256Hash <> targetSha256
-                                            || tracked.Blake3Hash <> targetBlake3
-                                            || not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3)
-                                        then
-                                            addCopy targetPath
-                                    | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
-                                | Directory ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath targetPath Directory with
-                                    | Error value -> rejection <- Some value
-                                    | Ok "tracked-directory" ->
-                                        match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetPath with
-                                        | Some value -> rejection <- Some value
-                                        | None ->
-                                            for directoryVersion in orderedTrackedDirectories trackedDirectories.Values do
-                                                let directoryPath = directoryVersion.RelativePath
-
-                                                if string directoryPath
-                                                   <> Constants.RootDirectoryPath
-                                                   && (pathKey directoryPath = pathKey targetPath
-                                                       || (string directoryPath)
-                                                           .StartsWith(string targetPath + "/", StringComparison.OrdinalIgnoreCase)) then
-                                                    addRemoval directoryPath (RemoveTrackedDirectory directoryPath)
-
-                                            for fileVersion in orderedTrackedFiles trackedFiles.Values do
-                                                let filePath = fileVersion.RelativePath
-
-                                                if (string filePath)
-                                                    .StartsWith(string targetPath + "/", StringComparison.OrdinalIgnoreCase) then
-                                                    addRemoval filePath (RemoveTrackedFile filePath)
-
-                                            addCopy targetPath
-                                    | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
-
-                    for fileVersion in orderedTrackedFiles trackedFiles.Values do
-                        if
-                            Option.isNone rejection
-                            && not (targetFiles.ContainsKey(pathKey fileVersion.RelativePath))
-                        then
-                            match fullPathUnderRoot scanInput.RootDirectory fileVersion.RelativePath with
-                            | Error value -> rejection <- Some value
-                            | Ok fullPath ->
-                                match actualKind fullPath with
-                                | Missing -> ()
-                                | File ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath File with
-                                    | Ok "tracked-file" -> addRemoval fileVersion.RelativePath (RemoveTrackedFile fileVersion.RelativePath)
-                                    | Error value -> rejection <- Some value
-                                    | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
-                                | Directory ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath Directory with
-                                    | Error value -> rejection <- Some value
-                                    | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
-
-                    for directoryVersion in orderedTrackedDirectories trackedDirectories.Values do
-                        let directoryPath = directoryVersion.RelativePath
-
-                        if
-                            Option.isNone rejection
-                            && string directoryPath
-                               <> Constants.RootDirectoryPath
-                            && not (targetDirectories.ContainsKey(pathKey directoryPath))
-                        then
-                            match fullPathUnderRoot scanInput.RootDirectory directoryPath with
-                            | Error value -> rejection <- Some value
-                            | Ok fullPath ->
-                                match actualKind fullPath with
-                                | Missing -> ()
-                                | Directory ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath Directory with
-                                    | Error value -> rejection <- Some value
-                                    | Ok "tracked-directory" ->
-                                        match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath directoryPath
-                                            with
-                                        | Some value -> rejection <- Some value
-                                        | None -> addRemoval directoryPath (RemoveTrackedDirectory directoryPath)
-                                    | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
-                                | File ->
-                                    match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath File with
-                                    | Error value -> rejection <- Some value
-                                    | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
-
-                    match rejection with
-                    | Some value -> return Rejected value
-                    | None ->
-                        let orderedRemovals =
-                            removals.Values
-                            |> Seq.sortWith (fun left right ->
-                                let leftPath =
-                                    match left with
-                                    | RemoveTrackedFile path
-                                    | RemoveTrackedDirectory path -> path
-                                    | _ -> RelativePath Constants.RootDirectoryPath
-
-                                let rightPath =
-                                    match right with
-                                    | RemoveTrackedFile path
-                                    | RemoveTrackedDirectory path -> path
-                                    | _ -> RelativePath Constants.RootDirectoryPath
-
-                                let byDepth = compare (depth rightPath) (depth leftPath)
-                                if byDepth <> 0 then byDepth else comparePaths leftPath rightPath)
-                            |> Seq.toList
-
-                        let orderedCreates =
-                            creates.Values
-                            |> Seq.sortWith (fun left right ->
-                                let leftPath =
-                                    match left with
-                                    | EnsureDirectory path -> path
-                                    | _ -> RelativePath Constants.RootDirectoryPath
-
-                                let rightPath =
-                                    match right with
-                                    | EnsureDirectory path -> path
-                                    | _ -> RelativePath Constants.RootDirectoryPath
-
-                                let byDepth = compare (depth leftPath) (depth rightPath)
-                                if byDepth <> 0 then byDepth else comparePaths leftPath rightPath)
-                            |> Seq.toList
-
-                        let orderedCopies =
-                            copies.Values
-                            |> Seq.sortWith (fun left right ->
-                                let leftPath =
-                                    match left with
-                                    | CopyVerifiedFile path -> path
-                                    | _ -> RelativePath Constants.RootDirectoryPath
-
-                                let rightPath =
-                                    match right with
-                                    | CopyVerifiedFile path -> path
-                                    | _ -> RelativePath Constants.RootDirectoryPath
-
-                                comparePaths leftPath rightPath)
-                            |> Seq.toList
-
-                        return Planned(Plan(orderedRemovals @ orderedCreates @ orderedCopies))
-            }
+        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously currentStatus manifest }
