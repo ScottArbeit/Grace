@@ -77,6 +77,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
             action root
         finally
+            WorkingDirectoryUpdate.LocalTransactionTesting.reset ()
             Services.clearShouldIgnoreCache ()
             Services.parseResult <- originalParseResult
             Environment.CurrentDirectory <- originalDirectory
@@ -113,11 +114,19 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             else
                 Some(path.Substring(0, separator))
 
-    /// Builds a complete rooted graph whose directory hashes cover the exact supplied files.
-    let private completeStatus (files: LocalFileVersion array) =
+    /// Builds a complete rooted graph whose directory hashes cover exact supplied files and explicitly selected empty directories.
+    let private completeStatusWithDirectories (explicitDirectories: string array) (files: LocalFileVersion array) =
         let paths =
             seq {
                 yield Constants.RootDirectoryPath
+
+                for directory in explicitDirectories do
+                    let mutable current = Some directory
+
+                    while Option.isSome current do
+                        let path = Option.get current
+                        yield path
+                        current <- parentPath path
 
                 for (file: LocalFileVersion) in files do
                     let mutable current = parentPath (string file.RelativePath)
@@ -201,6 +210,9 @@ module WorkingDirectoryUpdateLocalTransactionTests =
 
         status
 
+    /// Builds a complete rooted graph whose directories are implied solely by its supplied files.
+    let private completeStatus (files: LocalFileVersion array) = completeStatusWithDirectories Array.empty files
+
     /// Prepares one immutable manifest/byte pair matching the complete target graph's sole file.
     let private preparedContent (file: LocalFileVersion) (bytes: byte array) =
         let manifest =
@@ -215,10 +227,58 @@ module WorkingDirectoryUpdateLocalTransactionTests =
         |> fun task -> task.GetAwaiter().GetResult()
         |> required
 
-    /// Builds the single-file resolved target tuple required by the production five-input transaction.
-    let private targetGraph repositoryId branchId (file: LocalFileVersion) =
-        let status = completeStatus [| file |]
+    /// Prepares immutable bytes and explicit empty-directory topology for one direct production transaction.
+    let private preparedContentWithDirectories (directories: string array) (file: LocalFileVersion) (bytes: byte array) =
+        let entries =
+            seq {
+                yield!
+                    directories
+                    |> Seq.map (fun directory -> WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath directory))
 
+                yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(file.RelativePath, file.Sha256Hash, file.Blake3Hash)
+            }
+
+        let manifest =
+            WorkingDirectoryUpdateContracts.PreparedManifest.create entries
+            |> required
+
+        WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new Reader([ string file.RelativePath, bytes ])) CancellationToken.None
+        |> fun task -> task.GetAwaiter().GetResult()
+        |> required
+
+    /// Saves a direct configuration change without resetting the process cache that the transaction must not trust.
+    let private saveConfigurationChange (current: GraceConfiguration) change =
+        change current
+        saveConfigFile (Path.Combine(current.ConfigurationDirectory, GraceConfigFileName)) current
+
+    /// Verifies that the local transaction has not recorded any pending or terminal completion for a rejected or incomplete attempt.
+    let private assertNoCompletion (current: GraceConfiguration) target branchId selection =
+        let operation =
+            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection branchId selection target
+            |> required
+
+        LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+        |> fun task -> task.GetAwaiter().GetResult()
+        |> should equal None
+
+        LocalStateDb.readPendingWorkingDirectoryUpdateFinalization current.GraceStatusFile
+        |> fun task -> task.GetAwaiter().GetResult()
+        |> should equal None
+
+    /// Reacquires the exact WDU scope to prove every direct transaction outcome has released its local lease.
+    let private assertLeaseReacquirable repositoryId root =
+        let scope =
+            WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+            |> required
+
+        use acquired =
+            WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        acquired |> should not' (be Null)
+
+    /// Builds the resolved target tuple required by the production five-input transaction for one complete status graph.
+    let private targetGraphForStatus repositoryId branchId status =
         let target =
             WorkingDirectoryUpdateContracts.Target.create
                 repositoryId
@@ -232,6 +292,11 @@ module WorkingDirectoryUpdateLocalTransactionTests =
         status,
         WorkingDirectoryUpdate.ResolvedTargetGraph.create target status
         |> required
+
+    /// Builds the single-file resolved target tuple required by the production five-input transaction.
+    let private targetGraph repositoryId branchId (file: LocalFileVersion) =
+        let status = completeStatus [| file |]
+        targetGraphForStatus repositoryId branchId status
 
     /// Creates one phase from the exact current SQLite snapshot and an optional distinct cancellation token.
     let private acceptedPhase (current: GraceConfiguration) (cancellationToken: CancellationToken) =
@@ -394,3 +459,299 @@ module WorkingDirectoryUpdateLocalTransactionTests =
 
             Directory.Exists(current.ObjectDirectory)
             |> should equal false)
+
+    /// Proves a configuration change while the WDU lease is held rejects at the mandatory post-lease disk reread.
+    [<Test>]
+    let ``five-input transaction rejects configuration changed while waiting for the lease`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "selected.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+            let phase = acceptedPhase current CancellationToken.None
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            use sealedConfiguration = new ManualResetEventSlim(false)
+
+            use heldLease =
+                WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterSealedConfiguration (fun () -> sealedConfiguration.Set())
+
+            let running =
+                Task.Run (fun () ->
+                    WorkingDirectoryUpdate.LocalTransaction.run
+                        phase
+                        selection
+                        graph
+                        prepared
+                        (WorkingDirectoryUpdate.DiagnosticCorrelation.create "configuration-while-waiting"
+                         |> required)
+                    |> fun task -> task.GetAwaiter().GetResult())
+
+            sealedConfiguration.Wait(TimeSpan.FromSeconds(5.0))
+            |> should equal true
+
+            saveConfigurationChange current (fun configuration -> configuration.BranchId <- Guid.NewGuid())
+            WorkingDirectoryUpdateCoordination.Lease.dispose heldLease
+            let outcome = running.GetAwaiter().GetResult()
+
+            match outcome with
+            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | _ -> Assert.Fail($"Expected fresh configuration rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
+
+            assertNoCompletion current target branchId selection
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves final pre-mutation validation rereads disk configuration after object publication instead of trusting a cached object.
+    [<Test>]
+    let ``five-input transaction rejects configuration changed after object publication`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "selected.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+            let phase = acceptedPhase current CancellationToken.None
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterObjectPublication (fun () ->
+                saveConfigurationChange current (fun configuration -> configuration.BranchId <- Guid.NewGuid()))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    phase
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "configuration-after-objects"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | _ -> Assert.Fail($"Expected final fresh configuration rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
+
+            assertNoCompletion current target branchId selection
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves independent final-root verification requires nested empty directories and leaves no completion after their loss.
+    [<Test>]
+    let ``five-input transaction detects a removed expected empty directory before SQLite completion`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "nested/target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            let targetStatus =
+                completeStatusWithDirectories [| "nested"; "nested/empty" |] [|
+                    selected
+                |]
+
+            let target, _, graph = targetGraphForStatus repositoryId branchId targetStatus
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+            let prepared = preparedContentWithDirectories [| "nested/empty" |] selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterPlannedActions (fun () -> Directory.Delete(Path.Combine(root, "nested", "empty"), false))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "missing-empty-directory"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+            | _ -> Assert.Fail($"Expected incomplete topology verification, got {outcome}.")
+
+            Directory.Exists(Path.Combine(root, "nested", "empty"))
+            |> should equal false
+
+            File.Exists(Path.Combine(root, "nested", "target.txt"))
+            |> should equal true
+
+            assertNoCompletion current target branchId selection
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves an injected failure immediately before the first mutable filesystem call remains a clean pre-mutation rejection.
+    [<Test>]
+    let ``five-input transaction rejects an injected failure immediately before first mutation`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "nested/target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+            WorkingDirectoryUpdate.LocalTransactionTesting.installBeforeFirstMutation (fun () -> raise (IOException("before first mutation")))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    (preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes")))
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "before-first-mutation"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+            | _ -> Assert.Fail($"Expected pre-mutation rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "nested", "target.txt"))
+            |> should equal false
+
+            assertNoCompletion current target branchId selection
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves a failure after a filesystem action begins preserves marker evidence and reports incomplete without completion.
+    [<Test>]
+    let ``five-input transaction reports incomplete for injected failure after first mutation begins`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "nested/target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFirstMutationBegan (fun () -> raise (IOException("after first mutation began")))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    (preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes")))
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "after-first-mutation"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+            | _ -> Assert.Fail($"Expected post-mutation incomplete outcome, got {outcome}.")
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal true
+
+            assertNoCompletion current target branchId selection
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves cancellation during final planning remains pre-mutation, while cancellation after the first action begins remains incomplete.
+    [<Test>]
+    let ``five-input transaction honors cancellation only before first working-tree mutation`` () =
+        let runCase cancelDuringFinalPlanning cancelBeforeFirstMutation cancelAfterMutationBegins expectedIncomplete =
+            withTempRepository (fun root ->
+                let repositoryId = Guid.NewGuid()
+                let branchId = Guid.NewGuid()
+                let current = configure root repositoryId branchId
+                let baseline = completeStatus Array.empty<LocalFileVersion>
+
+                LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> ignore
+
+                let selected = localFile "nested/target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+                let target, _, graph = targetGraph repositoryId branchId selected
+                let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+                let scope =
+                    WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                    |> required
+
+                use cancellation = new CancellationTokenSource()
+
+                if cancelDuringFinalPlanning then
+                    WorkingDirectoryUpdate.LocalTransactionTesting.installBeforeFinalPlanning (fun () -> cancellation.Cancel())
+
+                if cancelBeforeFirstMutation then
+                    WorkingDirectoryUpdate.LocalTransactionTesting.installBeforeFirstMutation (fun () -> cancellation.Cancel())
+
+                if cancelAfterMutationBegins then
+                    WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFirstMutationBegan (fun () ->
+                        cancellation.Cancel()
+                        raise (OperationCanceledException(cancellation.Token)))
+
+                let outcome =
+                    WorkingDirectoryUpdate.LocalTransaction.run
+                        (acceptedPhase current cancellation.Token)
+                        selection
+                        graph
+                        (preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes")))
+                        (WorkingDirectoryUpdate.DiagnosticCorrelation.create "cancellation-boundary"
+                         |> required)
+                    |> fun task -> task.GetAwaiter().GetResult()
+
+                if expectedIncomplete then
+                    match outcome with
+                    | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+                    | _ -> Assert.Fail($"Expected post-mutation incomplete cancellation outcome, got {outcome}.")
+                else
+                    match outcome with
+                    | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                    | _ -> Assert.Fail($"Expected pre-mutation rejected cancellation outcome, got {outcome}.")
+
+                if expectedIncomplete then
+                    File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+                    |> should equal true
+
+                assertNoCompletion current target branchId selection
+                assertLeaseReacquirable repositoryId root)
+
+        runCase true false false false
+        runCase false true false false
+        runCase false false true true

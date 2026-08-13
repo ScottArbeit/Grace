@@ -294,8 +294,7 @@ module internal WorkingDirectoryUpdate =
             visit rootDirectory relativePath
 
         /// Classifies every target and removable tracked blocker without entering the asynchronous transaction workflow.
-        let private planSynchronously (currentStatus: GraceStatus) manifest =
-            let scanInput = currentScanInput ()
+        let private planSynchronously (scanInput: Services.WorkingTreeScanInput) (currentStatus: GraceStatus) manifest =
             let classifier = classifierInput scanInput
             let trackedRejection, trackedFiles, trackedDirectories = trackedTopology currentStatus
             let targetRejection, targetFiles, targetDirectories = targetTopology manifest
@@ -493,13 +492,178 @@ module internal WorkingDirectoryUpdate =
                     Planned(Plan(orderedRemovals @ orderedCreates @ orderedCopies))
 
         /// Produces one complete pre-mutation action list after classifying every target and removable tracked blocker.
-        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously currentStatus manifest }
+        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously (currentScanInput ()) currentStatus manifest }
+
+        /// Plans from one already-reread configuration snapshot so a transaction never falls back to cached configuration.
+        let internal planWithScanInput (scanInput: Services.WorkingTreeScanInput) (currentStatus: GraceStatus) manifest =
+            task { return planSynchronously scanInput currentStatus manifest }
 
     /// Carries the one complete target status graph and its exact selected-root identity through the local transaction.
     type ResolvedTargetGraph = private ResolvedTargetGraph of WorkingDirectoryUpdateContracts.Target * GraceStatus
 
     /// Carries correlation used only to identify diagnostics from one invocation; it never changes the update identity.
     type DiagnosticCorrelation = private DiagnosticCorrelation of string
+
+    /// Holds the immutable configuration facts that must remain unchanged from admission through first working-tree mutation.
+    type private CanonicalConfiguration =
+        {
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            RootDirectory: string
+            StandardizedRootDirectory: string
+            GraceDirectory: string
+            ObjectDirectory: string
+            GraceStatusFile: string
+            GraceObjectCacheFile: string
+            DirectoryVersionCache: string
+            ConfigurationDirectory: string
+            ConfigurationFile: string
+            GraceFileIgnoreEntries: string list
+            GraceDirectoryIgnoreEntries: string list
+        }
+
+    /// Loads immutable local configuration facts directly from disk instead of reusing the process cache.
+    module private CanonicalConfiguration =
+        /// Converts a deserialized configuration into the exact local facts consumed by this transaction.
+        let private fromInspection (inspection: GraceConfigurationInspection) =
+            let configuration = inspection.Configuration
+
+            {
+                OwnerId = configuration.OwnerId
+                OrganizationId = configuration.OrganizationId
+                RepositoryId = configuration.RepositoryId
+                BranchId = configuration.BranchId
+                RootDirectory = configuration.RootDirectory
+                StandardizedRootDirectory = configuration.StandardizedRootDirectory
+                GraceDirectory = configuration.GraceDirectory
+                ObjectDirectory = configuration.ObjectDirectory
+                GraceStatusFile = configuration.GraceStatusFile
+                GraceObjectCacheFile = configuration.GraceObjectCacheFile
+                DirectoryVersionCache = configuration.DirectoryVersionCache
+                ConfigurationDirectory = configuration.ConfigurationDirectory
+                ConfigurationFile = inspection.Path
+                GraceFileIgnoreEntries =
+                    configuration.GraceFileIgnoreEntries
+                    |> Array.toList
+                GraceDirectoryIgnoreEntries =
+                    configuration.GraceDirectoryIgnoreEntries
+                    |> Array.toList
+            }
+
+        /// Rereads the configured repository file and its derived ignore facts for a transaction boundary.
+        let loadFresh () =
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> Ok(fromInspection inspection)
+            | Error (ConfigurationFileNotFound error) -> Error error
+            | Error (ConfigurationFileMalformed (_, error)) -> Error error
+
+        /// Compares every configuration fact that controls local identity, paths, status, objects, and topology classification.
+        let matches left right = left = right
+
+        /// Builds the planner input without accessing Configuration.Current().
+        let scanInput configuration : Services.WorkingTreeScanInput =
+            {
+                RootDirectory = configuration.RootDirectory
+                GraceDirectory = configuration.GraceDirectory
+                GraceStatusFile = configuration.GraceStatusFile
+                DirectoryIgnoreEntries =
+                    configuration.GraceDirectoryIgnoreEntries
+                    |> List.toArray
+                FileIgnoreEntries =
+                    configuration.GraceFileIgnoreEntries
+                    |> List.toArray
+            }
+
+    /// Exposes precise test-only timing points without adding callers, request bags, or production transaction options.
+    module internal LocalTransactionTesting =
+        let mutable private afterSealedConfiguration: (unit -> unit) option = None
+        let mutable private afterLeaseAcquired: (unit -> unit) option = None
+        let mutable private afterObjectPublication: (unit -> unit) option = None
+        let mutable private beforeFinalPlanning: (unit -> unit) option = None
+        let mutable private beforeFirstMutation: (unit -> unit) option = None
+        let mutable private afterFirstMutationBegan: (unit -> unit) option = None
+        let mutable private afterPlannedActions: (unit -> unit) option = None
+
+        /// Removes all deterministic timing actions after a direct-runtime test completes.
+        let reset () =
+            afterSealedConfiguration <- None
+            afterLeaseAcquired <- None
+            afterObjectPublication <- None
+            beforeFinalPlanning <- None
+            beforeFirstMutation <- None
+            afterFirstMutationBegan <- None
+            afterPlannedActions <- None
+
+        /// Installs one action after the immutable configuration baseline is sealed and before WDU lease acquisition.
+        let installAfterSealedConfiguration action = afterSealedConfiguration <- Some action
+
+        /// Installs one action after the WDU lease is acquired and before the mandatory fresh configuration reread.
+        let installAfterLeaseAcquired action = afterLeaseAcquired <- Some action
+
+        /// Installs one action immediately after immutable objects are published and before final configuration reread.
+        let installAfterObjectPublication action = afterObjectPublication <- Some action
+
+        /// Installs one action immediately before final planning begins.
+        let installBeforeFinalPlanning action = beforeFinalPlanning <- Some action
+
+        /// Installs one action between the final cancellation check and the first possible working-tree mutation.
+        let installBeforeFirstMutation action = beforeFirstMutation <- Some action
+
+        /// Installs one action after a filesystem mutation begins but before the action returns to the transaction loop.
+        let installAfterFirstMutationBegan action = afterFirstMutationBegan <- Some action
+
+        /// Installs one action after all planned working-tree actions and before independent final-root verification.
+        let installAfterPlannedActions action = afterPlannedActions <- Some action
+
+        /// Executes and clears one deterministic action so later actions in the same transaction remain production-shaped.
+        let private invoke hook =
+            match hook with
+            | Some action -> action ()
+            | None -> ()
+
+        /// Executes the post-sealed-configuration test action once.
+        let afterSealedConfigurationNow () =
+            let hook = afterSealedConfiguration
+            afterSealedConfiguration <- None
+            invoke hook
+
+        /// Executes the post-lease-acquisition test action once.
+        let afterLeaseAcquiredNow () =
+            let hook = afterLeaseAcquired
+            afterLeaseAcquired <- None
+            invoke hook
+
+        /// Executes the post-object-publication test action once.
+        let afterObjectPublicationNow () =
+            let hook = afterObjectPublication
+            afterObjectPublication <- None
+            invoke hook
+
+        /// Executes the pre-final-planning test action once.
+        let beforeFinalPlanningNow () =
+            let hook = beforeFinalPlanning
+            beforeFinalPlanning <- None
+            invoke hook
+
+        /// Executes the pre-first-mutation test action once.
+        let beforeFirstMutationNow () =
+            let hook = beforeFirstMutation
+            beforeFirstMutation <- None
+            invoke hook
+
+        /// Executes the in-first-mutation test action once.
+        let afterFirstMutationBeganNow () =
+            let hook = afterFirstMutationBegan
+            afterFirstMutationBegan <- None
+            invoke hook
+
+        /// Executes the post-action test action once.
+        let afterPlannedActionsNow () =
+            let hook = afterPlannedActions
+            afterPlannedActions <- None
+            invoke hook
 
     /// Holds the private local-completion result that a later finalization leaf may consume without reconstructing facts.
     type LocalCompletion = private LocalCompletion of WorkingDirectoryUpdateContracts.Target * WorkingDirectoryUpdateContracts.Operation
@@ -785,6 +949,7 @@ module internal WorkingDirectoryUpdate =
 
                 if File.Exists(fullPath) then
                     File.Delete(fullPath)
+                    LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
                 else
                     false
@@ -793,6 +958,7 @@ module internal WorkingDirectoryUpdate =
 
                 if Directory.Exists(fullPath) then
                     Directory.Delete(fullPath, false)
+                    LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
                 else
                     false
@@ -803,6 +969,7 @@ module internal WorkingDirectoryUpdate =
                     false
                 else
                     Directory.CreateDirectory(fullPath) |> ignore
+                    LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
             | Topology.CopyVerifiedFile path ->
                 let key = pathKey path
@@ -819,6 +986,7 @@ module internal WorkingDirectoryUpdate =
                     let directory = Path.GetDirectoryName(finalPath)
                     Directory.CreateDirectory(directory) |> ignore
                     File.Copy(objectFile, finalPath, true)
+                    LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
 
         /// Returns every target file declared by the complete selected graph.
@@ -860,20 +1028,32 @@ module internal WorkingDirectoryUpdate =
                 |> Array.filter (fun entry ->
                     not (Services.isPathWithinDirectoryWithComparison StringComparison.OrdinalIgnoreCase graceDirectory entry.FullName))
 
+            let actualDirectories = HashSet<string>(StringComparer.Ordinal)
+            let actualFiles = HashSet<string>(StringComparer.Ordinal)
+
+            actualDirectories.Add(pathKey (RelativePath Constants.RootDirectoryPath))
+            |> ignore
+
+            actualEntries
+            |> Seq.iter (fun entry ->
+                let relativePath =
+                    Path.GetRelativePath(root, entry.FullName)
+                    |> Grace.Shared.Utilities.normalizeFilePath
+                    |> RelativePath
+
+                if entry :? DirectoryInfo then
+                    actualDirectories.Add(pathKey relativePath)
+                    |> ignore
+                else
+                    actualFiles.Add(pathKey relativePath) |> ignore)
+
             let actualTopologyMatches =
-                actualEntries
-                |> Array.forall (fun entry ->
-                    let relativePath =
-                        Path.GetRelativePath(root, entry.FullName)
-                        |> Grace.Shared.Utilities.normalizeFilePath
-                        |> RelativePath
-
-                    let key = pathKey relativePath
-
-                    if entry :? DirectoryInfo then
-                        expectedDirectories.Contains(key)
-                    else
-                        expectedFiles.ContainsKey(key))
+                actualDirectories.Count = expectedDirectories.Count
+                && actualFiles.Count = expectedFiles.Count
+                && expectedDirectories
+                   |> Seq.forall actualDirectories.Contains
+                && expectedFiles.Keys
+                   |> Seq.forall actualFiles.Contains
 
             let actualDirectoryHashesMatch =
                 if not targetFilesMatch || not actualTopologyMatches then
@@ -974,182 +1154,252 @@ module internal WorkingDirectoryUpdate =
 
                 try
                     actionToken.ThrowIfCancellationRequested()
-                    let current = Current()
 
-                    if current.RepositoryId
-                       <> WorkingDirectoryUpdateContracts.Target.repositoryId target then
-                        return rejected $"[{correlationValue}] Local configuration repository changed before Working Directory Update admission."
-                    else
-                        match WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId current.RootDirectory with
-                        | Error error -> return rejected $"[{correlationValue}] {error}"
-                        | Ok scope ->
-                            let! acquiredLease = WorkingDirectoryUpdateCoordination.Lease.acquire scope actionToken
-                            use acquiredLease = acquiredLease
-                            let dbPath = current.GraceStatusFile
-                            let! revision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+                    match CanonicalConfiguration.loadFresh () with
+                    | Error error -> return rejected $"[{correlationValue}] {error}"
+                    | Ok sealedConfiguration ->
+                        LocalTransactionTesting.afterSealedConfigurationNow ()
 
-                            let! currentStatusResult =
-                                LocalStateDb.readCompleteStatusSnapshotReadOnly dbPath current.OwnerId current.OrganizationId current.RepositoryId
+                        if sealedConfiguration.RepositoryId
+                           <> WorkingDirectoryUpdateContracts.Target.repositoryId target then
+                            return rejected $"[{correlationValue}] Local configuration repository changed before Working Directory Update admission."
+                        else
+                            match WorkingDirectoryUpdateCoordination.Scope.create sealedConfiguration.RepositoryId sealedConfiguration.RootDirectory with
+                            | Error error -> return rejected $"[{correlationValue}] {error}"
+                            | Ok scope ->
+                                let! acquiredLease = WorkingDirectoryUpdateCoordination.Lease.acquire scope actionToken
+                                use acquiredLease = acquiredLease
 
-                            let currentStatus =
-                                match currentStatusResult with
-                                | Ok status -> status
-                                | Error error -> invalidOp error
+                                LocalTransactionTesting.afterLeaseAcquiredNow ()
 
-                            let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
-
-                            if revision
-                               <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase then
-                                return rejected $"[{correlationValue}] Accepted local-status revision changed before Working Directory Update mutation."
-                            elif statusFingerprint currentStatus
-                                 <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase then
-                                return
-                                    rejected
-                                        $"[{correlationValue}] Accepted complete local-status fingerprint changed before Working Directory Update mutation."
-                            elif Option.isSome pending then
-                                return rejected $"[{correlationValue}] A pending Working Directory Update finalization blocks this local transaction."
-                            elif not (graphMatchesManifest targetStatus manifest) then
-                                return rejected $"[{correlationValue}] Resolved target graph does not match immutable prepared-content topology."
-                            else
-                                match branchOperation current.BranchId selection target with
+                                match CanonicalConfiguration.loadFresh () with
                                 | Error error -> return rejected $"[{correlationValue}] {error}"
-                                | Ok (operation, completionDetails) ->
-                                    let! markerInspection = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+                                | Ok admissionConfiguration when not (CanonicalConfiguration.matches sealedConfiguration admissionConfiguration) ->
+                                    return rejected $"[{correlationValue}] Local configuration changed while waiting for the Working Directory Update lease."
+                                | Ok admissionConfiguration ->
+                                    let dbPath = admissionConfiguration.GraceStatusFile
+                                    let! revision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
 
-                                    match markerInspection with
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
-                                        return rejected $"[{correlationValue}] Existing Working Directory Update marker is not exact owned admission evidence."
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
-                                        let attempt = WorkingDirectoryUpdateContracts.AttemptToken.create ()
+                                    let! currentStatusResult =
+                                        LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                            dbPath
+                                            admissionConfiguration.OwnerId
+                                            admissionConfiguration.OrganizationId
+                                            admissionConfiguration.RepositoryId
 
-                                        match WorkingDirectoryUpdateCoordination.Marker.create scope attempt target operation with
+                                    let currentStatus =
+                                        match currentStatusResult with
+                                        | Ok status -> status
+                                        | Error error -> invalidOp error
+
+                                    let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
+
+                                    if revision
+                                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase then
+                                        return rejected $"[{correlationValue}] Accepted local-status revision changed before Working Directory Update mutation."
+                                    elif statusFingerprint currentStatus
+                                         <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase then
+                                        return
+                                            rejected
+                                                $"[{correlationValue}] Accepted complete local-status fingerprint changed before Working Directory Update mutation."
+                                    elif Option.isSome pending then
+                                        return rejected $"[{correlationValue}] A pending Working Directory Update finalization blocks this local transaction."
+                                    elif not (graphMatchesManifest targetStatus manifest) then
+                                        return rejected $"[{correlationValue}] Resolved target graph does not match immutable prepared-content topology."
+                                    else
+                                        match branchOperation admissionConfiguration.BranchId selection target with
                                         | Error error -> return rejected $"[{correlationValue}] {error}"
-                                        | Ok marker ->
-                                            do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
-                                            ownedMarker <- Some(scope, attempt)
-                                            let! objectResult = publishObjects preparedContent current.ObjectDirectory manifest
+                                        | Ok (operation, completionDetails) ->
+                                            let! markerInspection = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
 
-                                            match objectResult with
-                                            | Error error ->
-                                                let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-
+                                            match markerInspection with
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
                                                 return
-                                                    match cleanup with
-                                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
-                                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> rejected $"[{correlationValue}] {error}"
-                                                    | _ -> rejected $"[{correlationValue}] {error}; exact marker cleanup failed."
-                                            | Ok () ->
-                                                let! initialPlan = Topology.plan currentStatus manifest
+                                                    rejected
+                                                        $"[{correlationValue}] Existing Working Directory Update marker is not exact owned admission evidence."
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                                let attempt = WorkingDirectoryUpdateContracts.AttemptToken.create ()
 
-                                                match initialPlan with
-                                                | Topology.Rejected rejection ->
-                                                    invalidOp $"Initial Working Directory Update topology rejected '{Topology.Rejection.path rejection}'."
-                                                | Topology.Planned _ -> ()
+                                                match WorkingDirectoryUpdateCoordination.Marker.create scope attempt target operation with
+                                                | Error error -> return rejected $"[{correlationValue}] {error}"
+                                                | Ok marker ->
+                                                    do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
+                                                    ownedMarker <- Some(scope, attempt)
+                                                    let! objectResult = publishObjects preparedContent admissionConfiguration.ObjectDirectory manifest
 
-                                                let finalCurrent = Current()
-                                                let! finalRevision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
-
-                                                let! finalStatusResult =
-                                                    LocalStateDb.readCompleteStatusSnapshotReadOnly
-                                                        dbPath
-                                                        current.OwnerId
-                                                        current.OrganizationId
-                                                        current.RepositoryId
-
-                                                let finalStatus =
-                                                    match finalStatusResult with
-                                                    | Ok status -> status
-                                                    | Error error -> invalidOp error
-
-                                                let! finalPending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
-                                                let! finalMarker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
-
-                                                let! finalMarkerAttempt =
-                                                    WorkingDirectoryUpdateCoordination.Marker.inspectExactAttempt scope target operation attempt
-
-                                                if
-                                                    finalCurrent.RepositoryId <> current.RepositoryId
-                                                    || finalCurrent.RootDirectory
-                                                       <> current.RootDirectory
-                                                    || finalCurrent.GraceStatusFile
-                                                       <> current.GraceStatusFile
-                                                    || finalCurrent.ObjectDirectory
-                                                       <> current.ObjectDirectory
-                                                    || finalCurrent.GraceDirectory
-                                                       <> current.GraceDirectory
-                                                    || finalCurrent.BranchId <> current.BranchId
-                                                    || finalRevision
-                                                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
-                                                    || statusFingerprint finalStatus
-                                                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase
-                                                    || Option.isSome finalPending
-                                                    || finalMarker
-                                                       <> WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
-                                                    || not finalMarkerAttempt
-                                                    || not (graphMatchesManifest targetStatus manifest)
-                                                then
-                                                    let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-
-                                                    return
-                                                        match cleanup with
-                                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
-                                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
-                                                            rejected $"[{correlationValue}] Working Directory Update facts changed before the first mutation."
-                                                        | _ ->
-                                                            rejected
-                                                                $"[{correlationValue}] Working Directory Update facts changed before mutation and exact marker cleanup failed."
-                                                else
-                                                    actionToken.ThrowIfCancellationRequested()
-                                                    let! planResult = Topology.plan finalStatus manifest
-
-                                                    match planResult with
-                                                    | Topology.Rejected rejection ->
+                                                    match objectResult with
+                                                    | Error error ->
                                                         let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
-                                                        let path = Topology.Rejection.path rejection
 
                                                         return
                                                             match cleanup with
                                                             | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
                                                             | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
-                                                                rejected $"[{correlationValue}] Working Directory Update topology rejected '{path}'."
-                                                            | _ ->
-                                                                rejected
-                                                                    $"[{correlationValue}] Working Directory Update topology rejected '{path}' and exact marker cleanup failed."
-                                                    | Topology.Planned plan ->
-                                                        let actions = Topology.Plan.actions plan |> List.toArray
-                                                        let objectHashes = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
+                                                                rejected $"[{correlationValue}] {error}"
+                                                            | _ -> rejected $"[{correlationValue}] {error}; exact marker cleanup failed."
+                                                    | Ok () ->
+                                                        let! initialPlan =
+                                                            Topology.planWithScanInput
+                                                                (CanonicalConfiguration.scanInput admissionConfiguration)
+                                                                currentStatus
+                                                                manifest
 
-                                                        WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest
-                                                        |> Seq.iter (function
-                                                            | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
-                                                                objectHashes[pathKey path] <- (sha256Hash, blake3Hash)
-                                                            | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory _ -> ())
+                                                        match initialPlan with
+                                                        | Topology.Rejected rejection ->
+                                                            invalidOp
+                                                                $"Initial Working Directory Update topology rejected '{Topology.Rejection.path rejection}'."
+                                                        | Topology.Planned _ -> ()
 
-                                                        actions
-                                                        |> Array.iter (fun action ->
-                                                            if applyAction current.RootDirectory current.ObjectDirectory objectHashes action then
-                                                                mutationStarted <- true)
+                                                        LocalTransactionTesting.afterObjectPublicationNow ()
 
-                                                        if not (verifyCompleteTargetRoot current.RootDirectory current.GraceDirectory targetStatus) then
+                                                        match CanonicalConfiguration.loadFresh () with
+                                                        | Error error ->
+                                                            let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
                                                             return
-                                                                incomplete
-                                                                    $"[{correlationValue}] Complete target-root verification failed after working-tree mutation."
-                                                        else
-                                                            let! _ =
-                                                                LocalStateDb.commitWorkingDirectoryUpdateCompletion
-                                                                    dbPath
-                                                                    targetStatus
-                                                                    (targetStatus.Index.Values :> IEnumerable<LocalDirectoryVersion>)
-                                                                    completionDetails
-                                                                    target
-                                                                    operation
+                                                                match cleanup with
+                                                                | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                                | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                    rejected $"[{correlationValue}] {error}"
+                                                                | _ -> rejected $"[{correlationValue}] {error}; exact marker cleanup failed."
+                                                        | Ok finalConfiguration when not (CanonicalConfiguration.matches sealedConfiguration finalConfiguration) ->
+                                                            let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
 
-                                                            match WorkingDirectoryUpdateContracts.Receipt.create target operation mutationStarted with
-                                                            | Ok receipt -> return WorkingDirectoryUpdateContracts.Outcome.Updated receipt
-                                                            | Error error -> return incomplete $"[{correlationValue}] {error}"
+                                                            return
+                                                                match cleanup with
+                                                                | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                                | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                    rejected $"[{correlationValue}] Local configuration changed before the first mutation."
+                                                                | _ ->
+                                                                    rejected
+                                                                        $"[{correlationValue}] Local configuration changed before mutation and exact marker cleanup failed."
+                                                        | Ok finalConfiguration ->
+                                                            let! finalRevision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                                                            let! finalStatusResult =
+                                                                LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                                                    dbPath
+                                                                    finalConfiguration.OwnerId
+                                                                    finalConfiguration.OrganizationId
+                                                                    finalConfiguration.RepositoryId
+
+                                                            let finalStatus =
+                                                                match finalStatusResult with
+                                                                | Ok status -> status
+                                                                | Error error -> invalidOp error
+
+                                                            let! finalPending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
+                                                            let! finalMarker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                                                            let! finalMarkerAttempt =
+                                                                WorkingDirectoryUpdateCoordination.Marker.inspectExactAttempt scope target operation attempt
+
+                                                            if
+                                                                finalRevision
+                                                                <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
+                                                                || statusFingerprint finalStatus
+                                                                   <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase
+                                                                || Option.isSome finalPending
+                                                                || finalMarker
+                                                                   <> WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                                                                || not finalMarkerAttempt
+                                                                || not (graphMatchesManifest targetStatus manifest)
+                                                            then
+                                                                let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+                                                                return
+                                                                    match cleanup with
+                                                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                        rejected
+                                                                            $"[{correlationValue}] Working Directory Update facts changed before the first mutation."
+                                                                    | _ ->
+                                                                        rejected
+                                                                            $"[{correlationValue}] Working Directory Update facts changed before mutation and exact marker cleanup failed."
+                                                            else
+                                                                actionToken.ThrowIfCancellationRequested()
+                                                                LocalTransactionTesting.beforeFinalPlanningNow ()
+
+                                                                let! planResult =
+                                                                    Topology.planWithScanInput
+                                                                        (CanonicalConfiguration.scanInput finalConfiguration)
+                                                                        finalStatus
+                                                                        manifest
+
+                                                                actionToken.ThrowIfCancellationRequested()
+
+                                                                match planResult with
+                                                                | Topology.Rejected rejection ->
+                                                                    let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+                                                                    let path = Topology.Rejection.path rejection
+
+                                                                    return
+                                                                        match cleanup with
+                                                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                            rejected
+                                                                                $"[{correlationValue}] Working Directory Update topology rejected '{path}'."
+                                                                        | _ ->
+                                                                            rejected
+                                                                                $"[{correlationValue}] Working Directory Update topology rejected '{path}' and exact marker cleanup failed."
+                                                                | Topology.Planned plan ->
+                                                                    let actions = Topology.Plan.actions plan |> List.toArray
+                                                                    let objectHashes = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
+
+                                                                    WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest
+                                                                    |> Seq.iter (function
+                                                                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path,
+                                                                                                                                      sha256Hash,
+                                                                                                                                      blake3Hash) ->
+                                                                            objectHashes[pathKey path] <- (sha256Hash, blake3Hash)
+                                                                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory _ -> ())
+
+                                                                    actions
+                                                                    |> Array.iter (fun action ->
+                                                                        if not mutationStarted then
+                                                                            actionToken.ThrowIfCancellationRequested()
+                                                                            LocalTransactionTesting.beforeFirstMutationNow ()
+                                                                            actionToken.ThrowIfCancellationRequested()
+                                                                            mutationStarted <- true
+
+                                                                        applyAction
+                                                                            finalConfiguration.RootDirectory
+                                                                            finalConfiguration.ObjectDirectory
+                                                                            objectHashes
+                                                                            action
+                                                                        |> ignore)
+
+                                                                    LocalTransactionTesting.afterPlannedActionsNow ()
+
+                                                                    if
+                                                                        not
+                                                                            (
+                                                                                verifyCompleteTargetRoot
+                                                                                    finalConfiguration.RootDirectory
+                                                                                    finalConfiguration.GraceDirectory
+                                                                                    targetStatus
+                                                                            )
+                                                                    then
+                                                                        return
+                                                                            incomplete
+                                                                                $"[{correlationValue}] Complete target-root verification failed after working-tree mutation."
+                                                                    else
+                                                                        let! _ =
+                                                                            LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                                                                                dbPath
+                                                                                targetStatus
+                                                                                (targetStatus.Index.Values :> IEnumerable<LocalDirectoryVersion>)
+                                                                                completionDetails
+                                                                                target
+                                                                                operation
+
+                                                                        match WorkingDirectoryUpdateContracts.Receipt.create target operation mutationStarted
+                                                                            with
+                                                                        | Ok receipt -> return WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                                                                        | Error error -> return incomplete $"[{correlationValue}] {error}"
                 with
                 | :? OperationCanceledException when mutationStarted ->
                     return incomplete $"[{correlationValue}] Cancellation arrived after the first working-tree mutation."
