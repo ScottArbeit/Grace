@@ -74,8 +74,12 @@ module CacheCommand =
         task {
             cancellationToken.ThrowIfCancellationRequested()
             let status = CacheIdentity.status stateRoot
-            renderStatus parseResult status |> ignore
-            return if status.Enrollment = "enrolled" then 0 else 1
+            let renderExitCode = renderStatus parseResult status
+
+            return
+                if renderExitCode <> 0 then renderExitCode
+                elif status.Enrollment = "enrolled" then 0
+                else 1
         }
 
     /// Invokes the pure local Cache status command through System.CommandLine.

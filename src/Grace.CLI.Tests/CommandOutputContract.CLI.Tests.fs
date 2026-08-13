@@ -907,6 +907,20 @@ module CommandOutputContractRegistryTests =
             |> should equal "success-envelope-shape"
         | None -> Assert.Fail("doctor should have a registry entry.")
 
+    /// Verifies cache status registry metadata advertises its implemented schema and example documents.
+    [<Test>]
+    let ``cache status registry entry exposes implemented schema and examples metadata`` () =
+        let identity = CommandOutputContract.commandIdentity [ "cache" ] "status"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Features.Schema
+            |> should equal ExistingBehavior
+
+            entry.Features.Examples
+            |> should equal ExistingBehavior
+        | None -> Assert.Fail("cache.status should have a registry entry.")
+
     /// Verifies that metadata incomplete registry entries are explicit.
     [<Test>]
     let ``metadata incomplete registry entries are explicit`` () =

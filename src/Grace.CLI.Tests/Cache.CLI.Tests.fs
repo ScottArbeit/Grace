@@ -391,6 +391,121 @@ module CacheCliTests =
                 finally
                     File.SetUnixFileMode(identityPath, originalMode)))
 
+    /// Verifies root dispatch gives output failures precedence and preserves valid projections for ready and non-ready states.
+    [<Test>]
+    let ``Linux cache status preserves select failures and valid projections`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache status Product V1 supports Linux only.")
+
+        withLoopbackRequestRecorder (fun endpoint assertNoRequest ->
+            withTemporaryRoots (fun _ root ->
+                let missingBefore = snapshotState root
+
+                let missingExitCode, missingOutput =
+                    runStatusWithoutHistoryMutation [| "--output"
+                                                       "Json"
+                                                       "--select"
+                                                       "Key"
+                                                       "cache"
+                                                       "status" |]
+
+                assertStateUnchanged root missingBefore
+                assertNoRequest ()
+                Assert.That(missingExitCode, Is.EqualTo(1))
+                Assert.That(missingOutput.Trim(), Is.EqualTo("\"missing\""))
+
+                let publicKey = CacheIdentity.createAttempt root |> requireOk
+
+                CacheIdentity.commitReady root (acceptedRegistration endpoint publicKey)
+                |> requireOk
+
+                let readyBefore = snapshotState root
+
+                let readyExitCode, readyOutput =
+                    runStatusWithoutHistoryMutation [| "--output"
+                                                       "Json"
+                                                       "--select"
+                                                       "CacheId"
+                                                       "cache"
+                                                       "status" |]
+
+                assertStateUnchanged root readyBefore
+                assertNoRequest ()
+                Assert.That(readyExitCode, Is.EqualTo(0))
+                Assert.That(readyOutput.Trim(), Is.EqualTo("\"11111111-1111-1111-1111-111111111111\""))
+
+                let failedProjectionExitCode, failedProjectionOutput =
+                    runStatusWithoutHistoryMutation [| "--output"
+                                                       "Json"
+                                                       "--select"
+                                                       "Missing"
+                                                       "cache"
+                                                       "status" |]
+
+                assertStateUnchanged root readyBefore
+                assertNoRequest ()
+                Assert.That(failedProjectionExitCode, Is.Not.EqualTo(0))
+
+                use failedProjection = parseCompleteJsonDocument failedProjectionOutput
+                let error = failedProjection.RootElement
+                Assert.That(error.GetProperty("Error").GetString(), Does.Contain("was not found in ReturnValue"))
+
+                let mutable returnValue = Unchecked.defaultof<JsonElement>
+                Assert.That(error.TryGetProperty("ReturnValue", &returnValue), Is.False)
+
+                let exceptionDetails = error.GetProperty("Exception")
+
+                Assert.That(
+                    exceptionDetails
+                        .GetProperty("Message")
+                        .GetString(),
+                    Is.EqualTo(String.Empty)
+                )
+
+                Assert.That(
+                    exceptionDetails
+                        .GetProperty("StackTrace")
+                        .GetString(),
+                    Is.EqualTo(String.Empty)
+                )
+
+                [
+                    root
+                    "identity.pk8"
+                    "registration.json"
+                    "PrivateKey"
+                    "PublicKey"
+                    "Fingerprint"
+                    "KeyReference"
+                    "Token"
+                    "Path:"
+                    "Reference"
+                ]
+                |> List.iter (fun forbidden ->
+                    Assert.That(failedProjectionOutput, Does.Not.Contain(forbidden), $"Failed Cache status projection must not expose {forbidden}."))))
+
+    /// Verifies built root introspection reports the implemented Cache status schema and examples dispositions.
+    [<Test>]
+    let ``cache status built schema and examples report existing behavior`` () =
+        for optionName, expectedKind in
+            [
+                "--schema", "schema"
+                "--examples", "examples"
+            ] do
+            let exitCode, output =
+                runWithCapturedStdout [| "cache"
+                                         "status"
+                                         optionName |]
+
+            Assert.That(exitCode, Is.EqualTo(0))
+
+            use document = parseCompleteJsonDocument output
+            let root = document.RootElement
+            let registry = root.GetProperty("Registry")
+            Assert.That(root.GetProperty("Kind").GetString(), Is.EqualTo(expectedKind))
+            Assert.That(registry.GetProperty("Schema").GetString(), Is.EqualTo("ExistingBehavior"))
+            Assert.That(registry.GetProperty("Examples").GetString(), Is.EqualTo("ExistingBehavior"))
+
     /// Verifies the published Cache status schema closes every production state pair and ready-only field boundary.
     [<Test>]
     let ``cache status schema accepts exact variants and rejects impossible output`` () =

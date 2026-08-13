@@ -1057,7 +1057,10 @@ module CommandOutputContract =
             Mutating = mutating
             EnvelopeContract = envelopeContract
             Features =
-                if identity.CommandId.Equals("doctor", StringComparison.Ordinal) then
+                if
+                    identity.CommandId.Equals("doctor", StringComparison.Ordinal)
+                    || identity.CommandId.Equals("cache.status", StringComparison.Ordinal)
+                then
                     { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
                 else
                     featuresFor behavior
