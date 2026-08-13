@@ -9,11 +9,26 @@ schema is intentionally narrow:
 - `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
   facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
   these rows are neither invoices nor immutable ledger entries.
+- `ops.BillingPeriod` stores one deterministic owner, organization, repository, and half-open UTC month. Its storage
+  state permits `Open`, `Provisional`, and the future close transition's `Closed` value, but this migration does not
+  perform that transition.
+- `ops.Charge` stores one immutable initial posting for a billing period and preview line. The physical trigger rejects
+  update and delete; the migration contains no pricing calculation.
+- `ops.BillingPeriodCloseEvidence` stores immutable accepted-fact and pricing-preview digests, close time, and
+  nonempty scheduled-operation provenance. The physical trigger rejects update and delete.
 - The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
   operations schema.
 
 The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
 `UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
+
+## Billing-close schema
+
+Migration `20260812130000_AddBillingPeriodClose` is deliberately self-contained: it emits literal SQL for only the
+three billing-close tables, their named checks, indexes, foreign keys, defaults, and immutable triggers. The runtime EF
+model, migration target, and snapshot each declare the close fragment independently so later runtime edits cannot make
+the migration or snapshot appear to agree by sharing a helper. Close execution, late-work storage, and public behavior
+remain outside this migration.
 
 ## Usage-Fact Journal
 
