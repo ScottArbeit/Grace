@@ -109,6 +109,12 @@ module private BillingCloseSchema =
         |> fun definition -> Regex.Replace(definition, ",\\s*", ",")
         |> fun definition -> Regex.Replace(definition, "\\s+", " ")
 
+    /// Applies a finite normalization only to SQL syntax tokens while preserving each quoted token byte-for-byte.
+    let private normalizeSyntaxTokens transform (value: string) =
+        tokenizeSql value
+        |> List.map (fun (isLiteral, token) -> if isLiteral then token else transform token)
+        |> String.concat ""
+
     /// Produces a stable SQL spelling without modifying quoted data.
     let normalizeSql (value: string) =
         if String.IsNullOrWhiteSpace value then
@@ -117,7 +123,7 @@ module private BillingCloseSchema =
             tokenizeSql value
             |> List.map (fun (isLiteral, token) -> if isLiteral then token else normalizeSyntax token)
             |> String.concat ""
-            |> fun definition -> Regex.Replace(definition, "\\s+", " ").Trim()
+            |> fun definition -> definition.Trim()
 
     /// Produces a stable type spelling without converting an explicit CLR-looking type into a provider alias.
     let normalizeStoreType (value: string) = Regex.Replace(value.Trim().ToLowerInvariant(), "\\s+", "")
@@ -127,11 +133,9 @@ module private BillingCloseSchema =
         let normalized =
             value
             |> normalizeSql
-            |> tokenizeSql
-            |> List.map (fun (isLiteral, token) -> if isLiteral then token else Regex.Replace(token, "\\((\\d+)\\)", "$1"))
-            |> String.concat ""
-            |> fun definition -> Regex.Replace(definition, "\\((\\[[^]]+\\] is null and \\[[^]]+\\] is null)\\) or", "$1 or")
-            |> fun definition -> Regex.Replace(definition, "\\s+", " ").Trim()
+            |> normalizeSyntaxTokens (fun token -> Regex.Replace(token, "\\((\\d+)\\)", "$1"))
+            |> normalizeSyntaxTokens (fun token -> Regex.Replace(token, "\\((\\[[^]]+\\] is null and \\[[^]]+\\] is null)\\) or", "$1 or"))
+            |> fun definition -> definition.Trim()
 
         let mutable depth = 0
         let mutable closesEarly = false
@@ -164,6 +168,23 @@ module private BillingCloseSchema =
         else
             normalized
 
+    /// Removes the one trailing syntax delimiter that SQL Server adds while rendering the model diagnostic branch.
+    let private removeTrailingSyntaxParenthesis (value: string) =
+        let rec removeFromReversedTokens (tokens: (bool * string) list) =
+            match tokens with
+            | (false, token) :: remaining when token.EndsWith(")") ->
+                (false, token[0 .. (token.Length - 2)])
+                :: remaining
+                |> List.rev
+                |> List.map snd
+                |> String.concat ""
+            | _ -> value
+
+        value
+        |> tokenizeSql
+        |> List.rev
+        |> removeFromReversedTokens
+
     /// Normalizes the one delimiter introduced while expanding the model diagnostic State-IN branch.
     let normalizeBillingPeriodDiagnosticDefinition (value: string) =
         let modelStateInBranch =
@@ -174,8 +195,8 @@ module private BillingCloseSchema =
 
         let normalized = normalizeDefinition value
 
-        if modelStateInBranch && normalized.EndsWith(")") then
-            normalized[0 .. normalized.Length - 2]
+        if modelStateInBranch then
+            removeTrailingSyntaxParenthesis normalized
         else
             normalized
 
@@ -727,6 +748,9 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
         let uppercase = "[CurrencyCode] NOT LIKE '%[^A-Z]%'"
         let lowercase = "[CurrencyCode] NOT LIKE '%[^a-z]%'"
         let escaped = "[ScheduledOperationProvenance] = 'it''s exact'"
+        let doubleSpaced = "[x] = 'one  space'"
+        let singleSpaced = "[x] = 'one space'"
+        let parenthesizedLiteral = "[x] = '([x] is null and [y] is null) or'"
 
         let normalizedModel = BillingCloseSchema.normalizeBillingPeriodDiagnosticDefinition modelRendered
         let normalizedServer = BillingCloseSchema.normalizeBillingPeriodDiagnosticDefinition serverRendered
@@ -734,6 +758,18 @@ INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,Mo
         Assert.That(normalizedModel, Is.EqualTo(normalizedServer), $"model: {normalizedModel}\nserver: {normalizedServer}")
 
         Assert.That(BillingCloseSchema.normalizeDefinition uppercase, Is.Not.EqualTo(BillingCloseSchema.normalizeDefinition lowercase))
+
+        Assert.That(
+            BillingCloseSchema.normalizeDefinition doubleSpaced,
+            Is.Not.EqualTo(BillingCloseSchema.normalizeDefinition singleSpaced),
+            "Whitespace inside a quoted literal is data and must remain distinguishable."
+        )
+
+        Assert.That(
+            BillingCloseSchema.normalizeDefinition parenthesizedLiteral,
+            Does.Contain("'([x] is null and [y] is null) or'"),
+            "The documented parenthesis rewrite must not inspect quoted literal data."
+        )
 
         Assert.That(
             BillingCloseSchema.normalizeDefinition escaped,
