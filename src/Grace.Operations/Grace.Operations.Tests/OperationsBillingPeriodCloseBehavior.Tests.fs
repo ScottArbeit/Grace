@@ -842,17 +842,18 @@ ORDER BY 1;
                 )
             })
 
-    /// Proves distinct owners and sibling repositories close independently and a fresh closer replays without reposting.
+    /// Proves distinct owners and sibling repositories close independently, zero facts remain nonterminal, and a fresh closer replays without reposting.
     [<Test>]
-    member _.OwnersSiblingRepositoriesAndRestartRemainIsolatedAndIdempotent() =
+    member _.OwnersSiblingRepositoriesZeroFactsAndRestartRemainIsolatedAndIdempotent() =
         withDatabaseAsync (fun connectionString ->
             task {
                 let organizationId = Guid.NewGuid()
-                let ownerA, ownerB = Guid.NewGuid(), Guid.NewGuid()
+                let ownerA, ownerB, zeroFactOwner = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
                 let repositoryA, repositoryB = Guid.NewGuid(), Guid.NewGuid()
                 let scopeA = scopeFor ownerA organizationId repositoryA
                 let scopeB = scopeFor ownerB organizationId repositoryA
                 let siblingScope = scopeFor ownerA organizationId repositoryB
+                let zeroFactScope = scopeFor zeroFactOwner organizationId repositoryA
                 do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerA organizationId repositoryA (monthStart + Duration.FromDays 5) 1L)
                 do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerB organizationId repositoryA (monthStart + Duration.FromDays 5) 2L)
                 do! acceptFactAsync connectionString (usageFact (Guid.NewGuid()) ownerA organizationId repositoryB (monthStart + Duration.FromDays 5) 3L)
@@ -868,9 +869,13 @@ ORDER BY 1;
 
                 let! results = Task.WhenAll(close scopeA, close scopeB, close siblingScope)
                 let! replay = close scopeA
+                let! zeroFactResult = close zeroFactScope
                 let! periods = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2;"
                 let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
                 let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+
+                let! zeroFactPending =
+                    countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1) AND RetryDiagnostic='ZeroFactCoveragePending';"
 
                 Assert.Multiple(
                     Action (fun () ->
@@ -889,8 +894,16 @@ ORDER BY 1;
                             Is.True
                         )
 
+                        Assert.That(
+                            (match zeroFactResult with
+                             | BillingPeriodCloseResult.Blocked "ZeroFactCoveragePending" -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
                         Assert.That(periods, Is.EqualTo(3))
                         Assert.That(charges, Is.EqualTo(3))
-                        Assert.That(evidence, Is.EqualTo(3)))
+                        Assert.That(evidence, Is.EqualTo(3))
+                        Assert.That(zeroFactPending, Is.EqualTo(1)))
                 )
             })
