@@ -8,6 +8,9 @@ open Microsoft.Data.SqlClient
 open NUnit.Framework
 open NodaTime
 open System
+open System.Globalization
+open System.Security.Cryptography
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 
@@ -242,6 +245,81 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             return Convert.ToInt64 value
         }
 
+    /// Recomputes the persisted preview evidence digest from independently read durable rows.
+    let previewEvidenceDigestAsync connectionString =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros FROM ops.ChargePreviewLine ORDER BY ChargePreviewLineId;"
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let lines = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then
+                    lines.Add(
+                        String.Join(
+                            "|",
+                            [|
+                                reader.GetGuid(0).ToString("D")
+                                reader.GetGuid(1).ToString("D")
+                                reader.GetGuid(2).ToString("D")
+                                reader.GetGuid(3).ToString("D")
+                                reader
+                                    .GetDateTime(4)
+                                    .Ticks.ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetDateTime(5)
+                                    .Ticks.ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetInt32(6)
+                                    .ToString(CultureInfo.InvariantCulture)
+                                reader.GetGuid(7).ToString("D")
+                                reader
+                                    .GetInt32(8)
+                                    .ToString(CultureInfo.InvariantCulture)
+                                reader.GetGuid(9).ToString("D")
+                                reader.GetGuid(10).ToString("D")
+                                reader.GetGuid(11).ToString("D")
+                                reader.GetString(12)
+                                reader.GetString(13)
+                                reader
+                                    .GetInt64(14)
+                                    .ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetInt64(15)
+                                    .ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetDateTime(16)
+                                    .Ticks.ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetDateTime(17)
+                                    .Ticks.ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetInt64(18)
+                                    .ToString(CultureInfo.InvariantCulture)
+                                reader
+                                    .GetInt64(19)
+                                    .ToString(CultureInfo.InvariantCulture)
+                            |]
+                        )
+                    )
+
+            return
+                lines
+                |> String.concat "\n"
+                |> Encoding.UTF8.GetBytes
+                |> SHA256.HashData
+                |> Convert.ToHexString
+        }
+
     /// Builds the fixed scheduled-operation request used by all close proofs.
     let request scope = { Scope = scope; ScheduledOperationProvenance = "operations-tests/billing-period-close/v1" }
 
@@ -253,141 +331,6 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             Assert.Fail($"Expected a Closed billing-period result but received {result}.")
             Unchecked.defaultof<int>
 
-#if BILLING_DISCOVERY_SLICE
-    /// Discovery and cursor lifecycle are intentionally compiled only by the later scheduled-discovery slice.
-    [<Test>]
-    member _.DiscoverySkipsClosedPricingScopesAndExpandsEveryCompletedAssignmentMonth() =
-        withDatabaseAsync (fun connectionString ->
-            task {
-                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
-                let scope = scopeFor ownerId organizationId repositoryId
-                use connection = new SqlConnection(connectionString)
-                do! connection.OpenAsync CancellationToken.None
-                use command = connection.CreateCommand()
-
-                command.CommandText <-
-                    """
-DECLARE @PlanId uniqueidentifier = NEWID();
-INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc)
-VALUES (@PlanId, 'discovery-plan', 'Discovery plan', '2026-01-01T00:00:00');
-
-DECLARE @index int = 0;
-WHILE @index < 101
-BEGIN
-    DECLARE @OwnerId uniqueidentifier = CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('owner-', @index)));
-    DECLARE @OrganizationId uniqueidentifier = CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('organization-', @index)));
-    DECLARE @RepositoryId uniqueidentifier = CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('repository-', @index)));
-    DECLARE @MonthStartUtc datetime2(7) = '2026-01-01T00:00:00';
-    INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc,EffectiveToUtc)
-    VALUES (NEWID(), @OwnerId, @OrganizationId, @RepositoryId, @PlanId, @MonthStartUtc, '2026-02-01T00:00:00');
-    INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State)
-    VALUES (NEWID(), @OwnerId, @OrganizationId, @RepositoryId, @MonthStartUtc, '2026-02-01T00:00:00', 2);
-    SET @index = @index + 1;
-END;
-
-INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc,EffectiveToUtc)
-VALUES (NEWID(), @TargetOwnerId, @TargetOrganizationId, @TargetRepositoryId, @PlanId, '2026-01-01T00:00:00', '2026-07-01T00:00:00');
-"""
-
-                command.Parameters.Add("@TargetOwnerId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
-                command.Parameters.Add("@TargetOrganizationId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
-                command.Parameters.Add("@TargetRepositoryId", System.Data.SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
-                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
-                let! firstPass = OperationsBillingPeriodCloseDiscovery.discoverAsync connectionString CancellationToken.None
-                let! repeatedPass = OperationsBillingPeriodCloseDiscovery.discoverAsync connectionString CancellationToken.None
-
-                let months (scopes: BillingCompletenessScope array) : Instant array =
-                    scopes
-                    |> Array.filter (fun candidate ->
-                        candidate.OwnerId = scope.OwnerId
-                        && candidate.OrganizationId = scope.OrganizationId
-                        && candidate.RepositoryId = scope.RepositoryId)
-                    |> Array.map (fun candidate -> candidate.MonthStart)
-                    |> Array.sort
-
-                let expected =
-                    [|
-                        Instant.FromUtc(2026, 1, 1, 0, 0)
-                        Instant.FromUtc(2026, 2, 1, 0, 0)
-                        Instant.FromUtc(2026, 3, 1, 0, 0)
-                        Instant.FromUtc(2026, 4, 1, 0, 0)
-                        Instant.FromUtc(2026, 5, 1, 0, 0)
-                        Instant.FromUtc(2026, 6, 1, 0, 0)
-                    |]
-
-                Assert.Multiple(
-                    Action (fun () ->
-                        Assert.That(firstPass.Length, Is.EqualTo(6))
-                        Assert.That(months firstPass, Is.EqualTo(expected :> obj))
-                        Assert.That(months repeatedPass, Is.EqualTo(expected :> obj)))
-                )
-            })
-
-    /// Proves a later closable scope is reached after the first page remains occupied by retryable nonterminal periods.
-    [<Test>]
-    member _.DiscoveryCursorReachesLaterClosableScopeWithoutDiscardingPersistentBlockers() =
-        withDatabaseAsync (fun connectionString ->
-            task {
-                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
-                let scope = scopeFor ownerId organizationId repositoryId
-                use connection = new SqlConnection(connectionString)
-                do! connection.OpenAsync CancellationToken.None
-                use command = connection.CreateCommand()
-
-                command.CommandText <-
-                    """
-DECLARE @index int = 0;
-WHILE @index < 100
-BEGIN
-    INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
-    VALUES
-    (
-        NEWID(),
-        CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('blocked-owner-', @index))),
-        CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('blocked-organization-', @index))),
-        CONVERT(uniqueidentifier, HASHBYTES('MD5', CONCAT('blocked-repository-', @index))),
-        '2026-01-01T00:00:00',
-        '2026-02-01T00:00:00',
-        0,
-        'Missing pricing remains retryable.',
-        SYSUTCDATETIME()
-    );
-    SET @index = @index + 1;
-END;
-"""
-
-                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
-                do! addPricingAsync connectionString scope
-
-                let! firstPage = OperationsBillingPeriodCloseDiscovery.discoverAsync connectionString CancellationToken.None
-
-                let! secondPage =
-                    OperationsBillingPeriodCloseDiscovery.discoverAfterAsync connectionString (Some firstPage[firstPage.Length - 1]) CancellationToken.None
-
-                let targetDiscovered =
-                    secondPage
-                    |> Array.exists (fun candidate ->
-                        candidate.OwnerId = scope.OwnerId
-                        && candidate.OrganizationId = scope.OrganizationId
-                        && candidate.RepositoryId = scope.RepositoryId
-                        && candidate.MonthStart = scope.MonthStart)
-
-                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
-                let! targetClose = closer.CloseAsync(request scope, CancellationToken.None)
-                let! blockedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1) AND RetryDiagnostic IS NOT NULL;"
-                let! closedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State = 2;"
-
-                Assert.Multiple(
-                    Action (fun () ->
-                        Assert.That(firstPage.Length, Is.EqualTo(100))
-                        Assert.That(targetDiscovered, Is.True)
-                        Assert.That(closedChargeCount targetClose, Is.Zero)
-                        Assert.That(blockedCount, Is.EqualTo(100))
-                        Assert.That(closedCount, Is.EqualTo(1)))
-                )
-            })
-
-#endif
     /// Proves only the database-owned instant at the exact +24h and +72h thresholds makes each operation eligible.
     [<Test>]
     member _.DatabaseClockTreatsPreviewAndCloseThresholdEqualityAsEligible() =
@@ -593,13 +536,42 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                 let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
                 let! lateWorkCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
                 let! evidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! previewQuantity = int64Async connectionString "SELECT TotalQuantity FROM ops.ChargePreviewLine;"
+                let! previewCharge = int64Async connectionString "SELECT ChargeMicros FROM ops.ChargePreviewLine;"
+                let! postedCharge = int64Async connectionString "SELECT ChargeMicros FROM ops.Charge;"
+                let! expectedPreviewDigest = previewEvidenceDigestAsync connectionString
+
+                let! persistedPreviewDigest =
+                    task {
+                        use connection = new SqlConnection(connectionString)
+                        do! connection.OpenAsync CancellationToken.None
+                        use command = connection.CreateCommand()
+                        command.CommandText <- "SELECT PricingPreviewDigestSha256Hex FROM ops.BillingPeriodCloseEvidence;"
+                        let! value = command.ExecuteScalarAsync CancellationToken.None
+                        return value :?> string
+                    }
+
+                let! persistedProvenance =
+                    task {
+                        use connection = new SqlConnection(connectionString)
+                        do! connection.OpenAsync CancellationToken.None
+                        use command = connection.CreateCommand()
+                        command.CommandText <- "SELECT ScheduledOperationProvenance FROM ops.BillingPeriodCloseEvidence;"
+                        let! value = command.ExecuteScalarAsync CancellationToken.None
+                        return value :?> string
+                    }
 
                 Assert.Multiple(
                     Action (fun () ->
                         Assert.That(closedChargeCount closed, Is.EqualTo(1))
                         Assert.That(chargeCount, Is.EqualTo(1))
                         Assert.That(lateWorkCount, Is.Zero)
-                        Assert.That(evidenceCount, Is.EqualTo(1)))
+                        Assert.That(evidenceCount, Is.EqualTo(1))
+                        Assert.That(previewQuantity, Is.EqualTo(7L))
+                        Assert.That(previewCharge, Is.EqualTo(14L))
+                        Assert.That(postedCharge, Is.EqualTo(14L))
+                        Assert.That(persistedPreviewDigest, Is.EqualTo(expectedPreviewDigest))
+                        Assert.That(persistedProvenance, Is.EqualTo("operations-tests/billing-period-close/v1")))
                 )
             })
 
@@ -634,118 +606,6 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                 )
             })
 
-#if BILLING_ZERO_FACT_COVERAGE_SLICE
-    /// Collective zero-fact pricing coverage belongs to the later dedicated slice.
-    [<Test>]
-    member _.ZeroEntryPricingCoverageBlocksThenRetryClosesAndFirstAcceptanceCreatesLateWork() =
-        withDatabaseAsync (fun connectionString ->
-            task {
-                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
-                let scope = scopeFor ownerId organizationId repositoryId
-                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
-                let! blocked = closer.CloseAsync(request scope, CancellationToken.None)
-                let! blockedChargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
-                let! blockedEvidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
-
-                let! blockedDiagnosticCount =
-                    countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0, 1) AND RetryDiagnostic IS NOT NULL;"
-
-                do! addPricingAsync connectionString scope
-                let! closed = closer.CloseAsync(request scope, CancellationToken.None)
-                let fact = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 4) 5L
-                do! acceptAsync connectionString fact
-                let! periodCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State = 2;"
-                let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
-                let! lateWorkCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
-                let! clearedDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL;"
-
-                Assert.Multiple(
-                    Action (fun () ->
-                        Assert.That(
-                            (match blocked with
-                             | BillingPeriodCloseResult.Blocked _ -> true
-                             | _ -> false),
-                            Is.True
-                        )
-
-                        Assert.That(blockedChargeCount, Is.Zero)
-                        Assert.That(blockedEvidenceCount, Is.Zero)
-                        Assert.That(blockedDiagnosticCount, Is.EqualTo(1))
-                        Assert.That(closedChargeCount closed, Is.Zero)
-                        Assert.That(periodCount, Is.EqualTo(1))
-                        Assert.That(chargeCount, Is.Zero)
-                        Assert.That(lateWorkCount, Is.EqualTo(1))
-                        Assert.That(clearedDiagnosticCount, Is.Zero))
-                )
-            })
-
-    /// Proves adjacent effective grains collectively cover a zero-fact month while a one-tick gap remains retryable.
-    [<Test>]
-    member _.ZeroFactCloseAcceptsAdjacentCoverageAndRejectsOneTickGapUntilRepaired() =
-        withDatabaseAsync (fun connectionString ->
-            task {
-                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
-                let adjacentScope = scopeFor ownerId organizationId repositoryId
-                let gapScope = { adjacentScope with MonthStart = Instant.FromUtc(2026, 7, 1, 0, 0) }
-                let monthStartUtc = adjacentScope.MonthStart.ToDateTimeUtc()
-
-                let nextMonthStartUtc =
-                    (BillingCompletenessScope.nextMonthStart adjacentScope)
-                        .ToDateTimeUtc()
-
-                let gapMonthStartUtc = gapScope.MonthStart.ToDateTimeUtc()
-
-                let gapNextMonthStartUtc =
-                    (BillingCompletenessScope.nextMonthStart gapScope)
-                        .ToDateTimeUtc()
-
-                let boundary = monthStartUtc.AddDays 15.0
-                let gapBoundary = gapMonthStartUtc.AddDays 15.0
-                let afterGapBoundary = gapBoundary.AddTicks 1L
-                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
-
-                do! addPricingWindowAsync connectionString adjacentScope 1 monthStartUtc boundary
-                do! addPricingWindowAsync connectionString adjacentScope 1 boundary nextMonthStartUtc
-                let! adjacentResult = closer.CloseAsync(request adjacentScope, CancellationToken.None)
-
-                do! addPricingWindowAsync connectionString gapScope 1 gapMonthStartUtc gapBoundary
-                do! addPricingWindowAsync connectionString gapScope 1 afterGapBoundary gapNextMonthStartUtc
-                let! gappedResult = closer.CloseAsync(request gapScope, CancellationToken.None)
-
-                let! gappedPostingCount =
-                    countAsync
-                        connectionString
-                        "SELECT COUNT(*) FROM ops.Charge WHERE BillingPeriodId IN (SELECT BillingPeriodId FROM ops.BillingPeriod WHERE RepositoryId <> '00000000-0000-0000-0000-000000000000');"
-
-                let! gappedEvidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
-                let! gappedDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL;"
-
-                do! addPricingWindowAsync connectionString gapScope 1 gapBoundary afterGapBoundary
-                let! repairedResult = closer.CloseAsync(request gapScope, CancellationToken.None)
-                let! repairedDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL;"
-                let! closedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State = 2;"
-
-                Assert.Multiple(
-                    Action (fun () ->
-                        Assert.That(closedChargeCount adjacentResult, Is.Zero)
-
-                        Assert.That(
-                            (match gappedResult with
-                             | BillingPeriodCloseResult.Blocked _ -> true
-                             | _ -> false),
-                            Is.True
-                        )
-
-                        Assert.That(gappedPostingCount, Is.Zero)
-                        Assert.That(gappedEvidenceCount, Is.EqualTo(1))
-                        Assert.That(gappedDiagnosticCount, Is.EqualTo(1))
-                        Assert.That(closedChargeCount repairedResult, Is.Zero)
-                        Assert.That(repairedDiagnosticCount, Is.Zero)
-                        Assert.That(closedCount, Is.EqualTo(2)))
-                )
-            })
-
-#endif
     /// Proves an empty period is visibly nonterminal and posts nothing until the dedicated zero-fact coverage slice runs.
     [<Test>]
     member _.ZeroFactCloseRemainsPendingWithoutPosting() =

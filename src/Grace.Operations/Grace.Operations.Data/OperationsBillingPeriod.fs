@@ -340,151 +340,6 @@ WHERE BillingPeriodId=@BillingPeriodId AND State IN (0,1);
             return rows |> Seq.toList
         }
 
-    // The collective zero-fact evaluator is intentionally deferred to #909.
-#if BILLING_ZERO_FACT_COVERAGE_SLICE
-    /// Verifies that a zero-fact period still has one complete current pricing grain before it can be closed.
-    let zeroFactPricingCoverageDiagnosticAsync
-        (connection: SqlConnection)
-        (transaction: SqlTransaction)
-        (scope: BillingCompletenessScope)
-        (cancellationToken: CancellationToken)
-        =
-        task {
-            use check =
-                command
-                    connection
-                    transaction
-                    """
-;WITH assignmentPlanApplicability AS
-(
-    SELECT rangeStart.EffectiveFromUtc, rangeEnd.EffectiveToUtc
-    FROM ops.PricingAssignment AS assignment
-    INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
-    CROSS APPLY
-    (
-        SELECT CASE WHEN assignment.EffectiveFromUtc > pricingPlan.EffectiveFromUtc
-                    THEN assignment.EffectiveFromUtc ELSE pricingPlan.EffectiveFromUtc END AS EffectiveFromUtc
-    ) AS rangeStart
-    CROSS APPLY
-    (
-        SELECT CASE WHEN ISNULL(assignment.EffectiveToUtc,@NextMonthStartUtc) < ISNULL(pricingPlan.EffectiveToUtc,@NextMonthStartUtc)
-                    THEN ISNULL(assignment.EffectiveToUtc,@NextMonthStartUtc) ELSE ISNULL(pricingPlan.EffectiveToUtc,@NextMonthStartUtc) END AS EffectiveToUtc
-    ) AS rangeEnd
-    WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-      AND rangeStart.EffectiveFromUtc < @NextMonthStartUtc AND rangeEnd.EffectiveToUtc > @MonthStartUtc
-),
-assignmentPlanBoundary AS
-(
-    SELECT @MonthStartUtc AS BoundaryUtc
-    UNION
-    SELECT CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
-    FROM assignmentPlanApplicability
-),
-mappingApplicability AS
-(
-    SELECT mapping.FactKind, mapping.BillableUsageKind, mapping.EffectiveFromUtc,
-           ISNULL(mapping.EffectiveToUtc,@NextMonthStartUtc) AS EffectiveToUtc
-    FROM ops.BillableUsageKindMapping AS mapping
-    WHERE mapping.EffectiveFromUtc < @NextMonthStartUtc
-      AND ISNULL(mapping.EffectiveToUtc,@NextMonthStartUtc) > @MonthStartUtc
-),
-mappingBoundary AS
-(
-    SELECT FactKind, @MonthStartUtc AS BoundaryUtc
-    FROM mappingApplicability
-    GROUP BY FactKind
-    UNION
-    SELECT FactKind, CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
-    FROM mappingApplicability
-),
-completeGrainApplicability AS
-(
-    SELECT mapping.FactKind, rangeStart.EffectiveFromUtc, rangeEnd.EffectiveToUtc
-    FROM ops.PricingAssignment AS assignment
-    INNER JOIN ops.PricingPlan AS pricingPlan ON pricingPlan.PricingPlanId=assignment.PricingPlanId
-    INNER JOIN mappingApplicability AS mapping ON 1=1
-    INNER JOIN ops.PricingRate AS rate ON rate.PricingPlanId=pricingPlan.PricingPlanId
-                                           AND rate.BillableUsageKind=mapping.BillableUsageKind
-    CROSS APPLY
-    (
-        SELECT MAX(boundary.EffectiveFromUtc) AS EffectiveFromUtc
-        FROM (VALUES (assignment.EffectiveFromUtc), (pricingPlan.EffectiveFromUtc), (mapping.EffectiveFromUtc), (rate.EffectiveFromUtc)) AS boundary(EffectiveFromUtc)
-    ) AS rangeStart
-    CROSS APPLY
-    (
-        SELECT MIN(boundary.EffectiveToUtc) AS EffectiveToUtc
-        FROM (VALUES (ISNULL(assignment.EffectiveToUtc,@NextMonthStartUtc)), (ISNULL(pricingPlan.EffectiveToUtc,@NextMonthStartUtc)), (mapping.EffectiveToUtc), (ISNULL(rate.EffectiveToUtc,@NextMonthStartUtc))) AS boundary(EffectiveToUtc)
-    ) AS rangeEnd
-    WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-      AND rangeStart.EffectiveFromUtc < @NextMonthStartUtc AND rangeEnd.EffectiveToUtc > @MonthStartUtc
-),
-completeGrainBoundary AS
-(
-    SELECT FactKind, @MonthStartUtc AS BoundaryUtc
-    FROM mappingApplicability
-    GROUP BY FactKind
-    UNION
-    SELECT FactKind, CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
-    FROM mappingApplicability
-    UNION
-    SELECT FactKind, CASE WHEN EffectiveToUtc < @NextMonthStartUtc THEN EffectiveToUtc ELSE @NextMonthStartUtc END
-    FROM completeGrainApplicability
-)
-SELECT CAST
-(
-    CASE
-        WHEN EXISTS
-        (
-            SELECT 1
-            FROM assignmentPlanBoundary AS boundary
-            WHERE boundary.BoundaryUtc < @NextMonthStartUtc
-              AND NOT EXISTS
-              (
-                  SELECT 1
-                  FROM assignmentPlanApplicability AS applicability
-                  WHERE applicability.EffectiveFromUtc <= boundary.BoundaryUtc
-                    AND boundary.BoundaryUtc < applicability.EffectiveToUtc
-              )
-        ) THEN 'Complete pricing assignment and plan coverage is required for zero-fact billing close.'
-        WHEN EXISTS
-        (
-            SELECT 1
-            FROM mappingBoundary AS boundary
-            WHERE boundary.BoundaryUtc < @NextMonthStartUtc
-              AND NOT EXISTS
-              (
-                  SELECT 1
-                  FROM mappingApplicability AS applicability
-                  WHERE applicability.FactKind=boundary.FactKind
-                    AND applicability.EffectiveFromUtc <= boundary.BoundaryUtc
-                    AND boundary.BoundaryUtc < applicability.EffectiveToUtc
-              )
-        ) THEN 'Complete billable usage-kind mapping coverage is required for zero-fact billing close.'
-        WHEN EXISTS
-        (
-            SELECT 1
-            FROM completeGrainBoundary AS boundary
-            WHERE boundary.BoundaryUtc < @NextMonthStartUtc
-              AND NOT EXISTS
-              (
-                  SELECT 1
-                  FROM completeGrainApplicability AS applicability
-                  WHERE applicability.FactKind=boundary.FactKind
-                    AND applicability.EffectiveFromUtc <= boundary.BoundaryUtc
-                    AND boundary.BoundaryUtc < applicability.EffectiveToUtc
-              )
-        ) THEN 'Complete pricing-rate coverage is required for zero-fact billing close.'
-        ELSE NULL
-    END AS nvarchar(400)
-);
-"""
-
-            addScope check scope
-            let! result = check.ExecuteScalarAsync cancellationToken
-            return if Convert.IsDBNull result then None else Some(result :?> string)
-        }
-
-#endif
     /// Replaces only the current period preview after successful calculation has produced every replacement line.
     let replacePreviewAsync
         (connection: SqlConnection)
@@ -550,6 +405,39 @@ SELECT CAST
         |> SHA256.HashData
         |> Convert.ToHexString
 
+    /// Captures every persisted preview input and calculated value so close evidence stays reproducible after pricing changes.
+    let pricingPreviewDigest (lines: ChargePreviewLineEntity array) =
+        lines
+        |> Seq.sortBy (fun line -> line.ChargePreviewLineId)
+        |> Seq.map (fun line ->
+            String.Join(
+                "|",
+                [|
+                    line.ChargePreviewLineId.ToString("D")
+                    line.OwnerId.ToString("D")
+                    line.OrganizationId.ToString("D")
+                    line.RepositoryId.ToString("D")
+                    line.PeriodFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    line.PeriodToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    line.FactKind.ToString(CultureInfo.InvariantCulture)
+                    line.BillableUsageKindMappingId.ToString("D")
+                    line.BillableUsageKind.ToString(CultureInfo.InvariantCulture)
+                    line.PricingAssignmentId.ToString("D")
+                    line.PricingPlanId.ToString("D")
+                    line.PricingRateId.ToString("D")
+                    line.CurrencyCode
+                    line.UnitName
+                    line.UnitQuantity.ToString(CultureInfo.InvariantCulture)
+                    line.UnitPriceMicros.ToString(CultureInfo.InvariantCulture)
+                    line.EffectiveFromUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    line.EffectiveToUtc.Ticks.ToString(CultureInfo.InvariantCulture)
+                    line.TotalQuantity.ToString(CultureInfo.InvariantCulture)
+                    line.ChargeMicros.ToString(CultureInfo.InvariantCulture)
+                |]
+            ))
+        |> Seq.toList
+        |> digest
+
     /// Reads canonical accepted-fact identities from the immutable raw source for close evidence.
     let acceptedFactDigestAsync
         (connection: SqlConnection)
@@ -613,11 +501,7 @@ SELECT CAST
 
             let! factDigest = acceptedFactDigestAsync connection transaction request.Scope cancellationToken
 
-            let previewDigest =
-                lines
-                |> Seq.map (fun line -> $"{line.ChargePreviewLineId:D}|{line.CurrencyCode}|{line.ChargeMicros}|{line.TotalQuantity}")
-                |> Seq.toList
-                |> digest
+            let previewDigest = pricingPreviewDigest lines
 
             use evidence =
                 command
