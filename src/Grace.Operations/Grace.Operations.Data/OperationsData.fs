@@ -716,24 +716,11 @@ type IOperationsUsageTransaction =
     abstract EnsureUsageFactIdMatchesBillingCompletenessScopeAsync:
         usageFactId: UsageFactId * scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task
 
-    /// Attempts to insert the raw fact, returning `false` when `UsageFactId` already exists.
-    abstract TryInsertRawUsageFactAsync: rawFact: RawUsageFact * cancellationToken: CancellationToken -> Task<bool>
-
-    /// Attempts to insert an archived replay fact without restoring hot SQL payload bytes.
-    abstract TryInsertReplayedArchivedUsageFactAsync:
-        rawFact: RawUsageFact * pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
-
-    /// Adds the accepted raw fact quantity to the derived minute aggregate.
-    abstract AddToUsageAggregateMinuteAsync: aggregate: UsageAggregateMinute * cancellationToken: CancellationToken -> Task
-
     /// Records the canonical scoped rejection unless accepted durable usage has already won.
     abstract RecordScopedUsageFactRejectionAsync: rejection: UsageFactRejection * cancellationToken: CancellationToken -> Task<UsageFactRejection option>
 
     /// Persists partial rejection evidence without manufacturing a billing scope.
     abstract RecordUnscopedUsageFactRejectionAsync: rejection: UsageFactRejection * cancellationToken: CancellationToken -> Task
-
-    /// Repairs all active blockers for an accepted exact fact while the scope lock remains held.
-    abstract ResolveScopedUsageFactRejectionAsync: usageFactId: UsageFactId * scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task
 
     /// Reads active scoped rejection evidence while the caller holds the central scope lock.
     abstract HasActiveScopedUsageFactRejectionAsync: scope: BillingCompletenessScope * cancellationToken: CancellationToken -> Task<bool>
@@ -789,51 +776,6 @@ type internal SqlOperationsUsageTransaction(connection: SqlConnection, transacti
     let toInstant (dateTime: DateTime) =
         DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)
         |> Instant.FromDateTimeUtc
-
-    /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
-    let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
-        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
-        addRawPayloadParameter command rawFact.RawPayload
-        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
-        addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
-        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
-        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
-        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
-        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
-        addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
-        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
-
-    /// Adds raw fact parameters for archive replay inserts that intentionally omit hot payload bytes.
-    let addReplayedRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
-        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
-        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
-        addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
-        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
-        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
-        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
-        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
-        addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
-        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
-
-    /// Adds archive pointer parameters for replay inserts that keep hot payload bytes out of SQL.
-    let addReplayedArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
-        addStringParameter command "@ArchiveBlobName" OperationsUsageSql.ArchiveBlobNameMaxLength pointer.BlobName
-
-        let checksumParameter = command.Parameters.Add("@ArchiveChecksumSha256Hex", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
-
-        checksumParameter.Value <- pointer.ChecksumSha256Hex
-        addParameter command "@ArchiveByteLength" SqlDbType.BigInt pointer.ByteLength
-        addParameter command "@ArchiveStateArchived" SqlDbType.Int (int RawUsageFactArchiveState.Archived)
-
-    /// Adds the aggregate parameters expected by `OperationsUsageSql.AddToUsageAggregateMinute`.
-    let addUsageAggregateMinuteParameters (command: SqlCommand) (aggregate: UsageAggregateMinute) =
-        addParameter command "@FactKind" SqlDbType.Int (int aggregate.Key.FactKind)
-        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier aggregate.Key.OwnerId
-        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier aggregate.Key.OrganizationId
-        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier aggregate.Key.RepositoryId
-        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength aggregate.Key.StoragePoolId
-        addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
-        addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
 
     /// Adds complete owner, organization, repository, and UTC-month parameters from the sole scope contract.
     let addBillingCompletenessScopeParameters (command: SqlCommand) (scope: BillingCompletenessScope) =
@@ -900,31 +842,6 @@ type internal SqlOperationsUsageTransaction(connection: SqlConnection, transacti
 
         member _.AcceptUsageFactAsync(plan, scope, rawInsertion, cancellationToken) =
             acceptedFactMutationExecutor.AcceptAsync(connection, transaction, plan, scope, rawInsertion, cancellationToken)
-
-        member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) =
-            task {
-                use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
-                addRawUsageFactParameters command rawFact
-                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
-                return rowsAffected = 1
-            }
-
-        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
-            task {
-                use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
-                addReplayedRawUsageFactParameters command rawFact
-                addReplayedArchivePointerParameters command pointer
-                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
-                return rowsAffected = 1
-            }
-
-        member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) =
-            task {
-                use command = createCommand OperationsUsageSql.AddToUsageAggregateMinute
-                addUsageAggregateMinuteParameters command aggregate
-                let! _ = command.ExecuteNonQueryAsync cancellationToken
-                return ()
-            }
 
         member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) =
             task {
@@ -995,14 +912,6 @@ type internal SqlOperationsUsageTransaction(connection: SqlConnection, transacti
                      |> Option.defaultValue DBNull.Value)
 
                 addStringParameter command "@Reason" OperationsUsageSql.ArchiveFailureReasonMaxLength rejection.Reason
-                let! _ = command.ExecuteNonQueryAsync cancellationToken
-                return ()
-            }
-
-        member _.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, cancellationToken) =
-            task {
-                use command = createCommand OperationsUsageSql.ResolveScopedUsageFactRejection
-                addScopedUsageFactRejectionParameters command usageFactId scope
                 let! _ = command.ExecuteNonQueryAsync cancellationToken
                 return ()
             }

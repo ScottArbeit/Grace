@@ -143,49 +143,12 @@ type private InMemoryOperationsUsageTransactionScope() =
                                         return InsertedIntoOpenPeriod
                             }
 
-                        member _.TryInsertRawUsageFactAsync(rawFact, insertCancellationToken) =
-                            insertCancellationToken.ThrowIfCancellationRequested()
-
-                            if rawFacts.ContainsKey rawFact.UsageFactId then
-                                Task.FromResult false
-                            else
-                                rawFacts.Add(rawFact.UsageFactId, rawFact)
-                                Task.FromResult true
-
-                        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, _pointer, insertCancellationToken) =
-                            insertCancellationToken.ThrowIfCancellationRequested()
-
-                            if rawFacts.ContainsKey rawFact.UsageFactId then
-                                Task.FromResult false
-                            else
-                                rawFacts.Add(rawFact.UsageFactId, { rawFact with RawPayload = Array.empty })
-                                Task.FromResult true
-
-                        member _.AddToUsageAggregateMinuteAsync(aggregate, updateCancellationToken) =
-                            updateCancellationToken.ThrowIfCancellationRequested()
-
-                            if failNextAggregateUpdate then
-                                failNextAggregateUpdate <- false
-                                Task.FromException(InvalidOperationException("forced aggregate failure"))
-                            else
-                                let current =
-                                    match aggregates.TryGetValue aggregate.Key with
-                                    | true, quantity -> quantity
-                                    | false, _ -> 0L
-
-                                aggregates[aggregate.Key] <- current + aggregate.Quantity
-                                Task.CompletedTask
-
                         member _.RecordScopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
                             rejectionCancellationToken.ThrowIfCancellationRequested()
                             Task.FromResult(None)
 
                         member _.RecordUnscopedUsageFactRejectionAsync(_rejection, rejectionCancellationToken) =
                             rejectionCancellationToken.ThrowIfCancellationRequested()
-                            Task.CompletedTask
-
-                        member _.ResolveScopedUsageFactRejectionAsync(_usageFactId, _scope, repairCancellationToken) =
-                            repairCancellationToken.ThrowIfCancellationRequested()
                             Task.CompletedTask
 
                         member _.HasActiveScopedUsageFactRejectionAsync(_scope, readCancellationToken) =

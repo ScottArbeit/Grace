@@ -44,23 +44,9 @@ type private ObservedOperationsUsageTransaction
                 return outcome
             }
 
-        member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) = inner.TryInsertRawUsageFactAsync(rawFact, cancellationToken)
-
-        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
-            inner.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken)
-
-        member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) =
-            task {
-                do! inner.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken)
-                do! afterUsageAggregateAsync aggregate cancellationToken
-            }
-
         member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken)
 
         member _.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken)
-
-        member _.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, cancellationToken) =
-            inner.ResolveScopedUsageFactRejectionAsync(usageFactId, scope, cancellationToken)
 
         member _.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken) = inner.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken)
 
@@ -284,6 +270,97 @@ type OperationsBillingCompletenessTests() =
             command.CommandText <- commandText
             let! value = command.ExecuteScalarAsync CancellationToken.None
             return value :?> byte array
+        }
+
+    /// Captures the immutable close projection independently from accepted-fact state for rollback and conflict proofs.
+    let immutableClosedProjectionAsync connectionString =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                """
+SELECT CONCAT('BillingPeriod|', (SELECT * FROM ops.BillingPeriod ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('ChargePreviewLine|', (SELECT * FROM ops.ChargePreviewLine ORDER BY ChargePreviewLineId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('Charge|', (SELECT * FROM ops.Charge ORDER BY ChargeId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodCloseEvidence|', (SELECT * FROM ops.BillingPeriodCloseEvidence ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+ORDER BY 1;
+"""
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let values = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then values.Add(reader.GetString 0)
+
+            return values |> Seq.toList
+        }
+
+    /// Inserts a closed period and complete immutable close projection directly for this adoption-only SQL fixture.
+    let seedClosedProjectionAsync connectionString ownerId organizationId repositoryId =
+        task {
+            let billingPeriodId = Guid.NewGuid()
+
+            do!
+                executeNonQueryAsync
+                    connectionString
+                    $"""
+DECLARE @PreviewLineId uniqueidentifier = NEWID();
+INSERT INTO ops.BillingPeriod
+    (BillingPeriodId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc, State)
+VALUES
+    ('{billingPeriodId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 2);
+INSERT INTO ops.ChargePreviewLine
+    (ChargePreviewLineId, OwnerId, OrganizationId, RepositoryId, PeriodFromUtc, PeriodToUtc, FactKind, BillableUsageKindMappingId, BillableUsageKind, PricingAssignmentId, PricingPlanId, PricingRateId, CurrencyCode, UnitName, UnitQuantity, UnitPriceMicros, EffectiveFromUtc, EffectiveToUtc, TotalQuantity, ChargeMicros)
+VALUES
+    (@PreviewLineId, '{ownerId:D}', '{organizationId:D}', '{repositoryId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 1, NEWID(), 1, NEWID(), NEWID(), NEWID(), 'USD', 'fixture-unit', 1, 1, '2026-08-01T00:00:00', '2026-09-01T00:00:00', 1, 1);
+INSERT INTO ops.Charge
+    (ChargeId, OwnerId, OrganizationId, RepositoryId, BillingPeriodId, ChargePreviewLineId, PeriodFromUtc, PeriodToUtc, FactKind, BillableUsageKindMappingId, BillableUsageKind, PricingAssignmentId, PricingPlanId, PricingRateId, CurrencyCode, UnitName, UnitQuantity, UnitPriceMicros, EffectiveFromUtc, EffectiveToUtc, TotalQuantity, ChargeMicros)
+SELECT NEWID(), OwnerId, OrganizationId, RepositoryId, '{billingPeriodId:D}', ChargePreviewLineId, PeriodFromUtc, PeriodToUtc, FactKind, BillableUsageKindMappingId, BillableUsageKind, PricingAssignmentId, PricingPlanId, PricingRateId, CurrencyCode, UnitName, UnitQuantity, UnitPriceMicros, EffectiveFromUtc, EffectiveToUtc, TotalQuantity, ChargeMicros
+FROM ops.ChargePreviewLine
+WHERE ChargePreviewLineId = @PreviewLineId;
+INSERT INTO ops.BillingPeriodCloseEvidence
+    (BillingPeriodId, AcceptedFactDigestSha256Hex, PricingPreviewDigestSha256Hex, ClosedAtUtc, ScheduledOperationProvenance)
+VALUES
+    ('{billingPeriodId:D}', REPLICATE('A', 64), REPLICATE('B', 64), '2026-09-01T00:00:00', 'adoption-fixture');
+"""
+
+            return billingPeriodId
+        }
+
+    /// Reads the raw, aggregate, rejection, late-work, and journal rows that the shared mutation may change.
+    let acceptedFactProjectionAsync connectionString =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                """
+SELECT CONCAT('RawUsageFact|', (SELECT * FROM ops.RawUsageFact ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageAggregateMinute|', (SELECT * FROM ops.UsageAggregateMinute ORDER BY OwnerId, OrganizationId, RepositoryId, FactKind, StoragePoolId, BucketStartUtc FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactRejection|', (SELECT * FROM ops.UsageFactRejection ORDER BY RejectionId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodLateWork|', (SELECT * FROM ops.BillingPeriodLateWork ORDER BY BillingPeriodId, UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactJournal|', (SELECT * FROM ops.UsageFactJournal ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+ORDER BY 1;
+"""
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let values = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then values.Add(reader.GetString 0)
+
+            return values |> Seq.toList
         }
 
     /// Reads whether SQL Server reports the named production operation has a waiting application-lock request.
@@ -1681,9 +1758,13 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 let rejectedRepairFact = fact repairUsageFactId ownerId organizationId repositoryBId observedAt
                 let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
                 let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! _ = seedClosedProjectionAsync connectionString ownerId organizationId repositoryAId
+                let! _ = seedClosedProjectionAsync connectionString ownerId organizationId repositoryBId
 
                 let! _ = store.StoreUsageFactAsync(acceptedProcessFact, payloadFor acceptedProcessFact, CancellationToken.None)
                 let! appendedProcess = journal.AppendAsync(pendingProcessFact, CancellationToken.None)
+                let! immutableBeforeProcess = immutableClosedProjectionAsync connectionString
+                let! acceptedBeforeProcess = acceptedFactProjectionAsync connectionString
 
                 let! processRejected =
                     task {
@@ -1695,9 +1776,14 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                         | :? SqlException -> return true
                     }
 
+                let! immutableAfterProcess = immutableClosedProjectionAsync connectionString
+                let! acceptedAfterProcess = acceptedFactProjectionAsync connectionString
+
                 let! _ = store.StoreUsageFactAsync(acceptedRepairFact, payloadFor acceptedRepairFact, CancellationToken.None)
                 let! appendedRepair = journal.AppendAsync(rejectedRepairFact, CancellationToken.None)
                 let! rejected = journal.RejectAsync(rejectedRepairFact, payloadFor rejectedRepairFact, "cross-scope repair regression", CancellationToken.None)
+                let! immutableBeforeRepair = immutableClosedProjectionAsync connectionString
+                let! acceptedBeforeRepair = acceptedFactProjectionAsync connectionString
 
                 let! repairRejected =
                     task {
@@ -1708,6 +1794,9 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                         | :? InvalidOperationException -> return true
                         | :? SqlException -> return true
                     }
+
+                let! immutableAfterRepair = immutableClosedProjectionAsync connectionString
+                let! acceptedAfterRepair = acceptedFactProjectionAsync connectionString
 
                 let! rawA =
                     executeInt32Async
@@ -1743,7 +1832,90 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                         Assert.That(rawB, Is.Zero)
                         Assert.That(processJournalState, Is.EqualTo(int UsageFactJournalState.Pending))
                         Assert.That(repairJournalState, Is.EqualTo(int UsageFactJournalState.Rejected))
-                        Assert.That(repairActiveRejection, Is.EqualTo(1)))
+                        Assert.That(repairActiveRejection, Is.EqualTo(1))
+                        Assert.That<string list>(acceptedAfterProcess, Is.EqualTo<string list>(acceptedBeforeProcess))
+                        Assert.That<string list>(immutableAfterProcess, Is.EqualTo<string list>(immutableBeforeProcess))
+                        Assert.That<string list>(acceptedAfterRepair, Is.EqualTo<string list>(acceptedBeforeRepair))
+                        Assert.That<string list>(immutableAfterRepair, Is.EqualTo<string list>(immutableBeforeRepair)))
+                )
+            })
+
+    /// Proves online and archived replay reject a cross-scope reused identity without changing closed projections or accepted state.
+    [<Test>]
+    member _.OnlineAndArchivedReplayRejectCrossScopeIdentityAgainstDirectClosedSnapshots() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryAId = Guid.NewGuid()
+                let repositoryBId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let onlineUsageFactId = Guid.NewGuid()
+                let replayUsageFactId = Guid.NewGuid()
+                let acceptedOnlineFact = fact onlineUsageFactId ownerId organizationId repositoryAId observedAt
+                let conflictingOnlineFact = fact onlineUsageFactId ownerId organizationId repositoryBId observedAt
+                let acceptedReplayFact = fact replayUsageFactId ownerId organizationId repositoryAId observedAt
+                let conflictingReplayFact = fact replayUsageFactId ownerId organizationId repositoryBId observedAt
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! _ = seedClosedProjectionAsync connectionString ownerId organizationId repositoryAId
+                let! _ = seedClosedProjectionAsync connectionString ownerId organizationId repositoryBId
+                let! _ = store.StoreUsageFactAsync(acceptedOnlineFact, payloadFor acceptedOnlineFact, CancellationToken.None)
+                let! immutableBeforeOnline = immutableClosedProjectionAsync connectionString
+                let! acceptedBeforeOnline = acceptedFactProjectionAsync connectionString
+
+                let! onlineRejected =
+                    task {
+                        try
+                            let! _ = store.StoreUsageFactAsync(conflictingOnlineFact, payloadFor conflictingOnlineFact, CancellationToken.None)
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                        | :? SqlException -> return true
+                    }
+
+                let! immutableAfterOnline = immutableClosedProjectionAsync connectionString
+                let! acceptedAfterOnline = acceptedFactProjectionAsync connectionString
+
+                let replayPointer =
+                    {
+                        UsageFactId = replayUsageFactId
+                        BlobName = "usage-facts/v1/cross-scope.jsonl.gz"
+                        ChecksumSha256Hex = String.replicate 64 "a"
+                        ByteLength = 4096L
+                    }
+
+                let! _ = store.ReplayArchivedUsageFactAsync(acceptedReplayFact, payloadFor acceptedReplayFact, replayPointer, CancellationToken.None)
+                let! immutableBeforeReplay = immutableClosedProjectionAsync connectionString
+                let! acceptedBeforeReplay = acceptedFactProjectionAsync connectionString
+
+                let! replayRejected =
+                    task {
+                        try
+                            let! _ =
+                                store.ReplayArchivedUsageFactAsync(
+                                    conflictingReplayFact,
+                                    payloadFor conflictingReplayFact,
+                                    replayPointer,
+                                    CancellationToken.None
+                                )
+
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                        | :? SqlException -> return true
+                    }
+
+                let! immutableAfterReplay = immutableClosedProjectionAsync connectionString
+                let! acceptedAfterReplay = acceptedFactProjectionAsync connectionString
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(onlineRejected, Is.True)
+                        Assert.That(replayRejected, Is.True)
+                        Assert.That<string list>(acceptedAfterOnline, Is.EqualTo<string list>(acceptedBeforeOnline))
+                        Assert.That<string list>(immutableAfterOnline, Is.EqualTo<string list>(immutableBeforeOnline))
+                        Assert.That<string list>(acceptedAfterReplay, Is.EqualTo<string list>(acceptedBeforeReplay))
+                        Assert.That<string list>(immutableAfterReplay, Is.EqualTo<string list>(immutableBeforeReplay)))
                 )
             })
 
@@ -1756,19 +1928,10 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
                 let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
-                let billingPeriodId = Guid.NewGuid()
                 let processedFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
                 let repairedFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (observedAt + Duration.FromSeconds(1L))
 
-                do!
-                    executeNonQueryAsync
-                        connectionString
-                        $"""
-INSERT INTO ops.BillingPeriod
-    (BillingPeriodId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc, State)
-VALUES
-    ('{billingPeriodId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 2);
-"""
+                let! billingPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId repositoryId
 
                 let journal = SqlOperationsUsageJournalStore(connectionString)
                 let! appendedProcessed = journal.AppendAsync(processedFact, CancellationToken.None)
@@ -1814,6 +1977,201 @@ VALUES
                         Assert.That(repairedLateWork, Is.EqualTo(1))
                         Assert.That(aggregateCount, Is.EqualTo(1))
                         Assert.That(aggregateQuantity, Is.EqualTo(8192)))
+                )
+            })
+
+    /// Proves every acceptance wrapper independently stages one closed-period handoff and converges its same-scope replay.
+    [<Test>]
+    member _.EveryAcceptedFactWrapperStagesOneClosedPeriodHandoffAndConvergesItsSameScopeReplay() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
+                let onlineRepositoryId = Guid.NewGuid()
+                let replayRepositoryId = Guid.NewGuid()
+                let processRepositoryId = Guid.NewGuid()
+                let repairRepositoryId = Guid.NewGuid()
+                let onlineFact = fact (Guid.NewGuid()) ownerId organizationId onlineRepositoryId observedAt
+                let replayFact = fact (Guid.NewGuid()) ownerId organizationId replayRepositoryId observedAt
+                let processFact = fact (Guid.NewGuid()) ownerId organizationId processRepositoryId observedAt
+                let repairFact = fact (Guid.NewGuid()) ownerId organizationId repairRepositoryId observedAt
+                let store = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! onlinePeriodId = seedClosedProjectionAsync connectionString ownerId organizationId onlineRepositoryId
+                let! replayPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId replayRepositoryId
+                let! processPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId processRepositoryId
+                let! repairPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId repairRepositoryId
+                let! immutableBefore = immutableClosedProjectionAsync connectionString
+
+                let replayPointer =
+                    {
+                        UsageFactId = replayFact.UsageFactId
+                        BlobName = "usage-facts/v1/closed-wrapper.jsonl.gz"
+                        ChecksumSha256Hex = String.replicate 64 "a"
+                        ByteLength = 4096L
+                    }
+
+                let! onlineFirst = store.StoreUsageFactAsync(onlineFact, payloadFor onlineFact, CancellationToken.None)
+                let! onlineDuplicate = store.StoreUsageFactAsync(onlineFact, payloadFor onlineFact, CancellationToken.None)
+                let! replayFirst = store.ReplayArchivedUsageFactAsync(replayFact, payloadFor replayFact, replayPointer, CancellationToken.None)
+                let! replayDuplicate = store.ReplayArchivedUsageFactAsync(replayFact, payloadFor replayFact, replayPointer, CancellationToken.None)
+                let! appendedProcess = journal.AppendAsync(processFact, CancellationToken.None)
+                let! processed = journal.ProcessAsync(processFact, payloadFor processFact, CancellationToken.None)
+                let! processedDuplicate = journal.ProcessAsync(processFact, payloadFor processFact, CancellationToken.None)
+                let! appendedRepair = journal.AppendAsync(repairFact, CancellationToken.None)
+                let! rejected = journal.RejectAsync(repairFact, payloadFor repairFact, "closed-wrapper repair", CancellationToken.None)
+                let! repaired = journal.RepairAsync(repairFact, CancellationToken.None)
+                let! repairedDuplicate = journal.RepairAsync(repairFact, CancellationToken.None)
+
+                let! rawOnline =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{onlineFact.UsageFactId:D}' AND RepositoryId = '{onlineRepositoryId:D}';"
+
+                let! rawReplay =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{replayFact.UsageFactId:D}' AND RepositoryId = '{replayRepositoryId:D}' AND ArchiveState = 2 AND RawPayload IS NULL;"
+
+                let! rawProcess =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{processFact.UsageFactId:D}' AND RepositoryId = '{processRepositoryId:D}';"
+
+                let! rawRepair =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{repairFact.UsageFactId:D}' AND RepositoryId = '{repairRepositoryId:D}';"
+
+                let! aggregateOnline =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT Quantity FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND RepositoryId = '{onlineRepositoryId:D}';"
+
+                let! aggregateReplay =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT Quantity FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND RepositoryId = '{replayRepositoryId:D}';"
+
+                let! aggregateProcess =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT Quantity FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND RepositoryId = '{processRepositoryId:D}';"
+
+                let! aggregateRepair =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT Quantity FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND RepositoryId = '{repairRepositoryId:D}';"
+
+                let! handoffOnline =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{onlinePeriodId:D}' AND UsageFactId = '{onlineFact.UsageFactId:D}' AND State = 0;"
+
+                let! handoffReplay =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{replayPeriodId:D}' AND UsageFactId = '{replayFact.UsageFactId:D}' AND State = 0;"
+
+                let! handoffProcess =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{processPeriodId:D}' AND UsageFactId = '{processFact.UsageFactId:D}' AND State = 0;"
+
+                let! handoffRepair =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{repairPeriodId:D}' AND UsageFactId = '{repairFact.UsageFactId:D}' AND State = 0;"
+
+                let! processJournal =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{processFact.UsageFactId:D}' AND State = 1;"
+
+                let! repairJournal =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{repairFact.UsageFactId:D}' AND State = 1;"
+
+                let! repairedRejection =
+                    executeInt32Async
+                        connectionString
+                        $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{repairFact.UsageFactId:D}' AND IsActive = 0;"
+
+                let! immutableAfter = immutableClosedProjectionAsync connectionString
+
+                let onlineAccepted =
+                    match onlineFirst with
+                    | Ok { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = usageFactId; Aggregate = Some _ } when
+                        usageFactId = onlineFact.UsageFactId
+                        ->
+                        true
+                    | _ -> false
+
+                let onlineIdempotent =
+                    match onlineDuplicate with
+                    | Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = usageFactId; Aggregate = None } when
+                        usageFactId = onlineFact.UsageFactId
+                        ->
+                        true
+                    | _ -> false
+
+                let replayAccepted =
+                    match replayFirst with
+                    | Ok { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = usageFactId; Aggregate = Some _ } when
+                        usageFactId = replayFact.UsageFactId
+                        ->
+                        true
+                    | _ -> false
+
+                let replayIdempotent =
+                    match replayDuplicate with
+                    | Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = usageFactId; Aggregate = None } when
+                        usageFactId = replayFact.UsageFactId
+                        ->
+                        true
+                    | _ -> false
+
+                let processAppended =
+                    match appendedProcess with
+                    | Ok AppendedPending -> true
+                    | _ -> false
+
+                let repairAppended =
+                    match appendedRepair with
+                    | Ok AppendedPending -> true
+                    | _ -> false
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(onlineAccepted, Is.True)
+                        Assert.That(onlineIdempotent, Is.True)
+                        Assert.That(replayAccepted, Is.True)
+                        Assert.That(replayIdempotent, Is.True)
+                        Assert.That(processAppended, Is.True)
+                        Assert.That(processed, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(processedDuplicate, Is.EqualTo(AlreadyAccepted))
+                        Assert.That(repairAppended, Is.True)
+                        Assert.That(rejected, Is.EqualTo(RejectedFromJournal))
+                        Assert.That(repaired, Is.EqualTo(AcceptedFromJournal))
+                        Assert.That(repairedDuplicate, Is.EqualTo(AlreadyAccepted))
+                        Assert.That(rawOnline, Is.EqualTo(1))
+                        Assert.That(rawReplay, Is.EqualTo(1))
+                        Assert.That(rawProcess, Is.EqualTo(1))
+                        Assert.That(rawRepair, Is.EqualTo(1))
+                        Assert.That(aggregateOnline, Is.EqualTo(4096))
+                        Assert.That(aggregateReplay, Is.EqualTo(4096))
+                        Assert.That(aggregateProcess, Is.EqualTo(4096))
+                        Assert.That(aggregateRepair, Is.EqualTo(4096))
+                        Assert.That(handoffOnline, Is.EqualTo(1))
+                        Assert.That(handoffReplay, Is.EqualTo(1))
+                        Assert.That(handoffProcess, Is.EqualTo(1))
+                        Assert.That(handoffRepair, Is.EqualTo(1))
+                        Assert.That(processJournal, Is.EqualTo(1))
+                        Assert.That(repairJournal, Is.EqualTo(1))
+                        Assert.That(repairedRejection, Is.EqualTo(1))
+                        Assert.That<string list>(immutableAfter, Is.EqualTo<string list>(immutableBefore)))
                 )
             })
 
@@ -1904,13 +2262,14 @@ VALUES
                 let repositoryId = Guid.NewGuid()
                 let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
                 let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
-                let scope = scopeFor ownerId organizationId repositoryId observedAt
                 let interleaving = CancellationAfterAcceptedFactStageInterleaving()
+                let! billingPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId repositoryId
+                let! immutableBefore = immutableClosedProjectionAsync connectionString
 
                 let journal = SqlOperationsUsageJournalStore.CreateForTest(connectionString, interleaving :> IOperationsUsageJournalTransactionInterleaving)
 
-                let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
                 let! appended = journal.AppendAsync(usageFact, CancellationToken.None)
+                let! acceptedBefore = acceptedFactProjectionAsync connectionString
                 use cancellation = new CancellationTokenSource()
                 let processing = journal.ProcessAsync(usageFact, payloadFor usageFact, cancellation.Token)
 
@@ -1927,22 +2286,13 @@ VALUES
                             | :? OperationCanceledException -> return true
                         }
 
-                    let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+                    let! acceptedAfter = acceptedFactProjectionAsync connectionString
+                    let! immutableAfter = immutableClosedProjectionAsync connectionString
 
-                    let! aggregateCount =
+                    let! lateWorkCount =
                         executeInt32Async
                             connectionString
-                            $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}' AND OrganizationId = '{organizationId:D}' AND RepositoryId = '{repositoryId:D}';"
-
-                    let! pendingJournalCount =
-                        executeInt32Async
-                            connectionString
-                            $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 0;"
-
-                    let! rejectionEvidenceCount =
-                        executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
-
-                    let! completenessAfterCancellation = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+                            $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodId:D}' AND UsageFactId = '{usageFact.UsageFactId:D}';"
 
                     let appendedPending =
                         match appended with
@@ -1953,11 +2303,9 @@ VALUES
                         Action (fun () ->
                             Assert.That(appendedPending, Is.True)
                             Assert.That(cancelled, Is.True)
-                            Assert.That(rawCount, Is.Zero)
-                            Assert.That(aggregateCount, Is.Zero)
-                            Assert.That(pendingJournalCount, Is.EqualTo(1))
-                            Assert.That(rejectionEvidenceCount, Is.Zero)
-                            Assert.That(completenessAfterCancellation, Is.EqualTo(BlockedByUnresolvedUsageFactJournal)))
+                            Assert.That(lateWorkCount, Is.Zero)
+                            Assert.That<string list>(acceptedAfter, Is.EqualTo<string list>(acceptedBefore))
+                            Assert.That<string list>(immutableAfter, Is.EqualTo<string list>(immutableBefore)))
                     )
                 finally
                     interleaving.Release()
@@ -1972,19 +2320,11 @@ VALUES
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
                 let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
-                let billingPeriodId = Guid.NewGuid()
                 let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
                 let interleaving = CancellationAfterAcceptedFactStageInterleaving()
 
-                do!
-                    executeNonQueryAsync
-                        connectionString
-                        $"""
-INSERT INTO ops.BillingPeriod
-    (BillingPeriodId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc, State)
-VALUES
-    ('{billingPeriodId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 2);
-"""
+                let! billingPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId repositoryId
+                let! immutableBefore = immutableClosedProjectionAsync connectionString
 
                 let store =
                     OperationsUsageStore(SqlOperationsUsageTransactionScope.CreateForTest(connectionString, interleaving :> IAcceptedFactMutationInterleaving))
@@ -2025,6 +2365,8 @@ VALUES
                             connectionString
                             $"SELECT COUNT(*) FROM ops.BillingPeriod WHERE BillingPeriodId = '{billingPeriodId:D}' AND State = 2;"
 
+                    let! immutableAfter = immutableClosedProjectionAsync connectionString
+
                     Assert.Multiple(
                         Action (fun () ->
                             Assert.That(cancelled, Is.True)
@@ -2032,7 +2374,8 @@ VALUES
                             Assert.That(aggregateCount, Is.Zero)
                             Assert.That(rejectionCount, Is.Zero)
                             Assert.That(lateWorkCount, Is.Zero)
-                            Assert.That(closedPeriodCount, Is.EqualTo(1)))
+                            Assert.That(closedPeriodCount, Is.EqualTo(1))
+                            Assert.That<string list>(immutableAfter, Is.EqualTo<string list>(immutableBefore)))
                     )
                 finally
                     interleaving.Release()
@@ -2060,15 +2403,8 @@ VALUES
 
                 let interleaving = CancellationAfterAcceptedFactStageInterleaving()
 
-                do!
-                    executeNonQueryAsync
-                        connectionString
-                        $"""
-INSERT INTO ops.BillingPeriod
-    (BillingPeriodId, OwnerId, OrganizationId, RepositoryId, MonthStartUtc, NextMonthStartUtc, State)
-VALUES
-    ('{billingPeriodId:D}', '{ownerId:D}', '{organizationId:D}', '{repositoryId:D}', '2026-08-01T00:00:00', '2026-09-01T00:00:00', 2);
-"""
+                let! billingPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId repositoryId
+                let! immutableBefore = immutableClosedProjectionAsync connectionString
 
                 let store =
                     OperationsUsageStore(SqlOperationsUsageTransactionScope.CreateForTest(connectionString, interleaving :> IAcceptedFactMutationInterleaving))
@@ -2109,6 +2445,8 @@ VALUES
                             connectionString
                             $"SELECT COUNT(*) FROM ops.BillingPeriod WHERE BillingPeriodId = '{billingPeriodId:D}' AND State = 2;"
 
+                    let! immutableAfter = immutableClosedProjectionAsync connectionString
+
                     Assert.Multiple(
                         Action (fun () ->
                             Assert.That(cancelled, Is.True)
@@ -2116,7 +2454,8 @@ VALUES
                             Assert.That(aggregateCount, Is.Zero)
                             Assert.That(rejectionCount, Is.Zero)
                             Assert.That(lateWorkCount, Is.Zero)
-                            Assert.That(closedPeriodCount, Is.EqualTo(1)))
+                            Assert.That(closedPeriodCount, Is.EqualTo(1))
+                            Assert.That<string list>(immutableAfter, Is.EqualTo<string list>(immutableBefore)))
                     )
                 finally
                     interleaving.Release()
@@ -2133,9 +2472,12 @@ VALUES
                 let observedAt = Instant.FromUtc(2026, 8, 4, 12, 0)
                 let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt
                 let interleaving = CancellationAfterAcceptedFactStageInterleaving()
+                let! billingPeriodId = seedClosedProjectionAsync connectionString ownerId organizationId repositoryId
+                let! immutableBefore = immutableClosedProjectionAsync connectionString
                 let journal = SqlOperationsUsageJournalStore.CreateForTest(connectionString, interleaving :> IOperationsUsageJournalTransactionInterleaving)
                 let! _ = journal.AppendAsync(usageFact, CancellationToken.None)
                 let! rejected = journal.RejectAsync(usageFact, payloadFor usageFact, "repair cancellation", CancellationToken.None)
+                let! acceptedBefore = acceptedFactProjectionAsync connectionString
                 use cancellation = new CancellationTokenSource()
                 let repair = journal.RepairAsync(usageFact, cancellation.Token)
 
@@ -2152,29 +2494,21 @@ VALUES
                             | :? OperationCanceledException -> return true
                         }
 
-                    let! rawCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
-                    let! aggregateCount = executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.UsageAggregateMinute WHERE OwnerId = '{ownerId:D}';"
-
-                    let! rejectionCount =
+                    let! lateWorkCount =
                         executeInt32Async
                             connectionString
-                            $"SELECT COUNT(*) FROM ops.UsageFactRejection WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND IsActive = 1;"
+                            $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId = '{billingPeriodId:D}' AND UsageFactId = '{usageFact.UsageFactId:D}';"
 
-                    let! lateWorkCount =
-                        executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
-
-                    let! journalState =
-                        executeInt32Async connectionString $"SELECT State FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+                    let! acceptedAfter = acceptedFactProjectionAsync connectionString
+                    let! immutableAfter = immutableClosedProjectionAsync connectionString
 
                     Assert.Multiple(
                         Action (fun () ->
                             Assert.That(rejected, Is.EqualTo(RejectedFromJournal))
                             Assert.That(cancelled, Is.True)
-                            Assert.That(rawCount, Is.Zero)
-                            Assert.That(aggregateCount, Is.Zero)
-                            Assert.That(rejectionCount, Is.EqualTo(1))
                             Assert.That(lateWorkCount, Is.Zero)
-                            Assert.That(journalState, Is.EqualTo(int UsageFactJournalState.Rejected)))
+                            Assert.That<string list>(acceptedAfter, Is.EqualTo<string list>(acceptedBefore))
+                            Assert.That<string list>(immutableAfter, Is.EqualTo<string list>(immutableBefore)))
                     )
                 finally
                     interleaving.Release()
