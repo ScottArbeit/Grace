@@ -169,6 +169,110 @@ function Expand-Predicate {
     return $expanded
 }
 
+function Assert-VerifiedRootCorrection {
+    param([Collections.Generic.Dictionary[string, object]] $RowsById, [string] $SourcePath)
+
+    function Get-CorrectionRow {
+        param([string] $RowId)
+        if (-not $RowsById.ContainsKey($RowId)) { Fail-Contract $SourcePath "missing required verified-root row '$RowId'" }
+        return $RowsById[$RowId]
+    }
+
+    function Assert-CorrectionAction {
+        param([object] $Row, [string] $RowId, [string] $Action)
+        if (-not (Test-OrdinalStringInCollection @($Row['requiredActions']) $Action)) {
+            Fail-Contract $SourcePath "row '$RowId' must require '$Action'"
+        }
+    }
+
+    function Assert-CorrectionNextRow {
+        param([object] $Row, [string] $RowId, [string] $Target)
+        if (-not (Test-ExactDictionaryKey $Row 'nextRows') -or -not (Test-OrdinalStringInCollection @($Row['nextRows']) $Target)) {
+            Fail-Contract $SourcePath "row '$RowId' must route to '$Target'"
+        }
+    }
+
+    $fresh = Get-CorrectionRow 'WDU-LC-200'
+    $adopted = Get-CorrectionRow 'WDU-LC-201'
+    $preTransition = Get-CorrectionRow 'WDU-LC-209'
+    $mutation = Get-CorrectionRow 'WDU-LC-210'
+    $mutationFailure = Get-CorrectionRow 'WDU-LC-002'
+    $completion = Get-CorrectionRow 'WDU-LC-006'
+    $completionFailure = Get-CorrectionRow 'WDU-LC-007'
+
+    Assert-CorrectionAction $fresh 'WDU-LC-200' 'reconcileFreshAdmissionAsNeedsApplyOnly'
+    Assert-CorrectionAction $adopted 'WDU-LC-201' 'reconcileExactAdoptionAsNeedsApplyOrAlreadySatisfied'
+    Assert-CorrectionAction $preTransition 'WDU-LC-209' 'compareCompleteRelevantTopologyWithPrefixAdvancedExpectedState'
+    Assert-CorrectionAction $preTransition 'WDU-LC-209' 'checkCancellationImmediatelyBeforeVerifiedLocalRootOrFirstMutation'
+    Assert-CorrectionAction $preTransition 'WDU-LC-209' 'routeZeroActionToVerifiedLocalRootOrMutatingPlanToFirstAction'
+    foreach ($target in @('WDU-LC-207', 'WDU-LC-208', 'WDU-LC-210', 'WDU-LC-006', 'WDU-LC-007')) { Assert-CorrectionNextRow $preTransition 'WDU-LC-209' $target }
+    Assert-CorrectionAction $mutation 'WDU-LC-210' 'compareCompleteRelevantTopologyWithPrefixAdvancedExpectedStateBeforeEveryLaterAction'
+    Assert-CorrectionAction $mutation 'WDU-LC-210' 'transitionToVerifiedLocalRoot'
+    foreach ($target in @('WDU-LC-002', 'WDU-LC-006', 'WDU-LC-007')) { Assert-CorrectionNextRow $mutation 'WDU-LC-210' $target }
+
+    if (-not (Test-OrdinalStringEquals $mutationFailure['match']['trigger']['value'] 'failureAfterFirstWorkingTreeMutationBeforeVerifiedLocalRoot')) {
+        Fail-Contract $SourcePath "row 'WDU-LC-002' must be limited to post-mutation pre-VerifiedLocalRoot failure"
+    }
+    Assert-CorrectionAction $completion 'WDU-LC-006' 'ignoreCancellation'
+    Assert-CorrectionAction $completion 'WDU-LC-006' 'returnLocalCompletionWithEphemeralBytesChanged'
+    if (-not (Test-OrdinalStringEquals $completionFailure['match']['trigger']['value'] 'failureAfterVerifiedLocalRootBeforeSqliteLocalCompletion') -or
+        -not (Test-OrdinalStringEquals $completionFailure['outcome'] 'UpdateIncomplete') -or
+        -not (Test-OrdinalStringEquals $completionFailure['durableResult'] 'noCompletion')) {
+        Fail-Contract $SourcePath "row 'WDU-LC-007' must classify post-VerifiedLocalRoot completion failure as retained-evidence UpdateIncomplete"
+    }
+    Assert-CorrectionAction $completionFailure 'WDU-LC-007' 'ignoreCancellation'
+    Assert-CorrectionAction $completionFailure 'WDU-LC-007' 'retainExactMarkerEvidence'
+}
+
+function Assert-EphemeralBytesChangedTerminalization {
+    param([Collections.Generic.Dictionary[string, object]] $RowsById, [string] $SourcePath)
+
+    function Get-BytesChangedRow {
+        param([string] $RowId)
+        if (-not $RowsById.ContainsKey($RowId)) {
+            Fail-Contract $SourcePath "missing required bytesChanged terminal row '$RowId'"
+        }
+        return $RowsById[$RowId]
+    }
+
+    function Assert-BytesChangedTerminal {
+        param([object] $Row, [string] $RowId, [string] $Trigger, [string] $Marker, [string] $Outcome)
+        if (-not (Test-OrdinalStringEquals $Row['match']['invocation']['value'] 'initial') -or
+            -not (Test-OrdinalStringEquals $Row['match']['selectionState']['value'] 'directoryVersion') -or
+            -not (Test-OrdinalStringEquals $Row['match']['trigger']['value'] $Trigger) -or
+            -not (Test-OrdinalStringEquals $Row['match']['marker']['value'] $Marker) -or
+            -not (Test-OrdinalStringEquals $Row['outcome'] $Outcome)) {
+            Fail-Contract $SourcePath "row '$RowId' must be the DirectoryVersion '$Trigger' '$Marker' terminal with outcome '$Outcome'"
+        }
+        if (-not (Test-OrdinalStringInCollection @($Row['requiredActions']) 'recordTerminal')) {
+            Fail-Contract $SourcePath "row '$RowId' must require 'recordTerminal'"
+        }
+    }
+
+    $changedMissing = Get-BytesChangedRow 'WDU-LC-026'
+    $unchangedMissing = Get-BytesChangedRow 'WDU-LC-028'
+    $changedExact = Get-BytesChangedRow 'WDU-LC-036'
+    $unchangedExact = Get-BytesChangedRow 'WDU-LC-038'
+    Assert-BytesChangedTerminal $changedMissing 'WDU-LC-026' 'afterSqliteLocalCompletionBytesChanged' 'missing' 'Updated'
+    Assert-BytesChangedTerminal $unchangedMissing 'WDU-LC-028' 'afterSqliteLocalCompletionBytesUnchanged' 'missing' 'Unchanged'
+    Assert-BytesChangedTerminal $changedExact 'WDU-LC-036' 'afterSqliteLocalCompletionBytesChanged' 'exact' 'Updated'
+    Assert-BytesChangedTerminal $unchangedExact 'WDU-LC-038' 'afterSqliteLocalCompletionBytesUnchanged' 'exact' 'Unchanged'
+
+    $completion = Get-BytesChangedRow 'WDU-LC-006'
+    foreach ($target in @('WDU-LC-026', 'WDU-LC-028', 'WDU-LC-036', 'WDU-LC-038')) {
+        if (-not (Test-OrdinalStringInCollection @($completion['nextRows']) $target)) {
+            Fail-Contract $SourcePath "row 'WDU-LC-006' must route to '$target'"
+        }
+    }
+
+    foreach ($referenceRowId in @('WDU-LC-020', 'WDU-LC-023', 'WDU-LC-025', 'WDU-LC-030', 'WDU-LC-033', 'WDU-LC-035')) {
+        $referenceRow = Get-BytesChangedRow $referenceRowId
+        if (-not (Test-OrdinalStringEquals $referenceRow['match']['trigger']['value'] 'afterSqliteLocalCompletion')) {
+            Fail-Contract $SourcePath "Reference row '$referenceRowId' must remain on afterSqliteLocalCompletion"
+        }
+    }
+}
+
 function Read-WduLifecycleContract {
     param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $Path)
 
@@ -199,9 +303,10 @@ function Read-WduLifecycleContract {
     try { $contract = $json | ConvertFrom-Json -AsHashtable -Depth 100 }
     catch { Fail-Contract $sourcePath "marked JSON cannot be decoded: $($_.Exception.Message)" }
 
-    Assert-ExactObject $contract @('schema', 'boundaries', 'retryAdmission', 'doctorCommand', 'order', 'machineGrammar', 'rows') '$' $sourcePath
+    Assert-ExactObject $contract @('schema', 'artifactIdentity', 'boundaries', 'retryAdmission', 'doctorCommand', 'order', 'machineGrammar', 'rows') '$' $sourcePath
     if (-not (Test-OrdinalStringEquals $contract['schema'] 'grace.wdu.branch-lifecycle/v1')) { Fail-Contract $sourcePath 'schema must be grace.wdu.branch-lifecycle/v1' }
-    Assert-ExactObject $contract['boundaries'] @('firstWorkingTreeMutation', 'sqliteLocalCompletion', 'firstApplicableRetryWrite') 'boundaries' $sourcePath
+    if (-not (Test-OrdinalStringEquals $contract['artifactIdentity'] 'issue-928')) { Fail-Contract $sourcePath 'artifactIdentity must be issue-928' }
+    Assert-ExactObject $contract['boundaries'] @('firstWorkingTreeMutation', 'verifiedLocalRoot', 'sqliteLocalCompletion', 'firstApplicableRetryWrite') 'boundaries' $sourcePath
     foreach ($name in $contract['boundaries'].Keys) { Assert-StringValue $contract['boundaries'][$name] "boundaries.$name" $sourcePath }
     Assert-ExactObject $contract['retryAdmission'] @('source', 'requiredActions', 'staleEvidenceAction') 'retryAdmission' $sourcePath
     Assert-StringValue $contract['retryAdmission']['source'] 'retryAdmission.source' $sourcePath
@@ -311,6 +416,8 @@ function Read-WduLifecycleContract {
             foreach ($target in $row['nextRows']) { if (-not $rowsById.ContainsKey($target)) { Fail-Contract $sourcePath "row '$($row['id'])' has dangling nextRows target '$target'" } }
         }
     }
+    Assert-VerifiedRootCorrection $rowsById $sourcePath
+    Assert-EphemeralBytesChangedTerminalization $rowsById $sourcePath
     $digestBytes = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))
     return [pscustomobject]@{ Digest = [Convert]::ToHexString($digestBytes).ToLowerInvariant(); RowIds = @($rowIds); ApplicabilityKeys = @($keyOwners.Keys); RowsById = $rowsById }
 }
