@@ -603,3 +603,6 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update failure reason must not be empty."
             else
                 Ok(Failure reason)
+
+        /// Exposes the classified private failure text to direct runtime regressions without widening the public transaction outcome.
+        let internal reason (Failure reason) = reason

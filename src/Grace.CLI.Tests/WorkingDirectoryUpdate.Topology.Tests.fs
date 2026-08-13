@@ -302,7 +302,7 @@ module WorkingDirectoryUpdateTopologyTests =
                     equal
                     [
                         WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "src")
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "src/new.txt")
+                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "src/new.txt", WorkingDirectoryUpdate.Topology.MustBeAbsent)
                     ]
             | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected a safe absent/matching plan."))
 
@@ -316,10 +316,8 @@ module WorkingDirectoryUpdateTopologyTests =
             let selectedBytes = Encoding.UTF8.GetBytes("selected replacement bytes")
             File.WriteAllBytes(Path.Combine(root, "replace.txt"), localBytes)
 
-            let currentStatus =
-                status [] [
-                    trackedFile "replace.txt" localBytes
-                ]
+            let existing = trackedFile "replace.txt" localBytes
+            let currentStatus = status [] [ existing ]
 
             match plan currentStatus (manifest [ targetFile "replace.txt" selectedBytes ]) with
             | WorkingDirectoryUpdate.Topology.Planned topologyPlan ->
@@ -327,7 +325,10 @@ module WorkingDirectoryUpdateTopologyTests =
                 |> should
                     equal
                     [
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "replace.txt")
+                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(
+                            RelativePath "replace.txt",
+                            WorkingDirectoryUpdate.Topology.ReplaceVerifiedTrackedFile(existing.Sha256Hash, existing.Blake3Hash)
+                        )
                     ]
             | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected tracked file replacement plan."))
 
@@ -359,7 +360,7 @@ module WorkingDirectoryUpdateTopologyTests =
                         WorkingDirectoryUpdate.Topology.RemoveTrackedFile(RelativePath "replace/nested/old.txt")
                         WorkingDirectoryUpdate.Topology.RemoveTrackedDirectory(RelativePath "replace/nested")
                         WorkingDirectoryUpdate.Topology.RemoveTrackedDirectory(RelativePath "replace")
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "replace")
+                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "replace", WorkingDirectoryUpdate.Topology.MustBeAbsent)
                     ]
             | WorkingDirectoryUpdate.Topology.Rejected rejection ->
                 Assert.Fail(
@@ -605,7 +606,7 @@ module WorkingDirectoryUpdateTopologyTests =
                     [
                         WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "one")
                         WorkingDirectoryUpdate.Topology.EnsureDirectory(RelativePath "one/two")
-                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "one/two/three.txt")
+                        WorkingDirectoryUpdate.Topology.CopyVerifiedFile(RelativePath "one/two/three.txt", WorkingDirectoryUpdate.Topology.MustBeAbsent)
                     ]
             | WorkingDirectoryUpdate.Topology.Rejected rejection ->
                 Assert.Fail(

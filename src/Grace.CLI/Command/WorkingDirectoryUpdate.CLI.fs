@@ -23,12 +23,17 @@ module internal WorkingDirectoryUpdate =
         /// Carries the stable repository-relative path and classification that prevented a pre-mutation plan.
         type Rejection = private { Path: RelativePath; Classification: RejectionClassification }
 
+        /// States whether an immutable object may create a new file or replace one exact accepted tracked file.
+        type CopyPrecondition =
+            | MustBeAbsent
+            | ReplaceVerifiedTrackedFile of Sha256Hash * Blake3Hash
+
         /// Describes one tracked later transaction step without carrying a writer, callback, or mutable filesystem handle.
         type Action =
             | RemoveTrackedFile of RelativePath
             | RemoveTrackedDirectory of RelativePath
             | EnsureDirectory of RelativePath
-            | CopyVerifiedFile of RelativePath
+            | CopyVerifiedFile of RelativePath * CopyPrecondition
 
         /// Represents the complete immutable topology plan that a later transaction may apply without discovering blockers.
         type Plan = private Plan of Action list
@@ -310,7 +315,7 @@ module internal WorkingDirectoryUpdate =
 
                 let addRemoval path action = removals[pathKey path] <- action
                 let addCreate path = creates[pathKey path] <- EnsureDirectory path
-                let addCopy path = copies[pathKey path] <- CopyVerifiedFile path
+                let addCopy path precondition = copies[pathKey path] <- CopyVerifiedFile(path, precondition)
 
                 for targetDirectory in orderedTargetDirectories targetDirectories.Values do
                     if Option.isNone rejection
@@ -345,7 +350,7 @@ module internal WorkingDirectoryUpdate =
                         | Error value -> rejection <- Some value
                         | Ok fullPath ->
                             match actualKind fullPath with
-                            | Missing -> addCopy targetPath
+                            | Missing -> addCopy targetPath MustBeAbsent
                             | File ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetPath File with
                                 | Error value -> rejection <- Some value
@@ -358,7 +363,7 @@ module internal WorkingDirectoryUpdate =
                                         || tracked.Blake3Hash <> targetBlake3
                                         || not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3)
                                     then
-                                        addCopy targetPath
+                                        addCopy targetPath (ReplaceVerifiedTrackedFile(tracked.Sha256Hash, tracked.Blake3Hash))
                                 | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
                             | Directory ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetPath Directory with
@@ -384,7 +389,7 @@ module internal WorkingDirectoryUpdate =
                                                 .StartsWith(string targetPath + "/", StringComparison.OrdinalIgnoreCase) then
                                                 addRemoval filePath (RemoveTrackedFile filePath)
 
-                                        addCopy targetPath
+                                        addCopy targetPath MustBeAbsent
                                 | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
 
                 for fileVersion in orderedTrackedFiles trackedFiles.Values do
@@ -478,12 +483,12 @@ module internal WorkingDirectoryUpdate =
                         |> Seq.sortWith (fun left right ->
                             let leftPath =
                                 match left with
-                                | CopyVerifiedFile path -> path
+                                | CopyVerifiedFile (path, _) -> path
                                 | _ -> RelativePath Constants.RootDirectoryPath
 
                             let rightPath =
                                 match right with
-                                | CopyVerifiedFile path -> path
+                                | CopyVerifiedFile (path, _) -> path
                                 | _ -> RelativePath Constants.RootDirectoryPath
 
                             comparePaths leftPath rightPath)
@@ -497,6 +502,10 @@ module internal WorkingDirectoryUpdate =
         /// Plans from one already-reread configuration snapshot so a transaction never falls back to cached configuration.
         let internal planWithScanInput (scanInput: Services.WorkingTreeScanInput) (currentStatus: GraceStatus) manifest =
             task { return planSynchronously scanInput currentStatus manifest }
+
+        /// Re-evaluates the complete relevant filesystem without a task boundary before the first mutable action.
+        let internal planSynchronouslyWithScanInput (scanInput: Services.WorkingTreeScanInput) (currentStatus: GraceStatus) manifest =
+            planSynchronously scanInput currentStatus manifest
 
     /// Carries the one complete target status graph and its exact selected-root identity through the local transaction.
     type ResolvedTargetGraph = private ResolvedTargetGraph of WorkingDirectoryUpdateContracts.Target * GraceStatus
@@ -1020,7 +1029,7 @@ module internal WorkingDirectoryUpdate =
                     Ok()
                 else
                     Error $"New directory '{path}' appeared or changed kind before it could be created."
-            | Topology.CopyVerifiedFile path ->
+            | Topology.CopyVerifiedFile (path, Topology.MustBeAbsent) ->
                 let candidate = fullPath path
 
                 if
@@ -1033,11 +1042,21 @@ module internal WorkingDirectoryUpdate =
                     Ok()
                 else
                     Error $"New file '{path}' appeared or changed kind before immutable bytes could be copied."
+            | Topology.CopyVerifiedFile (path, Topology.ReplaceVerifiedTrackedFile (sha256Hash, blake3Hash)) ->
+                let candidate = fullPath path
+
+                if
+                    File.Exists(candidate)
+                    && hasExpectedBytes candidate sha256Hash blake3Hash
+                then
+                    Ok()
+                else
+                    Error $"Tracked file '{path}' changed before immutable bytes could replace it."
 
         /// Rereads the source object before the mutation boundary so a corrupt or replaced object remains pre-mutation.
         let private verifyActionObject objectDirectory (objectHashes: Dictionary<string, Sha256Hash * Blake3Hash>) =
             function
-            | Topology.CopyVerifiedFile path ->
+            | Topology.CopyVerifiedFile (path, _) ->
                 match objectHashes.TryGetValue(pathKey path) with
                 | true, (sha256Hash, blake3Hash) when hasExpectedBytes (objectPath objectDirectory path sha256Hash blake3Hash) sha256Hash blake3Hash -> Ok()
                 | _ -> Error $"Immutable object bytes are corrupt or were replaced for '{path}'."
@@ -1079,7 +1098,7 @@ module internal WorkingDirectoryUpdate =
                     Directory.CreateDirectory(fullPath) |> ignore
                     LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
-            | Topology.CopyVerifiedFile path ->
+            | Topology.CopyVerifiedFile (path, copyPrecondition) ->
                 let key = pathKey path
 
                 match objectHashes.TryGetValue(key) with
@@ -1090,7 +1109,13 @@ module internal WorkingDirectoryUpdate =
                     let finalPath = workingPath root path
                     let directory = Path.GetDirectoryName(finalPath)
                     Directory.CreateDirectory(directory) |> ignore
-                    File.Copy(objectFile, finalPath, false)
+
+                    let overwrite =
+                        match copyPrecondition with
+                        | Topology.MustBeAbsent -> false
+                        | Topology.ReplaceVerifiedTrackedFile _ -> true
+
+                    File.Copy(objectFile, finalPath, overwrite)
                     LocalTransactionTesting.afterFirstMutationBeganNow ()
                     true
 
@@ -1269,18 +1294,21 @@ module internal WorkingDirectoryUpdate =
 
                     let! markerAttempt = WorkingDirectoryUpdateCoordination.Marker.inspectExactAttempt scope target operation attempt
 
-                    if
-                        revision
-                        <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
-                        || statusFingerprint currentStatus
-                           <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase
-                        || Option.isSome pending
-                        || marker
-                           <> WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
-                        || not markerAttempt
-                        || not (graphMatchesManifest targetStatus manifest)
-                    then
-                        return Error "Working Directory Update facts changed after final planning."
+                    if revision
+                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase then
+                        return Error "Accepted local-status revision changed after final planning."
+                    elif statusFingerprint currentStatus
+                         <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase then
+                        return Error "Accepted complete local-status fingerprint changed after final planning."
+                    elif Option.isSome pending then
+                        return Error "Pending Working Directory Update finalization changed after final planning."
+                    elif marker
+                         <> WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch then
+                        return Error "Working Directory Update marker changed after final planning."
+                    elif not markerAttempt then
+                        return Error "Working Directory Update marker attempt changed after final planning."
+                    elif not (graphMatchesManifest targetStatus manifest) then
+                        return Error "Resolved target graph changed after final planning."
                     else
                         return Ok currentConfiguration
             }
@@ -1534,7 +1562,25 @@ module internal WorkingDirectoryUpdate =
                                                                     | Ok executionConfiguration ->
                                                                         LocalTransactionTesting.afterFinalGlobalFactGateNow ()
 
-                                                                        let mutable actionFailure = None
+                                                                        let mutable actionFailure =
+                                                                            match
+                                                                                Topology.planSynchronouslyWithScanInput
+                                                                                    (CanonicalConfiguration.scanInput executionConfiguration)
+                                                                                    finalStatus
+                                                                                    manifest
+                                                                                with
+                                                                            | Topology.Planned revalidatedPlan when
+                                                                                (Topology.Plan.actions revalidatedPlan
+                                                                                 |> List.toArray) = actions
+                                                                                ->
+                                                                                None
+                                                                            | Topology.Planned _ ->
+                                                                                Some
+                                                                                    "The complete Working Directory Update plan changed before the first mutation."
+                                                                            | Topology.Rejected rejection ->
+                                                                                Some
+                                                                                    $"Working Directory Update topology rejected '{Topology.Rejection.path rejection}' before the first mutation."
+
                                                                         let mutable index = 0
 
                                                                         while index < actions.Length

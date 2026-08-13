@@ -246,6 +246,54 @@ module WorkingDirectoryUpdateLocalTransactionTests =
         |> fun task -> task.GetAwaiter().GetResult()
         |> required
 
+    /// Prepares an exact multi-file immutable manifest for direct transaction compositions.
+    let private preparedContentForFiles (directories: string array) (files: (LocalFileVersion * byte array) array) =
+        let entries =
+            seq {
+                yield!
+                    directories
+                    |> Seq.map (fun directory -> WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath directory))
+
+                yield!
+                    files
+                    |> Seq.map (fun (file, _) -> WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(file.RelativePath, file.Sha256Hash, file.Blake3Hash))
+            }
+
+        let manifest =
+            WorkingDirectoryUpdateContracts.PreparedManifest.create entries
+            |> required
+
+        let readerEntries =
+            files
+            |> Seq.map (fun (file, bytes) -> string file.RelativePath, bytes)
+            |> Seq.toList
+
+        WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new Reader(readerEntries)) CancellationToken.None
+        |> fun task -> task.GetAwaiter().GetResult()
+        |> required
+
+    /// Rewrites only the persisted revision so a direct regression can isolate an accepted-fact guard.
+    let private rewriteLocalStatusRevision dbPath revision =
+        SqliteConnection.ClearAllPools()
+
+        use connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+        use command = connection.CreateCommand()
+        command.CommandText <- "UPDATE meta SET value = $value WHERE key = 'LocalStatusRevision';"
+
+        command.Parameters.AddWithValue("$value", string revision)
+        |> ignore
+
+        command.ExecuteNonQuery() |> should equal 1
+
+    /// Asserts that a direct transaction rejection identifies the single global guard that observed the changed fact.
+    let private assertRejectedFor expectedReason outcome =
+        match outcome with
+        | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected failure) ->
+            WorkingDirectoryUpdateContracts.Failure.reason failure
+            |> should contain expectedReason
+        | _ -> Assert.Fail($"Expected rejected outcome for '{expectedReason}', got {outcome}.")
+
     /// Saves a direct configuration change without resetting the process cache that the transaction must not trust.
     let private saveConfigurationChange (current: GraceConfiguration) change =
         change current
@@ -379,7 +427,10 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 persistedSelection |> should equal selection
             | _ -> Assert.Fail("Expected one typed pending Branch finalization after verified local completion.")
 
-            assertPreparedDisposed prepared (RelativePath "nested/target.txt"))
+            Current().BranchId |> should equal currentBranchId
+
+            assertPreparedDisposed prepared (RelativePath "nested/target.txt")
+            assertLeaseReacquirable repositoryId root)
 
     /// Proves a stale accepted revision rejects before object or working-tree mutation and disposes immutable prepared bytes.
     [<Test>]
@@ -827,6 +878,306 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             assertPreparedDisposed prepared (RelativePath "target.txt")
             assertLeaseReacquirable repositoryId root)
 
+    /// Proves a tracked file with its accepted old dual hashes is the only existing copy target that may be replaced.
+    [<Test>]
+    let ``five-input transaction replaces a verified tracked file and records pending completion`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let oldBytes = Encoding.UTF8.GetBytes("accepted old bytes")
+            let newBytes = Encoding.UTF8.GetBytes("selected replacement bytes")
+            let oldFile = localFile "target.txt" oldBytes
+            let newFile = localFile "target.txt" newBytes
+            let baseline = completeStatus [| oldFile |]
+            let target, targetStatus, graph = targetGraph repositoryId branchId newFile
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            File.WriteAllBytes(Path.Combine(root, "target.txt"), oldBytes)
+            let prepared = preparedContent newFile newBytes
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "tracked-replacement"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Ok completion ->
+                WorkingDirectoryUpdate.LocalCompletion.target completion
+                |> should equal target
+            | Error result -> Assert.Fail($"Expected tracked replacement completion, got {result}.")
+
+            File.ReadAllBytes(Path.Combine(root, "target.txt"))
+            |> should equal newBytes
+
+            LocalStateDb.readCompleteStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> required
+            |> WorkingDirectoryUpdate.LocalTransaction.statusFingerprint
+            |> should equal (WorkingDirectoryUpdate.LocalTransaction.statusFingerprint targetStatus)
+
+            LocalStateDb.readPendingWorkingDirectoryUpdateFinalization current.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> Option.isSome
+            |> should equal true
+
+            assertPreparedDisposed prepared (RelativePath "target.txt")
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves a tracked replacement rechecks the accepted old identity at its action boundary before overwriting bytes.
+    [<Test>]
+    let ``five-input transaction rejects a late tracked replacement identity change before mutation`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let oldBytes = Encoding.UTF8.GetBytes("accepted old bytes")
+            let newBytes = Encoding.UTF8.GetBytes("selected replacement bytes")
+            let oldFile = localFile "target.txt" oldBytes
+            let newFile = localFile "target.txt" newBytes
+            let baseline = completeStatus [| oldFile |]
+            let target, _, graph = targetGraph repositoryId branchId newFile
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            File.WriteAllBytes(Path.Combine(root, "target.txt"), oldBytes)
+            let prepared = preparedContent newFile newBytes
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFinalGlobalFactGate (fun () ->
+                File.WriteAllText(Path.Combine(root, "target.txt"), "late tracked bytes"))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "late-tracked-replacement"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            assertRejectedFor "Tracked file 'target.txt' changed" outcome
+
+            File.ReadAllText(Path.Combine(root, "target.txt"))
+            |> should equal "late tracked bytes"
+
+            assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "target.txt")
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves a retained tracked file is part of the whole final-plan applicability check before an unrelated copy begins.
+    [<Test>]
+    let ``five-input transaction rejects a late retained tracked file change before unrelated mutation`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let retainedBytes = Encoding.UTF8.GetBytes("retained bytes")
+            let addedBytes = Encoding.UTF8.GetBytes("new bytes")
+            let retained = localFile "retained.txt" retainedBytes
+            let added = localFile "new.txt" addedBytes
+            let baseline = completeStatus [| retained |]
+            let targetStatus = completeStatus [| retained; added |]
+            let target, _, graph = targetGraphForStatus repositoryId branchId targetStatus
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            File.WriteAllBytes(Path.Combine(root, "retained.txt"), retainedBytes)
+
+            let prepared =
+                preparedContentForFiles
+                    Array.empty
+                    [|
+                        retained, retainedBytes
+                        added, addedBytes
+                    |]
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFinalGlobalFactGate (fun () ->
+                File.WriteAllText(Path.Combine(root, "retained.txt"), "late retained bytes"))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "late-retained-file"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            assertRejectedFor "complete Working Directory Update plan changed" outcome
+
+            File.ReadAllText(Path.Combine(root, "retained.txt"))
+            |> should equal "late retained bytes"
+
+            File.Exists(Path.Combine(root, "new.txt"))
+            |> should equal false
+
+            assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "retained.txt")
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves a retained tracked directory's newly eligible descendant invalidates the entire final plan before another action mutates.
+    [<Test>]
+    let ``five-input transaction rejects a late eligible descendant under a retained directory`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let addedBytes = Encoding.UTF8.GetBytes("new bytes")
+            let added = localFile "new.txt" addedBytes
+            let baseline = completeStatusWithDirectories [| "retained" |] Array.empty<LocalFileVersion>
+
+            let targetStatus =
+                completeStatusWithDirectories [| "retained" |] [|
+                    added
+                |]
+
+            let target, _, graph = targetGraphForStatus repositoryId branchId targetStatus
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            Directory.CreateDirectory(Path.Combine(root, "retained"))
+            |> ignore
+
+            let prepared =
+                preparedContentForFiles [| "retained" |] [|
+                    added, addedBytes
+                |]
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installAfterFinalGlobalFactGate (fun () ->
+                File.WriteAllText(Path.Combine(root, "retained", "late.txt"), "late eligible descendant"))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "late-retained-directory"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            assertRejectedFor "topology rejected 'retained/late.txt'" outcome
+
+            File.ReadAllText(Path.Combine(root, "retained", "late.txt"))
+            |> should equal "late eligible descendant"
+
+            File.Exists(Path.Combine(root, "new.txt"))
+            |> should equal false
+
+            assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "new.txt")
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves an accepted tracked file can be removed before its path becomes a target directory.
+    [<Test>]
+    let ``five-input transaction applies a tracked file to directory composition`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let oldBytes = Encoding.UTF8.GetBytes("tracked file")
+            let newBytes = Encoding.UTF8.GetBytes("nested target")
+            let oldFile = localFile "switch" oldBytes
+            let newFile = localFile "switch/new.txt" newBytes
+            let baseline = completeStatus [| oldFile |]
+            let targetStatus = completeStatus [| newFile |]
+            let _, _, graph = targetGraphForStatus repositoryId branchId targetStatus
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            File.WriteAllBytes(Path.Combine(root, "switch"), oldBytes)
+            let prepared = preparedContent newFile newBytes
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "file-to-directory"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Ok _ -> ()
+            | Error result -> Assert.Fail($"Expected file-to-directory completion, got {result}.")
+
+            Directory.Exists(Path.Combine(root, "switch"))
+            |> should equal true
+
+            File.ReadAllBytes(Path.Combine(root, "switch", "new.txt"))
+            |> should equal newBytes
+
+            assertPreparedDisposed prepared (RelativePath "switch/new.txt")
+            assertLeaseReacquirable repositoryId root)
+
+    /// Proves tracked directory descendants are removed before the exact path becomes a target file.
+    [<Test>]
+    let ``five-input transaction applies a tracked directory to file composition`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let oldBytes = Encoding.UTF8.GetBytes("tracked nested file")
+            let newBytes = Encoding.UTF8.GetBytes("target file")
+            let oldFile = localFile "switch/old.txt" oldBytes
+            let newFile = localFile "switch" newBytes
+            let baseline = completeStatus [| oldFile |]
+            let target, _, graph = targetGraph repositoryId branchId newFile
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            Directory.CreateDirectory(Path.Combine(root, "switch"))
+            |> ignore
+
+            File.WriteAllBytes(Path.Combine(root, "switch", "old.txt"), oldBytes)
+            let prepared = preparedContent newFile newBytes
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "directory-to-file"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Ok _ -> ()
+            | Error result -> Assert.Fail($"Expected directory-to-file completion, got {result}.")
+
+            File.ReadAllBytes(Path.Combine(root, "switch"))
+            |> should equal newBytes
+
+            assertPreparedDisposed prepared (RelativePath "switch")
+            assertLeaseReacquirable repositoryId root)
+
     /// Proves a source object replaced after publication rejects before the first filesystem mutation and cleans owned evidence.
     [<Test>]
     let ``five-input transaction rejects a replaced source object before mutation`` () =
@@ -875,12 +1226,69 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             assertPreparedDisposed prepared (RelativePath "target.txt")
             assertLeaseReacquirable repositoryId root)
 
+    /// Proves corrupt immutable bytes already present at the object path reject before marker-backed working-tree mutation.
+    [<Test>]
+    let ``five-input transaction rejects an initially corrupt existing source object before mutation`` () =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, _, graph = targetGraph repositoryId branchId selected
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let objectDirectory = Path.Combine(current.ObjectDirectory, string selected.RelativePath)
+
+            Directory.CreateDirectory(objectDirectory)
+            |> ignore
+
+            File.WriteAllText(
+                Path.Combine(objectDirectory, Services.getLocalObjectCacheFileName selected.RelativePath selected.Sha256Hash selected.Blake3Hash),
+                "initially corrupt object bytes"
+            )
+
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create "initially-corrupt-object"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
+            | _ -> Assert.Fail($"Expected initially corrupt object rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "target.txt"))
+            |> should equal false
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            assertNoCompletion current target branchId selection
+            assertPreparedDisposed prepared (RelativePath "target.txt")
+            assertLeaseReacquirable repositoryId root)
+
     /// Proves every post-plan global fact is reread before the first action can mutate the working tree.
-    [<TestCase("configuration")>]
-    [<TestCase("status")>]
+    [<TestCase("revision")>]
+    [<TestCase("fingerprint")>]
     [<TestCase("pending")>]
     [<TestCase("marker-attempt")>]
-    let ``five-input transaction rejects post-plan global fact changes`` changedFact =
+    let ``five-input transaction independently rejects each post-plan global fact change`` changedFact =
         withTempRepository (fun root ->
             let repositoryId = Guid.NewGuid()
             let branchId = Guid.NewGuid()
@@ -904,16 +1312,23 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                 |> required
 
             let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+            let accepted = acceptedPhase current CancellationToken.None
+
+            let acceptedRevision =
+                LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+                |> fun task -> task.GetAwaiter().GetResult()
 
             WorkingDirectoryUpdate.LocalTransactionTesting.installBeforeFinalGlobalFactGate (fun () ->
                 match changedFact with
-                | "configuration" -> saveConfigurationChange current (fun configuration -> configuration.BranchId <- Guid.NewGuid())
-                | "status" ->
+                | "revision" -> rewriteLocalStatusRevision current.GraceStatusFile (acceptedRevision + 1L)
+                | "fingerprint" ->
                     let changed = completeStatus [| localFile "different.txt" (Encoding.UTF8.GetBytes("different status bytes")) |]
 
                     LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile changed
                     |> fun task -> task.GetAwaiter().GetResult()
                     |> ignore
+
+                    rewriteLocalStatusRevision current.GraceStatusFile acceptedRevision
                 | "pending" ->
                     LocalStateDb.commitWorkingDirectoryUpdateCompletion
                         current.GraceStatusFile
@@ -924,6 +1339,12 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                         operation
                     |> fun task -> task.GetAwaiter().GetResult()
                     |> ignore
+
+                    LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+                    |> fun task -> task.GetAwaiter().GetResult()
+                    |> ignore
+
+                    rewriteLocalStatusRevision current.GraceStatusFile acceptedRevision
                 | "marker-attempt" ->
                     let differentAttempt = WorkingDirectoryUpdateContracts.AttemptToken.create ()
 
@@ -935,7 +1356,7 @@ module WorkingDirectoryUpdateLocalTransactionTests =
 
             let outcome =
                 WorkingDirectoryUpdate.LocalTransaction.run
-                    (acceptedPhase current CancellationToken.None)
+                    accepted
                     selection
                     graph
                     prepared
@@ -943,9 +1364,15 @@ module WorkingDirectoryUpdateLocalTransactionTests =
                      |> required)
                 |> fun task -> task.GetAwaiter().GetResult()
 
-            match outcome with
-            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
-            | _ -> Assert.Fail($"Expected post-plan {changedFact} rejection, got {outcome}.")
+            match changedFact with
+            | "revision" -> assertRejectedFor "Accepted local-status revision changed after final planning." outcome
+            | "fingerprint" -> assertRejectedFor "Accepted complete local-status fingerprint changed after final planning." outcome
+            | "pending" -> assertRejectedFor "Pending Working Directory Update finalization changed after final planning." outcome
+            | "marker-attempt" ->
+                match outcome with
+                | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
+                | _ -> Assert.Fail($"Expected post-plan marker-attempt rejection, got {outcome}.")
+            | value -> Assert.Fail($"Unexpected global fact '{value}'.")
 
             File.Exists(Path.Combine(root, "target.txt"))
             |> should equal false
