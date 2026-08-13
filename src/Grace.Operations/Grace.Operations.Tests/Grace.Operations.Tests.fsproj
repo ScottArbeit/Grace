@@ -19,6 +19,7 @@
     <Compile Include="OperationsPricing.Tests.fs" />
     <Compile Include="OperationsChargePreview.Tests.fs" />
     <Compile Include="OperationsBillingPeriodCloseBehavior.Tests.fs" />
+    <Compile Include="OperationsAcceptedFactMutation.Tests.fs" />
     <Compile Include="OperationsBillingPeriodClose.Tests.fs" />
     <Compile Include="OperationsUsageArchive.Tests.fs" />
     <Compile Include="OperationsWorkerIngestion.Tests.fs" />

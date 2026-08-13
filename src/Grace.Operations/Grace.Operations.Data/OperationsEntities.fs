@@ -410,3 +410,19 @@ type BillingPeriodCloseEvidenceEntity() =
     member val PricingPreviewDigestSha256Hex = String.Empty with get, set
     member val ClosedAtUtc = DateTime.MinValue with get, set
     member val ScheduledOperationProvenance = String.Empty with get, set
+
+/// Represents one Pending post-close handoff without copying accepted usage payload.
+[<AllowNullLiteral>]
+type BillingPeriodLateWorkEntity() =
+
+    /// Identifies the already closed period that owns the future correction decision.
+    member val BillingPeriodId = Guid.Empty with get, set
+
+    /// Identifies the newly accepted raw fact.
+    member val UsageFactId = Guid.Empty with get, set
+
+    /// Stores the only supported handoff state: Pending.
+    member val State = 0 with get, set
+
+    /// Stores the database-assigned creation time for this handoff.
+    member val CreatedAtUtc = DateTime.MinValue with get, set

@@ -244,7 +244,7 @@ type OperationsChargePreviewTests() =
                 "..",
                 "Grace.Operations.Data",
                 "Migrations",
-                "20260812130000_AddBillingPeriodClose.fs"
+                "20260812140000_AddBillingPeriodLateWork.fs"
             )
             |> Path.GetFullPath
 
@@ -274,7 +274,7 @@ type OperationsChargePreviewTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
-        let migration = AddBillingPeriodClose().TargetModel
+        let migration = AddBillingPeriodLateWork().TargetModel
 
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()
@@ -336,11 +336,13 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
             Assert.That(targetModelSource, Does.Contain("BillingPeriodCloseFrozenTarget.applyPriorModel modelBuilder"))
             Assert.That(targetModelSource, Does.Contain("BillingPeriodCloseFrozenTarget.apply modelBuilder"))
+            Assert.That(targetModelSource, Does.Contain("BillingPeriodLateWorkFrozenTarget.apply modelBuilder"))
             Assert.That(snapshotModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
             Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
+            Assert.That(snapshotModelSource, Does.Contain("let lateWork = modelBuilder.Entity<BillingPeriodLateWorkEntity>()"))
             Assert.That(rejection, Is.Not.Null)
             Assert.That((migrationShape = snapshotShape), Is.True)
 
