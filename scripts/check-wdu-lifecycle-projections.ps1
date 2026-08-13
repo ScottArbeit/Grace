@@ -1,11 +1,7 @@
 [CmdletBinding()]
 param(
     [string] $CanonicalPath = (Join-Path $PSScriptRoot '../docs/Working Directory Update.md'),
-    [Parameter(Mandatory, ValueFromRemainingArguments)][ValidateNotNullOrEmpty()][string[]] $ArtifactPath
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $PacketDirectory
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-Import-Module (Join-Path $PSScriptRoot 'modules/WduLifecycleProjection.psm1') -Force
-Test-WduLifecycleProjection -CanonicalPath $CanonicalPath -ArtifactPath $ArtifactPath
+& (Join-Path $PSScriptRoot 'test-wdu-lifecycle-packet.ps1') -CanonicalPath $CanonicalPath -PacketDirectory $PacketDirectory
