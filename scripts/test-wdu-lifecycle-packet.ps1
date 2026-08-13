@@ -17,10 +17,16 @@ $expectedOwners = [ordered]@{
     'REQ-011' = '#871'; 'REQ-012' = '#871'; 'REQ-013' = '#900'; 'REQ-014' = '#921'; 'REQ-015' = '#842'
     'REQ-016' = '#871'; 'REQ-017' = '#846'; 'REQ-018' = '#920'; 'REQ-019' = '#923'
 }
-$primaryOwnerTableHeader = '| Requirement | Primary delivery issue | Companion proof, extension, or deferred disposition | #846 audit disposition |'
-$primaryOwnerTableDivider = '| --- | --- | --- | --- |'
-$auditTableHeader = '| Requirement | Primary delivery issue | Audit disposition |'
-$auditTableDivider = '| --- | --- | --- |'
+$detailedEpicTable = [pscustomobject]@{
+    Header = '| Requirement | Primary delivery issue | Companion proof, extension, or deferred disposition | #846 audit disposition |'
+    Divider = '| --- | --- | --- | --- |'
+    ColumnCount = 6
+}
+$compactAuditTable = [pscustomobject]@{
+    Header = '| Requirement | Primary delivery issue | Audit disposition |'
+    Divider = '| --- | --- | --- |'
+    ColumnCount = 5
+}
 
 function Get-RequirementLedger {
     param([string] $Path)
@@ -37,15 +43,12 @@ function Get-RequirementLedger {
 }
 
 function Get-RequirementRows {
-    param([string] $Ledger, [string] $Path, [bool] $RequireOwners)
+    param([string] $Ledger, [string] $Path, [object] $TableShape)
 
     $lines = @($Ledger -split "`r`n|`n|`r")
-    $tableHeader = if ($RequireOwners) { $primaryOwnerTableHeader } else { $auditTableHeader }
-    $tableDivider = if ($RequireOwners) { $primaryOwnerTableDivider } else { $auditTableDivider }
-    $columnCount = if ($RequireOwners) { 6 } else { 5 }
     $headerIndexes = @(
         for ($index = 0; $index -lt $lines.Count; $index++) {
-            if ([StringComparer]::Ordinal.Equals($lines[$index].Trim(), $tableHeader)) { $index }
+            if ([StringComparer]::Ordinal.Equals($lines[$index].Trim(), $TableShape.Header)) { $index }
         }
     )
     if ($headerIndexes.Count -ne 1) {
@@ -53,7 +56,12 @@ function Get-RequirementRows {
     }
 
     $headerIndex = $headerIndexes[0]
-    if ($headerIndex + 1 -ge $lines.Count -or -not [StringComparer]::Ordinal.Equals($lines[$headerIndex + 1].Trim(), $tableDivider)) {
+    for ($index = 0; $index -lt $headerIndex; $index++) {
+        if (-not [string]::IsNullOrWhiteSpace($lines[$index])) {
+            throw "WDU lifecycle packet '$Path' requirements ledger has content before its requirement table at line $($index + 1)"
+        }
+    }
+    if ($headerIndex + 1 -ge $lines.Count -or -not [StringComparer]::Ordinal.Equals($lines[$headerIndex + 1].Trim(), $TableShape.Divider)) {
         throw "WDU lifecycle packet '$Path' requirements ledger must contain the exact requirement table divider"
     }
 
@@ -66,14 +74,14 @@ function Get-RequirementRows {
         }
 
         $columns = @($line.Split('|'))
-        if ($columns.Count -ne $columnCount -or -not [string]::IsNullOrWhiteSpace($columns[0]) -or -not [string]::IsNullOrWhiteSpace($columns[$columnCount - 1])) {
+        if ($columns.Count -ne $TableShape.ColumnCount -or -not [string]::IsNullOrWhiteSpace($columns[0]) -or -not [string]::IsNullOrWhiteSpace($columns[$TableShape.ColumnCount - 1])) {
             throw "WDU lifecycle packet '$Path' requirements ledger row at line $($index + 1) is malformed"
         }
 
-        $requirementPattern = if ($RequireOwners) { '\A(?<id>REQ-\d{3})\s+\S.*\z' } else { '\A(?<id>REQ-\d{3})\z' }
+        $requirementPattern = if ($TableShape -eq $detailedEpicTable) { '\A(?<id>REQ-\d{3})\s+\S.*\z' } else { '\A(?<id>REQ-\d{3})\z' }
         $requirementMatch = [regex]::Match($columns[1].Trim(), $requirementPattern)
         $owner = $columns[2].Trim()
-        $requiredContent = if ($RequireOwners) { @($columns[3], $columns[4]) } else { @($columns[3]) }
+        $requiredContent = if ($TableShape -eq $detailedEpicTable) { @($columns[3], $columns[4]) } else { @($columns[3]) }
         if (-not $requirementMatch.Success -or -not [regex]::IsMatch($owner, '\A#\d+\z') -or @($requiredContent | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0) {
             throw "WDU lifecycle packet '$Path' requirements ledger row at line $($index + 1) is malformed"
         }
@@ -85,18 +93,30 @@ function Get-RequirementRows {
 }
 
 function Assert-RequirementLedger {
-    param([string] $Path, [bool] $RequireOwners)
+    param([string] $Path, [object] $TableShape)
     $ledger = Get-RequirementLedger $Path
-    $rows = @(Get-RequirementRows -Ledger $ledger -Path $Path -RequireOwners $RequireOwners)
+    $rows = @(Get-RequirementRows -Ledger $ledger -Path $Path -TableShape $TableShape)
     if ($rows.Count -ne 19) { throw "WDU lifecycle packet '$Path' requirements ledger must contain exactly 19 requirement rows; found $($rows.Count)" }
     for ($index = 0; $index -lt $expectedRequirements.Count; $index++) {
         $requirement = $expectedRequirements[$index]
         if (-not [StringComparer]::Ordinal.Equals($rows[$index].Id, $requirement)) {
             throw "WDU lifecycle packet '$Path' requirements ledger row $($index + 1) must be $requirement; found $($rows[$index].Id)"
         }
-        if ($RequireOwners -and -not [StringComparer]::Ordinal.Equals($rows[$index].Owner, $expectedOwners[$requirement])) {
+        if (-not [StringComparer]::Ordinal.Equals($rows[$index].Owner, $expectedOwners[$requirement])) {
             throw "WDU lifecycle packet '$Path' requirements ledger row $($index + 1) $requirement must assign $($expectedOwners[$requirement]); found $($rows[$index].Owner)"
         }
+    }
+}
+
+function Assert-ActiveEpicRequirementCount {
+    param([string] $Path)
+    $text = [IO.File]::ReadAllText($Path)
+    $staleClaim = [regex]::Match($text, '\b(?:17\s*/\s*17|17\s+(?:active\s+)?requirements?|(?:all|exactly|current)\s+17\s+(?:active\s+)?requirements?)\b', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($staleClaim.Success) {
+        throw "WDU lifecycle packet '$Path' active epic must not claim stale 17-requirement completion: '$($staleClaim.Value)'"
+    }
+    if (-not [regex]::IsMatch($text, '\b(?:19\s*/\s*19|19\s+(?:active\s+)?requirements?)\b', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        throw "WDU lifecycle packet '$Path' active epic must state 19-requirement completion"
     }
 }
 
@@ -127,6 +147,7 @@ foreach ($artifact in $requiredArtifacts) {
     Assert-NoOperationalSupersededReference $path
 }
 
-Assert-RequirementLedger (Join-Path $resolved 'issue-835.md') $true
-Assert-RequirementLedger (Join-Path $resolved 'issue-846.md') $false
-Write-Host "PASS WDU lifecycle packet: 19 requirements, 15 artifacts, no operational #899 references, and no literal newline escapes"
+Assert-ActiveEpicRequirementCount (Join-Path $resolved 'issue-835.md')
+Assert-RequirementLedger (Join-Path $resolved 'issue-835.md') $detailedEpicTable
+Assert-RequirementLedger (Join-Path $resolved 'issue-846.md') $compactAuditTable
+Write-Host "PASS WDU lifecycle packet: 19 requirements, 15 artifacts, exact epic and audit ledgers, no stale epic count, no operational #899 references, and no literal newline escapes"

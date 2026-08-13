@@ -72,7 +72,7 @@ function New-Packet {
     $root = Join-Path $script:TestRoot $Name
     [IO.Directory]::CreateDirectory($root) | Out-Null
     foreach ($artifact in $artifactIds) {
-        $body = if ($artifact -eq 'issue-835') { Get-Ledger $true } elseif ($artifact -eq 'issue-846') { Get-Ledger $false } else { "# $artifact`n" }
+        $body = if ($artifact -eq 'issue-835') { "# $artifact`n`nCompletion claim: 19/19 requirements.`n`n$(Get-Ledger $true)" } elseif ($artifact -eq 'issue-846') { "# $artifact`n`n$(Get-Ledger $false)" } else { "# $artifact`n" }
         Write-TestText (Join-Path $root "$artifact.md") $body
     }
     return $root
@@ -161,6 +161,84 @@ try {
         $path = Join-Path $packet 'issue-835.md'
         Set-TestText $path (Replace-Once (Get-TestText $path) '| REQ-001 requirement 1 | #923 | companion 1 | audit 1 |' '| REQ-001 requirement 1 | #923 | companion 1 | audit 1')
         Assert-Fails { Invoke-PacketTest $packet } 'row at line 5 is malformed'
+    }
+
+    Invoke-Case 'rejects each of the 38 detailed and compact primary-owner mutations with artifact and row diagnostics' {
+        $failures = 0
+        foreach ($artifact in @('issue-835', 'issue-846')) {
+            $primary = $artifact -eq 'issue-835'
+            foreach ($index in 0..18) {
+                $packet = New-Packet "$artifact-owner-$index"
+                $path = Join-Path $packet "$artifact.md"
+                $requirement = 'REQ-{0:d3}' -f ($index + 1)
+                $row = if ($primary) { "| $requirement requirement $($index + 1) | $($expectedOwners[$index]) |" } else { "| $requirement | $($expectedOwners[$index]) |" }
+                $replacement = if ($primary) { "| $requirement requirement $($index + 1) | #999 |" } else { "| $requirement | #999 |" }
+                Set-TestText $path (Replace-Once (Get-TestText $path) $row $replacement)
+                try { Invoke-PacketTest $packet }
+                catch {
+                    $message = $_.Exception.Message
+                    Assert-True $message.Contains("$artifact.md", [StringComparison]::Ordinal) "$artifact mutation $requirement scopes its artifact"
+                    Assert-True $message.Contains("row $($index + 1) $requirement must assign $($expectedOwners[$index]); found #999", [StringComparison]::Ordinal) "$artifact mutation $requirement scopes its row"
+                    $failures++
+                    continue
+                }
+                throw "$artifact mutation $requirement unexpectedly passed"
+            }
+        }
+        Assert-True ($failures -eq 38) 'all 38 primary-owner mutations fail'
+    }
+
+    Invoke-Case 'rejects stale active-epic 17/17 and 17 requirements claims' {
+        foreach ($staleClaim in @('17/17', '17 requirements', 'all 17 active requirements')) {
+            $packet = New-Packet ('stale-claim-' + $staleClaim.Replace(' ', '-').Replace('/', '-'))
+            $path = Join-Path $packet 'issue-835.md'
+            Set-TestText $path (Replace-Once (Get-TestText $path) '19/19 requirements' $staleClaim)
+            Assert-Fails { Invoke-PacketTest $packet } 'active epic must not claim stale 17-requirement completion'
+        }
+    }
+
+    Invoke-Case 'rejects alternate complete tables before and after the detailed epic table' {
+        $alternate = (Get-Ledger $false).Replace('<!-- grace:wdu-requirements:start -->', '').Replace('<!-- grace:wdu-requirements:end -->', '').Trim()
+        foreach ($position in @('before', 'after')) {
+            $packet = New-Packet "alternate-table-$position"
+            $path = Join-Path $packet 'issue-835.md'
+            $text = Get-TestText $path
+            $text = if ($position -eq 'before') {
+                Replace-Once $text '<!-- grace:wdu-requirements:start -->' ("<!-- grace:wdu-requirements:start -->`n$alternate")
+            }
+            else {
+                Replace-Once $text '<!-- grace:wdu-requirements:end -->' ("$alternate`n<!-- grace:wdu-requirements:end -->")
+            }
+            Set-TestText $path $text
+            $reason = if ($position -eq 'before') { 'has content before its requirement table' } else { 'row at line' }
+            Assert-Fails { Invoke-PacketTest $packet } $reason
+        }
+    }
+
+    Invoke-Case 'rejects finite-ledger header, divider, column, case, and duplicate-block changes' {
+        $mutations = @(
+            @{ Name = 'detailed header case'; Artifact = 'issue-835'; Old = '| Requirement |'; New = '| requirement |'; Reason = 'one exact requirement table header' },
+            @{ Name = 'compact divider'; Artifact = 'issue-846'; Old = '| --- | --- | --- |'; New = '| --- | --- | ---'; Reason = 'exact requirement table divider' },
+            @{ Name = 'detailed wrong columns'; Artifact = 'issue-835'; Old = '| REQ-001 requirement 1 | #923 | companion 1 | audit 1 |'; New = '| REQ-001 requirement 1 | #923 | companion 1 |'; Reason = 'is malformed' },
+            @{ Name = 'compact wrong columns'; Artifact = 'issue-846'; Old = '| REQ-001 | #923 | audit 1 |'; New = '| REQ-001 | #923 | audit 1 | extra |'; Reason = 'is malformed' },
+            @{ Name = 'compact requirement case'; Artifact = 'issue-846'; Old = '| REQ-001 | #923 |'; New = '| req-001 | #923 |'; Reason = 'is malformed' },
+            @{ Name = 'duplicate marker block'; Artifact = 'issue-846'; Old = '<!-- grace:wdu-requirements:end -->'; New = "<!-- grace:wdu-requirements:end -->`n<!-- grace:wdu-requirements:start -->`n<!-- grace:wdu-requirements:end -->"; Reason = 'duplicate requirements ledger markers' }
+        )
+        foreach ($mutation in $mutations) {
+            $packet = New-Packet $mutation.Name.Replace(' ', '-')
+            $path = Join-Path $packet "$($mutation.Artifact).md"
+            Set-TestText $path (Replace-Once (Get-TestText $path) $mutation.Old $mutation.New)
+            Assert-Fails { Invoke-PacketTest $packet } $mutation.Reason
+        }
+    }
+
+    Invoke-Case 'accepts the finite ledgers with CR-only line endings' {
+        $packet = New-Packet 'cr-only-ledgers'
+        foreach ($artifact in @('issue-835', 'issue-846')) {
+            $path = Join-Path $packet "$artifact.md"
+            Set-TestText $path ((Get-TestText $path).Replace("`r`n", "`n").Replace("`n", "`r"))
+        }
+        Invoke-PacketTest $packet
     }
 }
 finally {
