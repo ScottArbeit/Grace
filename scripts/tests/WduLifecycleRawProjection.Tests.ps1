@@ -236,10 +236,55 @@ Invoke-Case 'rejects duplicate and case-equivalent root and nested properties' {
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#923"' '"id":"REQ-001","Id":"REQ-001","owner":"#923"' } 'duplicate case-equivalent'
 }
 
-Invoke-Case 'rejects missing extra reordered and incorrectly cased properties' {
+Invoke-Case 'rejects missing extra genuinely reordered and incorrectly cased properties' {
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table",' '' } 'ordered properties'
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2",' '"schema":"grace.wdu.lifecycle-projection/v2","extra":true,' } 'ordered properties'
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2","artifact"' '"artifact"' } 'ordered properties'
+    $rootPairSwap = Replace-Once (Get-Json $baseline) '"schema":"grace.wdu.lifecycle-projection/v2","artifact":"adr-0011"' '"artifact":"adr-0011","schema":"grace.wdu.lifecycle-projection/v2"'
+    $baselineDocument = [Text.Json.JsonDocument]::Parse((Get-Json $baseline))
+    $rootDocument = [Text.Json.JsonDocument]::Parse($rootPairSwap)
+    try {
+        $baselineRootProperties = @($baselineDocument.RootElement.EnumerateObject())
+        $rootProperties = @($rootDocument.RootElement.EnumerateObject())
+        Assert-True ($rootProperties.Count -eq 12) 'root pair swap retains all twelve properties'
+        foreach ($rootProperty in $rootProperties) {
+            $baselineProperty = @($baselineRootProperties | Where-Object { [StringComparer]::Ordinal.Equals($_.Name, $rootProperty.Name) })
+            Assert-True ($baselineProperty.Count -eq 1) "root pair swap retains property $($rootProperty.Name)"
+            Assert-True ($rootProperty.Value.GetRawText() -ceq $baselineProperty[0].Value.GetRawText()) "root pair swap retains exact $($rootProperty.Name) value"
+        }
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[0].Name, 'artifact')) 'root pair swap moves complete artifact pair first'
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[0].Value.GetString(), 'adr-0011')) 'root pair swap retains artifact value'
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[1].Name, 'schema')) 'root pair swap moves complete schema pair second'
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[1].Value.GetString(), 'grace.wdu.lifecycle-projection/v2')) 'root pair swap retains schema value'
+    }
+    finally {
+        $rootDocument.Dispose()
+        $baselineDocument.Dispose()
+    }
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $rootPairSwap) } "WDU raw lifecycle projection '$': property at ordinal 0 must be 'schema'"
+    $nestedPairSwap = Replace-Once (Get-Json $baseline) '"id":"REQ-001","owner":"#923"' '"owner":"#923","id":"REQ-001"'
+    $nestedBaselineDocument = [Text.Json.JsonDocument]::Parse((Get-Json $baseline))
+    $nestedDocument = [Text.Json.JsonDocument]::Parse($nestedPairSwap)
+    try {
+        $nestedBaselineProperties = @($nestedBaselineDocument.RootElement.GetProperty('requirements')[0].EnumerateObject())
+        $nestedProperties = @($nestedDocument.RootElement.GetProperty('requirements')[0].EnumerateObject())
+        Assert-True ($nestedProperties.Count -eq 2) 'nested pair swap retains both requirement properties'
+        foreach ($nestedProperty in $nestedProperties) {
+            $nestedBaselineProperty = @($nestedBaselineProperties | Where-Object { [StringComparer]::Ordinal.Equals($_.Name, $nestedProperty.Name) })
+            Assert-True ($nestedBaselineProperty.Count -eq 1) "nested pair swap retains property $($nestedProperty.Name)"
+            Assert-True ($nestedProperty.Value.GetRawText() -ceq $nestedBaselineProperty[0].Value.GetRawText()) "nested pair swap retains exact $($nestedProperty.Name) value"
+        }
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Name, 'owner')) 'nested pair swap moves complete owner pair first'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Value.GetString(), '#923')) 'nested pair swap retains owner value'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[1].Name, 'id')) 'nested pair swap moves complete ID pair second'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[1].Value.GetString(), 'REQ-001')) 'nested pair swap retains ID value'
+    }
+    finally {
+        $nestedDocument.Dispose()
+        $nestedBaselineDocument.Dispose()
+    }
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $nestedPairSwap) } "WDU raw lifecycle projection '$.requirements[0]': property at ordinal 0 must be 'id'"
+    $oldDeletionMutation = Replace-Once (Get-Json $baseline) '"schema":"grace.wdu.lifecycle-projection/v2","artifact"' '"artifact"'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $oldDeletionMutation) } 'must contain exactly 12 ordered properties'
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2"' '"Schema":"grace.wdu.lifecycle-projection/v2"' } 'property at ordinal'
 }
 
