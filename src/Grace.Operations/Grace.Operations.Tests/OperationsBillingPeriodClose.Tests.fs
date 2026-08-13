@@ -1,10 +1,13 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Operations.Data.Migrations
 open Grace.Operations.Worker
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Data.SqlClient
+open Microsoft.EntityFrameworkCore.Infrastructure
+open Microsoft.EntityFrameworkCore.Metadata
 open NUnit.Framework
 open NodaTime
 open System
@@ -245,6 +248,26 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             return Convert.ToInt64 value
         }
 
+    /// Reads one ordered scalar string projection from the isolated SQL catalog for physical schema parity proofs.
+    let stringsAsync connectionString sql =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- sql
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let values = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then values.Add(reader.GetString 0)
+
+            return values |> Seq.toList
+        }
+
     /// Recomputes the persisted preview evidence digest from independently read durable rows.
     let previewEvidenceDigestAsync connectionString =
         task {
@@ -458,6 +481,189 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
                     Action (fun () ->
                         Assert.That(charges, Is.EqualTo(1))
                         Assert.That(evidence, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves every close-core EF representation and the migrated SQL catalog retain the complete physical contract.
+    [<Test>]
+    member _.CloseCoreRuntimeTargetSnapshotAndLiveSqlSchemaAgree() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                use context =
+                    OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingCloseSchemaModel;Integrated Security=true;"
+
+                let runtime = context.GetService<IDesignTimeModel>().Model
+                let target = AddBillingPeriodClose().TargetModel
+                let snapshot = OperationsDbContextModelSnapshot().Model
+
+                let triggerNames (model: IModel) (entityType: Type) =
+                    model
+                        .FindEntityType(entityType)
+                        .GetDeclaredTriggers()
+                    |> Seq.map (fun trigger -> trigger.ModelName)
+                    |> Set.ofSeq
+
+                let expectedTriggers =
+                    Set.ofList [ "TR_ops_Charge_Immutable"
+                                 "TR_ops_BillingPeriodCloseEvidence_Immutable" ]
+
+                let! columns =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(t.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,c.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,ty.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,c.max_length,'|' COLLATE Latin1_General_100_BIN2,c.is_nullable,'|' COLLATE Latin1_General_100_BIN2,c.scale)
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+JOIN sys.columns c ON c.object_id=t.object_id
+JOIN sys.types ty ON ty.user_type_id=c.user_type_id
+WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence','BillingPeriodLateWork')
+ORDER BY t.name,c.column_id;
+"""
+
+                let! keys =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(t.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,kc.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,kc.type_desc COLLATE Latin1_General_100_BIN2)
+FROM sys.key_constraints kc
+JOIN sys.tables t ON t.object_id=kc.parent_object_id
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence','BillingPeriodLateWork')
+ORDER BY t.name,kc.name;
+"""
+
+                let! currencyCollation =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT c.collation_name
+FROM sys.columns c
+WHERE c.object_id=OBJECT_ID('ops.Charge') AND c.name='CurrencyCode';
+"""
+
+                let! indexes =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(t.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,i.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,i.is_unique)
+FROM sys.indexes i
+JOIN sys.tables t ON t.object_id=i.object_id
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence','BillingPeriodLateWork') AND i.name IS NOT NULL
+ORDER BY t.name,i.name;
+"""
+
+                let! foreignKeys =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(t.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,fk.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,OBJECT_SCHEMA_NAME(fk.referenced_object_id) COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,OBJECT_NAME(fk.referenced_object_id) COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,fk.delete_referential_action_desc COLLATE Latin1_General_100_BIN2)
+FROM sys.foreign_keys fk
+JOIN sys.tables t ON t.object_id=fk.parent_object_id
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence','BillingPeriodLateWork')
+ORDER BY t.name,fk.name;
+"""
+
+                let! checks =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(t.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,cc.name COLLATE Latin1_General_100_BIN2)
+FROM sys.check_constraints cc
+JOIN sys.tables t ON t.object_id=cc.parent_object_id
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence','BillingPeriodLateWork')
+ORDER BY t.name,cc.name;
+"""
+
+                let! defaults =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(t.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,c.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,dc.name COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,LOWER(dc.definition) COLLATE Latin1_General_100_BIN2)
+FROM sys.default_constraints dc
+JOIN sys.tables t ON t.object_id=dc.parent_object_id
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+JOIN sys.columns c ON c.object_id=t.object_id AND c.column_id=dc.parent_column_id
+WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence','BillingPeriodLateWork')
+ORDER BY t.name,c.column_id;
+"""
+
+                let! triggers =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(OBJECT_NAME(parent_id) COLLATE Latin1_General_100_BIN2,'|' COLLATE Latin1_General_100_BIN2,name COLLATE Latin1_General_100_BIN2)
+FROM sys.triggers
+WHERE parent_id IN (OBJECT_ID('ops.Charge'),OBJECT_ID('ops.BillingPeriodCloseEvidence'))
+ORDER BY name;
+"""
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(triggerNames runtime typeof<ChargeEntity>, Is.EqualTo(Set.ofList [ "TR_ops_Charge_Immutable" ] :> obj))
+
+                        Assert.That(
+                            triggerNames runtime typeof<BillingPeriodCloseEvidenceEntity>,
+                            Is.EqualTo(Set.ofList [ "TR_ops_BillingPeriodCloseEvidence_Immutable" ] :> obj)
+                        )
+
+                        Assert.That(
+                            triggerNames target typeof<ChargeEntity>
+                            + triggerNames target typeof<BillingPeriodCloseEvidenceEntity>,
+                            Is.EqualTo(expectedTriggers :> obj)
+                        )
+
+                        Assert.That(
+                            triggerNames snapshot typeof<ChargeEntity>
+                            + triggerNames snapshot typeof<BillingPeriodCloseEvidenceEntity>,
+                            Is.EqualTo(expectedTriggers :> obj)
+                        )
+
+                        Assert.That(columns, Does.Contain("Charge|CurrencyCode|varchar|3|0|0"))
+                        Assert.That(columns, Does.Contain("BillingPeriodCloseEvidence|AcceptedFactDigestSha256Hex|char|64|0|0"))
+                        Assert.That(columns, Does.Contain("BillingPeriodCloseEvidence|PricingPreviewDigestSha256Hex|char|64|0|0"))
+                        Assert.That(columns, Does.Contain("BillingPeriod|RetryDiagnostic|nvarchar|800|1|0"))
+                        Assert.That(columns, Does.Contain("BillingPeriodLateWork|UsageFactId|uniqueidentifier|16|0|0"))
+                        Assert.That(currencyCollation, Is.EqualTo([ "Latin1_General_100_BIN2" ] :> obj))
+                        Assert.That(keys, Does.Contain("BillingPeriod|PK_ops_BillingPeriod|PRIMARY_KEY_CONSTRAINT"))
+                        Assert.That(keys, Does.Contain("Charge|PK_ops_Charge|PRIMARY_KEY_CONSTRAINT"))
+                        Assert.That(keys, Does.Contain("BillingPeriodCloseEvidence|PK_ops_BillingPeriodCloseEvidence|PRIMARY_KEY_CONSTRAINT"))
+                        Assert.That(keys, Does.Contain("BillingPeriodLateWork|PK_ops_BillingPeriodLateWork|PRIMARY_KEY_CONSTRAINT"))
+                        Assert.That(indexes, Does.Contain("BillingPeriod|UX_ops_BillingPeriod_ExactScope|1"))
+                        Assert.That(indexes, Does.Contain("Charge|UX_ops_Charge_InitialPosting|1"))
+                        Assert.That(indexes, Does.Contain("Charge|IX_ops_Charge_ChargePreviewLine|0"))
+                        Assert.That(indexes, Does.Contain("BillingPeriodLateWork|IX_ops_BillingPeriodLateWork_UsageFact|0"))
+                        Assert.That(foreignKeys, Does.Contain("Charge|FK_ops_Charge_BillingPeriod|ops|BillingPeriod|NO_ACTION"))
+                        Assert.That(foreignKeys, Does.Contain("Charge|FK_ops_Charge_ChargePreviewLine|ops|ChargePreviewLine|NO_ACTION"))
+
+                        Assert.That(
+                            foreignKeys,
+                            Does.Contain("BillingPeriodCloseEvidence|FK_ops_BillingPeriodCloseEvidence_BillingPeriod|ops|BillingPeriod|NO_ACTION")
+                        )
+
+                        Assert.That(foreignKeys, Does.Contain("BillingPeriodLateWork|FK_ops_BillingPeriodLateWork_BillingPeriod|ops|BillingPeriod|NO_ACTION"))
+                        Assert.That(foreignKeys, Does.Contain("BillingPeriodLateWork|FK_ops_BillingPeriodLateWork_RawUsageFact|ops|RawUsageFact|NO_ACTION"))
+                        Assert.That(checks, Does.Contain("Charge|CK_ops_Charge_Amount"))
+                        Assert.That(checks, Does.Contain("Charge|CK_ops_Charge_Currency"))
+                        Assert.That(checks, Does.Contain("BillingPeriodCloseEvidence|CK_ops_BillingPeriodCloseEvidence_Digests"))
+                        Assert.That(checks, Does.Contain("BillingPeriodCloseEvidence|CK_ops_BillingPeriodCloseEvidence_Provenance"))
+                        Assert.That(defaults, Does.Contain("Charge|CreatedAtUtc|DF_ops_Charge_CreatedAtUtc|(sysutcdatetime())"))
+                        Assert.That(defaults, Does.Contain("BillingPeriod|CreatedAtUtc|DF_ops_BillingPeriod_CreatedAtUtc|(sysutcdatetime())"))
+                        Assert.That(defaults, Does.Contain("BillingPeriod|UpdatedAtUtc|DF_ops_BillingPeriod_UpdatedAtUtc|(sysutcdatetime())"))
+                        Assert.That(defaults, Does.Contain("BillingPeriodLateWork|CreatedAtUtc|DF_ops_BillingPeriodLateWork_CreatedAtUtc|(sysutcdatetime())"))
+
+                        Assert.That(
+                            triggers,
+                            Is.EqualTo(
+                                [
+                                    "BillingPeriodCloseEvidence|TR_ops_BillingPeriodCloseEvidence_Immutable"
+                                    "Charge|TR_ops_Charge_Immutable"
+                                ]
+                                :> obj
+                            )
+                        ))
                 )
             })
 

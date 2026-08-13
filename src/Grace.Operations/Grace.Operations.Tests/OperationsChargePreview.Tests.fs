@@ -290,7 +290,20 @@ type OperationsChargePreviewTests() =
 
                 let properties =
                     entity.GetProperties()
-                    |> Seq.map (fun property -> property.Name, property.ClrType.FullName, property.IsNullable)
+                    |> Seq.map (fun property ->
+                        property.Name,
+                        String.Join(
+                            "|",
+                            [|
+                                property.ClrType.FullName
+                                string property.IsNullable
+                                string (property.GetColumnType())
+                                string (property.GetMaxLength())
+                                string (property.IsUnicode())
+                                string (property.GetCollation())
+                                string (property.GetDefaultValueSql())
+                            |]
+                        ))
                     |> Set.ofSeq
 
                 let indexes =
@@ -319,7 +332,12 @@ type OperationsChargePreviewTests() =
                     |> Seq.map (fun constraint' -> constraint'.Name, constraint'.Sql)
                     |> Set.ofSeq
 
-                entity.Name, entity.GetSchema(), entity.GetTableName(), keys, properties, indexes, foreignKeys, checkConstraints)
+                let triggers =
+                    entity.GetDeclaredTriggers()
+                    |> Seq.map (fun trigger -> trigger.ModelName)
+                    |> Set.ofSeq
+
+                entity.Name, entity.GetSchema(), entity.GetTableName(), keys, properties, indexes, foreignKeys, checkConstraints, triggers)
             |> Set.ofSeq
 
         let runtimeShape = modelShape runtime
@@ -349,6 +367,23 @@ type OperationsChargePreviewTests() =
             Assert.That(migration.FindEntityType(typeof<BillingPeriodCloseEvidenceEntity>), Is.Not.Null)
             Assert.That(migration.FindEntityType(typeof<BillingPeriodLateWorkEntity>), Is.Not.Null)
             Assert.That(rejection, Is.Not.Null)
+
+            Assert.That(
+                migration
+                    .FindEntityType(typeof<ChargeEntity>)
+                    .GetDeclaredTriggers()
+                |> Seq.map (fun trigger -> trigger.ModelName),
+                Does.Contain("TR_ops_Charge_Immutable")
+            )
+
+            Assert.That(
+                migration
+                    .FindEntityType(typeof<BillingPeriodCloseEvidenceEntity>)
+                    .GetDeclaredTriggers()
+                |> Seq.map (fun trigger -> trigger.ModelName),
+                Does.Contain("TR_ops_BillingPeriodCloseEvidence_Immutable")
+            )
+
             Assert.That((migrationShape = snapshotShape), Is.True)
 
             Assert.That(

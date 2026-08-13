@@ -120,6 +120,9 @@ module OperationsBillingPeriodModel =
                     "LEN([CurrencyCode]) = 3 AND [CurrencyCode] = UPPER([CurrencyCode]) AND [CurrencyCode] NOT LIKE '%[^A-Z]%'"
                 )
                 |> ignore
+
+                table.HasTrigger("TR_ops_Charge_Immutable")
+                |> ignore
         )
         |> ignore
 
@@ -212,6 +215,9 @@ module OperationsBillingPeriodModel =
                 |> ignore
 
                 table.HasCheckConstraint("CK_ops_BillingPeriodCloseEvidence_Provenance", "LEN(LTRIM(RTRIM([ScheduledOperationProvenance]))) > 0")
+                |> ignore
+
+                table.HasTrigger("TR_ops_BillingPeriodCloseEvidence_Immutable")
                 |> ignore
         )
         |> ignore
