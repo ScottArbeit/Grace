@@ -795,6 +795,7 @@ module OperationsModel =
 
         OperationsChargePreviewModel.configure modelBuilder
         OperationsBillingPeriodModel.configure modelBuilder
+        OperationsBillingPeriodLateWorkModel.configure modelBuilder
 
 /// Owns the EF Core model for Grace Operations SQL Server schema evolution.
 type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
@@ -835,6 +836,10 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     /// Provides EF access to provisional charge-preview lines.
     [<DefaultValue>]
     val mutable private chargePreviewLines: DbSet<ChargePreviewLineEntity>
+
+    /// Provides EF access to the Pending post-close fact handoffs.
+    [<DefaultValue>]
+    val mutable private billingPeriodLateWork: DbSet<BillingPeriodLateWorkEntity>
 
     /// Provides the EF set for immutable usage fact rows.
     member this.RawUsageFacts
@@ -880,6 +885,11 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     member this.ChargePreviewLines
         with get () = this.chargePreviewLines
         and set value = this.chargePreviewLines <- value
+
+    /// Provides the EF set for Pending post-close accepted-fact handoffs.
+    member this.BillingPeriodLateWork
+        with get () = this.billingPeriodLateWork
+        and set value = this.billingPeriodLateWork <- value
 
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
     override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder

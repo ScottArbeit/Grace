@@ -250,6 +250,28 @@ WHERE NOT EXISTS
 );
 """
 
+    /// Stages one Pending handoff and reports whether the exact scope is already closed.
+    [<Literal>]
+    let StageClosedPeriodLateWork =
+        """
+DECLARE @ClosedBillingPeriodId uniqueidentifier;
+SELECT @ClosedBillingPeriodId = BillingPeriodId
+FROM ops.BillingPeriod WITH (UPDLOCK, HOLDLOCK)
+WHERE OwnerId = @OwnerId AND OrganizationId = @OrganizationId AND RepositoryId = @RepositoryId
+  AND MonthStartUtc = @MonthStartUtc AND NextMonthStartUtc = @NextMonthStartUtc AND State = 2;
+IF @ClosedBillingPeriodId IS NOT NULL
+BEGIN
+    INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId, UsageFactId, State)
+    SELECT @ClosedBillingPeriodId, @UsageFactId, 0
+    WHERE NOT EXISTS
+    (
+        SELECT 1 FROM ops.BillingPeriodLateWork WITH (UPDLOCK, HOLDLOCK)
+        WHERE BillingPeriodId = @ClosedBillingPeriodId AND UsageFactId = @UsageFactId
+    );
+END;
+SELECT CAST(CASE WHEN @ClosedBillingPeriodId IS NULL THEN 0 ELSE 1 END AS bit);
+"""
+
     /// Selects hot facts and partially verified facts that need archive processing or cleanup.
     [<Literal>]
     let SelectRawUsageFactsForArchive =
