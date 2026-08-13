@@ -874,3 +874,84 @@ module WorkingDirectoryUpdateLocalTransactionTests =
             assertNoCompletion current target branchId WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
             assertPreparedDisposed prepared (RelativePath "target.txt")
             assertLeaseReacquirable repositoryId root)
+
+    /// Proves every post-plan global fact is reread before the first action can mutate the working tree.
+    [<TestCase("configuration")>]
+    [<TestCase("status")>]
+    [<TestCase("pending")>]
+    [<TestCase("marker-attempt")>]
+    let ``five-input transaction rejects post-plan global fact changes`` changedFact =
+        withTempRepository (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let current = configure root repositoryId branchId
+            let baseline = completeStatus Array.empty<LocalFileVersion>
+
+            LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile baseline
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let selected = localFile "target.txt" (Encoding.UTF8.GetBytes("selected target bytes"))
+            let target, targetStatus, graph = targetGraph repositoryId branchId selected
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection branchId selection target
+                |> required
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let prepared = preparedContent selected (Encoding.UTF8.GetBytes("selected target bytes"))
+
+            WorkingDirectoryUpdate.LocalTransactionTesting.installBeforeFinalGlobalFactGate (fun () ->
+                match changedFact with
+                | "configuration" -> saveConfigurationChange current (fun configuration -> configuration.BranchId <- Guid.NewGuid())
+                | "status" ->
+                    let changed = completeStatus [| localFile "different.txt" (Encoding.UTF8.GetBytes("different status bytes")) |]
+
+                    LocalStateDb.replaceStatusSnapshotWithRevision current.GraceStatusFile changed
+                    |> fun task -> task.GetAwaiter().GetResult()
+                    |> ignore
+                | "pending" ->
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        current.GraceStatusFile
+                        targetStatus
+                        (targetStatus.Index.Values :> IEnumerable<LocalDirectoryVersion>)
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization branchId)
+                        target
+                        operation
+                    |> fun task -> task.GetAwaiter().GetResult()
+                    |> ignore
+                | "marker-attempt" ->
+                    let differentAttempt = WorkingDirectoryUpdateContracts.AttemptToken.create ()
+
+                    WorkingDirectoryUpdateCoordination.Marker.create scope differentAttempt target operation
+                    |> required
+                    |> WorkingDirectoryUpdateCoordination.Marker.write scope
+                    |> fun task -> task.GetAwaiter().GetResult()
+                | value -> Assert.Fail($"Unexpected global fact '{value}'."))
+
+            let outcome =
+                WorkingDirectoryUpdate.LocalTransaction.run
+                    (acceptedPhase current CancellationToken.None)
+                    selection
+                    graph
+                    prepared
+                    (WorkingDirectoryUpdate.DiagnosticCorrelation.create $"post-plan-{changedFact}"
+                     |> required)
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match outcome with
+            | Error (WorkingDirectoryUpdateContracts.Outcome.Rejected _) -> ()
+            | _ -> Assert.Fail($"Expected post-plan {changedFact} rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "target.txt"))
+            |> should equal false
+
+            if changedFact <> "pending" then
+                assertNoCompletion current target branchId selection
+
+            assertPreparedDisposed prepared (RelativePath "target.txt")
+            assertLeaseReacquirable repositoryId root)
