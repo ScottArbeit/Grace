@@ -63,8 +63,24 @@ type internal CacheIdentityError =
     | UnsupportedPlatform
     | StateUnavailable
 
+/// Represents the redacted local identity facts that the repository-independent CLI status command may publish.
+type internal CacheIdentityStatus =
+    {
+        Class: string
+        Enrollment: string
+        CacheId: Guid option
+        Endpoint: string option
+        BoundaryKind: string option
+        RepositoryCount: int option
+        Key: string
+    }
+
 /// Owns Linux-only protected static-key staging, ready publication, and opaque local inspection.
 module internal CacheIdentity =
+
+    /// Identifies the fixed Linux system-service root inspected by repository-independent Cache status.
+    [<Literal>]
+    let StateRoot = "/var/lib/grace-cache"
 
     [<Literal>]
     let private AttemptDirectoryName = "attempt"
@@ -680,6 +696,14 @@ module internal CacheIdentity =
                 with
                 | _ -> Error CacheIdentityError.StateUnavailable
 
+    /// Keeps the private parsed ready registration with its opaque inspection classification for one read-only inspection.
+    type private CacheIdentityInspectionDetail =
+        | Missing
+        | AttemptPresent
+        | Ready of CacheReadyRegistration
+        | Invalid
+        | Inaccessible
+
     /// Reads one ready configuration without emitting raw paths, filesystem errors, keys, or fingerprints.
     let private inspectReady ready =
         let identityPath = child ready IdentityFileName
@@ -688,10 +712,10 @@ module internal CacheIdentity =
         match inspectMode ready directoryMode, inspectMode identityPath fileMode, inspectMode registrationPath fileMode with
         | Error CacheIdentityInspection.Inaccessible, _, _
         | _, Error CacheIdentityInspection.Inaccessible, _
-        | _, _, Error CacheIdentityInspection.Inaccessible -> CacheIdentityInspection.Inaccessible
+        | _, _, Error CacheIdentityInspection.Inaccessible -> CacheIdentityInspectionDetail.Inaccessible
         | Error _, _, _
         | _, Error _, _
-        | _, _, Error _ -> CacheIdentityInspection.Invalid
+        | _, _, Error _ -> CacheIdentityInspectionDetail.Invalid
         | Ok (), Ok (), Ok () ->
             try
                 match tryParseReadyRegistration (File.ReadAllBytes(registrationPath)) with
@@ -703,41 +727,77 @@ module internal CacheIdentity =
                             fingerprint x y = expectedFingerprint
                             && String.Equals(registration.PublicKeyFingerprint, expectedFingerprint, StringComparison.Ordinal)
                             ->
-                            CacheIdentityInspection.Ready
-                        | _ -> CacheIdentityInspection.Invalid
-                    | None -> CacheIdentityInspection.Invalid
-                | None -> CacheIdentityInspection.Invalid
+                            CacheIdentityInspectionDetail.Ready registration
+                        | _ -> CacheIdentityInspectionDetail.Invalid
+                    | None -> CacheIdentityInspectionDetail.Invalid
+                | None -> CacheIdentityInspectionDetail.Invalid
             with
-            | :? UnauthorizedAccessException -> CacheIdentityInspection.Inaccessible
-            | :? IOException -> CacheIdentityInspection.Inaccessible
-            | _ -> CacheIdentityInspection.Invalid
+            | :? UnauthorizedAccessException -> CacheIdentityInspectionDetail.Inaccessible
+            | :? IOException -> CacheIdentityInspectionDetail.Inaccessible
+            | _ -> CacheIdentityInspectionDetail.Invalid
 
-    /// Inspects fixed local identity markers without mutating, repairing, deleting, or exposing protected state details.
-    let inspect root =
+    /// Reads fixed local identity markers once without mutation while retaining parsed ready facts inside this module.
+    let private inspectDetail root =
         if not (OperatingSystem.IsLinux()) then
             Error CacheIdentityError.UnsupportedPlatform
         else
             match probeDirectory root with
-            | Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspection.Inaccessible
-            | Error _ -> Ok CacheIdentityInspection.Invalid
-            | Ok false -> Ok CacheIdentityInspection.Missing
+            | Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspectionDetail.Inaccessible
+            | Error _ -> Ok CacheIdentityInspectionDetail.Invalid
+            | Ok false -> Ok CacheIdentityInspectionDetail.Missing
             | Ok true ->
                 match inspectMode root directoryMode with
-                | Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspection.Inaccessible
-                | Error _ -> Ok CacheIdentityInspection.Invalid
+                | Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspectionDetail.Inaccessible
+                | Error _ -> Ok CacheIdentityInspectionDetail.Invalid
                 | Ok () ->
                     let attempt = child root AttemptDirectoryName
                     let ready = child root ReadyDirectoryName
 
                     match probeDirectory attempt, probeDirectory ready with
                     | Error CacheIdentityInspection.Inaccessible, _
-                    | _, Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspection.Inaccessible
+                    | _, Error CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspectionDetail.Inaccessible
                     | Error _, _
-                    | _, Error _ -> Ok CacheIdentityInspection.Invalid
-                    | Ok false, Ok false -> Ok CacheIdentityInspection.Missing
-                    | Ok true, Ok true -> Ok CacheIdentityInspection.Invalid
-                    | Ok true, Ok false -> Ok(inspectAttempt attempt)
+                    | _, Error _ -> Ok CacheIdentityInspectionDetail.Invalid
+                    | Ok false, Ok false -> Ok CacheIdentityInspectionDetail.Missing
+                    | Ok true, Ok true -> Ok CacheIdentityInspectionDetail.Invalid
+                    | Ok true, Ok false ->
+                        match inspectAttempt attempt with
+                        | CacheIdentityInspection.AttemptPresent -> Ok CacheIdentityInspectionDetail.AttemptPresent
+                        | CacheIdentityInspection.Inaccessible -> Ok CacheIdentityInspectionDetail.Inaccessible
+                        | _ -> Ok CacheIdentityInspectionDetail.Invalid
                     | Ok false, Ok true -> Ok(inspectReady ready)
+
+    /// Inspects protected state without exposing parsed registration facts to Cache runtime callers.
+    let inspect root =
+        inspectDetail root
+        |> Result.map (function
+            | CacheIdentityInspectionDetail.Missing -> CacheIdentityInspection.Missing
+            | CacheIdentityInspectionDetail.AttemptPresent -> CacheIdentityInspection.AttemptPresent
+            | CacheIdentityInspectionDetail.Ready _ -> CacheIdentityInspection.Ready
+            | CacheIdentityInspectionDetail.Invalid -> CacheIdentityInspection.Invalid
+            | CacheIdentityInspectionDetail.Inaccessible -> CacheIdentityInspection.Inaccessible)
+
+    /// Projects one read-only identity inspection into the approved redacted Cache status facts.
+    let status root =
+        let nonReady enrollment key =
+            { Class = "Grace.Cache.Status"; Enrollment = enrollment; CacheId = None; Endpoint = None; BoundaryKind = None; RepositoryCount = None; Key = key }
+
+        match inspectDetail root with
+        | Ok CacheIdentityInspectionDetail.Missing -> nonReady "notEnrolled" "missing"
+        | Ok CacheIdentityInspectionDetail.AttemptPresent -> nonReady "notEnrolled" "available"
+        | Ok (CacheIdentityInspectionDetail.Ready registration) ->
+            {
+                Class = "Grace.Cache.Status"
+                Enrollment = "enrolled"
+                CacheId = Some registration.CacheId
+                Endpoint = Some registration.Endpoint
+                BoundaryKind = Some registration.BoundaryKind
+                RepositoryCount = Some registration.RepositoryScopes.Length
+                Key = "available"
+            }
+        | Ok CacheIdentityInspectionDetail.Invalid -> nonReady "invalid" "invalid"
+        | Ok CacheIdentityInspectionDetail.Inaccessible
+        | Error _ -> nonReady "invalid" "inaccessible"
 
     /// Best-effort cleanup for a failed caller operation; it intentionally has no cancellation token or failure result.
     let discardAttempt root =

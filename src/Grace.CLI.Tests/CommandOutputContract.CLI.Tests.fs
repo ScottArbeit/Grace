@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.CommandOutputContract
 open Grace.Shared
 open Grace.Types.Common
+open Json.Schema
 open NUnit.Framework
 open System
 open System.CommandLine
@@ -238,16 +239,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 206
+        |> should equal 207
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 197
+        |> should equal 198
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 185
+        |> should equal 186
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -289,7 +290,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 185
+        jsonReady |> should equal 186
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -466,12 +467,13 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 186
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
             | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto) -> ()
+            | RequiresCliDto
+            | NoServerDto) -> ()
             | other -> Assert.Fail($"Expected existing Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             entry.Features.Select
@@ -484,7 +486,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 186
 
         let parserInvalidEntries =
             commonEntries
@@ -515,7 +517,8 @@ module CommandOutputContractRegistryTests =
 
             match entry.EnvelopeContract with
             | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto) -> ()
+            | RequiresCliDto
+            | NoServerDto) -> ()
             | other -> Assert.Fail($"Expected central Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
@@ -968,6 +971,80 @@ module CommandOutputContractRegistryTests =
                 examplesDocument.Examples[0].Name
                 |> should equal "metadata-incomplete"
             | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
+
+    /// Evaluates the built Cache status ReturnValue schema with JsonSchema.Net.
+    let private evaluateCacheStatusSchema (value: string) =
+        let identity = CommandOutputContract.commandIdentity [ "cache" ] "status"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+
+            entry.Features.Schema
+            |> should equal ExistingBehavior
+
+            entry.Features.Examples
+            |> should equal ExistingBehavior
+
+            entry.Features.Select
+            |> should equal ExistingBehavior
+
+            let document = CommandOutputContract.introspectionDocument Schema entry
+
+            match document.Schema with
+            | Some schema ->
+                use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+                let returnValueSchema =
+                    successSchema
+                        .RootElement
+                        .GetProperty("properties")
+                        .GetProperty("ReturnValue")
+                        .GetRawText()
+                    |> JsonSchema.FromText
+
+                use valueDocument = JsonDocument.Parse(value)
+
+                returnValueSchema
+                    .Evaluate(
+                        valueDocument.RootElement,
+                        EvaluationOptions()
+                    )
+                    .IsValid
+            | None ->
+                Assert.Fail("Cache status should publish a schema-ready output contract.")
+                false
+        | None ->
+            Assert.Fail("Cache status should have a registry entry.")
+            false
+
+    /// Verifies that real JsonSchema.Net evaluation accepts every production Cache status variant and rejects invalid projections.
+    [<Test>]
+    let ``cache status schema accepts closed production variants and rejects invalid projections`` () =
+        [
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"enrolled\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\",\"Endpoint\":\"https://cache.example.test\",\"BoundaryKind\":\"Organization\",\"RepositoryCount\":1,\"Key\":\"available\"}",
+            true
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\"}", true
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"invalid\",\"Key\":\"inaccessible\"}", true
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"Extra\":true}", false
+            "{\"Class\":\"Other\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"unknown\",\"Key\":\"missing\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"unknown\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"enrolled\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\",\"Endpoint\":\"https://cache.example.test\",\"BoundaryKind\":\"Unknown\",\"RepositoryCount\":1,\"Key\":\"available\"}",
+            false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"invalid\",\"Key\":\"available\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"inaccessible\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"Endpoint\":\"https://cache.example.test\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"BoundaryKind\":\"Organization\"}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"RepositoryCount\":1}", false
+            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"enrolled\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\",\"Endpoint\":\"https://cache.example.test\",\"BoundaryKind\":\"Organization\",\"Key\":\"available\"}",
+            false
+        ]
+        |> List.iter (fun (value, expectedValid) ->
+            evaluateCacheStatusSchema value
+            |> should equal expectedValid)
 
     /// Verifies that examples for schema ready commands parse as grace envelopes.
     [<Test>]

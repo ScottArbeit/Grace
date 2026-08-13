@@ -2287,6 +2287,20 @@ module RootHelpGroupingTests =
 
             administration |> should contain "authorize"
 
+            let otherStart = output.IndexOf("Other:", StringComparison.Ordinal)
+
+            let localUtilities =
+                if otherStart >= 0 then
+                    sliceBetween output "Local utilities:" "Other:"
+                else
+                    output.Substring(output.IndexOf("Local utilities:", StringComparison.Ordinal))
+
+            localUtilities |> should contain "cache"
+
+            if otherStart >= 0 then
+                output.Substring(otherStart)
+                |> should not' (contain "cache")
+
             administration
             |> should not' (contain $"{Environment.NewLine}    access "))
 
