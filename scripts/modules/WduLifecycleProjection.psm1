@@ -6,6 +6,7 @@ Import-Module (Join-Path $PSScriptRoot 'WduLifecycleContract.psm1') -Force
 $script:MarkerPrefix = '<!-- grace:wdu-lifecycle-projection:'
 $script:ProjectionSchema = 'grace.wdu.lifecycle-projection/v2'
 $script:Utf8 = [Text.UTF8Encoding]::new($false, $true)
+$script:FailureAfterStagedWritesForTest = $null
 
 function Fail-Projection {
     param([string] $Subject, [string] $Reason)
@@ -174,6 +175,45 @@ function Get-Utf8BomLength {
     return 0
 }
 
+function Resolve-ExistingDirectoryIdentity {
+    param([string] $Path)
+    $directory = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($Path))
+    if (-not $directory.Exists) { Fail-Projection $directory.FullName 'requires an existing directory identity' }
+    $components = [Collections.Generic.Stack[string]]::new()
+    $cursor = $directory
+    while ($null -ne $cursor.Parent) {
+        $components.Push($cursor.Name)
+        $cursor = $cursor.Parent
+    }
+    $resolved = $cursor.FullName
+    while ($components.Count -gt 0) {
+        $candidate = [IO.DirectoryInfo]::new((Join-Path $resolved $components.Pop()))
+        $target = $candidate.ResolveLinkTarget($true)
+        $resolved = if ($null -eq $target) { $candidate.FullName } else { $target.FullName }
+    }
+    return [IO.Path]::GetFullPath($resolved)
+}
+
+function Test-PathIsWithinDirectory {
+    param([string] $Path, [string] $Directory)
+    $separator = [IO.Path]::DirectorySeparatorChar
+    $normalizedDirectory = $Directory.TrimEnd($separator, [IO.Path]::AltDirectorySeparatorChar)
+    return $Path.StartsWith($normalizedDirectory + $separator, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-RenderDestinationIsDisjoint {
+    param([object[]] $ArtifactInput, [string] $Destination)
+    $parent = [IO.Directory]::GetParent($Destination)
+    if ($null -eq $parent -or -not $parent.Exists) { Fail-Projection $Destination 'render destination parent does not exist' }
+    $physicalDestination = Join-Path (Resolve-ExistingDirectoryIdentity $parent.FullName) ([IO.Path]::GetFileName($Destination))
+    foreach ($input in $ArtifactInput) {
+        $inputDirectory = Resolve-ExistingDirectoryIdentity ([IO.Path]::GetDirectoryName($input.Path))
+        if (Test-PathIsWithinDirectory $physicalDestination $inputDirectory) {
+            Fail-Projection $Destination 'render destination must not be within an input artifact directory'
+        }
+    }
+}
+
 function Write-RenderedArtifact {
     param([object] $ArtifactInput, [string] $Destination)
     $bytes = [IO.File]::ReadAllBytes($ArtifactInput.Path)
@@ -233,13 +273,18 @@ function Export-WduLifecycleProjection {
     $inputs = @(Get-PacketInputs $compiled $ArtifactPath)
     $destination = [IO.Path]::GetFullPath($OutputDirectory)
     if (Test-Path -LiteralPath $destination) { Fail-Projection $destination 'render destination already exists' }
+    Assert-RenderDestinationIsDisjoint $inputs $destination
     $parent = [IO.Directory]::GetParent($destination)
-    if ($null -eq $parent -or -not $parent.Exists) { Fail-Projection $destination 'render destination parent does not exist' }
     $staging = Join-Path $parent.FullName ('.' + [IO.Path]::GetFileName($destination) + '.staging-' + [guid]::NewGuid().ToString('N'))
     try {
         [IO.Directory]::CreateDirectory($staging) | Out-Null
+        $stagedWrites = 0
         foreach ($artifactInput in $inputs) {
             Write-RenderedArtifact $artifactInput (Join-Path $staging ($artifactInput.Artifact.Id + '.md'))
+            $stagedWrites++
+            if ($null -ne $script:FailureAfterStagedWritesForTest -and $stagedWrites -ge $script:FailureAfterStagedWritesForTest) {
+                throw 'test-only deterministic failure after staged write'
+            }
         }
         Move-Item -LiteralPath $staging -Destination $destination -ErrorAction Stop
     }

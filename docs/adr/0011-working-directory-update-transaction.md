@@ -92,53 +92,155 @@ The complete requirements, state model, propagation map, and proof contract are 
 The projection below is an existing contextual consumer, not proof that the replacement packet has been published.
 Issue #929 rewrites and compares all fifteen exact projection blocks from the compiler result after PR #930 merges.
 
-<!-- grace:wdu-lifecycle-projection:start -->
+<!-- grace:wdu-lifecycle-projection:adr-0011:start -->
 ```json
 {
-  "schema": "grace.wdu.lifecycle-projection/v1",
+  "schema": "grace.wdu.lifecycle-projection/v2",
   "artifact": "adr-0011",
-  "canonical": "docs/Working Directory Update.md#normative-branch-lifecycle-table",
   "canonicalContentDigest": "ae3a77e28886485b49361d8836f040691e9f99228919cef87fac19b42e989d73",
-  "rowIds": [
-    "WDU-LC-200",
-    "WDU-LC-201",
-    "WDU-LC-202",
-    "WDU-LC-206",
-    "WDU-LC-207",
-    "WDU-LC-208",
-    "WDU-LC-209",
-    "WDU-LC-210",
-    "WDU-LC-212",
-    "WDU-LC-006",
-    "WDU-LC-007",
-    "WDU-LC-010",
-    "WDU-LC-015",
-    "WDU-LC-020",
-    "WDU-LC-023",
-    "WDU-LC-025",
-    "WDU-LC-026",
-    "WDU-LC-028",
-    "WDU-LC-030",
-    "WDU-LC-033",
-    "WDU-LC-035",
-    "WDU-LC-036",
-    "WDU-LC-038",
-    "WDU-LC-100",
-    "WDU-LC-101",
-    "WDU-LC-103",
-    "WDU-LC-110",
-    "WDU-LC-114",
-    "WDU-LC-120",
-    "WDU-LC-123",
-    "WDU-LC-130",
-    "WDU-LC-140",
-    "WDU-LC-143",
-    "WDU-LC-003"
+  "assignmentDigest": "20e329bd3aa4459a01f4ed3c6ec12cf365c86df3538b0323400639b90eeee877",
+  "counts": {
+    "rowCount": 70,
+    "applicabilityKeyCount": 260,
+    "requirementCount": 19,
+    "artifactCount": 15
+  },
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "owner": "#923"
+    },
+    {
+      "id": "REQ-002",
+      "owner": "#869"
+    },
+    {
+      "id": "REQ-003",
+      "owner": "#837"
+    },
+    {
+      "id": "REQ-004",
+      "owner": "#839"
+    },
+    {
+      "id": "REQ-005",
+      "owner": "#869"
+    },
+    {
+      "id": "REQ-006",
+      "owner": "#898"
+    },
+    {
+      "id": "REQ-007",
+      "owner": "#922"
+    },
+    {
+      "id": "REQ-008",
+      "owner": "#922"
+    },
+    {
+      "id": "REQ-009",
+      "owner": "#838"
+    },
+    {
+      "id": "REQ-010",
+      "owner": "#838"
+    },
+    {
+      "id": "REQ-011",
+      "owner": "#871"
+    },
+    {
+      "id": "REQ-012",
+      "owner": "#871"
+    },
+    {
+      "id": "REQ-013",
+      "owner": "#900"
+    },
+    {
+      "id": "REQ-014",
+      "owner": "#921"
+    },
+    {
+      "id": "REQ-015",
+      "owner": "#842"
+    },
+    {
+      "id": "REQ-016",
+      "owner": "#871"
+    },
+    {
+      "id": "REQ-017",
+      "owner": "#846"
+    },
+    {
+      "id": "REQ-018",
+      "owner": "#928"
+    },
+    {
+      "id": "REQ-019",
+      "owner": "#923"
+    }
   ],
-  "proof": "Record the lasting Branch transaction lifecycle and reference canonical rows without copying their order."
+  "artifactIds": [
+    "adr-0011",
+    "epic-835",
+    "issue-842",
+    "issue-843",
+    "issue-846",
+    "issue-869",
+    "issue-898",
+    "issue-928",
+    "issue-921",
+    "issue-922",
+    "issue-923",
+    "issue-900",
+    "issue-901",
+    "issue-871",
+    "issue-872"
+  ],
+  "assignment": {
+    "rowIds": [
+      "WDU-LC-200",
+      "WDU-LC-201",
+      "WDU-LC-202",
+      "WDU-LC-206",
+      "WDU-LC-207",
+      "WDU-LC-208",
+      "WDU-LC-209",
+      "WDU-LC-210",
+      "WDU-LC-212",
+      "WDU-LC-006",
+      "WDU-LC-007",
+      "WDU-LC-010",
+      "WDU-LC-015",
+      "WDU-LC-020",
+      "WDU-LC-023",
+      "WDU-LC-025",
+      "WDU-LC-026",
+      "WDU-LC-028",
+      "WDU-LC-030",
+      "WDU-LC-033",
+      "WDU-LC-035",
+      "WDU-LC-036",
+      "WDU-LC-038",
+      "WDU-LC-100",
+      "WDU-LC-101",
+      "WDU-LC-103",
+      "WDU-LC-110",
+      "WDU-LC-114",
+      "WDU-LC-120",
+      "WDU-LC-123",
+      "WDU-LC-130",
+      "WDU-LC-140",
+      "WDU-LC-143",
+      "WDU-LC-003"
+    ]
+  }
 }
 ```
-<!-- grace:wdu-lifecycle-projection:end -->
+<!-- grace:wdu-lifecycle-projection:adr-0011:end -->
 
 ## Consequences
 

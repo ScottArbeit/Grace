@@ -63,6 +63,20 @@ function Replace-Once {
     return $Text.Remove($index, $Old.Length).Insert($index, $New)
 }
 
+function Set-TestStagedWriteFailure {
+    param([int] $After)
+    & (Get-Module WduLifecycleProjection) {
+        param([int] $Value)
+        $script:FailureAfterStagedWritesForTest = $Value
+    } $After
+}
+
+function Clear-TestStagedWriteFailure {
+    & (Get-Module WduLifecycleProjection) {
+        $script:FailureAfterStagedWritesForTest = $null
+    }
+}
+
 Import-Module $modulePath -Force
 Import-Module $contractModulePath -Force
 $script:Compiled = Read-WduLifecycleContract -Path $canonicalPath
@@ -108,9 +122,9 @@ try {
     Invoke-Case 'rejects malformed, duplicate, reversed, nested, and unknown markers' {
         $mutations = @(
             @{ Old = ':start -->'; New = ':started -->'; Error = 'malformed lifecycle projection marker' },
-            @{ Old = ':start -->'; New = ":start -->`n<!-- grace:wdu-lifecycle-projection:$($script:Compiled.Artifacts[0].Id):start -->"; Error = 'malformed lifecycle projection marker' },
+            @{ Old = ':start -->'; New = ":start -->`n<!-- grace:wdu-lifecycle-projection:$($script:Compiled.Artifacts[0].Id):start -->"; Error = 'nested lifecycle projection markers' },
             @{ Old = ':start -->'; New = ':end -->'; Error = 'reversed end marker' },
-            @{ Old = ':start -->'; New = ':start -->`n<!-- grace:wdu-lifecycle-projection:unknown:start -->`n<!-- grace:wdu-lifecycle-projection:unknown:end -->'; Error = 'nested lifecycle projection markers' }
+            @{ Old = ':start -->'; New = ':start -->`n<!-- grace:wdu-lifecycle-projection:unknown:start -->`n<!-- grace:wdu-lifecycle-projection:unknown:end -->'; Error = "unknown artifact marker 'unknown'" }
         )
         $errors = @()
         foreach ($mutation in $mutations) {
@@ -118,7 +132,11 @@ try {
             $path = $packet.Paths[0]
             Write-TestText $path (Replace-Once ([IO.File]::ReadAllText($path)) $mutation.Old $mutation.New)
             try { Test-WduLifecycleProjection -CanonicalPath $canonicalPath -ArtifactPath $packet.Paths | Out-Null }
-            catch { $errors += $_.Exception.Message; continue }
+            catch {
+                Assert-True $_.Exception.Message.Contains($mutation.Error, [StringComparison]::Ordinal) "marker mutation reports '$($mutation.Error)': $($_.Exception.Message)"
+                $errors += $_.Exception.Message
+                continue
+            }
             throw 'marker mutation unexpectedly passed'
         }
         Assert-True ($errors.Count -eq $mutations.Count) 'all marker mutations fail'
@@ -154,6 +172,39 @@ try {
         $destination = Join-Path $script:TestRoot 'must-not-exist'
         Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonicalPath -ArtifactPath $packet.Paths[0..($packet.Paths.Count - 2)] -OutputDirectory $destination } 'packet is missing required artifact'
         Assert-True (-not (Test-Path -LiteralPath $destination)) 'failed preflight creates no destination'
+    }
+
+    Invoke-Case 'rejects lexical and junction aliases inside an input packet before writes' {
+        $packet = Get-TestPacket 'destination-aliases'
+        $before = Get-Hashes $packet.Paths
+        $lexicalDestination = Join-Path $packet.Directory '.\rendered'
+        Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonicalPath -ArtifactPath $packet.Paths -OutputDirectory $lexicalDestination } 'render destination must not be within an input artifact directory'
+        Assert-True (-not (Test-Path -LiteralPath $lexicalDestination)) 'lexical alias creates no destination'
+
+        $junction = Join-Path $script:TestRoot 'input-packet-junction'
+        New-Item -ItemType Junction -Path $junction -Target $packet.Directory | Out-Null
+        $junctionDestination = Join-Path $junction 'rendered'
+        Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonicalPath -ArtifactPath $packet.Paths -OutputDirectory $junctionDestination } 'render destination must not be within an input artifact directory'
+        Assert-True (-not (Test-Path -LiteralPath $junctionDestination)) 'junction alias creates no destination'
+        Assert-True ((Get-Hashes $packet.Paths) -join '|' -ceq ($before -join '|')) 'alias rejection leaves inputs byte-identical'
+    }
+
+    Invoke-Case 'cleans staged writes after deterministic late failure without changing inputs' {
+        $packet = Get-TestPacket 'late-failure'
+        $before = Get-Hashes $packet.Paths
+        $destination = Join-Path $script:TestRoot 'late-failure-output'
+        Set-TestStagedWriteFailure 1
+        try {
+            Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonicalPath -ArtifactPath $packet.Paths -OutputDirectory $destination } 'test-only deterministic failure after staged write'
+        }
+        finally {
+            Clear-TestStagedWriteFailure
+        }
+        $stagingPattern = '.' + [IO.Path]::GetFileName($destination) + '.staging-*'
+        $staging = @(Get-ChildItem -LiteralPath $script:TestRoot -Directory -Filter $stagingPattern)
+        Assert-True ((Get-Hashes $packet.Paths) -join '|' -ceq ($before -join '|')) 'late failure leaves inputs byte-identical'
+        Assert-True (-not (Test-Path -LiteralPath $destination)) 'late failure creates no final destination'
+        Assert-True ($staging.Count -eq 0) 'late failure removes its staging directory'
     }
 }
 finally {
