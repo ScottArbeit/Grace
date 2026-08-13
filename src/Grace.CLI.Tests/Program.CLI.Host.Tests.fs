@@ -120,6 +120,21 @@ module ProgramCliHostTests =
         Assert.That(exitCode, Is.Not.EqualTo(0))
         assertSingleRedactedCancellation output
 
+    /// Proves a canceled action exception token renders the stable cancellation result without caller cancellation.
+    [<Test>]
+    let ``run classifies a canceled action exception token when the caller token is not canceled`` () =
+        let initializer () = Assert.Fail("Cache status must not initialize execution dependencies.")
+
+        use actionCancellation = new CancellationTokenSource()
+        actionCancellation.Cancel()
+
+        let handler (_: CancellationToken) : Task<int> = Task.FromException<int>(OperationCanceledException(actionCancellation.Token))
+
+        let exitCode, output = runWithCapturedOutput (dependencies initializer handler) [| "cache"; "status" |] CancellationToken.None
+
+        Assert.That(exitCode, Is.Not.EqualTo(0))
+        assertSingleRedactedCancellation output
+
     /// Proves a rendered missing-credential result remains the only JSON output when no caller cancellation occurred.
     [<Test>]
     let ``run preserves the missing credential result without a second cancellation document`` () =
@@ -188,6 +203,45 @@ module ProgramCliHostTests =
             let exitCode = invocation.GetAwaiter().GetResult()
             Assert.That(exitCode, Is.Not.EqualTo(0))
             assertSingleRedactedCancellation (writer.ToString())
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
+    /// Proves a tokenless control exception keeps its rendered domain result when the caller cancels concurrently.
+    [<Test>]
+    let ``run preserves a rendered tokenless domain result when the caller cancels during cache status`` () =
+        let entered = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        let release = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        let initializer () = Assert.Fail("Cache status must not initialize execution dependencies.")
+
+        let handler (_: CancellationToken) : Task<int> =
+            task {
+                entered.TrySetResult() |> ignore
+                do! release.Task
+                Common.writeJsonErrorStdout (GraceError.Create "The domain result was already rendered." "domain-control")
+                return raise (OperationCanceledException("Domain control flow after rendering."))
+            }
+
+        use cancellation = new CancellationTokenSource()
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+
+            let invocation = GraceCommand.run (dependencies initializer handler) [| "cache"; "status" |] cancellation.Token
+            entered.Task.GetAwaiter().GetResult()
+            cancellation.Cancel()
+            release.TrySetResult() |> ignore
+
+            let exitCode = invocation.GetAwaiter().GetResult()
+            let output = writer.ToString()
+
+            Assert.That(exitCode, Is.Not.EqualTo(0))
+            Assert.That(Regex.Matches(output, "\\\"Error\\\"").Count, Is.EqualTo(1))
+            Assert.That(output, Does.Contain("The domain result was already rendered."))
+            Assert.That(output, Does.Not.Contain("The command was canceled."))
         finally
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
@@ -269,5 +323,37 @@ module ProgramCliHostTests =
 
         let exitCode, _ = runWithCapturedOutput (dependencies initializer handler) args CancellationToken.None
         Assert.That(exitCode, Is.Not.EqualTo(0))
+        Assert.That(initializerCalls, Is.EqualTo(0))
+        Assert.That(handlerCalls, Is.EqualTo(0))
+
+    /// Proves execution selection prevents both introspection documents without activating execution dependencies.
+    [<TestCase("--schema")>]
+    [<TestCase("--examples")>]
+    let ``cache status introspection selector incompatibility emits one error and no document`` introspectionOption =
+        let mutable initializerCalls = 0
+        let mutable handlerCalls = 0
+
+        let initializer () = initializerCalls <- initializerCalls + 1
+
+        let handler _ =
+            handlerCalls <- handlerCalls + 1
+            Task.FromResult(0)
+
+        let exitCode, output =
+            runWithCapturedOutput
+                (dependencies initializer handler)
+                [|
+                    "cache"
+                    "status"
+                    introspectionOption
+                    "--select"
+                    "Enrollment"
+                |]
+                CancellationToken.None
+
+        Assert.That(exitCode, Is.Not.EqualTo(0))
+        Assert.That(Regex.Matches(output, "\\\"Error\\\"").Count, Is.EqualTo(1))
+        Assert.That(output, Does.Contain("--select cannot be used with --schema or --examples."))
+        Assert.That(output, Does.Not.Contain("Registry"))
         Assert.That(initializerCalls, Is.EqualTo(0))
         Assert.That(handlerCalls, Is.EqualTo(0))

@@ -1568,7 +1568,7 @@ module GraceCommand =
                     return returnValue
                 with
                 | IntrospectionExit exitCode -> return exitCode
-                | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
+                | :? OperationCanceledException as ex when ex.CancellationToken.IsCancellationRequested ->
                     let correlationId =
                         if isNull parseResult then
                             generateCorrelationId ()
