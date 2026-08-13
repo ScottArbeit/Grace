@@ -77,8 +77,10 @@ artifact retrieval.
 | [Issue #622](https://github.com/ScottArbeit/Grace/issues/622) and [issue #724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned for Product V1. | Neither is a future implementation container. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | R0 static-contract pruning is complete. | Static cache identity is the current source contract. |
 | [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower R1A and R1B sequence. | Do not resume its mixed scope. |
-| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is the current implementation leaf. | It owns protected local identity and its focused proof. |
-| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) | R1B follows R1A with repository-independent enrollment and status commands. | It is not implemented by this leaf. |
+| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is complete. | It owns the protected local identity foundation and its focused proof. |
+| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | Superseded mixed status and enrollment evidence. | Do not reuse behavioral commits wholesale. |
+| [Issue #904](https://github.com/ScottArbeit/Grace/issues/904) | R1 status is a pure local, redacted, read-only command. | It reports ready or non-ready protected identity facts without repository, credential, server, or mutation work. |
+| [Issue #905](https://github.com/ScottArbeit/Grace/issues/905) | R1 enrollment is the separate one-shot manual enrollment leaf. | It owns credentials, one server request, staging, and cleanup. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | R2 registration liveness remains planned. | It follows the R1 sequence. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. `WorkingDirectoryUpdate.run` is not available to this epic until #835 merges to `main` and Epic #597 is refreshed. | Hard sequencing gate for #628 to #630 and #634. |
 | `src/Grace.Types/MaterializationExecutionMode.Types.fs` (`MaterializationExecutionMode`) | Defines `Direct`, `CachePreferred`, and `CacheRequired`. | Existing public execution-mode contract. |
@@ -109,8 +111,9 @@ The accepted deployment and risk boundary is deliberately narrow:
   directory.
 - One static cache service identity lasts until a current administrator revokes it and the host is manually
   re-enrolled.
-- A missed or ambiguous enrollment result does not start automatic reconciliation. It follows the R1 proof gate and,
-  only if that gate passes, allows fresh manual re-enrollment with the stated inactive-orphan risk.
+- A missed or ambiguous enrollment result does not start automatic reconciliation. An accepted but inactive server
+  enrollment is not selectable, fresh manual enrollment remains allowed, server expiration owns eventual cleanup, and
+  Grace Cache adds no retry or enrollment reconciliation.
 - Product V1 does not promise a platform-neutral keystore, high availability, disaster recovery, a defense against a
   hostile local root user, or automatic recovery from every local corruption event.
 
@@ -126,7 +129,7 @@ or unsupported-platform work merely because those capabilities could be useful l
 | DEC-GC-001 | Quality level | product | accepted | Product V1 governs every leaf and final release candidate. | Owner decision; each leaf declares the profile and proof. |
 | DEC-GC-002 | Cache service identity | domain | accepted | One static P-256 identity; no automatic or startup rotation. | R0 removes old rotation contract; R1 creates one static identity. |
 | DEC-GC-003 | Key custody promise | scope | accepted | OS-protected private storage and no Grace export surface; no hardware-backed claim. | R1 host and redaction proof. |
-| DEC-GC-004 | Enrollment ambiguity | proof | accepted with gate | No automatic reconciliation. R1 may accept an inactive orphan only after proving it cannot be selected or block manual re-enrollment. | R1 stops for owner direction if the proof fails. |
+| DEC-GC-004 | Enrollment ambiguity | proof | accepted | No automatic reconciliation. An inactive accepted enrollment is not selectable, does not block fresh manual enrollment, and expires under the server rule. | #886 completed the server and protected-state proof; #905 owns manual enrollment. |
 | DEC-GC-005 | Registration liveness | architecture | accepted | One scheduler, server-issued liveness times, bounded retry, and fail-closed expiration or definitive rejection. | R2 transition and fake-clock proof. |
 | DEC-GC-006 | Artifact-grant keys | domain | accepted | Keep existing artifact-grant validation-key rollover distinct from cache service identity. | R0 inventory must not remove grant-key behavior. |
 | DEC-GC-007 | Local mutation | architecture | accepted | Later materialization prepares exact content and calls `WorkingDirectoryUpdate.run`. | #835 merge and epic refresh gate before affected leaves. |
@@ -160,7 +163,7 @@ or unsupported-platform work merely because those capabilities could be useful l
 | Artifact-grant validation key | A public Grace Server signing key used to verify artifact grants. Its rollover is separate from cache service identity. |
 | Eligible cache | A cache selected by Grace Server because its registration is unrevoked, unexpired, healthy, and assigned to the resolved repository boundary. |
 | Ready configuration | Atomically committed local machine configuration that references one locally usable key and a server-accepted identity. |
-| Inactive orphan enrollment | A possible server enrollment left after an ambiguous request result before ready configuration commits. It is accepted only after R1 proves it is not selectable and cannot prevent fresh manual re-enrollment. |
+| Inactive orphan enrollment | A possible server enrollment left after an ambiguous request result before ready configuration commits. It is unselectable, does not prevent fresh manual enrollment, and expires under the server rule. |
 | Complete artifact | Locally staged and validated bytes plus committed metadata for every full-root artifact required by one plan. Local presence alone is neither user permission nor cache eligibility. |
 
 The identity tuple for one plan is the requester, repository, selector kind and selector value, resolved target-root
@@ -186,10 +189,10 @@ proof before every serve, and validate exact prepared content before making late
 4. On success, it atomically persists ready configuration that refers to that key. `status` then reports enrolled with
    redacted identifiers and state.
 5. On definitive rejection, it deletes the staged key and remains not enrolled.
-6. On an ambiguous response or a crash before ready configuration commits, the next command removes an unreferenced
-   staged key and reports not enrolled. It does not retry or reconcile automatically.
-7. Before this path is implemented, R1 must prove the inactive-orphan condition in DEC-GC-004. Failure returns a small
-   owner decision packet; it does not add a generalized reconciliation protocol.
+6. On an ambiguous response or a crash before ready configuration commits, manual enrollment follows its explicit
+   cleanup rule and reports not enrolled. It does not retry or reconcile automatically.
+7. The completed DEC-GC-004 disposition permits fresh manual enrollment because an inactive accepted enrollment is not
+   selectable, cannot block it, and expires under the server rule.
 8. Missing, corrupt, or mismatched configured key material fails closed. The recovery is server revocation, local reset,
    and manual re-enrollment.
 
@@ -263,15 +266,12 @@ create another local working-tree mutation, SQLite-completion, Branch/Watch-fina
 - **Invariant:** V1 exposes no automatic or startup identity rotation contract.
 - **Forbidden shortcut:** reporting enrolled before both server acceptance and local ready-config commit.
 
-### GC-REQ-003 - Enrollment ambiguity gate
+### GC-REQ-003 - Enrollment ambiguity disposition
 
-- **Trigger:** an R1 Tier-2 investigation before enrollment code starts.
-- **Preconditions:** inspect current server enrollment uniqueness, registration selection, revocation/list options, and
-  relevant tests on the leaf's current head.
-- **Result:** prove that an inactive orphan cannot be selected and cannot block fresh manual re-enrollment; record the
-  concrete paths, symbols, and proof.
-- **Failure:** stop R1 and return for owner direction with the smallest supported alternative.
-- **Invariant:** no implementation assumes orphan safety without this proof.
+- **Trigger:** an ambiguous manual-enrollment outcome.
+- **Result:** an accepted inactive enrollment is not selectable, fresh manual enrollment is allowed, and server
+  expiration owns eventual cleanup.
+- **Invariant:** Grace Cache adds no automatic retry or enrollment reconciliation.
 - **Forbidden shortcut:** adding automatic reconciliation, background lookup, or a new durable recovery workflow.
 
 ### GC-REQ-004 - One bounded liveness scheduler
@@ -424,7 +424,7 @@ to establish the static Product V1 shape.
 | --- | --- | --- | --- |
 | Enrollment validation fails | No server effect; no ready configuration | Clear rejected input; no enrolled status | Validation-before-effect |
 | Enrollment definitively rejected | Staged key removed; no ready configuration | Not enrolled | Rejection and cleanup |
-| Enrollment response lost or crash before commit | Staged key cleaned next command; inactive-orphan handling only after R1 proof gate | Not enrolled; manual re-enrollment if gate passed | Ambiguous and crash path |
+| Enrollment response lost or crash before commit | #905 applies its explicit invocation-owned cleanup; inactive server enrollment is unselectable and expires | Not enrolled; fresh manual enrollment is allowed | Ambiguous and crash path |
 | Ready-config atomic write fails | No ready configuration; staged material follows defined cleanup | Not enrolled or recovery-required, never enrolled | Atomic write failure |
 | Startup registration fails | Listener stops; no ready publication | Nonzero exit | Startup failure |
 | Temporary refresh fails | One bounded retry, never after expiry | Retrying before expiry | Fake-clock and retry cap |
@@ -454,8 +454,9 @@ to establish the static Product V1 shape.
 | --- | --- | --- |
 | Immutable plans and mode contract | Materialization types, server resolver, OpenAPI, SDK/CLI projections | Positive root resolution; rejected whole-file/manifest/block cache requests; mode serialization; CacheRequired no-fallback; generated freshness. |
 | Static identity pruning | Cache types, actor state, server routes, OpenAPI, SDKs, docs, test fixtures | Inventory finds no active service-identity rotation/candidate route, field, setting, state, or command; grant-key rollover remains proven. |
-| R1 enrollment | Cache CLI/host boundary, protected key store, local config | Success; validation-before-effect; rejection; lost response; crash cleanup; atomic write failure; key mismatch; redaction; unsupported-profile rejection. |
-| R1 ambiguity gate | Current server enrollment, selection, revoke/list declarations and tests | Concrete proof that inactive orphan is unselectable and fresh manual re-enrollment cannot be blocked; otherwise owner decision packet. |
+| R1 status (#904) | Cache CLI, protected key inspection, command-output contract | Pure local redacted missing/staging/invalid/inaccessible/ready output; no network, mutation, repository state, or history. |
+| R1 enrollment (#905) | Cache CLI, protected key store, local config | Success; validation-before-effect; rejection; lost response; cleanup; atomic write failure; key mismatch; redaction; unsupported-profile rejection. |
+| R1 ambiguity disposition | Current server enrollment, selection, and expiry declarations | Completed proof that inactive enrollment is unselectable, fresh manual enrollment remains allowed, and server expiration owns eventual cleanup. |
 | R2 liveness | Cache run host, registration route/actor, injectable clock/timer | Startup; exact endpoint; guard conflict; signed Unhealthy refresh; temporary retry; `Retry-After` cap; revocation; expiry; shutdown race; restart; server selection. #857 does not publish Healthy. |
 | Artifact store and serving | SQLite/filesystem metadata, read-through fetcher, artifact route | Authorized hit; miss-fill-serve-hit; hash/size mismatch; partial staging; grant/proof rejection; grant-key rollover; restart completeness. |
 | Working Directory Update | Cache execution path and #835 public local-update seam | Exact prepared content invokes `WorkingDirectoryUpdate.run`; no alternate local completion path. |
@@ -478,14 +479,14 @@ proof of a safe cache path.
 | --- | --- | --- | --- | --- | --- | --- |
 | GC-REQ-001 | Server-resolved immutable full-root plan | required | Materialization types/server/OpenAPI | Plan and resolver tests | Existing plan leaves | Cache must not become a resolver. |
 | GC-REQ-002 | One static cache service identity | required | R0/R1A contracts and host config | Enrollment, config, redaction tests | #855, #886 | Local custody is OS-protected, not hardware-backed. |
-| GC-REQ-003 | Inactive-orphan proof before R1A code | required gate | Current registration server/actor behavior | Tier-2 evidence packet | #886 | Failing proof returns to owner. |
+| GC-REQ-003 | Inactive-orphan disposition | required | Current registration server/actor behavior | #886 proof and #905 enrollment tests | #886, #905 | No automatic retry or reconciliation. |
 | GC-REQ-004 | One bounded registration scheduler | required | R2 cache host and registration contract | Fake-clock transition tests | #857 | Exact response classes/time values require Tier-2 inventory. |
 | GC-REQ-005 | Current eligible-cache selection | required | Server selection and registration actor | Selection/revocation/expiry tests | Existing and R2 | Snapshot is limited to plan issuance. |
 | GC-REQ-006 | Authorized complete read-through | required | Store, artifact route, grant verifier | Miss-fill-serve-hit and negative integrity proof | #625 to #627 | Partial bytes must never become a hit. |
 | GC-REQ-007 | Three execution-mode behaviors | required | Plan resolver, SDK, CLI, cache executor | Positive/negative mode and generated-contract proof | #625 to #630 | CacheRequired false fallback is high risk. |
 | GC-REQ-008 | Working Directory Update sequence | required | Later local materialization | Cross-epic execution proof | #628 to #630 | Blocked until #835 merge and epic refresh. |
-| GC-REQ-009 | Truthful status and diagnostics | required | R1B/R2 commands and process state | Status, redaction, expiry tests | #887, #857 | Must not report stale readiness. |
-| GC-REQ-010 | Reset and redaction | required | Local config/key store and output | Failure and output scans | #887 | Manual recovery is intentional. |
+| GC-REQ-009 | Truthful status and diagnostics | required | #904/R2 commands and process state | Status, redaction, expiry tests | #904, #857 | Must not report stale readiness. |
+| GC-REQ-010 | Manual recovery and redaction | required | #905 local config/key store and output | Failure and output scans | #905 | Manual recovery is intentional. |
 | GC-REQ-011 | Static contract pruning | required | Shared types, routes, OpenAPI, SDK, docs | Inventory and freshness checks | #855 | Must retain artifact-grant key rollover. |
 | GC-DEF-001 | Automatic identity rotation | deferred | None | Absence scan | Future Hardened epic | Do not leave a partial surface. |
 | GC-DEF-002 | Prefetch and scheduled retention | deferred | None | Absence scan | Future work | Read-through remains the only correctness path. |
@@ -515,15 +516,16 @@ without rotation, prefetch, or scheduled retention.
 
 1. **R0 static-contract pruning (#855)**: Inventory every cache service-identity rotation/candidate surface, remove it or
    rebaseline it to static identity, regenerate contracts, and prove artifact-grant key rollover remains separate.
-2. **R1A static enrollment identity (#886)**: Starts after R0 and its Tier-2 orphan/re-enrollment proof gate pass.
-3. **R1B enrollment and status commands (#887)**: Follows R1A and owns no R1A protected-identity detail.
-4. **R2 registration liveness (#857)**: Starts after R1 and its Tier-2 server timestamp, response-class, selection, and clock
+2. **R1A static enrollment identity (#886)**: Complete, including the inactive-orphan/manual-re-enrollment proof.
+3. **R1 status (#904)**: Pure local protected-identity status, schema/examples, and canonical-document reconciliation.
+4. **R1 enrollment (#905)**: Follows #904 and owns one-shot manual enrollment without retry or reconciliation.
+5. **R2 registration liveness (#857)**: Starts after R1 and its Tier-2 server timestamp, response-class, selection, and clock
    table are complete. Its signed refreshes remain Unhealthy; it does not publish Healthy.
-5. **Runtime/artifact serving (#625)**: May proceed independently where write sets do not overlap with #835; it owns storage,
+6. **Runtime/artifact serving (#625)**: May proceed independently where write sets do not overlap with #835; it owns storage,
    grant verification, the miss-fill-serve-hit tracer, and Healthy publication only after serving readiness is proven.
-6. **Cache-aware local execution and Watch**: #628 to #630 and #634 do not start until #835 merges to `main` and the
+7. **Cache-aware local execution and Watch**: #628 to #630 and #634 do not start until #835 merges to `main` and the
    Epic #597 branch refreshes from it.
-7. **Final audit and release candidate**: Classify every row in `docs/Grace Cache implementation audit.md`, validate the
+8. **Final audit and release candidate**: Classify every row in `docs/Grace Cache implementation audit.md`, validate the
    current head, complete fresh review, and request Scott's explicit final merge approval.
 
 Shared generated contracts, cache registration types, server route wiring, and later local materialization files are
@@ -534,8 +536,8 @@ high-conflict surfaces. Parallel work requires both independent user behavior an
 - **R0:** Tier-2 static inventory covers DTOs, actor state/events, routes, CLI settings/status, local configuration,
   OpenAPI/SDK, documentation, tests, serializers, AOT roots, and command catalogs. It distinguishes cache service
   identity from artifact-grant validation keys.
-- **R1:** Before code, prove the inactive-orphan condition in GC-REQ-003 from current server selection and enrollment
-  behavior. An orphan that can be selected or permanently block manual re-enrollment stops the leaf for owner direction.
+- **R1:** The completed GC-REQ-003 disposition is fixed: inactive accepted enrollment is not selectable, fresh manual
+  enrollment remains allowed, server expiration owns eventual cleanup, and Grace Cache adds no retry or reconciliation.
 - **R2:** Before code, produce the exact current registration response, timestamp, revocation/access, selection,
   capability, and clock transition table. It names one bounded retry schedule and its expiry cap.
 - **All leaves:** Declare owned paths, forbidden paths, state/time model where needed, propagation dispositions, focused
@@ -562,10 +564,10 @@ The specification is Plan-ready for implementation planning because Product V1 s
 deferred capabilities, identity model, liveness shape, failure posture, propagation inventory, proof seams, tracer,
 sequencing, and owner interruption rules are explicit. The recovery topology may now compile into focused issue plans.
 
-This verdict does not make R0, R1, R2, or later semantic work ready to code. The portable specification contract says
-Plan-ready supports implementation planning, while `dev-process` requires each issue to complete Tier-2 research and
-the issue-level Implementation Readiness Gate. The R1 inactive-orphan proof and R2 exact liveness table are intentionally
-leaf-level gates with defined stop outcomes, not hidden assumptions in this document.
+This verdict does not make later semantic work ready to code. The portable specification contract says Plan-ready
+supports implementation planning, while `dev-process` requires each issue to complete Tier-2 research and the
+issue-level Implementation Readiness Gate. The R1 inactive-orphan disposition is complete; the R2 exact liveness table
+remains a leaf-level gate with a defined stop outcome.
 
 ### Passed criteria
 
@@ -579,8 +581,8 @@ leaf-level gates with defined stop outcomes, not hidden assumptions in this docu
 
 - The requested project specification profile is absent at the required starting commit. Its absence is recorded for
   later repository restoration; this document does not infer missing profile rules.
-- R1 has no current proof that inactive orphan enrollment is unselectable and does not block manual re-enrollment. This
-  is a stop condition before R1 code, not an accepted behavior claim.
+- The completed R1 disposition relies on server expiration for eventual inactive-enrollment cleanup; Grace Cache does
+  not retry or reconcile it automatically.
 - R2 still needs exact current server liveness response classes, timestamps, and selection timing on its branch head.
 - Cache host, SQLite/filesystem implementation, artifact route execution, and the local Working Directory Update seam
   do not exist on this epic head. They are planned work, not present behavior.
@@ -591,7 +593,8 @@ leaf-level gates with defined stop outcomes, not hidden assumptions in this docu
 
 Return to the owner before expanding scope when:
 
-- R1's current-contract proof shows an inactive orphan can become selectable or block fresh manual re-enrollment.
+- A future change that makes an inactive accepted enrollment selectable or blocks fresh manual enrollment violates the
+  completed R1 invariant and requires an owner decision before changing the contract.
 - R0 shows that pruning rotation changes the server source-of-truth model, needs a new durable object/state machine, or
   reveals a real deployed compatibility obligation.
 - R2 needs a second scheduler/state machine, durable recovery workflow, new server source of truth, or generalized

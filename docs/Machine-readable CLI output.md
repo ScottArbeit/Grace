@@ -24,6 +24,8 @@ grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace --output Json cache status
+grace cache status --schema
 ```
 
 bash / zsh:
@@ -34,6 +36,8 @@ grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace --output Json cache status
+grace cache status --schema
 ```
 
 ## Output Envelopes
@@ -129,8 +133,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `206`
-- JSON-ready routed commands: `185`
+- Total leaf commands: `207`
+- JSON-ready routed commands: `186`
 - Intentionally human-only commands: `1`
 - Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`
@@ -173,6 +177,11 @@ starting the watcher.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
+
+`cache status` is also JSON-ready. It is repository-independent and reads only protected local Cache identity state. Its
+closed `oneOf` schema emits `Class`, `Enrollment`, and `Key` for every state; only an enrolled ready state includes
+`CacheId`, `Endpoint`, `BoundaryKind`, and `RepositoryCount`. The command performs no credential lookup, server request,
+repair, cleanup, or local mutation.
 
 ## Agent Recipes
 

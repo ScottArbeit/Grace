@@ -881,6 +881,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(Doctor.Build)
+        rootCommand.Subcommands.Add(CacheCommand.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)
@@ -1016,6 +1017,19 @@ module GraceCommand =
             if parseResult.CommandResult.Parent.GetValue("config") then true else false
         else
             false
+
+    /// Checks whether the parsed command is the pure local Cache status leaf.
+    let isGraceCacheStatus (parseResult: ParseResult) =
+        if isNull parseResult then
+            false
+        else
+            let commands =
+                Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
+                |> Seq.map (fun command -> command.Name)
+                |> Set.ofSeq
+
+            Set.contains "cache" commands
+            && Set.contains "status" commands
 
     /// Models feedback section values passed between the parser and program handlers.
     type FeedbackSection(action: HelpAction) =
@@ -1156,17 +1170,18 @@ module GraceCommand =
 
             try
                 try
-                    Auth.configureSdkAuth ()
-                    Services.configureSdkClientIdentity ()
-                    Services.resetInvocationCorrelationId ()
-                    Common.resetLifecycleWarningSuppression ()
-
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
                     let argvToParse = if args.Length = 0 then [| helpOptions[0] |] else argvNormalized
 
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
+
+                    if not (parseResult |> isGraceCacheStatus) then
+                        Auth.configureSdkAuth ()
+                        Services.configureSdkClientIdentity ()
+                        Services.resetInvocationCorrelationId ()
+                        Common.resetLifecycleWarningSuppression ()
 
                     match introspectionRequestFromTokens argvToParse with
                     | Some (Ok kind) ->
@@ -1202,7 +1217,10 @@ module GraceCommand =
                                 raise (IntrospectionExit returnValue)
                             | None -> ()
 
-                        if not (parseResult |> isGraceDoctor) then
+                        if
+                            not (parseResult |> isGraceDoctor)
+                            && not (parseResult |> isGraceCacheStatus)
+                        then
                             LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
@@ -1373,6 +1391,9 @@ module GraceCommand =
 
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
+                    else if parseResult |> isGraceCacheStatus then
+                        let! invokedReturnValue = parseResult.InvokeAsync()
+                        returnValue <- invokedReturnValue
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
@@ -1526,6 +1547,7 @@ module GraceCommand =
                 if
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
+                    && not (parseResult |> isGraceCacheStatus)
                 then
                     HistoryStorage.tryRecordInvocation
                         {

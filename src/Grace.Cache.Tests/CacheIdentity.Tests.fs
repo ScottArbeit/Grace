@@ -456,6 +456,45 @@ type CacheIdentityTests() =
 
             withRestoredMode registration UnixFileMode.UserWrite (fun () -> requireInspection CacheIdentityInspection.Inaccessible (CacheIdentity.inspect root)))
 
+    /// Verifies status publishes only the approved redacted facts for each locally observed identity state.
+    [<Test>]
+    member _.``status projects missing staging ready invalid and inaccessible identity states``() =
+        withLinuxRoot (fun root ->
+            let missing = CacheIdentity.status root
+
+            Assert.That(missing.Enrollment, Is.EqualTo("notEnrolled"))
+            Assert.That(missing.Key, Is.EqualTo("missing"))
+            Assert.That(missing.CacheId, Is.EqualTo(None))
+
+            CacheIdentity.createAttempt root
+            |> requireOk
+            |> ignore
+
+            let staging = CacheIdentity.status root
+
+            Assert.That(staging.Enrollment, Is.EqualTo("notEnrolled"))
+            Assert.That(staging.Key, Is.EqualTo("available"))
+            Assert.That(staging.CacheId, Is.EqualTo(None))
+
+            CacheIdentity.discardAttempt root
+            readyIdentity root |> ignore
+            let ready = CacheIdentity.status root
+
+            Assert.That(ready.Enrollment, Is.EqualTo("enrolled"))
+            Assert.That(ready.Key, Is.EqualTo("available"))
+            Assert.That(ready.CacheId.IsSome, Is.True)
+            Assert.That(ready.Endpoint, Is.EqualTo(Some "https://cache.example.test"))
+            Assert.That(ready.BoundaryKind, Is.EqualTo(Some "Organization"))
+            Assert.That(ready.RepositoryCount, Is.EqualTo(Some 2))
+
+            let identityPath = Path.Combine(root, "ready", "identity.pk8")
+
+            withRestoredMode identityPath (privateMode ||| UnixFileMode.OtherRead) (fun () ->
+                let invalid = CacheIdentity.status root
+                Assert.That(invalid.Enrollment, Is.EqualTo("invalid"))
+                Assert.That(invalid.Key, Is.EqualTo("invalid"))
+                Assert.That(invalid.CacheId, Is.EqualTo(None))))
+
     /// Verifies discard has no cancellation/error channel and removes only the fixed attempt marker.
     [<Test>]
     member _.``discardAttempt removes staging without changing ready state``() =

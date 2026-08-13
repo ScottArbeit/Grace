@@ -42,8 +42,10 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0 static-contract pruning. | Required predecessor completed. |
 | [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded by the narrower #886 and #887 R1 sequence. | Do not resume its mixed server, command, and status scope. |
-| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | R1A static enrollment identity is implemented on the current PR head; focused proof and current-head Linux validation remain required before merge. | Owns only static enrollment state, protected local identity, and their focused proof. |
-| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) | Open R1B follow-on for repository-independent cache enrollment and status commands. | Starts after #886 integrates; owns no R1A implementation detail. |
+| [Issue #886](https://github.com/ScottArbeit/Grace/issues/886) and [PR #888](https://github.com/ScottArbeit/Grace/pull/888) | Complete R1A static enrollment identity foundation. | Owns the completed protected local identity and server selection proof. |
+| [Issue #887](https://github.com/ScottArbeit/Grace/issues/887) and [PR #896](https://github.com/ScottArbeit/Grace/pull/896) | Superseded mixed status/enrollment evidence. | Do not resume or reuse behavioral commits wholesale. |
+| [Issue #904](https://github.com/ScottArbeit/Grace/issues/904) | Active pure local redacted cache status leaf. | Owns status, schema/examples, and canonical-document reconciliation. |
+| [Issue #905](https://github.com/ScottArbeit/Grace/issues/905) | Planned one-shot manual cache enrollment leaf. | Owns credentials, local staging, one server request, and cleanup. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
 
@@ -116,8 +118,9 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 - **Proof:** Actor persistence failure cannot advance authoritative in-memory selection; raw JSON `Health` cannot make
   a new registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without
   mutation; Linux tests restore modified modes before cleanup.
-- **Deferred:** #887 owns HTTP, credentials, command output, accepted/rejected/unknown orchestration, and cleanup calls;
-  #857 owns signed refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
+- **Completed:** #904 owns the pure local redacted status command and its closed output contract.
+- **Deferred:** #905 owns HTTP, credentials, accepted/rejected/unknown orchestration, and cleanup calls; #857 owns signed
+  refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
   R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
 
 ### R2: registration liveness (#857)
