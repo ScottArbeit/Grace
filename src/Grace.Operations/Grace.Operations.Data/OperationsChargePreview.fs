@@ -43,7 +43,7 @@ module OperationsChargePreviewSql =
         """
 SELECT fact.UsageFactId, fact.FactKind, fact.Quantity, fact.ObservedAtUtc,
        assignment.PricingAssignmentId, assignment.PricingPlanId AS AssignedPricingPlanId,
-       plan.PricingPlanId, mapping.BillableUsageKindMappingId, mapping.BillableUsageKind,
+       pricingPlan.PricingPlanId, mapping.BillableUsageKindMappingId, mapping.BillableUsageKind,
        rate.PricingRateId, rate.CurrencyCode, rate.UnitName, rate.UnitQuantity, rate.UnitPriceMicros,
        applicability.EffectiveFromUtc, applicability.EffectiveToUtc
 FROM ops.RawUsageFact AS fact
@@ -64,7 +64,7 @@ OUTER APPLY (
       AND candidate.EffectiveFromUtc <= fact.ObservedAtUtc
       AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc < candidate.EffectiveToUtc)
     ORDER BY candidate.EffectiveFromUtc DESC, candidate.PricingPlanId
-) AS plan
+) AS pricingPlan
 OUTER APPLY (
     SELECT TOP (1) candidate.BillableUsageKindMappingId, candidate.BillableUsageKind,
            candidate.EffectiveFromUtc, candidate.EffectiveToUtc
@@ -77,7 +77,7 @@ OUTER APPLY (
     SELECT TOP (1) candidate.PricingRateId, candidate.CurrencyCode, candidate.UnitName,
            candidate.UnitQuantity, candidate.UnitPriceMicros, candidate.EffectiveFromUtc, candidate.EffectiveToUtc
     FROM ops.PricingRate AS candidate
-    WHERE candidate.PricingPlanId = plan.PricingPlanId
+    WHERE candidate.PricingPlanId = pricingPlan.PricingPlanId
       AND candidate.BillableUsageKind = mapping.BillableUsageKind
       AND candidate.EffectiveFromUtc <= fact.ObservedAtUtc
       AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc < candidate.EffectiveToUtc)
@@ -88,7 +88,7 @@ OUTER APPLY (
            MIN(boundary.EffectiveToUtc) AS EffectiveToUtc
     FROM (VALUES
         (assignment.EffectiveFromUtc, ISNULL(assignment.EffectiveToUtc, @PeriodToUtc)),
-        (plan.EffectiveFromUtc, ISNULL(plan.EffectiveToUtc, @PeriodToUtc)),
+        (pricingPlan.EffectiveFromUtc, ISNULL(pricingPlan.EffectiveToUtc, @PeriodToUtc)),
         (mapping.EffectiveFromUtc, ISNULL(mapping.EffectiveToUtc, @PeriodToUtc)),
         (rate.EffectiveFromUtc, ISNULL(rate.EffectiveToUtc, @PeriodToUtc)),
         (@PeriodFromUtc, @PeriodToUtc)

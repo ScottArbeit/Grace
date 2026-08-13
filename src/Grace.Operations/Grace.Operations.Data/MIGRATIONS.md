@@ -31,6 +31,18 @@ rejection evidence and `Rejected`, which remains blocked until explicit same-pay
 This internal seam does not create a repository-storage producer. #829 owns the first such producer and must append to
 the journal before sending any signal.
 
+## Direct Billing Close Core
+
+`ops.BillingPeriod` holds one deterministic exact owner, organization, repository, and half-open UTC-month period.
+The direct close seam uses the usage journal's exact-scope SQL lock, database UTC, and one transaction to rebuild a
+nonempty final preview, append immutable `ops.Charge` rows, write `ops.BillingPeriodCloseEvidence`, and mark the period
+closed. Charge and evidence rows reject update and delete through SQL triggers. A newly accepted fact for an already
+closed exact period records only one `ops.BillingPeriodLateWork` row keyed by period and fact; correction processing is
+not part of this migration.
+
+An exact scope with no accepted facts remains nonterminal with `ZeroFactCoveragePending`. This migration deliberately
+adds no zero-fact coverage evaluator, candidate discovery query, cursor, timer, or hosted close service.
+
 ## Hot/Cold Raw Payload Archive
 
 Raw payloads stay hot in SQL only for the configured Operations archive retention window. When archive Blob settings
