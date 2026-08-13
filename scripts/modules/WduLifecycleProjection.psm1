@@ -5,7 +5,7 @@ Import-Module (Join-Path $PSScriptRoot 'WduLifecycleContract.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WduLifecycleRawProjection.psm1') -Force
 
 $script:Utf8 = [Text.UTF8Encoding]::new($false, $true)
-$script:MarkerPrefix = '<!-- grace:wdu-lifecycle-projection:'
+$script:MarkerSentinel = 'grace:wdu-lifecycle-projection'
 $script:FailureAfterStagedWritesForTest = $null
 
 function Fail-Packet {
@@ -61,13 +61,13 @@ function Get-MarkerTokens {
         $end = Find-Bytes $Bytes $commentEnd ($start + $commentStart.Length)
         if ($end -lt 0) {
             $partial = $script:Utf8.GetString($Bytes, $start, $Bytes.Length - $start)
-            if ($partial.StartsWith($script:MarkerPrefix, [StringComparison]::OrdinalIgnoreCase)) { Fail-Packet $Subject 'contains malformed lifecycle projection marker' }
+            if ($partial.IndexOf($script:MarkerSentinel, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Fail-Packet $Subject 'contains malformed lifecycle projection marker' }
             break
         }
         $comment = $script:Utf8.GetString($Bytes, $start, $end + $commentEnd.Length - $start)
-        if ($comment.StartsWith($script:MarkerPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            if (-not $comment.StartsWith($script:MarkerPrefix, [StringComparison]::Ordinal)) { Fail-Packet $Subject 'contains case-changed lifecycle projection marker' }
-            if ($comment -match '^<!-- grace:wdu-lifecycle-projection:(start|end) -->$') { Fail-Packet $Subject 'contains generic legacy lifecycle projection marker' }
+        if ($comment.IndexOf($script:MarkerSentinel, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            if ($comment -cmatch '^<!-- grace:wdu-lifecycle-projection:(start|end) -->$') { Fail-Packet $Subject 'contains generic legacy lifecycle projection marker' }
+            if ($comment -match '^<!-- grace:wdu-lifecycle-projection:(start|end) -->$') { Fail-Packet $Subject 'contains case-changed lifecycle projection marker' }
             if ($comment -cmatch '^<!-- grace:wdu-lifecycle-projection:([a-z0-9-]+):(start|end) -->$') {
                 $tokens.Add([pscustomobject]@{ Artifact = $Matches[1]; Kind = $Matches[2]; Start = $start; End = $end + $commentEnd.Length })
             }

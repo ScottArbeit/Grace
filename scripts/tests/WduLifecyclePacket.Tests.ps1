@@ -41,6 +41,12 @@ try {
     Invoke-Case 'renders exactly 15 declared packet files' { Assert-True ($renderedFiles.Count -eq 15) 'render must produce 15 files' }
     Invoke-Case 'preserves every source input hash after render' { $after = Get-Hashes @(Get-ChildItem -LiteralPath $seed -File | Select-Object -ExpandProperty FullName); Assert-True (($after -join '|') -ceq ($before -join '|')) 'source hashes change' }
     Invoke-Case 'checks every rendered payload exactly' { Assert-True (@(Test-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $rendered).Count -eq 15) 'exact packet result count' }
+    Invoke-Case 'check mode retains complete membership and input hashes' {
+        $beforeCheck = Get-Hashes @(Get-ChildItem -LiteralPath $rendered -File | Sort-Object Name | Select-Object -ExpandProperty FullName)
+        $checkedPacket = @(Test-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $rendered)
+        $afterCheck = Get-Hashes @(Get-ChildItem -LiteralPath $rendered -File | Sort-Object Name | Select-Object -ExpandProperty FullName)
+        Assert-True ($checkedPacket.Count -eq $compiled.Artifacts.Count) 'check membership count'; Assert-True (($afterCheck -join '|') -ceq ($beforeCheck -join '|')) 'check mode changes input hashes'
+    }
     Invoke-Case 'rejects an existing destination before staging' { Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $seed -OutputDirectory $rendered } 'render destination already exists' }
 
     foreach ($artifact in $compiled.Artifacts) {
@@ -94,6 +100,32 @@ try {
         }
     }
 
+    $validPairPlusMalformedCases = @(
+        @{ Name = 'extra opener whitespace'; Comment = '<!--  grace:wdu-lifecycle-projection:adr-0011:start -->'; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'missing opener whitespace'; Comment = '<!--grace:wdu-lifecycle-projection:adr-0011:start -->'; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'whitespace before artifact delimiter'; Comment = '<!-- grace:wdu-lifecycle-projection :adr-0011:start -->'; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'whitespace before kind delimiter'; Comment = '<!-- grace:wdu-lifecycle-projection:adr-0011 :start -->'; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'whitespace after kind delimiter'; Comment = '<!-- grace:wdu-lifecycle-projection:adr-0011: start -->'; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'tab whitespace'; Comment = "<!-- grace:wdu-lifecycle-projection:`tadr-0011:start -->"; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'newline whitespace'; Comment = "<!-- grace:wdu-lifecycle-projection:`nadr-0011:start -->"; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'case-changed sentinel'; Comment = '<!-- Grace:Wdu-Lifecycle-Projection:adr-0011:start -->'; Reason = 'contains case-changed lifecycle projection marker' },
+        @{ Name = 'generic legacy evidence'; Comment = '<!-- grace:wdu-lifecycle-projection:start -->'; Reason = 'contains generic legacy lifecycle projection marker' },
+        @{ Name = 'malformed kind'; Comment = '<!-- grace:wdu-lifecycle-projection:adr-0011:middle -->'; Reason = 'contains malformed lifecycle projection marker' },
+        @{ Name = 'malformed artifact'; Comment = '<!-- grace:wdu-lifecycle-projection:ADR_0011:start -->'; Reason = 'contains malformed lifecycle projection marker' }
+    )
+    foreach ($case in $validPairPlusMalformedCases) {
+        Invoke-Case "rejects valid pair plus $($case.Name)" {
+            $packet = Copy-Packet $seed ('sentinel-' + $case.Name.Replace(' ', '-')); $path = Join-Path $packet 'adr-0011.md'
+            [IO.File]::WriteAllText($path, ([IO.File]::ReadAllText($path) + "`n$($case.Comment)"), [Text.UTF8Encoding]::new($false))
+            Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $packet -OutputDirectory (Join-Path $testRoot ('out-sentinel-' + $case.Name.Replace(' ', '-'))) } $case.Reason
+        }
+    }
+    Invoke-Case 'accepts ordinary unrelated HTML comments beside a valid pair' {
+        $packet = Copy-Packet $seed 'ordinary-comment'; $path = Join-Path $packet 'adr-0011.md'
+        [IO.File]::WriteAllText($path, ([IO.File]::ReadAllText($path) + "`n<!-- ordinary human comment -->"), [Text.UTF8Encoding]::new($false))
+        Export-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $packet -OutputDirectory (Join-Path $testRoot 'out-ordinary-comment') | Out-Null
+    }
+
     foreach ($case in @(
         @{ Name = 'missing packet member'; Act = { param($packet) [IO.File]::Delete((Join-Path $packet 'adr-0011.md')) }; Reason = 'must contain exactly 15 packet members' },
         @{ Name = 'extra non-Markdown member'; Act = { param($packet) [IO.File]::WriteAllText((Join-Path $packet 'extra.txt'), 'unexpected', [Text.UTF8Encoding]::new($false)) }; Reason = 'must contain exactly 15 packet members' },
@@ -116,7 +148,8 @@ try {
 
     Invoke-Case 'fails after staged writes without a final output or staging residue' {
         $module = Get-Module WduLifecycleProjection; & $module { $script:FailureAfterStagedWritesForTest = 2 }
-        $failed = Join-Path $testRoot 'failed'; Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $seed -OutputDirectory $failed } 'test-only deterministic failure'
+        $failed = Join-Path $testRoot 'failed'; $beforeFailure = Get-Hashes @(Get-ChildItem -LiteralPath $seed -File | Select-Object -ExpandProperty FullName); Assert-Fails { Export-WduLifecycleProjection -CanonicalPath $canonical -PacketDirectory $seed -OutputDirectory $failed } 'test-only deterministic failure'
+        $afterFailure = Get-Hashes @(Get-ChildItem -LiteralPath $seed -File | Select-Object -ExpandProperty FullName); Assert-True (($afterFailure -join '|') -ceq ($beforeFailure -join '|')) 'source hashes change after staged failure'
         Assert-True (-not (Test-Path -LiteralPath $failed)) 'final output exists'; Assert-True (@(Get-ChildItem -LiteralPath $testRoot -Directory -Filter '*.staging-*').Count -eq 0) 'staging remains'
         & $module { $script:FailureAfterStagedWritesForTest = $null }
     }
