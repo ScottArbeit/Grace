@@ -146,6 +146,22 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
         | Ok rawFactScope when rawFactScope = scope -> ()
         | Ok _ -> invalidArg (nameof scope) "Accepted-fact mutation scope must match the raw fact identity and UTC month."
 
+    /// Rejects an aggregate whose key, minute bucket, or quantity diverges from the immutable raw fact being accepted.
+    let validateAggregateMatchesRawFact (rawFact: RawUsageFact) (aggregate: UsageAggregateMinute) =
+        let bucketStart = UsageFactPersistencePlan.bucketObservedAt rawFact.ObservedAt
+
+        let matchesRawFact =
+            aggregate.Key.FactKind = rawFact.FactKind
+            && aggregate.Key.OwnerId = rawFact.OwnerId
+            && aggregate.Key.OrganizationId = rawFact.OrganizationId
+            && aggregate.Key.RepositoryId = rawFact.RepositoryId
+            && aggregate.Key.StoragePoolId = rawFact.StoragePoolId
+            && aggregate.Key.BucketStart = bucketStart
+            && aggregate.Quantity = rawFact.Quantity
+
+        if not matchesRawFact then
+            invalidArg (nameof aggregate) "Accepted-fact mutation aggregate must exactly match the raw fact identity, UTC-minute bucket, and quantity."
+
     /// Stages raw fact, rejection repair, aggregate, and conditional Pending handoff using only the caller-owned transaction.
     member _.AcceptAsync
         (
@@ -163,6 +179,7 @@ type internal SqlAcceptedFactMutation(interleaving: IAcceptedFactMutationInterle
             | Ok _ -> ()
 
             validateRawFactScope plan.RawFact scope
+            validateAggregateMatchesRawFact plan.RawFact plan.Aggregate
 
             do! ensureRawIdentityAsync connection transaction plan.RawFact.UsageFactId scope cancellationToken
             let! inserted = tryInsertRawFactAsync connection transaction plan.RawFact cancellationToken

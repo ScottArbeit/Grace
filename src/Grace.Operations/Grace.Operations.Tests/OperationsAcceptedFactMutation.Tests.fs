@@ -23,6 +23,18 @@ type private NoAcceptedFactMutationTestInterleaving() =
     interface IAcceptedFactMutationInterleaving with
         member _.AfterAcceptedFactMutationsStagedAsync(_, _) = Task.CompletedTask
 
+/// Counts post-staging callbacks so rejected caller plans prove they never reached the primitive interleaving.
+type private CountingAcceptedFactMutationInterleaving() =
+    let mutable invocationCount = 0
+
+    /// Exposes how often the accepted-fact primitive reached its post-staging callback.
+    member _.InvocationCount = invocationCount
+
+    interface IAcceptedFactMutationInterleaving with
+        member _.AfterAcceptedFactMutationsStagedAsync(_, _) =
+            invocationCount <- invocationCount + 1
+            Task.CompletedTask
+
 /// Exercises the transaction-scoped accepted-fact primitive against disposable SQL Server databases.
 [<TestFixture>]
 [<NonParallelizable>]
@@ -343,5 +355,98 @@ ORDER BY 1;
                         Assert.That(openLateWork, Is.Zero)
                         Assert.That(closedLateWork, Is.EqualTo(1))
                         Assert.That(repairedRejection, Is.Zero))
+                )
+            })
+
+    /// Rejects record-updated aggregates before they can diverge durable raw, aggregate, rejection, or late-work truth.
+    [<Test>]
+    member _.AcceptedFactMutationRejectsAggregateThatDoesNotExactlyMatchRawFact() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let observedAt = Instant.FromUtc(2026, 8, 12, 10, 15)
+                let baselineFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt 7L
+                let baselineScope = scopeFor baselineFact
+                let closedPeriodId = Guid.NewGuid()
+                do! seedPeriodAsync connectionString closedPeriodId baselineScope 2
+                do! seedActiveRejectionAsync connectionString baselineFact.UsageFactId baselineScope
+
+                let noInterleaving = NoAcceptedFactMutationTestInterleaving() :> IAcceptedFactMutationInterleaving
+                let! baselineOutcome = acceptAndCommitAsync connectionString noInterleaving baselineFact
+                let keyMismatchFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt 11L
+                let quantityMismatchFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId observedAt 13L
+                let keyMismatchPlan = planFor keyMismatchFact
+                let quantityMismatchPlan = planFor quantityMismatchFact
+
+                let aggregateKeyMismatchPlan =
+                    { keyMismatchPlan with
+                        Aggregate = { keyMismatchPlan.Aggregate with Key = { keyMismatchPlan.Aggregate.Key with RepositoryId = Guid.NewGuid() } }
+                    }
+
+                let aggregateQuantityMismatchPlan =
+                    { quantityMismatchPlan with Aggregate = { quantityMismatchPlan.Aggregate with Quantity = quantityMismatchPlan.Aggregate.Quantity + 1L } }
+
+                let! beforeRejectedPlans = durableProjectionAsync connectionString
+                let keyMismatchInterleaving = CountingAcceptedFactMutationInterleaving()
+                use keyMismatchConnection = new SqlConnection(connectionString)
+                do! keyMismatchConnection.OpenAsync CancellationToken.None
+                use keyMismatchTransaction = keyMismatchConnection.BeginTransaction()
+                let keyMismatchMutation = SqlAcceptedFactMutation(keyMismatchInterleaving :> IAcceptedFactMutationInterleaving)
+
+                let! keyMismatchRaised =
+                    task {
+                        try
+                            let! _ =
+                                keyMismatchMutation.AcceptAsync(
+                                    keyMismatchConnection,
+                                    keyMismatchTransaction,
+                                    aggregateKeyMismatchPlan,
+                                    scopeFor keyMismatchFact,
+                                    CancellationToken.None
+                                )
+
+                            return false
+                        with
+                        | :? ArgumentException -> return true
+                    }
+
+                do! keyMismatchTransaction.RollbackAsync CancellationToken.None
+                let! afterKeyMismatch = durableProjectionAsync connectionString
+                let quantityMismatchInterleaving = CountingAcceptedFactMutationInterleaving()
+                use quantityMismatchConnection = new SqlConnection(connectionString)
+                do! quantityMismatchConnection.OpenAsync CancellationToken.None
+                use quantityMismatchTransaction = quantityMismatchConnection.BeginTransaction()
+
+                let quantityMismatchMutation = SqlAcceptedFactMutation(quantityMismatchInterleaving :> IAcceptedFactMutationInterleaving)
+
+                let! quantityMismatchRaised =
+                    task {
+                        try
+                            let! _ =
+                                quantityMismatchMutation.AcceptAsync(
+                                    quantityMismatchConnection,
+                                    quantityMismatchTransaction,
+                                    aggregateQuantityMismatchPlan,
+                                    scopeFor quantityMismatchFact,
+                                    CancellationToken.None
+                                )
+
+                            return false
+                        with
+                        | :? ArgumentException -> return true
+                    }
+
+                do! quantityMismatchTransaction.RollbackAsync CancellationToken.None
+                let! afterQuantityMismatch = durableProjectionAsync connectionString
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(baselineOutcome, Is.EqualTo(InsertedIntoClosedPeriod))
+                        Assert.That(keyMismatchRaised, Is.True)
+                        Assert.That(quantityMismatchRaised, Is.True)
+                        Assert.That(keyMismatchInterleaving.InvocationCount, Is.Zero)
+                        Assert.That(quantityMismatchInterleaving.InvocationCount, Is.Zero)
+                        Assert.That<string list>(afterKeyMismatch, Is.EqualTo<string list>(beforeRejectedPlans))
+                        Assert.That<string list>(afterQuantityMismatch, Is.EqualTo<string list>(beforeRejectedPlans)))
                 )
             })
