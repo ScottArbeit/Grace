@@ -9,6 +9,9 @@ schema is intentionally narrow:
 - `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
   facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
   these rows are neither invoices nor immutable ledger entries.
+- `ops.BillingPeriod`, `ops.Charge`, and `ops.BillingPeriodCloseEvidence` preserve one exact monthly scope, immutable
+  initial postings, and immutable close evidence. The literal migration owns their SQL checks, keys, defaults,
+  foreign keys, and append-only triggers; it does not implement close behavior.
 - The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
   operations schema.
 
