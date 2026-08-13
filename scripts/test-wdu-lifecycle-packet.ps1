@@ -73,7 +73,7 @@ function Get-RequirementRows {
             throw "WDU lifecycle packet '$Path' requirements ledger has non-table content after its requirement table at line $($index + 1)"
         }
 
-        $columns = @($line.Split('|'))
+        $columns = @(Split-RequirementTableRow $line)
         if ($columns.Count -ne $TableShape.ColumnCount -or -not [string]::IsNullOrWhiteSpace($columns[0]) -or -not [string]::IsNullOrWhiteSpace($columns[$TableShape.ColumnCount - 1])) {
             throw "WDU lifecycle packet '$Path' requirements ledger row at line $($index + 1) is malformed"
         }
@@ -90,6 +90,40 @@ function Get-RequirementRows {
     }
 
     return @($rows)
+}
+
+function Split-RequirementTableRow {
+    param([string] $Row)
+
+    $columns = [Collections.Generic.List[string]]::new()
+    $cell = [Text.StringBuilder]::new()
+    $backslashCount = 0
+    foreach ($character in $Row.ToCharArray()) {
+        if ($character -eq '\') {
+            [void] $cell.Append($character)
+            $backslashCount++
+            continue
+        }
+
+        if ($character -eq '|') {
+            if ($backslashCount % 2 -eq 1) {
+                [void] $cell.Remove($cell.Length - 1, 1)
+                [void] $cell.Append($character)
+            }
+            else {
+                $columns.Add($cell.ToString())
+                [void] $cell.Clear()
+            }
+            $backslashCount = 0
+            continue
+        }
+
+        [void] $cell.Append($character)
+        $backslashCount = 0
+    }
+
+    $columns.Add($cell.ToString())
+    return @($columns.ToArray())
 }
 
 function Assert-RequirementLedger {
@@ -111,13 +145,50 @@ function Assert-RequirementLedger {
 function Assert-ActiveEpicRequirementCount {
     param([string] $Path)
     $text = [IO.File]::ReadAllText($Path)
-    $staleClaim = [regex]::Match($text, '\b(?:17\s*/\s*17|17\s+(?:active\s+)?requirements?|(?:all|exactly|current)\s+17\s+(?:active\s+)?requirements?)\b', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $activeText = Get-ActiveEpicText $text $Path
+    $staleClaim = [regex]::Match($activeText, '\b(?:17\s*/\s*17|(?:(?:all|exactly|current)\s+)?17\s+(?:(?:total|active)\s+)?requirements?|(?:(?:all|exactly|current)\s+)?seventeen\s+(?:(?:total|active)\s+)?requirements?)\b', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if ($staleClaim.Success) {
         throw "WDU lifecycle packet '$Path' active epic must not claim stale 17-requirement completion: '$($staleClaim.Value)'"
     }
-    if (-not [regex]::IsMatch($text, '\b(?:19\s*/\s*19|19\s+(?:active\s+)?requirements?)\b', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+    if (-not [regex]::IsMatch($activeText, '\b(?:19\s*/\s*19|(?:(?:all|exactly|current)\s+)?19\s+(?:(?:total|active)\s+)?requirements?)\b', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
         throw "WDU lifecycle packet '$Path' active epic must state 19-requirement completion"
     }
+}
+
+function Get-ActiveEpicText {
+    param([string] $Text, [string] $Path)
+
+    $historicalStart = '<!-- grace:wdu-lifecycle-historical-evidence:start -->'
+    $historicalEnd = '<!-- grace:wdu-lifecycle-historical-evidence:end -->'
+    $startIndexes = [Collections.Generic.List[int]]::new()
+    $endIndexes = [Collections.Generic.List[int]]::new()
+    $cursor = 0
+    while ($true) {
+        $index = $Text.IndexOf($historicalStart, $cursor, [StringComparison]::Ordinal)
+        if ($index -lt 0) { break }
+        $startIndexes.Add($index)
+        $cursor = $index + $historicalStart.Length
+    }
+    $cursor = 0
+    while ($true) {
+        $index = $Text.IndexOf($historicalEnd, $cursor, [StringComparison]::Ordinal)
+        if ($index -lt 0) { break }
+        $endIndexes.Add($index)
+        $cursor = $index + $historicalEnd.Length
+    }
+
+    if ($startIndexes.Count -eq 0 -and $endIndexes.Count -eq 0) { return $Text }
+    if ($startIndexes.Count -gt 1 -or $endIndexes.Count -gt 1) {
+        throw "WDU lifecycle packet '$Path' has duplicate historical evidence markers"
+    }
+    if ($startIndexes.Count -ne 1 -or $endIndexes.Count -ne 1) {
+        throw "WDU lifecycle packet '$Path' must contain one complete historical evidence marker pair"
+    }
+    if ($endIndexes[0] -le $startIndexes[0]) {
+        throw "WDU lifecycle packet '$Path' historical evidence marker end must follow start"
+    }
+
+    return $Text.Remove($startIndexes[0], $endIndexes[0] + $historicalEnd.Length - $startIndexes[0])
 }
 
 function Assert-NoOperationalSupersededReference {

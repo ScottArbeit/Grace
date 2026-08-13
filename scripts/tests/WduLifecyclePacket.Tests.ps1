@@ -188,12 +188,63 @@ try {
         Assert-True ($failures -eq 38) 'all 38 primary-owner mutations fail'
     }
 
-    Invoke-Case 'rejects stale active-epic 17/17 and 17 requirements claims' {
-        foreach ($staleClaim in @('17/17', '17 requirements', 'all 17 active requirements')) {
+    Invoke-Case 'accepts historical stale evidence while retaining an active current 19 claim' {
+        $packet = New-Packet 'historical-stale-evidence'
+        $path = Join-Path $packet 'issue-835.md'
+        $historicalEvidence = @(
+            '<!-- grace:wdu-lifecycle-historical-evidence:start -->',
+            'Historical evidence: 17 requirements.',
+            '<!-- grace:wdu-lifecycle-historical-evidence:end -->'
+        ) -join "`n"
+        Set-TestText $path (Replace-Once (Get-TestText $path) "$(Get-Ledger $true)" "$historicalEvidence`n`n$(Get-Ledger $true)")
+        Invoke-PacketTest $packet
+    }
+
+    Invoke-Case 'rejects stale active-epic count claims despite a separate current 19 claim' {
+        foreach ($staleClaim in @('17/17 requirements', '17 requirements', '17 total requirements', 'seventeen requirements', 'all 17 active requirements')) {
             $packet = New-Packet ('stale-claim-' + $staleClaim.Replace(' ', '-').Replace('/', '-'))
             $path = Join-Path $packet 'issue-835.md'
-            Set-TestText $path (Replace-Once (Get-TestText $path) '19/19 requirements' $staleClaim)
+            Set-TestText $path ((Get-TestText $path) + "`nCurrent stale claim: $staleClaim.`n")
             Assert-Fails { Invoke-PacketTest $packet } 'active epic must not claim stale 17-requirement completion'
+        }
+    }
+
+    Invoke-Case 'rejects incomplete, reversed, and duplicate historical evidence markers' {
+        $mutations = @(
+            @{ Name = 'unclosed'; Text = "<!-- grace:wdu-lifecycle-historical-evidence:start -->`nHistorical 17 requirements."; Reason = 'must contain one complete historical evidence marker pair' },
+            @{ Name = 'reversed'; Text = "<!-- grace:wdu-lifecycle-historical-evidence:end -->`n<!-- grace:wdu-lifecycle-historical-evidence:start -->"; Reason = 'historical evidence marker end must follow start' },
+            @{ Name = 'duplicate'; Text = "<!-- grace:wdu-lifecycle-historical-evidence:start -->`nHistorical 17 requirements.`n<!-- grace:wdu-lifecycle-historical-evidence:end -->`n<!-- grace:wdu-lifecycle-historical-evidence:start -->`nHistorical 17 requirements.`n<!-- grace:wdu-lifecycle-historical-evidence:end -->"; Reason = 'duplicate historical evidence markers' }
+        )
+        foreach ($mutation in $mutations) {
+            $packet = New-Packet ('historical-marker-' + $mutation.Name)
+            $path = Join-Path $packet 'issue-835.md'
+            Set-TestText $path ((Get-TestText $path) + "`n$($mutation.Text)`n")
+            Assert-Fails { Invoke-PacketTest $packet } $mutation.Reason
+        }
+    }
+
+    Invoke-Case 'accepts escaped pipes in detailed and compact ordinary ledger cells' {
+        foreach ($artifact in @('issue-835', 'issue-846')) {
+            $packet = New-Packet ("escaped-pipe-" + $artifact)
+            $path = Join-Path $packet "$artifact.md"
+            $old = if ($artifact -eq 'issue-835') { '| REQ-001 requirement 1 | #923 | companion 1 | audit 1 |' } else { '| REQ-001 | #923 | audit 1 |' }
+            $new = if ($artifact -eq 'issue-835') { '| REQ-001 requirement 1 | #923 | companion 1 \| retained text | audit 1 |' } else { '| REQ-001 | #923 | audit 1 \| retained text |' }
+            Set-TestText $path (Replace-Once (Get-TestText $path) $old $new)
+            Invoke-PacketTest $packet
+        }
+    }
+
+    Invoke-Case 'rejects raw extra-column pipes and treats even escaped backslashes as a delimiter' {
+        $mutations = @(
+            @{ Name = 'detailed raw extra'; Artifact = 'issue-835'; Old = '| REQ-001 requirement 1 | #923 | companion 1 | audit 1 |'; New = '| REQ-001 requirement 1 | #923 | companion 1 | raw extra | audit 1 |' },
+            @{ Name = 'compact raw extra'; Artifact = 'issue-846'; Old = '| REQ-001 | #923 | audit 1 |'; New = '| REQ-001 | #923 | audit 1 | raw extra |' },
+            @{ Name = 'detailed even backslashes'; Artifact = 'issue-835'; Old = '| REQ-001 requirement 1 | #923 | companion 1 | audit 1 |'; New = '| REQ-001 requirement 1 | #923 | companion 1 \\| raw extra | audit 1 |' }
+        )
+        foreach ($mutation in $mutations) {
+            $packet = New-Packet $mutation.Name.Replace(' ', '-')
+            $path = Join-Path $packet "$($mutation.Artifact).md"
+            Set-TestText $path (Replace-Once (Get-TestText $path) $mutation.Old $mutation.New)
+            Assert-Fails { Invoke-PacketTest $packet } 'is malformed'
         }
     }
 
