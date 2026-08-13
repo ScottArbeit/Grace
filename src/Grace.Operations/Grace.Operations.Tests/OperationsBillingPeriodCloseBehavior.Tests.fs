@@ -1,6 +1,7 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Data.SqlClient
@@ -11,6 +12,7 @@ open System.Data
 open System.Globalization
 open System.Security.Cryptography
 open System.Text
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
@@ -113,6 +115,42 @@ type private StageCancellationInterleaving(stage: string, cancellation: Cancella
         member _.AfterPreviewReplacementAsync _ = cancelAt "preview"
         member _.AfterChargeInsertionAsync _ = cancelAt "charge"
         member _.AfterCloseEvidenceStagedAsync _ = cancelAt "evidence"
+
+/// Records the exact accepted-fact scope lock requested by a production store while delegating every SQL mutation.
+type private ScopeRecordingOperationsUsageTransaction(inner: IOperationsUsageTransaction, scopes: ResizeArray<BillingCompletenessScope>) =
+
+    interface IAcceptedFactMutationTransaction with
+
+        member _.AcquireBillingCompletenessScopeAsync(scope, cancellationToken) =
+            scopes.Add(scope)
+            inner.AcquireBillingCompletenessScopeAsync(scope, cancellationToken)
+
+        member _.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(usageFactId, scope, cancellationToken) =
+            inner.EnsureUsageFactIdMatchesBillingCompletenessScopeAsync(usageFactId, scope, cancellationToken)
+
+        member _.AcceptUsageFactAsync(plan, scope, rawInsertion, cancellationToken) =
+            (inner :?> IAcceptedFactMutationTransaction)
+                .AcceptUsageFactAsync(plan, scope, rawInsertion, cancellationToken)
+
+        member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken)
+
+        member _.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordUnscopedUsageFactRejectionAsync(rejection, cancellationToken)
+
+        member _.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken) = inner.HasActiveScopedUsageFactRejectionAsync(scope, cancellationToken)
+
+        member _.HasUnresolvedUsageFactJournalAsync(scope, cancellationToken) = inner.HasUnresolvedUsageFactJournalAsync(scope, cancellationToken)
+
+/// Preserves the production SQL transaction while exposing only the scope identity chosen by its accepted-fact caller.
+type private ScopeRecordingOperationsUsageTransactionScope(inner: IOperationsUsageTransactionScope, scopes: ResizeArray<BillingCompletenessScope>) =
+
+    interface IOperationsUsageTransactionScope with
+
+        member _.ExecuteAsync(operation, cancellationToken) =
+            inner.ExecuteAsync(
+                (fun transaction operationCancellationToken ->
+                    operation (ScopeRecordingOperationsUsageTransaction(transaction, scopes) :> IOperationsUsageTransaction) operationCancellationToken),
+                cancellationToken
+            )
 
 /// Retains the exact pricing identities and immutable values inserted for one close-proof scope.
 type private SeededPricing =
@@ -289,6 +327,120 @@ type OperationsBillingPeriodCloseBehaviorTests() =
             let! _ = journal.AppendAsync(fact, CancellationToken.None)
             let! result = journal.ProcessAsync(fact, Array.empty, CancellationToken.None)
             Assert.That(result, Is.EqualTo(UsageFactJournalProcessResult.AcceptedFromJournal))
+        }
+
+    /// Serializes a UsageFact as the online and archived production acceptance boundaries receive it.
+    let payloadFor fact = JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
+
+    /// Builds the immutable archive pointer required by the production archived-replay wrapper.
+    let archivePointerFor (fact: UsageFact) =
+        {
+            UsageFactId = fact.UsageFactId
+            BlobName = $"billing-close-convergence/{fact.UsageFactId:N}.json.gz"
+            ChecksumSha256Hex = String.replicate 64 "a"
+            ByteLength = 4096L
+        }
+
+    /// Builds a production store that records the exact scope used to acquire its shared SQL application lock.
+    let scopeRecordingStore connectionString scopes =
+        OperationsUsageStore(ScopeRecordingOperationsUsageTransactionScope(SqlOperationsUsageTransactionScope connectionString, scopes))
+
+    /// Reads the full persisted scope projection that convergence attempts are forbidden to alter.
+    let scopeSnapshotAsync connectionString (scope: BillingCompletenessScope) =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                """
+SELECT CONCAT('RawUsageFact|',(SELECT * FROM ops.RawUsageFact WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@MonthStartUtc AND ObservedAtUtc<@NextMonthStartUtc ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageAggregateMinute|',(SELECT * FROM ops.UsageAggregateMinute WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND BucketStartUtc>=@MonthStartUtc AND BucketStartUtc<@NextMonthStartUtc ORDER BY FactKind,StoragePoolId,BucketStartUtc FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriod|',(SELECT * FROM ops.BillingPeriod WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND MonthStartUtc=@MonthStartUtc AND NextMonthStartUtc=@NextMonthStartUtc ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('ChargePreviewLine|',(SELECT * FROM ops.ChargePreviewLine WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@MonthStartUtc AND PeriodToUtc=@NextMonthStartUtc ORDER BY ChargePreviewLineId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('Charge|',(SELECT * FROM ops.Charge WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@MonthStartUtc AND PeriodToUtc=@NextMonthStartUtc ORDER BY ChargeId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodCloseEvidence|',(SELECT evidence.* FROM ops.BillingPeriodCloseEvidence AS evidence INNER JOIN ops.BillingPeriod AS period ON period.BillingPeriodId=evidence.BillingPeriodId WHERE period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId AND period.MonthStartUtc=@MonthStartUtc AND period.NextMonthStartUtc=@NextMonthStartUtc ORDER BY evidence.BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactJournal|',(SELECT * FROM ops.UsageFactJournal WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@MonthStartUtc AND ObservedAtUtc<@NextMonthStartUtc ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactRejection|',(SELECT * FROM ops.UsageFactRejection WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND MonthStartUtc=@MonthStartUtc ORDER BY RejectionId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodLateWork|',(SELECT lateWork.* FROM ops.BillingPeriodLateWork AS lateWork INNER JOIN ops.BillingPeriod AS period ON period.BillingPeriodId=lateWork.BillingPeriodId WHERE period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId AND period.MonthStartUtc=@MonthStartUtc AND period.NextMonthStartUtc=@NextMonthStartUtc ORDER BY lateWork.BillingPeriodId,lateWork.UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+ORDER BY 1;
+"""
+
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@MonthStartUtc", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+
+            command.Parameters.Add("@NextMonthStartUtc", SqlDbType.DateTime2).Value <- (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let rows = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then rows.Add(reader.GetString 0)
+
+            return rows |> Seq.toList
+        }
+
+    /// Counts pending late work for exactly one closed billing period rather than relying on global totals.
+    let lateWorkCountAsync connectionString billingPeriodId =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- "SELECT COUNT(*) FROM ops.BillingPeriodLateWork WHERE BillingPeriodId=@BillingPeriodId AND State=0;"
+            command.Parameters.Add("@BillingPeriodId", SqlDbType.UniqueIdentifier).Value <- billingPeriodId
+            let! count = command.ExecuteScalarAsync CancellationToken.None
+            return Convert.ToInt32 count
+        }
+
+    /// Reads every persisted aggregate key and quantity for one exact scope so duplicate acceptance cannot silently mutate a minute.
+    let usageAggregateMinuteProjectionAsync connectionString (scope: BillingCompletenessScope) =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT FactKind,StoragePoolId,BucketStartUtc,Quantity FROM ops.UsageAggregateMinute WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND BucketStartUtc>=@MonthStartUtc AND BucketStartUtc<@NextMonthStartUtc ORDER BY FactKind,StoragePoolId,BucketStartUtc;"
+
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+            command.Parameters.Add("@MonthStartUtc", SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+
+            command.Parameters.Add("@NextMonthStartUtc", SqlDbType.DateTime2).Value <- (BillingCompletenessScope.nextMonthStart scope)
+                .ToDateTimeUtc()
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let rows = ResizeArray<int * string * DateTime * int64>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then
+                    rows.Add(reader.GetInt32 0, reader.GetString 1, reader.GetDateTime 2, reader.GetInt64 3)
+
+            return rows |> Seq.toList
+        }
+
+    /// Reads one exact journal state so failed Process and Repair attempts cannot masquerade as terminal acceptance.
+    let journalStateAsync connectionString usageFactId =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- "SELECT State FROM ops.UsageFactJournal WHERE UsageFactId=@UsageFactId;"
+            command.Parameters.Add("@UsageFactId", SqlDbType.UniqueIdentifier).Value <- usageFactId
+            let! state = command.ExecuteScalarAsync CancellationToken.None
+            return Convert.ToInt32 state
         }
 
     /// Adds one complete pricing grain through the live Operations SQL schema.
@@ -1187,6 +1339,284 @@ ORDER BY 1;
                     Action (fun () ->
                         Assert.That(cancellation.IsCancellationRequested, Is.True)
                         Assert.That(after, Is.EqualTo(before :> obj)))
+                )
+            })
+
+    /// Proves production close and all accepted-fact wrappers converge across two independently closed exact scopes.
+    [<Test>]
+    member _.ProductionCloseAndAcceptedFactTransactionsConvergeAcrossTwoExactScopes() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerA, organizationA, repositoryA = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let ownerB, organizationB, repositoryB = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scopeA = scopeFor ownerA organizationA repositoryA
+                let scopeB = scopeFor ownerB organizationB repositoryB
+                let seedA = usageFact (Guid.NewGuid()) ownerA organizationA repositoryA (monthStart + Duration.FromDays 3) 7L
+                let seedB = usageFact (Guid.NewGuid()) ownerB organizationB repositoryB (monthStart + Duration.FromDays 4) 11L
+                let initialScopes = ResizeArray<BillingCompletenessScope>()
+                let initialStore = scopeRecordingStore connectionString initialScopes
+                let! acceptedA = initialStore.StoreUsageFactAsync(seedA, payloadFor seedA, CancellationToken.None)
+                let! duplicateA = initialStore.StoreUsageFactAsync(seedA, payloadFor seedA, CancellationToken.None)
+                let! pricingA = addPricingAsync connectionString scopeA
+                let! pricingB = addPricingAsync connectionString scopeB
+                let provenanceA = "operations-tests/close-accept-convergence/accept-first/v1"
+                let provenanceB = "operations-tests/close-accept-convergence/close-first/v1"
+                let expectedA = seededCloseExpectation scopeA seedA.UsageFactId (monthStart + Duration.FromDays 3) 7L pricingA provenanceA
+                let expectedB = seededCloseExpectation scopeB seedB.UsageFactId (monthStart + Duration.FromDays 4) 11L pricingB provenanceB
+                let closeAInterleaving = ClockOrderingInterleaving()
+
+                let closeA =
+                    SqlBillingPeriodCloser.CreateForTest(connectionString, closeAInterleaving :> IBillingPeriodCloseTransactionInterleaving)
+                    :> IBillingPeriodCloser
+
+                let! closeAResult = closeA.CloseAsync({ Scope = scopeA; ScheduledOperationProvenance = provenanceA }, CancellationToken.None)
+
+                let closeBInterleaving = ClockOrderingInterleaving()
+
+                let closeB =
+                    SqlBillingPeriodCloser.CreateForTest(connectionString, closeBInterleaving :> IBillingPeriodCloseTransactionInterleaving)
+                    :> IBillingPeriodCloser
+
+                let! acceptedBSeed = acceptFactAsync connectionString seedB
+                let! closeBResult = closeB.CloseAsync({ Scope = scopeB; ScheduledOperationProvenance = provenanceB }, CancellationToken.None)
+
+                let! factCountA, factQuantityA = acceptedScopeFactSummaryAsync connectionString scopeA
+                let! factCountB, factQuantityB = acceptedScopeFactSummaryAsync connectionString scopeB
+                let! projectionA = readClosedScopeProjectionAsync connectionString scopeA
+                let! projectionB = readClosedScopeProjectionAsync connectionString scopeB
+                assertSeededScopeClose "accept-first scope A" expectedA 7L factCountA factQuantityA projectionA
+                assertSeededScopeClose "close-first scope B seed" expectedB 11L factCountB factQuantityB projectionB
+
+                let periodA =
+                    projectionA
+                    |> List.exactlyOne
+                    |> fun projection -> projection.BillingPeriodId
+
+                let periodB =
+                    projectionB
+                    |> List.exactlyOne
+                    |> fun projection -> projection.BillingPeriodId
+
+                let! initialLateWorkA = lateWorkCountAsync connectionString periodA
+                let! initialLateWorkB = lateWorkCountAsync connectionString periodB
+
+                let perturbationFails =
+                    projectionB
+                    |> List.exactlyOne
+                    |> fun projection ->
+                        projection.BillingPeriodId
+                        <> expectedA.BillingPeriodId
+
+                let lateB = usageFact (Guid.NewGuid()) ownerB organizationB repositoryB (monthStart + Duration.FromDays 5) 13L
+                let restartedScopes = ResizeArray<BillingCompletenessScope>()
+                let restartedStore = scopeRecordingStore connectionString restartedScopes
+                let! lateBFirst = restartedStore.StoreUsageFactAsync(lateB, payloadFor lateB, CancellationToken.None)
+
+                let expectedLateBAggregates =
+                    [
+                        (int UsageFactKind.RepositoryStorageBytesMinute, "billing-close-pool", (monthStart + Duration.FromDays 4).ToDateTimeUtc(), 11L)
+                        (int UsageFactKind.RepositoryStorageBytesMinute, "billing-close-pool", (monthStart + Duration.FromDays 5).ToDateTimeUtc(), 13L)
+                    ]
+
+                /// Validates that duplicate and replay paths preserve every independently derived aggregate row for scope B.
+                let assertLateBAggregates (stage: string) (actual: (int * string * DateTime * int64) list) =
+                    Assert.That<(int * string * DateTime * int64) list>(
+                        actual,
+                        Is.EqualTo<(int * string * DateTime * int64) list>(expectedLateBAggregates),
+                        $"{stage} must preserve the independently derived exact UsageAggregateMinute state."
+                    )
+
+                let! lateBAggregatesAfterFirst = usageAggregateMinuteProjectionAsync connectionString scopeB
+                assertLateBAggregates "First accepted late fact" lateBAggregatesAfterFirst
+                let! lateBDuplicate = restartedStore.StoreUsageFactAsync(lateB, payloadFor lateB, CancellationToken.None)
+                let! lateBAggregatesAfterDuplicate = usageAggregateMinuteProjectionAsync connectionString scopeB
+                assertLateBAggregates "Online duplicate" lateBAggregatesAfterDuplicate
+                let! lateBArchivedReplay = restartedStore.ReplayArchivedUsageFactAsync(lateB, payloadFor lateB, archivePointerFor lateB, CancellationToken.None)
+                let! lateBAggregatesAfterArchivedReplay = usageAggregateMinuteProjectionAsync connectionString scopeB
+                assertLateBAggregates "Archived replay" lateBAggregatesAfterArchivedReplay
+
+                let freshStore = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! seedAReplay = freshStore.ReplayArchivedUsageFactAsync(seedA, payloadFor seedA, archivePointerFor seedA, CancellationToken.None)
+                let! lateWorkAAfterReplay = lateWorkCountAsync connectionString periodA
+                let! lateWorkBAfterReplay = lateWorkCountAsync connectionString periodB
+                let! projectionAAfterReplay = readClosedScopeProjectionAsync connectionString scopeA
+                let! projectionBAfterReplay = readClosedScopeProjectionAsync connectionString scopeB
+                assertSeededScopeClose "accept-first scope A after restart replay" expectedA 7L factCountA factQuantityA projectionAAfterReplay
+                assertSeededScopeClose "close-first scope B after late acceptance" expectedB 11L factCountB factQuantityB projectionBAfterReplay
+
+                let onlineConflictId, archiveConflictId, processConflictId, repairConflictId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+
+                let onlineA = usageFact onlineConflictId ownerA organizationA repositoryA (monthStart + Duration.FromDays 6) 17L
+                let onlineB = usageFact onlineConflictId ownerB organizationB repositoryB (monthStart + Duration.FromDays 6) 17L
+                let! _ = freshStore.StoreUsageFactAsync(onlineA, payloadFor onlineA, CancellationToken.None)
+                let! onlineABefore = scopeSnapshotAsync connectionString scopeA
+                let! onlineBBefore = scopeSnapshotAsync connectionString scopeB
+
+                let! onlineRejected =
+                    task {
+                        try
+                            let! _ = freshStore.StoreUsageFactAsync(onlineB, payloadFor onlineB, CancellationToken.None)
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                        | :? SqlException -> return true
+                    }
+
+                let! onlineAAfter = scopeSnapshotAsync connectionString scopeA
+                let! onlineBAfter = scopeSnapshotAsync connectionString scopeB
+
+                let archiveA = usageFact archiveConflictId ownerA organizationA repositoryA (monthStart + Duration.FromDays 7) 19L
+                let archiveB = usageFact archiveConflictId ownerB organizationB repositoryB (monthStart + Duration.FromDays 7) 19L
+                let! _ = freshStore.ReplayArchivedUsageFactAsync(archiveA, payloadFor archiveA, archivePointerFor archiveA, CancellationToken.None)
+                let! archiveABefore = scopeSnapshotAsync connectionString scopeA
+                let! archiveBBefore = scopeSnapshotAsync connectionString scopeB
+
+                let! archiveRejected =
+                    task {
+                        try
+                            let! _ = freshStore.ReplayArchivedUsageFactAsync(archiveB, payloadFor archiveB, archivePointerFor archiveB, CancellationToken.None)
+
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                        | :? SqlException -> return true
+                    }
+
+                let! archiveAAfter = scopeSnapshotAsync connectionString scopeA
+                let! archiveBAfter = scopeSnapshotAsync connectionString scopeB
+
+                let processA = usageFact processConflictId ownerA organizationA repositoryA (monthStart + Duration.FromDays 8) 23L
+                let processB = usageFact processConflictId ownerB organizationB repositoryB (monthStart + Duration.FromDays 8) 23L
+                let! _ = freshStore.StoreUsageFactAsync(processA, payloadFor processA, CancellationToken.None)
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! appendedProcess = journal.AppendAsync(processB, CancellationToken.None)
+                let! processABefore = scopeSnapshotAsync connectionString scopeA
+                let! processBBefore = scopeSnapshotAsync connectionString scopeB
+
+                let! processRejected =
+                    task {
+                        try
+                            let! _ = journal.ProcessAsync(processB, payloadFor processB, CancellationToken.None)
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                        | :? SqlException -> return true
+                    }
+
+                let! processAAfter = scopeSnapshotAsync connectionString scopeA
+                let! processBAfter = scopeSnapshotAsync connectionString scopeB
+                let! processJournalState = journalStateAsync connectionString processConflictId
+
+                let repairA = usageFact repairConflictId ownerA organizationA repositoryA (monthStart + Duration.FromDays 9) 29L
+                let repairB = usageFact repairConflictId ownerB organizationB repositoryB (monthStart + Duration.FromDays 9) 29L
+                let! _ = freshStore.StoreUsageFactAsync(repairA, payloadFor repairA, CancellationToken.None)
+                let! appendedRepair = journal.AppendAsync(repairB, CancellationToken.None)
+                let! rejectedRepair = journal.RejectAsync(repairB, payloadFor repairB, "close convergence conflict", CancellationToken.None)
+                let! repairABefore = scopeSnapshotAsync connectionString scopeA
+                let! repairBBefore = scopeSnapshotAsync connectionString scopeB
+
+                let! repairRejected =
+                    task {
+                        try
+                            let! _ = journal.RepairAsync(repairB, CancellationToken.None)
+                            return false
+                        with
+                        | :? InvalidOperationException -> return true
+                        | :? SqlException -> return true
+                    }
+
+                let! repairAAfter = scopeSnapshotAsync connectionString scopeA
+                let! repairBAfter = scopeSnapshotAsync connectionString scopeB
+                let! repairJournalState = journalStateAsync connectionString repairConflictId
+                let! finalLateWorkA = lateWorkCountAsync connectionString periodA
+                let! finalLateWorkB = lateWorkCountAsync connectionString periodB
+                let! finalFactCountA, finalFactQuantityA = acceptedScopeFactSummaryAsync connectionString scopeA
+                let! finalFactCountB, finalFactQuantityB = acceptedScopeFactSummaryAsync connectionString scopeB
+                let! finalProjectionA = readClosedScopeProjectionAsync connectionString scopeA
+                let! finalProjectionB = readClosedScopeProjectionAsync connectionString scopeB
+                assertSeededScopeClose "scope A immutable close projection after conflicts" expectedA 7L 1 7L finalProjectionA
+                assertSeededScopeClose "scope B immutable close projection after conflicts" expectedB 11L 1 11L finalProjectionB
+
+                let accepted result usageFactId =
+                    match result with
+                    | Ok { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = actual; Aggregate = Some _ } when actual = usageFactId -> true
+                    | _ -> false
+
+                let alreadyProcessed result usageFactId =
+                    match result with
+                    | Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = actual; Aggregate = None } when actual = usageFactId -> true
+                    | _ -> false
+
+                let processAppended =
+                    match appendedProcess with
+                    | Ok AppendedPending -> true
+                    | _ -> false
+
+                let repairAppended =
+                    match appendedRepair with
+                    | Ok AppendedPending -> true
+                    | _ -> false
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(accepted acceptedA seedA.UsageFactId, Is.True)
+                        Assert.That(alreadyProcessed duplicateA seedA.UsageFactId, Is.True)
+                        Assert.That(closeAResult, Is.EqualTo(BillingPeriodCloseResult.Closed(periodA, 1)))
+                        Assert.That(closeBResult, Is.EqualTo(BillingPeriodCloseResult.Closed(periodB, 1)))
+                        Assert.That(initialLateWorkA, Is.Zero)
+                        Assert.That(initialLateWorkB, Is.Zero)
+
+                        Assert.That(
+                            perturbationFails,
+                            Is.True,
+                            "The deliberate scope-identity perturbation must make the proof fail before the real identity is restored."
+                        )
+
+                        Assert.That(initialScopes.Count, Is.EqualTo(2))
+                        Assert.That(restartedScopes.Count, Is.EqualTo(3))
+                        Assert.That(closeAInterleaving.Resource, Is.EqualTo(BillingCompletenessScope.databaseLockIdentity scopeA))
+
+                        Assert.That(
+                            initialScopes
+                            |> Seq.forall (fun scope -> BillingCompletenessScope.databaseLockIdentity scope = closeAInterleaving.Resource),
+                            Is.True
+                        )
+
+                        Assert.That(
+                            restartedScopes
+                            |> Seq.forall (fun scope -> BillingCompletenessScope.databaseLockIdentity scope = closeBInterleaving.Resource),
+                            Is.True
+                        )
+
+                        Assert.That(accepted lateBFirst lateB.UsageFactId, Is.True)
+                        Assert.That(alreadyProcessed lateBDuplicate lateB.UsageFactId, Is.True)
+                        Assert.That(alreadyProcessed lateBArchivedReplay lateB.UsageFactId, Is.True)
+                        Assert.That(alreadyProcessed seedAReplay seedA.UsageFactId, Is.True)
+                        Assert.That(lateWorkAAfterReplay, Is.Zero)
+                        Assert.That(lateWorkBAfterReplay, Is.EqualTo(1))
+                        Assert.That(onlineRejected, Is.True)
+                        Assert.That(archiveRejected, Is.True)
+                        Assert.That(processRejected, Is.True)
+                        Assert.That(repairRejected, Is.True)
+                        Assert.That(processAppended, Is.True)
+                        Assert.That(repairAppended, Is.True)
+                        Assert.That(rejectedRepair, Is.EqualTo(RejectedFromJournal))
+                        Assert.That(processJournalState, Is.EqualTo(int UsageFactJournalState.Pending))
+                        Assert.That(repairJournalState, Is.EqualTo(int UsageFactJournalState.Rejected))
+                        Assert.That<string list>(onlineAAfter, Is.EqualTo<string list>(onlineABefore))
+                        Assert.That<string list>(onlineBAfter, Is.EqualTo<string list>(onlineBBefore))
+                        Assert.That<string list>(archiveAAfter, Is.EqualTo<string list>(archiveABefore))
+                        Assert.That<string list>(archiveBAfter, Is.EqualTo<string list>(archiveBBefore))
+                        Assert.That<string list>(processAAfter, Is.EqualTo<string list>(processABefore))
+                        Assert.That<string list>(processBAfter, Is.EqualTo<string list>(processBBefore))
+                        Assert.That<string list>(repairAAfter, Is.EqualTo<string list>(repairABefore))
+                        Assert.That<string list>(repairBAfter, Is.EqualTo<string list>(repairBBefore))
+                        Assert.That(finalFactCountA, Is.EqualTo(5))
+                        Assert.That(finalFactQuantityA, Is.EqualTo(95L))
+                        Assert.That(finalFactCountB, Is.EqualTo(2))
+                        Assert.That(finalFactQuantityB, Is.EqualTo(24L))
+                        Assert.That(finalLateWorkA, Is.EqualTo(4))
+                        Assert.That(finalLateWorkB, Is.EqualTo(1)))
                 )
             })
 
