@@ -244,7 +244,7 @@ type OperationsChargePreviewTests() =
                 "..",
                 "Grace.Operations.Data",
                 "Migrations",
-                "20260812110000_AddUsageFactJournal.fs"
+                "20260812130000_AddBillingPeriodClose.fs"
             )
             |> Path.GetFullPath
 
@@ -274,7 +274,7 @@ type OperationsChargePreviewTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
-        let migration = AddUsageFactJournal().TargetModel
+        let migration = AddBillingPeriodClose().TargetModel
 
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()
@@ -288,9 +288,12 @@ type OperationsChargePreviewTests() =
                         |> Seq.toList)
                     |> Set.ofSeq
 
+                let storeObject = StoreObjectIdentifier.Table(entity.GetTableName(), entity.GetSchema())
+
                 let properties =
                     entity.GetProperties()
-                    |> Seq.map (fun property -> property.Name, property.ClrType.FullName, property.IsNullable)
+                    |> Seq.map (fun property ->
+                        property.Name, property.GetColumnName(&storeObject), property.ClrType.FullName, property.IsNullable, property.IsShadowProperty())
                     |> Set.ofSeq
 
                 let indexes =
@@ -328,23 +331,38 @@ type OperationsChargePreviewTests() =
         let preview = runtime.FindEntityType(typeof<ChargePreviewLineEntity>)
         let rejection = runtime.FindEntityType(typeof<UsageFactRejectionEntity>)
 
+        let noShadowMembers (model: IModel) =
+            model.GetEntityTypes()
+            |> Seq.collect (fun entity -> entity.GetProperties())
+            |> Seq.exists (fun property -> property.IsShadowProperty())
+
         ChargePreviewTestData.multiple (fun () ->
             Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
             Assert.That(migrationSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
             Assert.That(snapshotModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
             Assert.That(targetModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
             Assert.That(snapshotModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
-            Assert.That(targetModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
+            Assert.That(migrationSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
             Assert.That(snapshotModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
-            Assert.That(targetModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
+            Assert.That(targetModelSource, Does.Contain("BillingPeriodCloseFrozenTarget.applyPriorModel modelBuilder"))
+            Assert.That(migrationSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
-            Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
+            Assert.That(migrationSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
-            Assert.That(targetModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
+            Assert.That(migrationSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
-            Assert.That(targetModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
+            Assert.That(migrationSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let journal = modelBuilder.Entity<UsageFactJournalEntity>()"))
+            Assert.That(migrationSource, Does.Contain("let period = modelBuilder.Entity<BillingPeriodEntity>()"))
+            Assert.That(migrationSource, Does.Contain("let charge = modelBuilder.Entity<ChargeEntity>()"))
+            Assert.That(migrationSource, Does.Contain("let evidence = modelBuilder.Entity<BillingPeriodCloseEvidenceEntity>()"))
             Assert.That(rejection, Is.Not.Null)
+            Assert.That(migration.GetEntityTypes() |> Seq.length, Is.EqualTo(12))
+            Assert.That(runtime.GetEntityTypes() |> Seq.length, Is.EqualTo(12))
+            Assert.That(snapshot.GetEntityTypes() |> Seq.length, Is.EqualTo(12))
+            Assert.That(noShadowMembers migration, Is.False, "Frozen migration target must not add convention shadow members.")
+            Assert.That(noShadowMembers runtime, Is.False, "Runtime model must not add convention shadow members.")
+            Assert.That(noShadowMembers snapshot, Is.False, "Snapshot must not add convention shadow members.")
             Assert.That((migrationShape = snapshotShape), Is.True)
 
             Assert.That(

@@ -37,11 +37,18 @@ module private BillingCloseSchema =
             Triggers: Set<string>
         }
 
-    /// Names only the tables introduced by the billing-close migration.
+    /// Names only the tables introduced by the billing-close migration with their SQL schema.
     let private tables =
-        Set.ofList [ "BillingPeriod"
-                     "Charge"
-                     "BillingPeriodCloseEvidence" ]
+        Set.ofList [ "ops.BillingPeriod"
+                     "ops.Charge"
+                     "ops.BillingPeriodCloseEvidence" ]
+
+    /// Names tables that existed before the billing-close migration and are excluded from this leaf's live catalog slice.
+    let private priorTables =
+        "'__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine'"
+
+    /// Forms the schema-qualified physical identity used by every catalog comparison facet.
+    let private tableIdentity schema table = $"{schema}.{table}"
 
     /// Produces a stable SQL spelling without deriving aliases from configured provider types.
     let normalizeSql (value: string) =
@@ -131,19 +138,20 @@ module private BillingCloseSchema =
     let fromModel (model: IModel) =
         let entities =
             model.GetEntityTypes()
-            |> Seq.filter (fun entity -> tables.Contains(entity.GetTableName()))
+            |> Seq.filter (fun entity -> tables.Contains(tableIdentity (entity.GetSchema()) (entity.GetTableName())))
             |> Seq.toList
 
         let tableNames =
             entities
-            |> Seq.map (fun entity -> entity.GetTableName())
+            |> Seq.map (fun entity -> tableIdentity (entity.GetSchema()) (entity.GetTableName()))
             |> Set.ofSeq
 
         let columns, properties, provenance =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
-                let storeObject = StoreObjectIdentifier.Table(table, entity.GetSchema())
+                let tableName = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) tableName
+                let storeObject = StoreObjectIdentifier.Table(tableName, entity.GetSchema())
 
                 entity.GetProperties()
                 |> Seq.map (fun property ->
@@ -167,7 +175,7 @@ module private BillingCloseSchema =
                             |]
                         )
 
-                    let propertyEntry = $"{table}|{column}|{property.ClrType.FullName}"
+                    let propertyEntry = $"{table}|{property.Name}|{column}|{property.ClrType.FullName}"
 
                     let provenanceEntry =
                         match storeTypeProvenance property with
@@ -181,7 +189,7 @@ module private BillingCloseSchema =
         let keys =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) (entity.GetTableName())
 
                 entity.GetKeys()
                 |> Seq.map (fun key ->
@@ -202,7 +210,7 @@ module private BillingCloseSchema =
         let indexes =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) (entity.GetTableName())
 
                 entity.GetIndexes()
                 |> Seq.map (fun index ->
@@ -217,7 +225,7 @@ module private BillingCloseSchema =
         let foreignKeys =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) (entity.GetTableName())
 
                 entity.GetForeignKeys()
                 |> Seq.map (fun foreignKey ->
@@ -238,7 +246,7 @@ module private BillingCloseSchema =
         let checks =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) (entity.GetTableName())
 
                 entity.GetCheckConstraints()
                 |> Seq.map (fun check -> $"{table}|{check.Name}|{normalizeDefinition check.Sql}"))
@@ -247,7 +255,8 @@ module private BillingCloseSchema =
         let defaults =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
+                let tableName = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) tableName
 
                 entity.GetProperties()
                 |> Seq.choose (fun property ->
@@ -256,14 +265,14 @@ module private BillingCloseSchema =
                     if String.IsNullOrWhiteSpace definition then
                         None
                     else
-                        let storeObject = StoreObjectIdentifier.Table(table, entity.GetSchema())
+                        let storeObject = StoreObjectIdentifier.Table(tableName, entity.GetSchema())
                         Some $"{table}|{property.GetColumnName(&storeObject)}|{property.GetDefaultConstraintName()}|{normalizeDefinition definition}"))
             |> Set.ofSeq
 
         let triggers =
             entities
             |> Seq.collect (fun entity ->
-                let table = entity.GetTableName()
+                let table = tableIdentity (entity.GetSchema()) (entity.GetTableName())
 
                 entity.GetDeclaredTriggers()
                 |> Seq.map (fun trigger -> $"{table}|{trigger.ModelName}"))
@@ -338,13 +347,13 @@ module private BillingCloseSchema =
             let! liveTables =
                 catalogSetAsync
                     connectionString
-                    "SELECT t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence');"
+                    $"SELECT CONCAT(s.name,'.',t.name) FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE s.name='ops' AND t.name NOT IN ({priorTables});"
 
             let! columns =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(t.name COLLATE DATABASE_DEFAULT,'|',c.name COLLATE DATABASE_DEFAULT,'|',
+SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAULT,'|',c.name COLLATE DATABASE_DEFAULT,'|',
     CASE ty.name COLLATE DATABASE_DEFAULT WHEN 'datetime2' THEN CONCAT('datetime2(',c.scale,')') WHEN 'nvarchar' THEN CONCAT('nvarchar(',c.max_length / 2,')') WHEN 'varchar' THEN CONCAT('varchar(',c.max_length,')') WHEN 'char' THEN CONCAT('char(',c.max_length,')') ELSE ty.name COLLATE DATABASE_DEFAULT END,
     '|',CASE c.is_nullable WHEN 1 THEN 'True' ELSE 'False' END,
     '|',CASE WHEN ty.name IN ('nvarchar','varchar','char') THEN CONVERT(varchar(10), CASE WHEN ty.name='nvarchar' THEN c.max_length / 2 ELSE c.max_length END) ELSE '-' END,
@@ -355,42 +364,42 @@ FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.columns c ON c.object_id=t.object_id
 JOIN sys.types ty ON ty.user_type_id=c.user_type_id
-WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence');
+WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
 """
 
             let! keys =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(t.name COLLATE DATABASE_DEFAULT,'|',kc.name COLLATE DATABASE_DEFAULT,'|',CASE kc.type COLLATE DATABASE_DEFAULT WHEN 'PK' THEN 'primary' ELSE 'alternate' END,'|',STRING_AGG(c.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY ic.key_ordinal))
+SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAULT,'|',kc.name COLLATE DATABASE_DEFAULT,'|',CASE kc.type COLLATE DATABASE_DEFAULT WHEN 'PK' THEN 'primary' ELSE 'alternate' END,'|',STRING_AGG(c.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY ic.key_ordinal))
 FROM sys.key_constraints kc
 JOIN sys.tables t ON t.object_id=kc.parent_object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.index_columns ic ON ic.object_id=kc.parent_object_id AND ic.index_id=kc.unique_index_id
 JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
-WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence')
-GROUP BY t.name,kc.name,kc.type;
+WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine')
+GROUP BY s.name,t.name,kc.name,kc.type;
 """
 
             let! indexes =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(t.name COLLATE DATABASE_DEFAULT,'|',i.name COLLATE DATABASE_DEFAULT,'|',CASE i.is_unique WHEN 1 THEN 'True' ELSE 'False' END,'|',STRING_AGG(c.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY ic.key_ordinal),'|',COALESCE(i.filter_definition COLLATE DATABASE_DEFAULT,'-'))
+SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAULT,'|',i.name COLLATE DATABASE_DEFAULT,'|',CASE i.is_unique WHEN 1 THEN 'True' ELSE 'False' END,'|',STRING_AGG(c.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY ic.key_ordinal),'|',COALESCE(i.filter_definition COLLATE DATABASE_DEFAULT,'-'))
 FROM sys.indexes i
 JOIN sys.tables t ON t.object_id=i.object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal > 0
 JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
-WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence') AND i.is_primary_key=0 AND i.is_unique_constraint=0
-GROUP BY t.name,i.name,i.is_unique,i.filter_definition;
+WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine') AND i.is_primary_key=0 AND i.is_unique_constraint=0
+GROUP BY s.name,t.name,i.name,i.is_unique,i.filter_definition;
 """
 
             let! foreignKeys =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(child.name COLLATE DATABASE_DEFAULT,'|',fk.name COLLATE DATABASE_DEFAULT,'|',STRING_AGG(childColumn.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY fkc.constraint_column_id),'|',principalSchema.name COLLATE DATABASE_DEFAULT,'.',parent.name COLLATE DATABASE_DEFAULT,'|',STRING_AGG(parentColumn.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY fkc.constraint_column_id),'|',LOWER(fk.delete_referential_action_desc) COLLATE DATABASE_DEFAULT)
+SELECT CONCAT(childSchema.name COLLATE DATABASE_DEFAULT,'.',child.name COLLATE DATABASE_DEFAULT,'|',fk.name COLLATE DATABASE_DEFAULT,'|',STRING_AGG(childColumn.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY fkc.constraint_column_id),'|',principalSchema.name COLLATE DATABASE_DEFAULT,'.',parent.name COLLATE DATABASE_DEFAULT,'|',STRING_AGG(parentColumn.name COLLATE DATABASE_DEFAULT,',') WITHIN GROUP (ORDER BY fkc.constraint_column_id),'|',LOWER(fk.delete_referential_action_desc) COLLATE DATABASE_DEFAULT)
 FROM sys.foreign_keys fk
 JOIN sys.tables child ON child.object_id=fk.parent_object_id
 JOIN sys.schemas childSchema ON childSchema.schema_id=child.schema_id
@@ -399,42 +408,42 @@ JOIN sys.schemas principalSchema ON principalSchema.schema_id=parent.schema_id
 JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id=fk.object_id
 JOIN sys.columns childColumn ON childColumn.object_id=child.object_id AND childColumn.column_id=fkc.parent_column_id
 JOIN sys.columns parentColumn ON parentColumn.object_id=parent.object_id AND parentColumn.column_id=fkc.referenced_column_id
-WHERE childSchema.name='ops' AND child.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence')
-GROUP BY child.name,fk.name,principalSchema.name,parent.name,fk.delete_referential_action_desc;
+WHERE childSchema.name='ops' AND child.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine')
+GROUP BY childSchema.name,child.name,fk.name,principalSchema.name,parent.name,fk.delete_referential_action_desc;
 """
 
             let! checks =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(t.name COLLATE DATABASE_DEFAULT,'|',cc.name COLLATE DATABASE_DEFAULT,'|',cc.definition COLLATE DATABASE_DEFAULT)
+SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAULT,'|',cc.name COLLATE DATABASE_DEFAULT,'|',cc.definition COLLATE DATABASE_DEFAULT)
 FROM sys.check_constraints cc
 JOIN sys.tables t ON t.object_id=cc.parent_object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
-WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence');
+WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
 """
 
             let! defaults =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(t.name COLLATE DATABASE_DEFAULT,'|',c.name COLLATE DATABASE_DEFAULT,'|',dc.name COLLATE DATABASE_DEFAULT,'|',dc.definition COLLATE DATABASE_DEFAULT)
+SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAULT,'|',c.name COLLATE DATABASE_DEFAULT,'|',dc.name COLLATE DATABASE_DEFAULT,'|',dc.definition COLLATE DATABASE_DEFAULT)
 FROM sys.default_constraints dc
 JOIN sys.tables t ON t.object_id=dc.parent_object_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
 JOIN sys.columns c ON c.object_id=t.object_id AND c.column_id=dc.parent_column_id
-WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence');
+WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
 """
 
             let! triggers =
                 catalogSetAsync
                     connectionString
                     """
-SELECT CONCAT(t.name COLLATE DATABASE_DEFAULT,'|',tr.name COLLATE DATABASE_DEFAULT)
+SELECT CONCAT(s.name COLLATE DATABASE_DEFAULT,'.',t.name COLLATE DATABASE_DEFAULT,'|',tr.name COLLATE DATABASE_DEFAULT)
 FROM sys.triggers tr
 JOIN sys.tables t ON t.object_id=tr.parent_id
 JOIN sys.schemas s ON s.schema_id=t.schema_id
-WHERE s.name='ops' AND t.name IN ('BillingPeriod','Charge','BillingPeriodCloseEvidence');
+WHERE s.name='ops' AND t.name NOT IN ('__EFMigrationsHistory','RawUsageFact','UsageFactRejection','UsageFactJournal','UsageAggregateMinute','PricingPlan','BillableUsageKindMapping','PricingRate','PricingAssignment','ChargePreviewLine');
 """
 
             return
@@ -474,12 +483,14 @@ type OperationsBillingPeriodCloseTests() =
     /// Creates a database name that cannot share rows with another test run.
     let databaseName () = $"GraceOperationsBillingCloseSchema_{Guid.NewGuid():N}"
 
-    /// Requires the configured SQL Server because this issue's physical proof has no valid skipped path.
+    /// Explicitly skips only live SQL proofs when no disposable SQL Server was configured for this process.
     let requireSqlConnectionString () =
         let value = Environment.GetEnvironmentVariable sqlConnectionStringEnvironmentVariable
 
         if String.IsNullOrWhiteSpace value then
-            Assert.Fail($"{sqlConnectionStringEnvironmentVariable} is required; the physical-schema matrix has zero permitted skips.")
+            Assert.Ignore(
+                $"{sqlConnectionStringEnvironmentVariable} is unavailable; live SQL proof is skipped for this run and remains required in the isolated Docker gate."
+            )
 
         value
 
@@ -587,7 +598,7 @@ ORDER BY 1;
         executeAsync
             connectionString
             """
-DECLARE @PeriodId uniqueidentifier=NEWID(), @LineId uniqueidentifier=NEWID();
+DECLARE @PeriodId uniqueidentifier='11111111-1111-1111-1111-111111111111', @LineId uniqueidentifier='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
 VALUES (@PeriodId,NEWID(),NEWID(),NEWID(),'2026-06-01','2026-07-01',0,NULL,NULL);
 INSERT ops.ChargePreviewLine (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros)
@@ -595,6 +606,13 @@ VALUES (@LineId,NEWID(),NEWID(),NEWID(),'2026-06-01','2026-07-01',1,NEWID(),1,NE
 INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) VALUES (NEWID(),@PeriodId,@LineId,'USD',1);
 INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance)
 VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-fixture');
+DECLARE @AmountPeriodId uniqueidentifier='22222222-2222-2222-2222-222222222222', @AmountLineId uniqueidentifier='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State) VALUES (@AmountPeriodId,NEWID(),NEWID(),NEWID(),'2026-07-01','2026-08-01',0);
+INSERT ops.ChargePreviewLine (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (@AmountLineId,NEWID(),NEWID(),NEWID(),'2026-07-01','2026-08-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-07-01','2026-08-01',1,1);
+DECLARE @CurrencyPeriodId uniqueidentifier='33333333-3333-3333-3333-333333333333', @CurrencyLineId uniqueidentifier='cccccccc-cccc-cccc-cccc-cccccccccccc';
+INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State) VALUES (@CurrencyPeriodId,NEWID(),NEWID(),NEWID(),'2026-08-01','2026-09-01',0);
+INSERT ops.ChargePreviewLine (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (@CurrencyLineId,NEWID(),NEWID(),NEWID(),'2026-08-01','2026-09-01',1,NEWID(),1,NEWID(),NEWID(),NEWID(),'USD','unit',1,1,'2026-08-01','2026-09-01',1,1);
+INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State) VALUES ('44444444-4444-4444-4444-444444444444',NEWID(),NEWID(),NEWID(),'2026-09-01','2026-10-01',0),('55555555-5555-5555-5555-555555555555',NEWID(),NEWID(),NEWID(),'2026-10-01','2026-11-01',0);
 """
 
     /// Proves configured provider types retain their explicit provenance and cannot silently become CLR aliases.
@@ -606,10 +624,12 @@ VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-f
             context.GetService<IDesignTimeModel>().Model
             |> BillingCloseSchema.fromModel
 
-        let original = "Charge|CurrencyCode|explicit|varchar(3)"
+        let original = "ops.Charge|CurrencyCode|explicit|varchar(3)"
 
         let mutated =
-            { runtime with StoreTypeProvenance = BillingCloseSchema.replace original "Charge|CurrencyCode|explicit|System.Int32" runtime.StoreTypeProvenance }
+            { runtime with
+                StoreTypeProvenance = BillingCloseSchema.replace original "ops.Charge|CurrencyCode|explicit|System.Int32" runtime.StoreTypeProvenance
+            }
 
         let drift = BillingCloseSchema.compare runtime mutated true
         Assert.That(drift, Is.Not.Empty)
@@ -627,7 +647,7 @@ VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-f
             { runtime with
                 Columns =
                     runtime.Columns
-                    |> Set.remove "Charge|ChargeMicros|bigint|False|-|-|-|-|-|-"
+                    |> Set.remove "ops.Charge|ChargeMicros|bigint|False|-|-|-|-|-|-"
             }
 
         let drift = BillingCloseSchema.compare runtime incomplete false
@@ -657,6 +677,15 @@ VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-f
                 assertNoDrift "runtime-target" (BillingCloseSchema.compare runtime target true)
                 assertNoDrift "runtime-snapshot" (BillingCloseSchema.compare runtime snapshot true)
                 assertNoDrift "runtime-live" (BillingCloseSchema.compare runtime live false)
+
+                do! executeAsync connectionString "CREATE TABLE ops.UnexpectedPhysicalObject (UnexpectedId uniqueidentifier NOT NULL);"
+                let! liveWithUnexpectedObject = BillingCloseSchema.fromLiveSqlAsync connectionString
+
+                Assert.That(
+                    BillingCloseSchema.compare runtime liveWithUnexpectedObject false,
+                    Is.Not.Empty,
+                    "The live catalog extractor must report an unexpected physical table instead of prefiltering it away."
+                )
             })
 
     /// Verifies five independent altered fixture representations all produce exact-set drift reports.
@@ -673,33 +702,46 @@ VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-f
                 { runtime with
                     StoreTypeProvenance =
                         BillingCloseSchema.replace
-                            "Charge|CurrencyCode|explicit|varchar(3)"
-                            "Charge|CurrencyCode|explicit|System.Int32"
+                            "ops.Charge|CurrencyCode|explicit|varchar(3)"
+                            "ops.Charge|CurrencyCode|explicit|System.Int32"
                             runtime.StoreTypeProvenance
                 }
                 { runtime with
                     Checks =
                         BillingCloseSchema.replace
-                            "Charge|CK_ops_Charge_Amount|[chargemicros] >= 0"
-                            "Charge|CK_ops_Charge_Amount|[chargemicros] > 0"
+                            "ops.Charge|CK_ops_Charge_Amount|[chargemicros] >= 0"
+                            "ops.Charge|CK_ops_Charge_Amount|[chargemicros] > 0"
                             runtime.Checks
                 }
                 { runtime with
                     Indexes =
                         BillingCloseSchema.replace
-                            "Charge|UX_ops_Charge_InitialPosting|True|BillingPeriodId,ChargePreviewLineId|-"
-                            "Charge|UX_ops_Charge_InitialPosting|True|ChargePreviewLineId,BillingPeriodId|-"
+                            "ops.Charge|UX_ops_Charge_InitialPosting|True|BillingPeriodId,ChargePreviewLineId|-"
+                            "ops.Charge|UX_ops_Charge_InitialPosting|True|ChargePreviewLineId,BillingPeriodId|-"
                             runtime.Indexes
                 }
                 { runtime with
                     ForeignKeys =
                         BillingCloseSchema.replace
-                            "Charge|FK_ops_Charge_BillingPeriod|BillingPeriodId|ops.BillingPeriod|BillingPeriodId|no_action"
-                            "Charge|FK_ops_Charge_BillingPeriod|BillingPeriodId|ops.BillingPeriod|BillingPeriodId|cascade"
+                            "ops.Charge|FK_ops_Charge_BillingPeriod|BillingPeriodId|ops.BillingPeriod|BillingPeriodId|no_action"
+                            "ops.Charge|FK_ops_Charge_BillingPeriod|BillingPeriodId|ops.BillingPeriod|BillingPeriodId|cascade"
                             runtime.ForeignKeys
                 }
                 { runtime with
-                    Triggers = BillingCloseSchema.replace "Charge|TR_ops_Charge_Immutable" "Charge|TR_ops_Charge_Immutable_Renamed" runtime.Triggers
+                    Triggers = BillingCloseSchema.replace "ops.Charge|TR_ops_Charge_Immutable" "ops.Charge|TR_ops_Charge_Immutable_Renamed" runtime.Triggers
+                }
+                { runtime with Tables = BillingCloseSchema.replace "ops.Charge" "dbo.Charge" runtime.Tables }
+                { runtime with
+                    Properties =
+                        BillingCloseSchema.replace
+                            "ops.Charge|CurrencyCode|CurrencyCode|System.String"
+                            "ops.Charge|Currency|CurrencyCode|System.String"
+                            runtime.Properties
+                }
+                { runtime with
+                    Tables =
+                        runtime.Tables
+                        |> Set.add "ops.UnexpectedPhysicalObject"
                 }
             ]
 
@@ -741,13 +783,13 @@ VALUES (@PeriodId,REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),'schema-f
                         "period diagnostic",
                         "INSERT ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc) VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'2026-06-01','2026-07-01',2,'retry',SYSUTCDATETIME());"
                         "charge amount",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) SELECT NEWID(),BillingPeriodId,ChargePreviewLineId,'USD',-1 FROM ops.Charge;"
+                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) VALUES (NEWID(),'22222222-2222-2222-2222-222222222222','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','USD',-1);"
                         "charge currency",
-                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) SELECT NEWID(),BillingPeriodId,ChargePreviewLineId,'usd',1 FROM ops.Charge;"
+                        "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) VALUES (NEWID(),'33333333-3333-3333-3333-333333333333','cccccccc-cccc-cccc-cccc-cccccccccccc','usd',1);"
                         "evidence digest",
-                        "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES (NEWID(),'bad',REPLICATE('A',64),SYSUTCDATETIME(),'x');"
+                        "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES ('44444444-4444-4444-4444-444444444444','bad',REPLICATE('A',64),SYSUTCDATETIME(),'x');"
                         "evidence provenance",
-                        "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES (NEWID(),REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),' ');"
+                        "INSERT ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance) VALUES ('55555555-5555-5555-5555-555555555555',REPLICATE('A',64),REPLICATE('B',64),SYSUTCDATETIME(),' ');"
                         "duplicate posting",
                         "INSERT ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros) SELECT NEWID(),BillingPeriodId,ChargePreviewLineId,'USD',1 FROM ops.Charge;"
                         "charge period foreign key",
