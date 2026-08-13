@@ -494,3 +494,695 @@ module internal WorkingDirectoryUpdate =
 
         /// Produces one complete pre-mutation action list after classifying every target and removable tracked blocker.
         let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously currentStatus manifest }
+
+    /// Carries the one complete target status graph and its exact selected-root identity through the local transaction.
+    type ResolvedTargetGraph = private ResolvedTargetGraph of WorkingDirectoryUpdateContracts.Target * GraceStatus
+
+    /// Carries correlation used only to identify diagnostics from one invocation; it never changes the update identity.
+    type DiagnosticCorrelation = private DiagnosticCorrelation of string
+
+    /// Holds the private local-completion result that a later finalization leaf may consume without reconstructing facts.
+    type LocalCompletion = private LocalCompletion of WorkingDirectoryUpdateContracts.Target * WorkingDirectoryUpdateContracts.Operation
+
+    /// Builds the only accepted resolved graph when its complete rooted status and selected-root identity agree.
+    module ResolvedTargetGraph =
+        /// Creates the runtime target graph after proving its root matches the selected target exactly.
+        let create target (status: GraceStatus) =
+            match LocalStateDb.validateCompleteStatusTree status with
+            | Error error -> Error $"Resolved target graph must be complete: {error}"
+            | Ok () ->
+                match
+                    WorkingDirectoryUpdateContracts.Target.create
+                        (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                        (WorkingDirectoryUpdateContracts.Target.branchId target)
+                        status.RootDirectoryId
+                        status.RootDirectorySha256Hash
+                        status.RootDirectoryBlake3Hash
+                    with
+                | Ok graphTarget when graphTarget = target -> Ok(ResolvedTargetGraph(target, status))
+                | Ok _ -> Error "Resolved target graph root does not exactly match the selected target."
+                | Error error -> Error $"Resolved target graph has an invalid root: {error}"
+
+        /// Returns the exact selected-root identity retained by this immutable graph.
+        let internal target (ResolvedTargetGraph (target, _)) = target
+
+        /// Returns the complete rooted status graph retained by this immutable graph.
+        let internal status (ResolvedTargetGraph (_, status)) = status
+
+    /// Supplies construction for non-empty diagnostic correlation values without making them part of operation identity.
+    module DiagnosticCorrelation =
+        /// Creates correlation text that can distinguish simultaneous local attempts in diagnostics.
+        let create value =
+            if String.IsNullOrWhiteSpace(value) then
+                Error "Working Directory Update diagnostic correlation must not be empty."
+            else
+                Ok(DiagnosticCorrelation value)
+
+        /// Returns diagnostic-only correlation text to the local transaction implementation.
+        let internal value (DiagnosticCorrelation value) = value
+
+    /// Supplies the narrow immutable result consumed by later pending-finalization routing.
+    module LocalCompletion =
+        /// Returns the selected target preserved by verified SQLite local completion.
+        let internal target (LocalCompletion (target, _)) = target
+
+        /// Returns the exact operation whose pending local completion was committed.
+        let internal operation (LocalCompletion (_, operation)) = operation
+
+    /// Owns application of the private five-input Branch transaction through verified pending local completion.
+    module LocalTransaction =
+        /// Produces a deterministic complete-status fingerprint used to reject stale Branch admission after preparation.
+        let statusFingerprint (status: GraceStatus) =
+            let canonical =
+                status.Index.Values
+                |> Seq.sortBy (fun directory -> string directory.RelativePath)
+                |> Seq.collect (fun directory ->
+                    seq {
+                        yield $"D|{directory.RelativePath}|{directory.DirectoryVersionId:N}|{directory.Sha256Hash}|{directory.Blake3Hash}"
+
+                        yield!
+                            directory.Files
+                            |> Seq.sortBy (fun file -> string file.RelativePath)
+                            |> Seq.map (fun file -> $"F|{file.RelativePath}|{file.Sha256Hash}|{file.Blake3Hash}|{file.Size}")
+                    })
+                |> String.concat "\n"
+
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical))
+            |> Convert.ToHexString
+            |> fun value -> value.ToLowerInvariant()
+
+        /// Computes a stable Windows comparison key for graph and manifest topology proof.
+        let private pathKey (path: RelativePath) =
+            string path
+            |> fun value -> value.ToUpperInvariant()
+
+        /// Enumerates all parent directories implied by one target path, including the root directory.
+        let private parentDirectories (path: RelativePath) =
+            let segments =
+                (string path)
+                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+            seq {
+                yield RelativePath Constants.RootDirectoryPath
+
+                for index in 1 .. segments.Length - 1 do
+                    yield RelativePath(String.Join('/', segments[0 .. index - 1]))
+            }
+
+        /// Compares the full normalized directory and dual-hash file topology before any planner can consume it.
+        let private graphMatchesManifest (graph: GraceStatus) manifest =
+            let graphDirectories = Dictionary<string, RelativePath>(StringComparer.Ordinal)
+            let graphFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
+            let manifestDirectories = Dictionary<string, RelativePath>(StringComparer.Ordinal)
+            let manifestFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
+            let mutable valid = true
+
+            graph.Index.Values
+            |> Seq.iter (fun directory ->
+                let directoryKey = pathKey directory.RelativePath
+
+                if
+                    graphDirectories.ContainsKey(directoryKey)
+                    || graphFiles.ContainsKey(directoryKey)
+                then
+                    valid <- false
+                else
+                    graphDirectories[directoryKey] <- directory.RelativePath
+
+                directory.Files
+                |> Seq.iter (fun file ->
+                    let fileKey = pathKey file.RelativePath
+
+                    if
+                        graphFiles.ContainsKey(fileKey)
+                        || graphDirectories.ContainsKey(fileKey)
+                    then
+                        valid <- false
+                    else
+                        graphFiles[fileKey] <- (file.Sha256Hash, file.Blake3Hash)))
+
+            WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest
+            |> Seq.iter (function
+                | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory path ->
+                    let key = pathKey path
+
+                    if
+                        manifestDirectories.ContainsKey(key)
+                        || manifestFiles.ContainsKey(key)
+                    then
+                        valid <- false
+                    else
+                        manifestDirectories[key] <- path
+
+                    parentDirectories path
+                    |> Seq.iter (fun parent ->
+                        let parentKey = pathKey parent
+
+                        if manifestFiles.ContainsKey(parentKey) then
+                            valid <- false
+                        else
+                            manifestDirectories[parentKey] <- parent)
+                | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
+                    let key = pathKey path
+
+                    if
+                        manifestFiles.ContainsKey(key)
+                        || manifestDirectories.ContainsKey(key)
+                    then
+                        valid <- false
+                    else
+                        manifestFiles[key] <- (sha256Hash, blake3Hash)
+
+                    parentDirectories path
+                    |> Seq.iter (fun parent ->
+                        let parentKey = pathKey parent
+
+                        if manifestFiles.ContainsKey(parentKey) then
+                            valid <- false
+                        else
+                            manifestDirectories[parentKey] <- parent))
+
+            valid
+            && graphDirectories.Count = manifestDirectories.Count
+            && graphFiles.Count = manifestFiles.Count
+            && graphDirectories.Keys
+               |> Seq.forall manifestDirectories.ContainsKey
+            && graphFiles
+               |> Seq.forall (fun pair ->
+                   match manifestFiles.TryGetValue(pair.Key) with
+                   | true, hashes -> hashes = pair.Value
+                   | false, _ -> false)
+
+        /// Maps one prepared path and hashes to its immutable local object-cache path.
+        let private objectPath objectDirectory path sha256Hash blake3Hash =
+            Path.Combine(objectDirectory, string path, Services.getLocalObjectCacheFileName path sha256Hash blake3Hash)
+
+        /// Verifies one filesystem file against both selected content hashes without trusting its name or metadata.
+        let private hasExpectedBytes path sha256Hash blake3Hash =
+            Services.createLocalFileVersion (FileInfo(path))
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> Option.exists (fun file ->
+                file.Sha256Hash = sha256Hash
+                && file.Blake3Hash = blake3Hash)
+
+        /// Publishes one verified prepared file exactly once and rejects a mismatching immutable object already at its final path.
+        let private publishObject preparedContent objectDirectory path sha256Hash blake3Hash =
+            task {
+                let finalPath = objectPath objectDirectory path sha256Hash blake3Hash
+
+                if File.Exists(finalPath) then
+                    if not (hasExpectedBytes finalPath sha256Hash blake3Hash) then
+                        return Error $"Immutable object bytes are corrupt or were replaced for '{path}'."
+                    else
+                        return Ok()
+                else
+                    match WorkingDirectoryUpdateContracts.PreparedContent.openRead preparedContent path with
+                    | Error error -> return Error error
+                    | Ok source ->
+                        use source = source
+                        let directory = Path.GetDirectoryName(finalPath)
+                        Directory.CreateDirectory(directory) |> ignore
+
+                        let temporaryPath =
+                            finalPath
+                            + "."
+                            + Guid.NewGuid().ToString("N")
+                            + ".tmp"
+
+                        use destination = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+                        do! source.CopyToAsync(destination)
+                        destination.Flush(true)
+                        destination.Dispose()
+
+                        if not (hasExpectedBytes temporaryPath sha256Hash blake3Hash) then
+                            File.Delete(temporaryPath)
+                            return Error $"Prepared object bytes do not match their declared hashes for '{path}'."
+                        else
+                            try
+                                File.Move(temporaryPath, finalPath)
+                            with
+                            | :? IOException when File.Exists(finalPath) -> File.Delete(temporaryPath)
+
+                            if hasExpectedBytes finalPath sha256Hash blake3Hash then
+                                return Ok()
+                            else
+                                return Error $"Immutable object bytes are corrupt or were replaced for '{path}'."
+            }
+
+        /// Publishes and rechecks every prepared immutable object before working-directory mutation is considered.
+        let private publishObjects preparedContent objectDirectory manifest =
+            task {
+                let files =
+                    WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest
+                    |> Seq.choose (function
+                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) -> Some(path, sha256Hash, blake3Hash)
+                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory _ -> None)
+                    |> Seq.toArray
+
+                let mutable failure = None
+                let mutable index = 0
+
+                while index < files.Length && Option.isNone failure do
+                    let path, sha256Hash, blake3Hash = files[index]
+                    let! result = publishObject preparedContent objectDirectory path sha256Hash blake3Hash
+
+                    match result with
+                    | Ok () -> ()
+                    | Error error -> failure <- Some error
+
+                    index <- index + 1
+
+                return
+                    match failure with
+                    | Some error -> Error error
+                    | None -> Ok()
+            }
+
+        /// Converts a planned repository-relative path to a root-contained filesystem path.
+        let private workingPath root (path: RelativePath) =
+            if string path = Constants.RootDirectoryPath then
+                root
+            else
+                let fullPath =
+                    Path.GetFullPath(
+                        Path.Combine(
+                            root,
+                            (string path)
+                                .Replace('/', Path.DirectorySeparatorChar)
+                        )
+                    )
+
+                if Services.isPathWithinDirectoryWithComparison StringComparison.OrdinalIgnoreCase root fullPath then
+                    fullPath
+                else
+                    invalidOp $"Working Directory Update plan path escapes the local root: {path}"
+
+        /// Applies one preplanned action using only already-verified immutable objects.
+        let private applyAction root objectDirectory (objectHashes: Dictionary<string, Sha256Hash * Blake3Hash>) =
+            function
+            | Topology.RemoveTrackedFile path ->
+                let fullPath = workingPath root path
+
+                if File.Exists(fullPath) then
+                    File.Delete(fullPath)
+                    true
+                else
+                    false
+            | Topology.RemoveTrackedDirectory path ->
+                let fullPath = workingPath root path
+
+                if Directory.Exists(fullPath) then
+                    Directory.Delete(fullPath, false)
+                    true
+                else
+                    false
+            | Topology.EnsureDirectory path ->
+                let fullPath = workingPath root path
+
+                if Directory.Exists(fullPath) then
+                    false
+                else
+                    Directory.CreateDirectory(fullPath) |> ignore
+                    true
+            | Topology.CopyVerifiedFile path ->
+                let key = pathKey path
+
+                match objectHashes.TryGetValue(key) with
+                | false, _ -> invalidOp $"Planned file '{path}' has no immutable object declaration."
+                | true, (sha256Hash, blake3Hash) ->
+                    let objectFile = objectPath objectDirectory path sha256Hash blake3Hash
+
+                    if not (hasExpectedBytes objectFile sha256Hash blake3Hash) then
+                        invalidOp $"Immutable object bytes are corrupt or were replaced for '{path}'."
+
+                    let finalPath = workingPath root path
+                    let directory = Path.GetDirectoryName(finalPath)
+                    Directory.CreateDirectory(directory) |> ignore
+                    File.Copy(objectFile, finalPath, true)
+                    true
+
+        /// Returns every target file declared by the complete selected graph.
+        let private targetFiles (status: GraceStatus) =
+            status.Index.Values
+            |> Seq.collect (fun directory -> directory.Files)
+            |> Seq.map (fun file -> file.RelativePath, file.Sha256Hash, file.Blake3Hash)
+            |> Seq.toArray
+
+        /// Independently verifies every target path, file hash, directory kind, and absence of extra working-tree entries.
+        let private verifyCompleteTargetRoot root graceDirectory (status: GraceStatus) =
+            let expectedDirectories =
+                status.Index.Values
+                |> Seq.map (fun directory -> pathKey directory.RelativePath)
+                |> HashSet
+
+            let expectedFiles =
+                targetFiles status
+                |> Seq.map (fun (path, sha256Hash, blake3Hash) -> pathKey path, (sha256Hash, blake3Hash))
+                |> dict
+
+            let targetFilesMatch =
+                expectedFiles
+                |> Seq.forall (fun pair ->
+                    let relativePath =
+                        status.Index.Values
+                        |> Seq.collect (fun directory -> directory.Files)
+                        |> Seq.find (fun file -> pathKey file.RelativePath = pair.Key)
+                        |> fun file -> file.RelativePath
+
+                    let fullPath = workingPath root relativePath
+
+                    File.Exists(fullPath)
+                    && hasExpectedBytes fullPath (fst pair.Value) (snd pair.Value))
+
+            let actualEntries =
+                DirectoryInfo(root)
+                    .GetFileSystemInfos("*", SearchOption.AllDirectories)
+                |> Array.filter (fun entry ->
+                    not (Services.isPathWithinDirectoryWithComparison StringComparison.OrdinalIgnoreCase graceDirectory entry.FullName))
+
+            let actualTopologyMatches =
+                actualEntries
+                |> Array.forall (fun entry ->
+                    let relativePath =
+                        Path.GetRelativePath(root, entry.FullName)
+                        |> Grace.Shared.Utilities.normalizeFilePath
+                        |> RelativePath
+
+                    let key = pathKey relativePath
+
+                    if entry :? DirectoryInfo then
+                        expectedDirectories.Contains(key)
+                    else
+                        expectedFiles.ContainsKey(key))
+
+            let actualDirectoryHashesMatch =
+                if not targetFilesMatch || not actualTopologyMatches then
+                    false
+                else
+                    let computedDirectories = Dictionary<DirectoryVersionId, Sha256Hash * Blake3Hash>()
+
+                    let orderedDirectories =
+                        status.Index.Values
+                        |> Seq.sortByDescending (fun directory -> string directory.RelativePath)
+                        |> Seq.toArray
+
+                    let mutable matches = true
+
+                    orderedDirectories
+                    |> Seq.iter (fun directory ->
+                        let childDirectories =
+                            directory.Directories
+                            |> Seq.map (fun childId ->
+                                match computedDirectories.TryGetValue(childId) with
+                                | true, (sha256Hash, blake3Hash) ->
+                                    let child = status.Index[childId]
+
+                                    Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size blake3Hash sha256Hash
+                                | false, _ ->
+                                    matches <- false
+
+                                    Services.DirectoryVersionPreimageEntry.Directory
+                                        (RelativePath "invalid")
+                                        0L
+                                        (Blake3Hash String.Empty)
+                                        (Sha256Hash String.Empty))
+
+                        let files =
+                            directory.Files
+                            |> Seq.map (fun file -> Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash)
+
+                        let entries = Seq.append childDirectories files |> Seq.toArray
+                        let sha256Hash = Services.computeSha256ForDirectoryEntries directory.RelativePath entries
+                        let blake3Hash = Services.computeBlake3ForDirectory directory.RelativePath entries
+
+                        if directory.Sha256Hash <> sha256Hash
+                           || directory.Blake3Hash <> blake3Hash then
+                            matches <- false
+
+                        computedDirectories[directory.DirectoryVersionId] <- (sha256Hash, blake3Hash))
+
+                    matches
+                    && match computedDirectories.TryGetValue(status.RootDirectoryId) with
+                       | true, (sha256Hash, blake3Hash) ->
+                           sha256Hash = status.RootDirectorySha256Hash
+                           && blake3Hash = status.RootDirectoryBlake3Hash
+                       | false, _ -> false
+
+            targetFilesMatch
+            && actualTopologyMatches
+            && actualDirectoryHashesMatch
+
+        /// Forms the exact Branch operation and pending details from typed selection and current configuration only.
+        let private branchOperation currentBranchId selection target =
+            match selection with
+            | WorkingDirectoryUpdateContracts.BranchSelection.Reference referenceId ->
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection currentBranchId selection target
+                |> Result.map (fun operation -> operation, LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(currentBranchId, referenceId))
+            | WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion ->
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection currentBranchId selection target
+                |> Result.map (fun operation ->
+                    operation, LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization currentBranchId)
+
+        /// Produces a classified rejected outcome while retaining the exact runtime reason.
+        let private rejected reason =
+            WorkingDirectoryUpdateContracts.Failure.create reason
+            |> Result.map WorkingDirectoryUpdateContracts.Outcome.Rejected
+            |> Result.defaultWith invalidOp
+
+        /// Produces a classified incomplete outcome after actual working-tree mutation begins.
+        let private incomplete reason =
+            WorkingDirectoryUpdateContracts.Failure.create reason
+            |> Result.map WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete
+            |> Result.defaultWith invalidOp
+
+        /// Applies the only Branch five-input local transaction through verified pending SQLite completion.
+        let private runCore
+            (acceptedPhase: WorkingDirectoryUpdateContracts.AcceptedBranchPhase)
+            (selection: WorkingDirectoryUpdateContracts.BranchSelection)
+            (resolvedGraph: ResolvedTargetGraph)
+            (preparedContent: WorkingDirectoryUpdateContracts.PreparedContent)
+            (correlation: DiagnosticCorrelation)
+            =
+            task {
+                let target = ResolvedTargetGraph.target resolvedGraph
+                let targetStatus = ResolvedTargetGraph.status resolvedGraph
+                let manifest = WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent
+                let actionToken = WorkingDirectoryUpdateContracts.AcceptedBranchPhase.actionToken acceptedPhase
+                let correlationValue = DiagnosticCorrelation.value correlation
+                let mutable mutationStarted = false
+                let mutable ownedMarker = None
+
+                try
+                    actionToken.ThrowIfCancellationRequested()
+                    let current = Current()
+
+                    if current.RepositoryId
+                       <> WorkingDirectoryUpdateContracts.Target.repositoryId target then
+                        return rejected $"[{correlationValue}] Local configuration repository changed before Working Directory Update admission."
+                    else
+                        match WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId current.RootDirectory with
+                        | Error error -> return rejected $"[{correlationValue}] {error}"
+                        | Ok scope ->
+                            let! acquiredLease = WorkingDirectoryUpdateCoordination.Lease.acquire scope actionToken
+                            use acquiredLease = acquiredLease
+                            let dbPath = current.GraceStatusFile
+                            let! revision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                            let! currentStatusResult =
+                                LocalStateDb.readCompleteStatusSnapshotReadOnly dbPath current.OwnerId current.OrganizationId current.RepositoryId
+
+                            let currentStatus =
+                                match currentStatusResult with
+                                | Ok status -> status
+                                | Error error -> invalidOp error
+
+                            let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
+
+                            if revision
+                               <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase then
+                                return rejected $"[{correlationValue}] Accepted local-status revision changed before Working Directory Update mutation."
+                            elif statusFingerprint currentStatus
+                                 <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase then
+                                return
+                                    rejected
+                                        $"[{correlationValue}] Accepted complete local-status fingerprint changed before Working Directory Update mutation."
+                            elif Option.isSome pending then
+                                return rejected $"[{correlationValue}] A pending Working Directory Update finalization blocks this local transaction."
+                            elif not (graphMatchesManifest targetStatus manifest) then
+                                return rejected $"[{correlationValue}] Resolved target graph does not match immutable prepared-content topology."
+                            else
+                                match branchOperation current.BranchId selection target with
+                                | Error error -> return rejected $"[{correlationValue}] {error}"
+                                | Ok (operation, completionDetails) ->
+                                    let! markerInspection = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                                    match markerInspection with
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
+                                        return rejected $"[{correlationValue}] Existing Working Directory Update marker is not exact owned admission evidence."
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                        let attempt = WorkingDirectoryUpdateContracts.AttemptToken.create ()
+
+                                        match WorkingDirectoryUpdateCoordination.Marker.create scope attempt target operation with
+                                        | Error error -> return rejected $"[{correlationValue}] {error}"
+                                        | Ok marker ->
+                                            do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
+                                            ownedMarker <- Some(scope, attempt)
+                                            let! objectResult = publishObjects preparedContent current.ObjectDirectory manifest
+
+                                            match objectResult with
+                                            | Error error ->
+                                                let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+                                                return
+                                                    match cleanup with
+                                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> rejected $"[{correlationValue}] {error}"
+                                                    | _ -> rejected $"[{correlationValue}] {error}; exact marker cleanup failed."
+                                            | Ok () ->
+                                                let! initialPlan = Topology.plan currentStatus manifest
+
+                                                match initialPlan with
+                                                | Topology.Rejected rejection ->
+                                                    invalidOp $"Initial Working Directory Update topology rejected '{Topology.Rejection.path rejection}'."
+                                                | Topology.Planned _ -> ()
+
+                                                let finalCurrent = Current()
+                                                let! finalRevision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                                                let! finalStatusResult =
+                                                    LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                                        dbPath
+                                                        current.OwnerId
+                                                        current.OrganizationId
+                                                        current.RepositoryId
+
+                                                let finalStatus =
+                                                    match finalStatusResult with
+                                                    | Ok status -> status
+                                                    | Error error -> invalidOp error
+
+                                                let! finalPending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization dbPath
+                                                let! finalMarker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                                                let! finalMarkerAttempt =
+                                                    WorkingDirectoryUpdateCoordination.Marker.inspectExactAttempt scope target operation attempt
+
+                                                if
+                                                    finalCurrent.RepositoryId <> current.RepositoryId
+                                                    || finalCurrent.RootDirectory
+                                                       <> current.RootDirectory
+                                                    || finalCurrent.GraceStatusFile
+                                                       <> current.GraceStatusFile
+                                                    || finalCurrent.ObjectDirectory
+                                                       <> current.ObjectDirectory
+                                                    || finalCurrent.GraceDirectory
+                                                       <> current.GraceDirectory
+                                                    || finalCurrent.BranchId <> current.BranchId
+                                                    || finalRevision
+                                                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.localStatusRevision acceptedPhase
+                                                    || statusFingerprint finalStatus
+                                                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.statusFingerprint acceptedPhase
+                                                    || Option.isSome finalPending
+                                                    || finalMarker
+                                                       <> WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                                                    || not finalMarkerAttempt
+                                                    || not (graphMatchesManifest targetStatus manifest)
+                                                then
+                                                    let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+                                                    return
+                                                        match cleanup with
+                                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                            rejected $"[{correlationValue}] Working Directory Update facts changed before the first mutation."
+                                                        | _ ->
+                                                            rejected
+                                                                $"[{correlationValue}] Working Directory Update facts changed before mutation and exact marker cleanup failed."
+                                                else
+                                                    actionToken.ThrowIfCancellationRequested()
+                                                    let! planResult = Topology.plan finalStatus manifest
+
+                                                    match planResult with
+                                                    | Topology.Rejected rejection ->
+                                                        let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+                                                        let path = Topology.Rejection.path rejection
+
+                                                        return
+                                                            match cleanup with
+                                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                                                rejected $"[{correlationValue}] Working Directory Update topology rejected '{path}'."
+                                                            | _ ->
+                                                                rejected
+                                                                    $"[{correlationValue}] Working Directory Update topology rejected '{path}' and exact marker cleanup failed."
+                                                    | Topology.Planned plan ->
+                                                        let actions = Topology.Plan.actions plan |> List.toArray
+                                                        let objectHashes = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
+
+                                                        WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest
+                                                        |> Seq.iter (function
+                                                            | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
+                                                                objectHashes[pathKey path] <- (sha256Hash, blake3Hash)
+                                                            | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory _ -> ())
+
+                                                        actions
+                                                        |> Array.iter (fun action ->
+                                                            if applyAction current.RootDirectory current.ObjectDirectory objectHashes action then
+                                                                mutationStarted <- true)
+
+                                                        if not (verifyCompleteTargetRoot current.RootDirectory current.GraceDirectory targetStatus) then
+                                                            return
+                                                                incomplete
+                                                                    $"[{correlationValue}] Complete target-root verification failed after working-tree mutation."
+                                                        else
+                                                            let! _ =
+                                                                LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                                                                    dbPath
+                                                                    targetStatus
+                                                                    (targetStatus.Index.Values :> IEnumerable<LocalDirectoryVersion>)
+                                                                    completionDetails
+                                                                    target
+                                                                    operation
+
+                                                            match WorkingDirectoryUpdateContracts.Receipt.create target operation mutationStarted with
+                                                            | Ok receipt -> return WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                                                            | Error error -> return incomplete $"[{correlationValue}] {error}"
+                with
+                | :? OperationCanceledException when mutationStarted ->
+                    return incomplete $"[{correlationValue}] Cancellation arrived after the first working-tree mutation."
+                | :? OperationCanceledException ->
+                    match ownedMarker with
+                    | Some (scope, attempt) ->
+                        let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+                        return
+                            match cleanup with
+                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker ->
+                                rejected $"[{correlationValue}] Working Directory Update was cancelled before the first working-tree mutation."
+                            | _ -> rejected $"[{correlationValue}] Working Directory Update was cancelled before mutation and exact marker cleanup failed."
+                    | None -> return rejected $"[{correlationValue}] Working Directory Update was cancelled before the first working-tree mutation."
+                | ex when mutationStarted -> return incomplete $"[{correlationValue}] {ex.Message}"
+                | ex ->
+                    match ownedMarker with
+                    | Some (scope, attempt) ->
+                        let! cleanup = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attempt
+
+                        return
+                            match cleanup with
+                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                            | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> rejected $"[{correlationValue}] {ex.Message}"
+                            | _ -> rejected $"[{correlationValue}] {ex.Message}; exact marker cleanup failed."
+                    | None -> return rejected $"[{correlationValue}] {ex.Message}"
+            }
+
+        /// Disposes immutable prepared bytes exactly once after every five-input transaction path completes.
+        let run acceptedPhase selection resolvedGraph preparedContent correlation =
+            task {
+                let! outcome = runCore acceptedPhase selection resolvedGraph preparedContent correlation
+                WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+                return outcome
+            }

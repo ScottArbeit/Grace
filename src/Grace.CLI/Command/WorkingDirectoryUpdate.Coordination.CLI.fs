@@ -383,6 +383,25 @@ module internal WorkingDirectoryUpdateCoordination =
                         | :? UnauthorizedAccessException -> return Unreadable
             }
 
+        /// Verifies that a reread marker still binds the exact fresh attempt token created under the held scope lease.
+        let inspectExactAttempt scope expectedTarget operation expectedAttempt =
+            task {
+                let! inspection = inspect scope expectedTarget operation
+
+                if inspection <> ExactMatch then
+                    return false
+                else
+                    try
+                        let content = File.ReadAllText(Scope.markerPath scope)
+
+                        match tryReadMarkerDocument scope content with
+                        | Ok marker -> return marker.AttemptToken = WorkingDirectoryUpdate.AttemptToken.value expectedAttempt
+                        | Error _ -> return false
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return false
+            }
+
         /// Removes a marker with an injected deletion action so portable focused proofs can force the exact cleanup-failure boundary.
         let tryRemoveOwnedWithDelete scope attemptToken deleteMarker =
             task {

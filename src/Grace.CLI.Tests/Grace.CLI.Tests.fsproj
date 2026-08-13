@@ -53,6 +53,7 @@
     <Compile Include="WorkingDirectoryUpdate.PreparedContent.Tests.fs" />
     <Compile Include="WorkingDirectoryUpdate.Coordination.Tests.fs" />
     <Compile Include="WorkingDirectoryUpdate.Topology.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.LocalTransaction.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

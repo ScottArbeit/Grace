@@ -68,8 +68,8 @@ module internal WorkingDirectoryUpdateContracts =
     /// Represents immutable dual-hash-verified bytes for a future update engine.
     type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref
 
-    /// Holds validated update inputs without exposing a mutation plan, writer, or transaction callback.
-    type Request = private Request of Target * Operation * PreparedContent * CorrelationId
+    /// Seals the no-Save Branch admission facts that must survive immutable target preparation unchanged.
+    type AcceptedBranchPhase = private AcceptedBranchPhase of localStatusRevision: int64 * statusFingerprint: string * actionToken: CancellationToken
 
     /// Holds the target and operation facts proven by a completed update attempt.
     type Receipt = private Receipt of Target * Operation * bytesChanged: bool
@@ -236,6 +236,15 @@ module internal WorkingDirectoryUpdateContracts =
 
         /// Returns the canonical target encoding included in caller operation tuples.
         let canonical (Target (_, _, _, _, _, canonical)) = canonical
+
+        /// Returns the exact root directory-version identity that the resolved graph must prove.
+        let rootDirectoryVersionId (Target (_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
+
+        /// Returns the exact root SHA-256 that the resolved graph must prove.
+        let rootSha256Hash (Target (_, _, _, sha256Hash, _, _)) = sha256Hash
+
+        /// Returns the exact root BLAKE3 that the resolved graph must prove.
+        let rootBlake3Hash (Target (_, _, _, _, blake3Hash, _)) = blake3Hash
 
     /// Supplies construction and access functions for local-root scopes.
     module LocalRootScope =
@@ -532,34 +541,43 @@ module internal WorkingDirectoryUpdateContracts =
         let openRead (PreparedContent (_, bytesByPath, disposed)) path =
             match normalizeRelativePath path with
             | Error error -> Error error
-            | Ok path when !disposed -> Error "Prepared-content has already been disposed."
+            | Ok path when disposed.Value -> Error "Prepared-content has already been disposed."
             | Ok path ->
                 match bytesByPath.TryGetValue(windowsPathKey path) with
                 | true, bytes -> Ok(new MemoryStream(bytes, writable = false) :> Stream)
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
+        /// Returns the immutable manifest that is the sole topology input to the collision-safe planner.
+        let manifest (PreparedContent (manifest, _, _)) = manifest
+
         /// Clears verified bytes when the owning update operation reaches a terminal path.
         let dispose (PreparedContent (_, bytesByPath, disposed)) =
-            if not !disposed then
+            if not disposed.Value then
                 bytesByPath.Values
                 |> Seq.iter (fun bytes -> Array.Clear(bytes, 0, bytes.Length))
 
                 bytesByPath.Clear()
-                disposed := true
+                disposed.Value <- true
 
-    /// Supplies construction and access functions for private update requests.
-    module Request =
-        /// Creates a request only when its deterministic operation belongs to the selected target scope.
-        let create target operation preparedContent correlationId =
-            if isNull (box preparedContent) then
-                Error "Working Directory Update requires prepared content."
-            elif Operation.matchesTarget target operation then
-                Ok(Request(target, operation, preparedContent, correlationId))
+    /// Supplies the sole construction and internal consumption path for accepted Branch admission facts.
+    module AcceptedBranchPhase =
+        /// Seals one successful Branch admission before target resolution and immutable content preparation begin.
+        let create localStatusRevision statusFingerprint actionToken =
+            if localStatusRevision < 0L then
+                Error "Accepted Branch phase requires a non-negative local-status revision."
+            elif String.IsNullOrWhiteSpace(statusFingerprint) then
+                Error "Accepted Branch phase requires a complete status fingerprint."
             else
-                Error "Working Directory Update operation does not match the selected target."
+                Ok(AcceptedBranchPhase(localStatusRevision, statusFingerprint, actionToken))
 
-        /// Returns the logical operation independently of diagnostic correlation.
-        let operation (Request (_, operation, _, _)) = operation
+        /// Returns the accepted SQLite revision only to the canonical Working Directory Update runtime.
+        let internal localStatusRevision (AcceptedBranchPhase (revision, _, _)) = revision
+
+        /// Returns the complete-status fingerprint only to the canonical Working Directory Update runtime.
+        let internal statusFingerprint (AcceptedBranchPhase (_, fingerprint, _)) = fingerprint
+
+        /// Returns the original invocation token without permitting a caller to replace it after admission.
+        let internal actionToken (AcceptedBranchPhase (_, _, token)) = token
 
     /// Supplies construction and access functions for completed update receipts.
     module Receipt =
