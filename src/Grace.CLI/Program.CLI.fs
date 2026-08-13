@@ -28,6 +28,7 @@ open System.IO
 open System.Linq
 open System.Text.Json
 open System.Text.RegularExpressions
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Caching.Memory
 open System.CommandLine.Help
@@ -226,22 +227,17 @@ module GraceCommand =
             let groupPath = path |> List.take (path.Length - 1)
             CommandOutputContract.commandIdentity groupPath commandName
 
-    /// Defines root parser introspection request from tokens behavior for Grace CLI startup and help output.
-    let private introspectionRequestFromTokens (args: string array) =
-        let tokens =
-            if isNull args then
-                Array.empty
-            else
-                args
-                |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
+    /// Determines whether the parser recognized one occurrence of the supplied root option.
+    let private isOptionRequested (option: Option) (parseResult: ParseResult) =
+        let optionResult = parseResult.GetResult(option)
 
-        /// Defines the contains option used by this command parser.
-        let containsOption optionName =
-            tokens
-            |> Array.exists (fun token -> token.Equals(optionName, StringComparison.OrdinalIgnoreCase))
+        not (isNull optionResult)
+        && optionResult.IdentifierTokenCount > 0
 
-        let schema = containsOption OptionName.Schema
-        let examples = containsOption OptionName.Examples
+    /// Classifies the parsed introspection options without inspecting parser message text.
+    let private introspectionRequest (parseResult: ParseResult) =
+        let schema = isOptionRequested Options.schema parseResult
+        let examples = isOptionRequested Options.examples parseResult
 
         match schema, examples with
         | false, false -> None
@@ -255,20 +251,24 @@ module GraceCommand =
         Common.writeJsonErrorStdout error
         -1
 
-    /// Evaluates is ignorable introspection parse error against parsed options and command state.
-    let private isIgnorableIntrospectionParseError (error: ParseError) =
-        error.Message.StartsWith("Required argument missing for command:", StringComparison.Ordinal)
+    /// Identifies a missing required command argument through System.CommandLine parser metadata.
+    let private isMissingRequiredArgument (error: ParseError) =
+        match error.SymbolResult with
+        | :? ArgumentResult as argumentResult ->
+            argumentResult.Tokens.Count = 0
+            && argumentResult.Argument.Arity.MinimumNumberOfValues > 0
+        | _ -> false
 
-    /// Evaluates has blocking introspection parse errors against parsed options and command state.
+    /// Determines whether introspection has a parser failure other than a missing execution argument.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =
         parseResult.Errors
-        |> Seq.exists (isIgnorableIntrospectionParseError >> not)
+        |> Seq.exists (isMissingRequiredArgument >> not)
 
-    /// Writes introspection parse error data through the CLI output contract.
-    let private writeIntrospectionParseError (parseResult: ParseResult) =
+    /// Writes the typed blocking parser failures for schema and examples requests.
+    let private writeBlockingIntrospectionParseErrors (parseResult: ParseResult) =
         let message =
             parseResult.Errors
-            |> Seq.filter (isIgnorableIntrospectionParseError >> not)
+            |> Seq.filter (isMissingRequiredArgument >> not)
             |> Seq.map (fun error -> error.Message)
             |> String.concat Environment.NewLine
 
@@ -853,7 +853,11 @@ module GraceCommand =
 
         current
 
-    let rootCommand =
+    /// Supplies the small set of host dependencies needed to construct and execute the production root graph.
+    type internal RootDependencies = { CreateCacheCommand: unit -> Command; InitializeExecution: unit -> unit }
+
+    /// Builds the Grace command graph from host dependencies shared by production and focused host tests.
+    let internal createRoot (dependencies: RootDependencies) =
         // Create the root of the command tree.
         let rootCommand = new RootCommand("Grace Version Control System")
 
@@ -882,7 +886,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(Doctor.Build)
-        rootCommand.Subcommands.Add(CacheCommand.Build)
+        rootCommand.Subcommands.Add(dependencies.CreateCacheCommand())
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)
@@ -900,6 +904,19 @@ module GraceCommand =
         Alias.Subcommands.Add(ListAliases)
         rootCommand.Subcommands.Add(Alias)
         rootCommand
+
+    /// Performs the process-wide initialization required by commands other than the pure local Cache status leaf.
+    let private initializeProductionExecution () =
+        Auth.configureSdkAuth ()
+        Services.configureSdkClientIdentity ()
+        Services.resetInvocationCorrelationId ()
+        Common.resetLifecycleWarningSuppression ()
+
+    /// Provides the production command factory and execution initialization for the retained root command value.
+    let private productionDependencies = { CreateCacheCommand = (fun () -> CacheCommand.Build); InitializeExecution = initializeProductionExecution }
+
+    /// Retains the production root command graph for existing callers and parser tests.
+    let rootCommand = createRoot productionDependencies
 
     ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
     //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
@@ -1032,6 +1049,10 @@ module GraceCommand =
             Set.contains "cache" commands
             && Set.contains "status" commands
 
+    /// Invokes an asynchronous command action through the configured root exception boundary.
+    let private invokeAsync (parseResult: ParseResult) (invocationConfiguration: InvocationConfiguration) (cancellationToken: CancellationToken) =
+        parseResult.InvokeAsync(invocationConfiguration, cancellationToken)
+
     /// Models feedback section values passed between the parser and program handlers.
     type FeedbackSection(action: HelpAction) =
         inherit SynchronousCommandLineAction()
@@ -1051,9 +1072,14 @@ module GraceCommand =
 
             result
 
-    /// This is the main entry point for Grace CLI.
-    [<EntryPoint>]
-    let main args =
+    /// Executes one Grace command graph with caller cancellation and the production invocation configuration.
+    let internal run (dependencies: RootDependencies) (args: string array) (cancellationToken: CancellationToken) =
+        let rootCommand = createRoot dependencies
+
+        let invocationConfiguration = InvocationConfiguration()
+        invocationConfiguration.EnableDefaultExceptionHandler <- false
+        invocationConfiguration.ProcessTerminationTimeout <- Nullable(TimeSpan.FromSeconds(2.0))
+
         let startTime = getCurrentInstant ()
 
         // Create a MemoryCache instance.
@@ -1178,20 +1204,14 @@ module GraceCommand =
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
 
-                    if not (parseResult |> isGraceCacheStatus) then
-                        Auth.configureSdkAuth ()
-                        Services.configureSdkClientIdentity ()
-                        Services.resetInvocationCorrelationId ()
-                        Common.resetLifecycleWarningSuppression ()
-
-                    match introspectionRequestFromTokens argvToParse with
+                    match introspectionRequest parseResult with
                     | Some (Ok kind) ->
                         isIntrospection <- true
                         Services.parseResult <- parseResult
 
                         returnValue <-
                             if hasBlockingIntrospectionParseErrors parseResult then
-                                writeIntrospectionParseError parseResult
+                                writeBlockingIntrospectionParseErrors parseResult
                             else
                                 handleIntrospectionRequest parseResult kind
 
@@ -1204,6 +1224,9 @@ module GraceCommand =
                     | None ->
                         // Write the ParseResult to Services as global context for the CLI.
                         Services.parseResult <- parseResult
+
+                        if not (parseResult |> isGraceCacheStatus) then
+                            dependencies.InitializeExecution()
 
                         if parseResult.Errors.Count > 0
                            && isJsonOutputRequestedFromTokens argvToParse then
@@ -1393,7 +1416,7 @@ module GraceCommand =
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
                     else if parseResult |> isGraceCacheStatus then
-                        let! invokedReturnValue = parseResult.InvokeAsync()
+                        let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                         returnValue <- invokedReturnValue
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
@@ -1436,7 +1459,7 @@ module GraceCommand =
                                     | None -> ()
 
                                 // Now we can invoke the command!
-                                let! invokedReturnValue = parseResult.InvokeAsync()
+                                let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                                 returnValue <- invokedReturnValue
 
                                 // Stuff to do after the command has been invoked:
@@ -1499,7 +1522,7 @@ module GraceCommand =
                                     |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
 
                         if isAllowed then
-                            let! invokedReturnValue = parseResult.InvokeAsync()
+                            let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
                             returnValue <- invokedReturnValue
                             ()
                         else
@@ -1528,6 +1551,16 @@ module GraceCommand =
                     return returnValue
                 with
                 | IntrospectionExit exitCode -> return exitCode
+                | :? OperationCanceledException ->
+                    let correlationId =
+                        if isNull parseResult then
+                            generateCorrelationId ()
+                        else
+                            getCorrelationId parseResult
+
+                    Common.writeJsonErrorStdout (GraceError.Create "The command was canceled." correlationId)
+                    returnValue <- -1
+                    return returnValue
                 | ex ->
                     if isJsonOutputRequestedFromTokens argvNormalized then
                         returnValue <- writeJsonException parseResult ex
@@ -1567,4 +1600,9 @@ module GraceCommand =
                    && parseResult |> isGraceWatchForeground then
                     deleteGraceWatchIpcFileIfOwned ()
         })
-            .Result
+
+    /// Starts the production root graph with process cancellation handled by System.CommandLine invocation configuration.
+    [<EntryPoint>]
+    let main args =
+        run productionDependencies args CancellationToken.None
+        |> fun invocation -> invocation.GetAwaiter().GetResult()

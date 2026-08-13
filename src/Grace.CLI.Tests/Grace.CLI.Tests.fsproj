@@ -30,6 +30,7 @@
     <Compile Include="Storage.SDK.Tests.fs" />
     <Compile Include="SelectProjection.CLI.Parsing.Tests.fs" />
     <Compile Include="Program.CLI.Parsing.Tests.fs" />
+    <Compile Include="Program.CLI.Host.Tests.fs" />
     <Compile Include="Program.CLI.Tests.fs" />
     <Compile Include="HistoryStorage.CLI.Tests.fs" />
     <Compile Include="LocalStateDb.Tests.fs" />
