@@ -36,9 +36,9 @@ module internal BillingPeriodCloseEligibility =
         let threshold = nextMonthStartUtc.AddHours(if isFinal then 72.0 else 24.0)
         databaseUtcNow >= threshold
 
-/// Signals that nonempty close must not infer the deferred collective zero-fact pricing decision.
-type private ZeroFactCoveragePendingException() =
-    inherit InvalidOperationException("ZeroFactCoveragePending")
+/// Signals that an empty close lacks one required collective pricing grain.
+type private ZeroFactPricingCoverageException(diagnostic: string) =
+    inherit InvalidOperationException(diagnostic)
 
 /// Exposes the internal transaction stages used by real-SQL rollback and contention proofs.
 type internal IBillingPeriodCloseTransactionInterleaving =
@@ -586,7 +586,13 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
                             return Blocked diagnostic
                         | None ->
                             let! facts = readPricedFactsAsync connection transaction request.Scope cancellationToken
-                            if List.isEmpty facts then raise (ZeroFactCoveragePendingException())
+
+                            if List.isEmpty facts then
+                                let coverage = SqlZeroFactPricingCoverage() :> IZeroFactPricingCoverage
+
+                                match! coverage.EvaluateAsync(connection, transaction, request.Scope, cancellationToken) with
+                                | Incomplete diagnostic -> raise (ZeroFactPricingCoverageException(diagnostic))
+                                | Complete -> ()
 
                             let previewScope: ChargePreviewScope =
                                 {
@@ -625,7 +631,7 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
                 do! setDiagnosticAsync connection transaction (billingPeriodId request.Scope) (Some ex.Message) cancellationToken
                 do! transaction.CommitAsync cancellationToken
                 return Blocked ex.Message
-            | :? ZeroFactCoveragePendingException as ex ->
+            | :? ZeroFactPricingCoverageException as ex ->
                 do! setDiagnosticAsync connection transaction (billingPeriodId request.Scope) (Some ex.Message) cancellationToken
                 do! transaction.CommitAsync cancellationToken
                 return Blocked ex.Message

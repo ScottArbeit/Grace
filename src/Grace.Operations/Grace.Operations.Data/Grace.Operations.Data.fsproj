@@ -37,6 +37,7 @@
     <Compile Include="OperationsData.fs" />
     <Compile Include="OperationsAcceptedFactMutation.fs" />
     <Compile Include="OperationsAcceptedUsageStore.fs" />
+    <Compile Include="OperationsZeroFactPricingCoverage.fs" />
     <Compile Include="OperationsBillingPeriod.fs" />
     <Compile Include="OperationsUsageJournal.fs" />
   </ItemGroup>

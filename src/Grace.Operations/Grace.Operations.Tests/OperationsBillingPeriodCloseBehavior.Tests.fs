@@ -1620,7 +1620,7 @@ ORDER BY 1;
                 )
             })
 
-    /// Proves distinct owners and sibling repositories close independently, zero facts remain nonterminal, and a fresh closer replays without reposting.
+    /// Proves distinct owners and sibling repositories close independently, missing zero-fact coverage remains nonterminal, and a fresh closer replays without reposting.
     [<Test>]
     member _.OwnersSiblingRepositoriesZeroFactsAndRestartRemainIsolatedAndIdempotent() =
         withDatabaseAsync (fun connectionString ->
@@ -1669,7 +1669,7 @@ ORDER BY 1;
                 assertSeededScopeClose "owner A/repository B" expectedSibling 3L siblingFactCount siblingFactQuantity siblingProjections
 
                 let! zeroFactPending =
-                    countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1) AND RetryDiagnostic='ZeroFactCoveragePending';"
+                    countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1) AND RetryDiagnostic LIKE 'MissingAssignment:%';"
 
                 Assert.Multiple(
                     Action (fun () ->
@@ -1690,7 +1690,7 @@ ORDER BY 1;
 
                         Assert.That(
                             (match zeroFactResult with
-                             | BillingPeriodCloseResult.Blocked "ZeroFactCoveragePending" -> true
+                             | BillingPeriodCloseResult.Blocked diagnostic when diagnostic.StartsWith("MissingAssignment:", StringComparison.Ordinal) -> true
                              | _ -> false),
                             Is.True
                         )
@@ -1699,5 +1699,246 @@ ORDER BY 1;
                         Assert.That(charges, Is.EqualTo(3))
                         Assert.That(evidence, Is.EqualTo(3))
                         Assert.That(zeroFactPending, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves an empty period posts one zero-line close only after the complete supported-kind pricing chain is present.
+    [<Test>]
+    member _.ZeroFactCloseRequiresCompletePricingThenClosesOnceAtZero() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let scope = scopeFor (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid())
+                let request = { Scope = scope; ScheduledOperationProvenance = "operations-tests/zero-fact-coverage/v1" }
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! red = closer.CloseAsync(request, CancellationToken.None)
+                let! periodBeforeRepair = closeProjectionAsync connectionString
+                let! _ = addPricingAsync connectionString scope
+                let! green = closer.CloseAsync(request, CancellationToken.None)
+                let! replay = closer.CloseAsync(request, CancellationToken.None)
+                let! periodAfterClose = closeProjectionAsync connectionString
+                let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! nullDiagnosticCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2 AND RetryDiagnostic IS NULL;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match red with
+                             | BillingPeriodCloseResult.Blocked diagnostic when diagnostic.StartsWith("MissingAssignment:", StringComparison.Ordinal) -> true
+                             | _ -> false),
+                            Is.True,
+                            "No assignment must be the first bounded coverage failure, not an empty-set success."
+                        )
+
+                        Assert.That(
+                            periodBeforeRepair
+                            |> List.exists (fun row -> row.Contains("MissingAssignment:")),
+                            Is.True
+                        )
+
+                        Assert.That(
+                            (match green with
+                             | BillingPeriodCloseResult.Closed (_, 0) -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(
+                            (match replay with
+                             | BillingPeriodCloseResult.Closed (_, 0) -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(chargeCount, Is.Zero)
+                        Assert.That(evidenceCount, Is.EqualTo(1))
+                        Assert.That(nullDiagnosticCount, Is.EqualTo(1))
+
+                        Assert.That(
+                            periodAfterClose
+                            |> List.exists (fun row -> row.Contains("\"State\":2")),
+                            Is.True
+                        ))
+                )
+            })
+
+    /// Proves each independently incomplete pricing layer blocks an otherwise complete empty-period close.
+    [<TestCase("assignment", "MissingAssignment")>]
+    [<TestCase("plan", "MissingPricingPlan")>]
+    [<TestCase("mapping", "MissingMapping")>]
+    [<TestCase("rate", "MissingRate")>]
+    member _.ZeroFactCoverageRejectsOneTickGapInEachPricingLayer(layer: string, expectedDiagnostic: string) =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let scope = scopeFor (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid())
+                let! pricing = addPricingAsync connectionString scope
+                let gapStart = scope.MonthStart.ToDateTimeUtc().AddDays 14.0
+                let afterGap = gapStart.AddTicks 1L
+                let replacementPlanId = Guid.NewGuid()
+                let replacementId = Guid.NewGuid()
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    match layer with
+                    | "assignment" ->
+                        "UPDATE ops.PricingAssignment SET EffectiveToUtc=@GapStart WHERE PricingAssignmentId=@AssignmentId; INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc) VALUES (@ReplacementId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@AfterGap);"
+                    | "plan" ->
+                        "UPDATE ops.PricingPlan SET EffectiveToUtc=@GapStart WHERE PricingPlanId=@PlanId; INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc) VALUES (@ReplacementPlanId,@ReplacementPlanCode,'replacement',@AfterGap); INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc) VALUES (@ReplacementId,@ReplacementPlanId,101,'USD','byte-minute',1,2,@GapStart); UPDATE ops.PricingAssignment SET EffectiveToUtc=@GapStart WHERE PricingAssignmentId=@AssignmentId; INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc) VALUES (@ReplacementId,@OwnerId,@OrganizationId,@RepositoryId,@ReplacementPlanId,@GapStart);"
+                    | "mapping" ->
+                        "UPDATE ops.BillableUsageKindMapping SET EffectiveToUtc=@GapStart WHERE BillableUsageKindMappingId=@MappingId; INSERT INTO ops.BillableUsageKindMapping (BillableUsageKindMappingId,FactKind,BillableUsageKind,DisplayName,EffectiveFromUtc) VALUES (@ReplacementId,1,101,'replacement',@AfterGap);"
+                    | "rate" ->
+                        "UPDATE ops.PricingRate SET EffectiveToUtc=@GapStart WHERE PricingRateId=@RateId; INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc) VALUES (@ReplacementId,@PlanId,101,'USD','byte-minute',1,2,@AfterGap);"
+                    | _ -> invalidArg (nameof layer) $"Unknown pricing layer '{layer}'."
+
+                command.Parameters.Add("@GapStart", SqlDbType.DateTime2).Value <- gapStart
+                command.Parameters.Add("@AfterGap", SqlDbType.DateTime2).Value <- afterGap
+                command.Parameters.Add("@PlanId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingPlanId
+                command.Parameters.Add("@AssignmentId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingAssignmentId
+                command.Parameters.Add("@MappingId", SqlDbType.UniqueIdentifier).Value <- pricing.BillableUsageKindMappingId
+                command.Parameters.Add("@RateId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingRateId
+                command.Parameters.Add("@ReplacementId", SqlDbType.UniqueIdentifier).Value <- replacementId
+                command.Parameters.Add("@ReplacementPlanId", SqlDbType.UniqueIdentifier).Value <- replacementPlanId
+                command.Parameters.Add("@ReplacementPlanCode", SqlDbType.NVarChar, 128).Value <- $"replacement-{replacementPlanId:N}"
+                command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+                command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+                command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+                let request = { Scope = scope; ScheduledOperationProvenance = $"operations-tests/zero-fact-gap-{layer}/v1" }
+
+                let! result =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(request, CancellationToken.None)
+
+                let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! openPeriods = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0,1);"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match result with
+                             | BillingPeriodCloseResult.Blocked diagnostic when diagnostic.StartsWith($"{expectedDiagnostic}:", StringComparison.Ordinal) ->
+                                 true
+                             | _ -> false),
+                            Is.True,
+                            $"A one-tick {layer} gap must not be hidden by another pricing layer."
+                        )
+
+                        Assert.That(charges, Is.Zero)
+                        Assert.That(evidence, Is.Zero)
+                        Assert.That(openPeriods, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves required supported kinds are never inferred from the mapping or rate rows that happen to exist.
+    [<TestCase("mapping", "MissingMapping")>]
+    [<TestCase("rate", "MissingRate")>]
+    member _.ZeroFactCoverageRejectsEmptyMappingOrRateSet(layer: string, expectedDiagnostic: string) =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let scope = scopeFor (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid())
+                let! pricing = addPricingAsync connectionString scope
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    match layer with
+                    | "mapping" -> "DELETE FROM ops.BillableUsageKindMapping WHERE BillableUsageKindMappingId=@MappingId;"
+                    | "rate" -> "DELETE FROM ops.PricingRate WHERE PricingRateId=@RateId;"
+                    | _ -> invalidArg (nameof layer) $"Unknown pricing layer '{layer}'."
+
+                command.Parameters.Add("@MappingId", SqlDbType.UniqueIdentifier).Value <- pricing.BillableUsageKindMappingId
+                command.Parameters.Add("@RateId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingRateId
+                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+                let request = { Scope = scope; ScheduledOperationProvenance = $"operations-tests/zero-fact-empty-{layer}/v1" }
+
+                let! result =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(request, CancellationToken.None)
+
+                let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match result with
+                             | BillingPeriodCloseResult.Blocked diagnostic when diagnostic.StartsWith($"{expectedDiagnostic}:", StringComparison.Ordinal) ->
+                                 true
+                             | _ -> false),
+                            Is.True,
+                            $"An empty {layer} set must be a required-kind failure, not a successful empty coverage set."
+                        )
+
+                        Assert.That(charges, Is.Zero)
+                        Assert.That(evidence, Is.Zero))
+                )
+            })
+
+    /// Proves adjacent half-open pricing windows remain complete at every independently varied pricing layer.
+    [<TestCase("assignment")>]
+    [<TestCase("plan")>]
+    [<TestCase("mapping")>]
+    [<TestCase("rate")>]
+    member _.ZeroFactCoverageAcceptsAdjacentWindowsInEachPricingLayer(layer: string) =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let scope = scopeFor (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid())
+                let! pricing = addPricingAsync connectionString scope
+                let boundary = scope.MonthStart.ToDateTimeUtc().AddDays 14.0
+                let replacementPlanId = Guid.NewGuid()
+                let replacementId = Guid.NewGuid()
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    match layer with
+                    | "assignment" ->
+                        "UPDATE ops.PricingAssignment SET EffectiveToUtc=@Boundary WHERE PricingAssignmentId=@AssignmentId; INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc) VALUES (@ReplacementId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@Boundary);"
+                    | "plan" ->
+                        "UPDATE ops.PricingPlan SET EffectiveToUtc=@Boundary WHERE PricingPlanId=@PlanId; INSERT INTO ops.PricingPlan (PricingPlanId,PlanCode,DisplayName,EffectiveFromUtc) VALUES (@ReplacementPlanId,@ReplacementPlanCode,'replacement',@Boundary); INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc) VALUES (@ReplacementId,@ReplacementPlanId,101,'USD','byte-minute',1,2,@Boundary); UPDATE ops.PricingAssignment SET EffectiveToUtc=@Boundary WHERE PricingAssignmentId=@AssignmentId; INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc) VALUES (@ReplacementId,@OwnerId,@OrganizationId,@RepositoryId,@ReplacementPlanId,@Boundary);"
+                    | "mapping" ->
+                        "UPDATE ops.BillableUsageKindMapping SET EffectiveToUtc=@Boundary WHERE BillableUsageKindMappingId=@MappingId; INSERT INTO ops.BillableUsageKindMapping (BillableUsageKindMappingId,FactKind,BillableUsageKind,DisplayName,EffectiveFromUtc) VALUES (@ReplacementId,1,101,'replacement',@Boundary);"
+                    | "rate" ->
+                        "UPDATE ops.PricingRate SET EffectiveToUtc=@Boundary WHERE PricingRateId=@RateId; INSERT INTO ops.PricingRate (PricingRateId,PricingPlanId,BillableUsageKind,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc) VALUES (@ReplacementId,@PlanId,101,'USD','byte-minute',1,2,@Boundary);"
+                    | _ -> invalidArg (nameof layer) $"Unknown pricing layer '{layer}'."
+
+                command.Parameters.Add("@Boundary", SqlDbType.DateTime2).Value <- boundary
+                command.Parameters.Add("@PlanId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingPlanId
+                command.Parameters.Add("@AssignmentId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingAssignmentId
+                command.Parameters.Add("@MappingId", SqlDbType.UniqueIdentifier).Value <- pricing.BillableUsageKindMappingId
+                command.Parameters.Add("@RateId", SqlDbType.UniqueIdentifier).Value <- pricing.PricingRateId
+                command.Parameters.Add("@ReplacementId", SqlDbType.UniqueIdentifier).Value <- replacementId
+                command.Parameters.Add("@ReplacementPlanId", SqlDbType.UniqueIdentifier).Value <- replacementPlanId
+                command.Parameters.Add("@ReplacementPlanCode", SqlDbType.NVarChar, 128).Value <- $"replacement-{replacementPlanId:N}"
+                command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
+                command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
+                command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
+                let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+                let request = { Scope = scope; ScheduledOperationProvenance = $"operations-tests/zero-fact-adjacent-{layer}/v1" }
+
+                let! result =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(request, CancellationToken.None)
+
+                let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match result with
+                             | BillingPeriodCloseResult.Closed (_, 0) -> true
+                             | _ -> false),
+                            Is.True,
+                            $"Adjacent {layer} rows must cover the half-open month without a synthetic gap."
+                        )
+
+                        Assert.That(charges, Is.Zero)
+                        Assert.That(evidence, Is.EqualTo(1)))
                 )
             })
