@@ -76,15 +76,23 @@ type internal IBillingPeriodCloseClock =
     abstract UtcNowAsync: connection: SqlConnection * transaction: SqlTransaction * cancellationToken: CancellationToken -> Task<DateTime>
 
 /// Uses the production SQL Server clock with no process-time alternative.
-type private DatabaseBillingPeriodCloseClock() =
+type private DatabaseBillingPeriodCloseClock(transactionInterleaving: IBillingPeriodCloseTransactionInterleaving) =
     interface IBillingPeriodCloseClock with
         member _.UtcNowAsync(connection, transaction, cancellationToken) =
             task {
                 use clockCommand = connection.CreateCommand()
                 clockCommand.Transaction <- transaction
-                clockCommand.CommandText <- "SELECT SYSUTCDATETIME();"
-                let! value = clockCommand.ExecuteScalarAsync cancellationToken
-                return value :?> DateTime
+                clockCommand.CommandText <- "SELECT @@SPID, SYSUTCDATETIME();"
+                use! reader = clockCommand.ExecuteReaderAsync cancellationToken
+                let! hasRow = reader.ReadAsync cancellationToken
+
+                if not hasRow then
+                    invalidOp "SQL Server did not return a billing-period close clock value."
+
+                let sessionId = reader.GetInt32 0
+                let databaseUtcNow = reader.GetDateTime 1
+                do! transactionInterleaving.AfterDatabaseClockReadAsync(sessionId, databaseUtcNow, cancellationToken)
+                return databaseUtcNow
             }
 
 /// Exposes the bounded preview and final-close calls used by later scheduled-operation hosting.
@@ -559,10 +567,6 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
                 else
                     let! databaseUtcNow = clock.UtcNowAsync(connection, transaction, cancellationToken)
 
-                    use sessionCommand = command connection transaction "SELECT @@SPID;"
-                    let! sessionId = sessionCommand.ExecuteScalarAsync cancellationToken
-                    do! transactionInterleaving.AfterDatabaseClockReadAsync(Convert.ToInt32 sessionId, databaseUtcNow, cancellationToken)
-
                     let nextMonthStartUtc =
                         (BillingCompletenessScope.nextMonthStart request.Scope)
                             .ToDateTimeUtc()
@@ -637,12 +641,13 @@ ELSE SELECT CAST(NULL AS nvarchar(400));
         SqlBillingPeriodCloser(
             connectionString,
             NoBillingPeriodCloseTransactionInterleaving() :> IBillingPeriodCloseTransactionInterleaving,
-            DatabaseBillingPeriodCloseClock() :> IBillingPeriodCloseClock
+            DatabaseBillingPeriodCloseClock(NoBillingPeriodCloseTransactionInterleaving() :> IBillingPeriodCloseTransactionInterleaving)
+            :> IBillingPeriodCloseClock
         )
 
     /// Creates a real-SQL close seam that retains the production SQL clock while exposing transaction stages to tests.
     static member internal CreateForTest(connectionString, transactionInterleaving) =
-        SqlBillingPeriodCloser(connectionString, transactionInterleaving, DatabaseBillingPeriodCloseClock() :> IBillingPeriodCloseClock)
+        SqlBillingPeriodCloser(connectionString, transactionInterleaving, DatabaseBillingPeriodCloseClock(transactionInterleaving) :> IBillingPeriodCloseClock)
 
     /// Creates an internal policy-boundary seam with controlled database-time values while retaining the production transaction.
     static member internal CreateForTest(connectionString, transactionInterleaving, clock) =
