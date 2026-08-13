@@ -85,6 +85,24 @@ function Assert-UniqueStrings {
     }
 }
 
+function Get-Sha256Hex {
+    param([string] $Text)
+    $bytes = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Text))
+    return [Convert]::ToHexString($bytes).ToLowerInvariant()
+}
+
+function Assert-ExactOrderedVector {
+    param([string[]] $Actual, [string[]] $Expected, [string] $Path, [string] $SourcePath)
+    if ($Actual.Count -ne $Expected.Count) {
+        Fail-Contract $SourcePath "$Path must contain exactly $($Expected.Count) values"
+    }
+    for ($index = 0; $index -lt $Expected.Count; $index++) {
+        if (-not (Test-OrdinalStringEquals $Actual[$index] $Expected[$index])) {
+            Fail-Contract $SourcePath "$Path must match the declared canonical order at index $index"
+        }
+    }
+}
+
 function Assert-NullableString {
     param([object] $Value, [string] $Path, [string] $SourcePath)
     if ($null -ne $Value) { Assert-StringValue $Value $Path $SourcePath }
@@ -273,6 +291,22 @@ function Assert-EphemeralBytesChangedTerminalization {
     }
 }
 
+function Assert-TerminalReplay {
+    param([Collections.Generic.Dictionary[string, object]] $RowsById, [System.Collections.IDictionary] $Grammar, [string] $SourcePath)
+    if (-not (Test-OrdinalStringEquals $Grammar['terminalReplay']['row'] 'WDU-LC-003')) {
+        Fail-Contract $SourcePath 'machineGrammar.terminalReplay.row must resolve exactly WDU-LC-003'
+    }
+    if (-not $RowsById.ContainsKey('WDU-LC-003')) {
+        Fail-Contract $SourcePath 'machineGrammar.terminalReplay.row does not resolve to a declared row'
+    }
+    $row = $RowsById['WDU-LC-003']
+    if (-not (Test-OrdinalStringEquals $row['match']['invocation']['value'] 'terminalReplay') -or
+        -not (Test-OrdinalStringEquals $row['match']['trigger']['value'] 'exactTerminalCompletionRegardlessOfInvocationCancellation') -or
+        -not (Test-OrdinalStringEquals $row['outcome'] 'Unchanged')) {
+        Fail-Contract $SourcePath 'machineGrammar.terminalReplay.row must resolve to the exact terminal replay row'
+    }
+}
+
 function Read-WduLifecycleContract {
     param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $Path)
 
@@ -303,9 +337,11 @@ function Read-WduLifecycleContract {
     try { $contract = $json | ConvertFrom-Json -AsHashtable -Depth 100 }
     catch { Fail-Contract $sourcePath "marked JSON cannot be decoded: $($_.Exception.Message)" }
 
-    Assert-ExactObject $contract @('schema', 'artifactIdentity', 'boundaries', 'retryAdmission', 'doctorCommand', 'order', 'machineGrammar', 'rows') '$' $sourcePath
+    Assert-ExactObject $contract @('schema', 'artifactIdentity', 'canonicalContentDigest', 'boundaries', 'retryAdmission', 'doctorCommand', 'order', 'machineGrammar', 'machineMetadata', 'rows') '$' $sourcePath
     if (-not (Test-OrdinalStringEquals $contract['schema'] 'grace.wdu.branch-lifecycle/v1')) { Fail-Contract $sourcePath 'schema must be grace.wdu.branch-lifecycle/v1' }
     if (-not (Test-OrdinalStringEquals $contract['artifactIdentity'] 'issue-928')) { Fail-Contract $sourcePath 'artifactIdentity must be issue-928' }
+    Assert-StringValue $contract['canonicalContentDigest'] 'canonicalContentDigest' $sourcePath
+    if ($contract['canonicalContentDigest'] -notmatch '^[0-9a-f]{64}$') { Fail-Contract $sourcePath 'canonicalContentDigest must be a lowercase SHA-256 digest' }
     Assert-ExactObject $contract['boundaries'] @('firstWorkingTreeMutation', 'verifiedLocalRoot', 'sqliteLocalCompletion', 'firstApplicableRetryWrite') 'boundaries' $sourcePath
     foreach ($name in $contract['boundaries'].Keys) { Assert-StringValue $contract['boundaries'][$name] "boundaries.$name" $sourcePath }
     Assert-ExactObject $contract['retryAdmission'] @('source', 'requiredActions', 'staleEvidenceAction') 'retryAdmission' $sourcePath
@@ -316,7 +352,7 @@ function Read-WduLifecycleContract {
     Assert-StringArray $contract['order'] 'order' $sourcePath | Out-Null
 
     $grammar = $contract['machineGrammar']
-    Assert-ExactObject $grammar @('predicateAxes', 'encoding', 'concreteEnums', 'aggregates', 'expansion', 'overlap', 'terminalReplay') 'machineGrammar' $sourcePath
+    Assert-ExactObject $grammar @('predicateAxes', 'encoding', 'concreteEnums', 'aggregates', 'expansion', 'overlap', 'terminalReplay', 'rowVector') 'machineGrammar' $sourcePath
     $axes = @(Assert-StringArray $grammar['predicateAxes'] 'machineGrammar.predicateAxes' $sourcePath); Assert-UniqueStrings $axes 'machineGrammar.predicateAxes' $sourcePath
     Assert-ExactObject $grammar['encoding'] @('one', 'set', 'aggregate') 'machineGrammar.encoding' $sourcePath
     foreach ($kind in @('one', 'set', 'aggregate')) {
@@ -353,10 +389,33 @@ function Read-WduLifecycleContract {
         }
     }
     Assert-ExactObject $grammar['terminalReplay'] @('row', 'selectionExpansion', 'markerExpansion', 'effects') 'machineGrammar.terminalReplay' $sourcePath
+    $expectedRowIds = @(Assert-StringArray $grammar['rowVector'] 'machineGrammar.rowVector' $sourcePath)
+    Assert-UniqueStrings $expectedRowIds 'machineGrammar.rowVector' $sourcePath
+    if ($expectedRowIds.Count -ne 70) { Fail-Contract $sourcePath 'machineGrammar.rowVector must contain exactly 70 row IDs' }
     foreach ($name in $grammar['expansion'].Keys) { Assert-StringValue $grammar['expansion'][$name] "machineGrammar.expansion.$name" $sourcePath }
     foreach ($name in @('rule', 'routing')) { Assert-StringValue $grammar['overlap'][$name] "machineGrammar.overlap.$name" $sourcePath }
     foreach ($name in $grammar['terminalReplay'].Keys) { Assert-StringValue $grammar['terminalReplay'][$name] "machineGrammar.terminalReplay.$name" $sourcePath }
 
+    $metadata = $contract['machineMetadata']
+    Assert-ExactObject $metadata @('decisionIds', 'requirements', 'artifacts', 'expectedCounts') 'machineMetadata' $sourcePath
+    $decisionIds = @(Assert-StringArray $metadata['decisionIds'] 'machineMetadata.decisionIds' $sourcePath)
+    Assert-UniqueStrings $decisionIds 'machineMetadata.decisionIds' $sourcePath
+    if ($decisionIds.Count -ne 9) { Fail-Contract $sourcePath 'machineMetadata.decisionIds must contain exactly 9 decision IDs' }
+    foreach ($decisionId in $decisionIds) {
+        if ($decisionId -notmatch '^DEC-[0-9]{3}$') { Fail-Contract $sourcePath "machineMetadata.decisionIds has invalid ID '$decisionId'" }
+    }
+    if ($metadata['requirements'] -is [string] -or $metadata['requirements'] -is [System.Collections.IDictionary] -or $metadata['requirements'] -isnot [System.Collections.IEnumerable]) {
+        Fail-Contract $sourcePath 'machineMetadata.requirements must be a JSON array'
+    }
+    if ($metadata['artifacts'] -is [string] -or $metadata['artifacts'] -is [System.Collections.IDictionary] -or $metadata['artifacts'] -isnot [System.Collections.IEnumerable]) {
+        Fail-Contract $sourcePath 'machineMetadata.artifacts must be a JSON array'
+    }
+    Assert-ExactObject $metadata['expectedCounts'] @('decisionCount', 'requirementCount', 'artifactCount', 'rowCount', 'applicabilityKeyCount') 'machineMetadata.expectedCounts' $sourcePath
+    foreach ($name in $metadata['expectedCounts'].Keys) {
+        if ($metadata['expectedCounts'][$name] -isnot [long] -and $metadata['expectedCounts'][$name] -isnot [int]) {
+            Fail-Contract $sourcePath "machineMetadata.expectedCounts.$name must be a JSON integer"
+        }
+    }
     if ($contract['rows'] -is [string] -or $contract['rows'] -is [System.Collections.IDictionary] -or $contract['rows'] -isnot [System.Collections.IEnumerable]) {
         Fail-Contract $sourcePath 'rows must be a JSON array'
     }
@@ -411,15 +470,77 @@ function Read-WduLifecycleContract {
         }
     }
     if ($rows.Count -ne $rowIds.Count -or $rows.Count -ne $rowsById.Count) { Fail-Contract $sourcePath 'row identity counts are inconsistent' }
+    Assert-ExactOrderedVector @($rowIds) $expectedRowIds 'rows[].id' $sourcePath
     foreach ($row in $rows) {
         if (Test-ExactDictionaryKey $row 'nextRows') {
-            foreach ($target in $row['nextRows']) { if (-not $rowsById.ContainsKey($target)) { Fail-Contract $sourcePath "row '$($row['id'])' has dangling nextRows target '$target'" } }
+            $nextRows = @(Assert-StringArray $row['nextRows'] "row $($row['id']).nextRows" $sourcePath)
+            Assert-UniqueStrings $nextRows "row $($row['id']).nextRows" $sourcePath
+            foreach ($target in $nextRows) { if (-not $rowsById.ContainsKey($target)) { Fail-Contract $sourcePath "row '$($row['id'])' has dangling nextRows target '$target'" } }
         }
+    }
+    Assert-TerminalReplay $rowsById $grammar $sourcePath
+
+    $requirements = @($metadata['requirements'])
+    $requirementIds = [Collections.Generic.List[string]]::new()
+    $requirementOwners = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    foreach ($requirement in $requirements) {
+        Assert-ExactObject $requirement @('id', 'owner') 'machineMetadata.requirements[]' $sourcePath
+        Assert-StringValue $requirement['id'] 'machineMetadata.requirements[].id' $sourcePath
+        Assert-StringValue $requirement['owner'] 'machineMetadata.requirements[].owner' $sourcePath
+        if (-not $requirement['id'] -cmatch '^REQ-[0-9]{3}$') { Fail-Contract $sourcePath "machineMetadata.requirements has invalid ID '$($requirement['id'])'" }
+        if (-not $requirement['owner'] -cmatch '^#[0-9]+$') { Fail-Contract $sourcePath "machineMetadata.requirements has invalid owner '$($requirement['owner'])'" }
+        if (-not $requirementOwners.TryAdd($requirement['id'], $requirement['owner'])) { Fail-Contract $sourcePath "machineMetadata.requirements has duplicate ID '$($requirement['id'])'" }
+        $requirementIds.Add($requirement['id'])
+    }
+    $artifacts = @($metadata['artifacts'])
+    $artifactIds = [Collections.Generic.List[string]]::new()
+    $artifactAssignments = [Collections.Generic.Dictionary[string, string[]]]::new([StringComparer]::Ordinal)
+    $assignedRowIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($artifact in $artifacts) {
+        Assert-ExactObject $artifact @('id', 'rowIds') 'machineMetadata.artifacts[]' $sourcePath
+        Assert-StringValue $artifact['id'] 'machineMetadata.artifacts[].id' $sourcePath
+        $assignment = @(Assert-StringArray $artifact['rowIds'] "machineMetadata.artifacts.$($artifact['id']).rowIds" $sourcePath)
+        Assert-UniqueStrings $assignment "machineMetadata.artifacts.$($artifact['id']).rowIds" $sourcePath
+        foreach ($rowId in $assignment) {
+            $index = Find-OrdinalStringIndex @($rowIds) $rowId
+            if ($index -lt 0) { Fail-Contract $sourcePath "machineMetadata.artifacts.$($artifact['id']).rowIds has unknown row '$rowId'" }
+            $null = $assignedRowIds.Add($rowId)
+        }
+        if (-not $artifactAssignments.TryAdd($artifact['id'], [string[]] $assignment)) { Fail-Contract $sourcePath "machineMetadata.artifacts has duplicate ID '$($artifact['id'])'" }
+        $artifactIds.Add($artifact['id'])
+    }
+    if ($requirements.Count -ne 19 -or $artifacts.Count -ne 15) { Fail-Contract $sourcePath 'machineMetadata must contain exactly 19 requirements and 15 artifacts' }
+    if ($artifactAssignments.ContainsKey('issue-920') -or $artifactAssignments.ContainsKey('issue-929') -or -not $artifactAssignments.ContainsKey('issue-928')) {
+        Fail-Contract $sourcePath 'machineMetadata artifact identities must include issue-928 and exclude issue-920 and issue-929'
+    }
+    if ($assignedRowIds.Count -ne $rowIds.Count) { Fail-Contract $sourcePath 'machineMetadata artifact assignments must cover every lifecycle row' }
+    foreach ($rowId in $rowIds) { if (-not $assignedRowIds.Contains($rowId)) { Fail-Contract $sourcePath "machineMetadata artifact assignments are missing row '$rowId'" } }
+    $expectedCounts = $metadata['expectedCounts']
+    $actualCounts = [ordered]@{ decisionCount = $decisionIds.Count; requirementCount = $requirements.Count; artifactCount = $artifacts.Count; rowCount = $rowIds.Count; applicabilityKeyCount = $keyOwners.Count }
+    foreach ($name in $actualCounts.Keys) {
+        if ($expectedCounts[$name] -ne $actualCounts[$name]) { Fail-Contract $sourcePath "machineMetadata.expectedCounts.$name must equal $($actualCounts[$name])" }
     }
     Assert-VerifiedRootCorrection $rowsById $sourcePath
     Assert-EphemeralBytesChangedTerminalization $rowsById $sourcePath
-    $digestBytes = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))
-    return [pscustomobject]@{ Digest = [Convert]::ToHexString($digestBytes).ToLowerInvariant(); RowIds = @($rowIds); ApplicabilityKeys = @($keyOwners.Keys); RowsById = $rowsById }
+    $digestInput = [regex]::Replace($json, '"canonicalContentDigest"\s*:\s*"[0-9a-f]{64}"', '"canonicalContentDigest":"0000000000000000000000000000000000000000000000000000000000000000"', 1)
+    $digest = Get-Sha256Hex $digestInput
+    if (-not (Test-OrdinalStringEquals $contract['canonicalContentDigest'] $digest)) { Fail-Contract $sourcePath 'canonicalContentDigest does not match the complete machine-owned plan' }
+    $assignmentDigest = Get-Sha256Hex (($artifacts | ConvertTo-Json -Compress -Depth 100))
+    return [pscustomobject]@{
+        SchemaVersion = 'grace.wdu.lifecycle-compiler-result/v1'
+        Digest = $digest
+        RowIds = @($rowIds)
+        ApplicabilityKeys = @($keyOwners.Keys)
+        RowsById = $rowsById
+        DecisionIds = @($decisionIds)
+        Requirements = @($requirements | ForEach-Object { [pscustomobject]@{ Id = $_['id']; Owner = $_['owner'] } })
+        RequirementOwners = $requirementOwners
+        Artifacts = @($artifacts | ForEach-Object { [pscustomobject]@{ Id = $_['id']; RowIds = @($_['rowIds']) } })
+        ArtifactAssignments = $artifactAssignments
+        AssignmentDigest = $assignmentDigest
+        AssignedRowIds = @($rowIds | Where-Object { $assignedRowIds.Contains($_) })
+        Counts = [pscustomobject] $actualCounts
+    }
 }
 
 Export-ModuleMember -Function Read-WduLifecycleContract

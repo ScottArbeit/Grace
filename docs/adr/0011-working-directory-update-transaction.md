@@ -62,7 +62,9 @@ justify three local-integrity implementations.
 
 ## Serial delivery and proof boundary
 
-The active exact-root packet is serial. #928 owns the lifecycle correction; #921 owns reconciliation; #922 owns
+The active exact-root packet is serial. #928 owns the lifecycle compiler correction; after PR #930 merges, #929 owns
+the exact projection and tracker packet. The live projection packet and the #921 implementation gate remain pending
+issue #929. #921 owns reconciliation; #922 owns
 held-lease application through opaque `VerifiedLocalRoot`; #923 owns the real five-input transaction through pending
 SQLite completion; #900 owns DirectoryVersion terminalization and filesystem-free retry; and #901 owns hash-selected
 Branch wiring. #898 remains the collision-safe topology predecessor. Closed predecessor records and PR #895 are
@@ -87,13 +89,16 @@ The complete requirements, state model, propagation map, and proof contract are 
 
 ## Lifecycle projection
 
+The projection below is an existing contextual consumer, not proof that the replacement packet has been published.
+Issue #929 rewrites and compares all fifteen exact projection blocks from the compiler result after PR #930 merges.
+
 <!-- grace:wdu-lifecycle-projection:start -->
 ```json
 {
   "schema": "grace.wdu.lifecycle-projection/v1",
   "artifact": "adr-0011",
   "canonical": "docs/Working Directory Update.md#normative-branch-lifecycle-table",
-  "canonicalContentDigest": "2ccf5278632fb2ab881b07b062a7c5fe219bcfcb84b13476114ed55f1af481b2",
+  "canonicalContentDigest": "ae3a77e28886485b49361d8836f040691e9f99228919cef87fac19b42e989d73",
   "rowIds": [
     "WDU-LC-200",
     "WDU-LC-201",
