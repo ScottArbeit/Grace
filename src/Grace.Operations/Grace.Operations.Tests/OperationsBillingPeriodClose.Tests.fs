@@ -46,6 +46,47 @@ type private BillingCloseInterleaving(stage: string, pause: bool) =
         member _.AfterLedgerInsertionAsync cancellationToken = observe "ledger" cancellationToken
         member _.AfterCloseEvidenceStagedAsync cancellationToken = observe "evidence" cancellationToken
 
+/// Cancels a real close only after the named durable mutation stage has been reached inside its transaction.
+type private BillingCloseCancellationInterleaving(stage: string, cancellation: CancellationTokenSource) =
+    let reached = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Cancels the supplied operation token at the selected production transaction seam.
+    let cancel expected (cancellationToken: CancellationToken) =
+        task {
+            if stage = expected then
+                reached.TrySetResult() |> ignore
+                cancellation.Cancel()
+                cancellationToken.ThrowIfCancellationRequested()
+        }
+        :> Task
+
+    /// Completes when the selected production stage has been reached before cancellation is observed.
+    member _.Reached = reached.Task
+
+    interface IBillingPeriodCloseTransactionInterleaving with
+        member _.AfterPreviewReplacementAsync cancellationToken = cancel "preview" cancellationToken
+        member _.AfterLedgerInsertionAsync cancellationToken = cancel "ledger" cancellationToken
+        member _.AfterCloseEvidenceStagedAsync cancellationToken = cancel "evidence" cancellationToken
+
+/// Cancels accepted usage after raw, aggregate, and late-work staging but before the journal state can commit Accepted.
+type private UsageJournalCancellationInterleaving(cancellation: CancellationTokenSource) =
+    let reached = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Cancels the supplied processing token at the production accepted-usage transaction seam.
+    let cancel (cancellationToken: CancellationToken) =
+        task {
+            reached.TrySetResult() |> ignore
+            cancellation.Cancel()
+            cancellationToken.ThrowIfCancellationRequested()
+        }
+        :> Task
+
+    /// Completes when raw, aggregate, and late-work mutations are staged but not yet committed.
+    member _.Reached = reached.Task
+
+    interface IOperationsUsageJournalTransactionInterleaving with
+        member _.AfterRawAndAggregateStagedAsync cancellationToken = cancel cancellationToken
+
 /// Returns a fixed transaction-local UTC instant while still requiring the production closer to acquire its SQL lock.
 type private FixedBillingCloseClock(now: DateTime) =
     interface IBillingPeriodCloseClock with
@@ -248,6 +289,45 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             return Convert.ToInt64 value
         }
 
+    /// Reads one database-owned UTC time value without using the process clock in a close proof.
+    let dateTimeAsync connectionString sql =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- sql
+            let! value = command.ExecuteScalarAsync CancellationToken.None
+            return value :?> DateTime
+        }
+
+    /// Recomputes accepted-fact evidence from independently queried immutable raw rows.
+    let acceptedFactEvidenceDigestAsync connectionString =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+
+            command.CommandText <- "SELECT UsageFactId,FactKind,Quantity,ObservedAtUtc FROM ops.RawUsageFact ORDER BY ObservedAtUtc,UsageFactId;"
+
+            use! reader = command.ExecuteReaderAsync CancellationToken.None
+            let values = ResizeArray<string>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync CancellationToken.None
+                reading <- hasRow
+
+                if hasRow then
+                    values.Add($"{reader.GetGuid(0):D}|{reader.GetInt32(1)}|{reader.GetInt64(2)}|{reader.GetDateTime(3).Ticks}")
+
+            return
+                values
+                |> String.concat "\n"
+                |> Encoding.UTF8.GetBytes
+                |> SHA256.HashData
+                |> Convert.ToHexString
+        }
+
     /// Reads one ordered scalar string projection from the isolated SQL catalog for physical schema parity proofs.
     let stringsAsync connectionString sql =
         task {
@@ -266,6 +346,67 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
                 if hasRow then values.Add(reader.GetString 0)
 
             return values |> Seq.toList
+        }
+
+    /// Captures every durable column in each close-owned and completeness-owned table for rejected-mutation and rollback proof.
+    let durableCloseSnapshotAsync connectionString =
+        stringsAsync
+            connectionString
+            """
+SELECT CONCAT('BillingPeriod|',(SELECT * FROM ops.BillingPeriod ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('ChargePreviewLine|',(SELECT * FROM ops.ChargePreviewLine ORDER BY ChargePreviewLineId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('Charge|',(SELECT * FROM ops.Charge ORDER BY ChargeId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodCloseEvidence|',(SELECT * FROM ops.BillingPeriodCloseEvidence ORDER BY BillingPeriodId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('BillingPeriodLateWork|',(SELECT * FROM ops.BillingPeriodLateWork ORDER BY BillingPeriodId,UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('RawUsageFact|',(SELECT * FROM ops.RawUsageFact ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageAggregateMinute|',(SELECT * FROM ops.UsageAggregateMinute ORDER BY FactKind,OwnerId,OrganizationId,RepositoryId,StoragePoolId,BucketStartUtc FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactRejection|',(SELECT * FROM ops.UsageFactRejection ORDER BY RejectionId FOR JSON PATH, INCLUDE_NULL_VALUES))
+UNION ALL SELECT CONCAT('UsageFactJournal|',(SELECT * FROM ops.UsageFactJournal ORDER BY UsageFactId FOR JSON PATH, INCLUDE_NULL_VALUES))
+ORDER BY 1;
+"""
+
+    /// Executes one deliberately invalid physical mutation and proves it leaves every relevant durable row byte-for-byte unchanged.
+    let rejectSqlAndPreserveAsync connectionString label sql =
+        task {
+            let! before = durableCloseSnapshotAsync connectionString
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- sql
+
+            Assert.ThrowsAsync<SqlException>(Func<Task>(fun () -> command.ExecuteNonQueryAsync(CancellationToken.None) :> Task))
+            |> ignore
+
+            let! after = durableCloseSnapshotAsync connectionString
+
+            if after <> before then
+                Assert.Fail($"{label} changed durable state. Before: {before}; after: {after}.")
+        }
+
+    /// Attempts an exact transaction-owned application lock and returns SQL Server's direct grant or timeout result.
+    let probeScopeLockAsync connectionString scope =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use! transaction = connection.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, CancellationToken.None)
+            use command = connection.CreateCommand()
+            command.Transaction <- transaction :?> SqlTransaction
+
+            command.CommandText <-
+                """
+DECLARE @LockResult int;
+EXEC @LockResult = sys.sp_getapplock
+    @Resource = @Resource,
+    @LockMode = 'Exclusive',
+    @LockOwner = 'Transaction',
+    @LockTimeout = 0;
+SELECT @LockResult;
+"""
+
+            command.Parameters.Add("@Resource", System.Data.SqlDbType.NVarChar, 255).Value <- BillingCompletenessScope.databaseLockIdentity scope
+            let! result = command.ExecuteScalarAsync CancellationToken.None
+            do! transaction.RollbackAsync CancellationToken.None
+            return Convert.ToInt32 result
         }
 
     /// Recomputes the persisted preview evidence digest from independently read durable rows.
@@ -738,7 +879,9 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                 do! acceptAsync connectionString fact
                 do! addPricingAsync connectionString scope
                 let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! databaseTimeBeforeClose = dateTimeAsync connectionString "SELECT SYSUTCDATETIME();"
                 let! closed = closer.CloseAsync(request scope, CancellationToken.None)
+                let! databaseTimeAfterClose = dateTimeAsync connectionString "SELECT SYSUTCDATETIME();"
                 let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
                 let! lateWorkCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
                 let! evidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
@@ -746,6 +889,17 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                 let! previewCharge = int64Async connectionString "SELECT ChargeMicros FROM ops.ChargePreviewLine;"
                 let! postedCharge = int64Async connectionString "SELECT ChargeMicros FROM ops.Charge;"
                 let! expectedPreviewDigest = previewEvidenceDigestAsync connectionString
+                let! expectedFactDigest = acceptedFactEvidenceDigestAsync connectionString
+
+                let! persistedFactDigest =
+                    task {
+                        use connection = new SqlConnection(connectionString)
+                        do! connection.OpenAsync CancellationToken.None
+                        use command = connection.CreateCommand()
+                        command.CommandText <- "SELECT AcceptedFactDigestSha256Hex FROM ops.BillingPeriodCloseEvidence;"
+                        let! value = command.ExecuteScalarAsync CancellationToken.None
+                        return value :?> string
+                    }
 
                 let! persistedPreviewDigest =
                     task {
@@ -767,6 +921,8 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                         return value :?> string
                     }
 
+                let! persistedClosedAtUtc = dateTimeAsync connectionString "SELECT ClosedAtUtc FROM ops.BillingPeriodCloseEvidence;"
+
                 Assert.Multiple(
                     Action (fun () ->
                         Assert.That(closedChargeCount closed, Is.EqualTo(1))
@@ -776,8 +932,11 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                         Assert.That(previewQuantity, Is.EqualTo(7L))
                         Assert.That(previewCharge, Is.EqualTo(14L))
                         Assert.That(postedCharge, Is.EqualTo(14L))
+                        Assert.That(persistedFactDigest, Is.EqualTo(expectedFactDigest))
                         Assert.That(persistedPreviewDigest, Is.EqualTo(expectedPreviewDigest))
-                        Assert.That(persistedProvenance, Is.EqualTo("operations-tests/billing-period-close/v1")))
+                        Assert.That(persistedProvenance, Is.EqualTo("operations-tests/billing-period-close/v1"))
+                        Assert.That(persistedClosedAtUtc, Is.GreaterThanOrEqualTo(databaseTimeBeforeClose))
+                        Assert.That(persistedClosedAtUtc, Is.LessThanOrEqualTo(databaseTimeAfterClose)))
                 )
             })
 
@@ -831,7 +990,7 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                 )
             })
 
-    /// Proves missing pricing retains a nonterminal period with no posting and a bounded retry diagnostic.
+    /// Proves missing pricing blocks first, then corrected committed pricing retries once and clears only the obsolete diagnostic.
     [<Test>]
     member _.MissingPricingBlocksWithoutPosting() =
         withDatabaseAsync (fun connectionString ->
@@ -844,6 +1003,17 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                 let! result = closer.CloseAsync(request scope, CancellationToken.None)
                 let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
                 let! blockedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State IN (0, 1) AND RetryDiagnostic IS NOT NULL;"
+                do! addPricingAsync connectionString scope
+                let! retried = closer.CloseAsync(request scope, CancellationToken.None)
+                let! finalChargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+
+                let! clearedDiagnosticCount =
+                    countAsync
+                        connectionString
+                        "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2 AND RetryDiagnostic IS NULL AND RetryDiagnosticAtUtc IS NULL;"
+
+                let! replay = closer.CloseAsync(request scope, CancellationToken.None)
+                let! replayChargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
 
                 Assert.Multiple(
                     Action (fun () ->
@@ -855,7 +1025,79 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                         )
 
                         Assert.That(chargeCount, Is.Zero)
-                        Assert.That(blockedCount, Is.EqualTo(1)))
+                        Assert.That(blockedCount, Is.EqualTo(1))
+                        Assert.That(closedChargeCount retried, Is.EqualTo(1))
+                        Assert.That(finalChargeCount, Is.EqualTo(1))
+                        Assert.That(clearedDiagnosticCount, Is.EqualTo(1))
+                        Assert.That(closedChargeCount replay, Is.EqualTo(1))
+                        Assert.That(replayChargeCount, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves each unresolved production completeness source independently prevents the final close transaction.
+    [<TestCase("pending")>]
+    [<TestCase("rejected")>]
+    [<TestCase("active-rejection")>]
+    member _.PendingRejectedAndActiveRejectionEachBlockCloseWithoutPosting(blocker: string) =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let factId = Guid.NewGuid()
+                let fact = usageFact factId ownerId organizationId repositoryId (monthStart + Duration.FromDays 8) 5L
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! appended = journal.AppendAsync(fact, CancellationToken.None)
+
+                match appended with
+                | Ok UsageFactJournalAppendResult.AppendedPending -> ()
+                | other -> Assert.Fail($"Expected a newly appended Pending journal row but received {other}.")
+
+                match blocker with
+                | "pending" -> ()
+                | "rejected" ->
+                    let! rejected = journal.RejectAsync(fact, Array.empty, "test rejection", CancellationToken.None)
+                    Assert.That(rejected, Is.EqualTo(UsageFactJournalRejectResult.RejectedFromJournal))
+                | "active-rejection" ->
+                    let! accepted = journal.ProcessAsync(fact, Array.empty, CancellationToken.None)
+                    Assert.That(accepted, Is.EqualTo(UsageFactJournalProcessResult.AcceptedFromJournal))
+                    use connection = new SqlConnection(connectionString)
+                    do! connection.OpenAsync CancellationToken.None
+                    use command = connection.CreateCommand()
+
+                    command.CommandText <-
+                        "INSERT INTO ops.UsageFactRejection (RejectionId,UsageFactId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,Reason,IsActive) VALUES (@RejectionId,@UsageFactId,@OwnerId,@OrganizationId,@RepositoryId,@MonthStartUtc,'independent active rejection',1);"
+
+                    command.Parameters.Add("@RejectionId", System.Data.SqlDbType.UniqueIdentifier).Value <- Guid.NewGuid()
+                    command.Parameters.Add("@UsageFactId", System.Data.SqlDbType.UniqueIdentifier).Value <- factId
+                    command.Parameters.Add("@OwnerId", System.Data.SqlDbType.UniqueIdentifier).Value <- ownerId
+                    command.Parameters.Add("@OrganizationId", System.Data.SqlDbType.UniqueIdentifier).Value <- organizationId
+                    command.Parameters.Add("@RepositoryId", System.Data.SqlDbType.UniqueIdentifier).Value <- repositoryId
+                    command.Parameters.Add("@MonthStartUtc", System.Data.SqlDbType.DateTime2).Value <- scope.MonthStart.ToDateTimeUtc()
+                    let! _ = command.ExecuteNonQueryAsync CancellationToken.None
+                    ()
+                | unexpected -> invalidArg (nameof blocker) unexpected
+
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! result = closer.CloseAsync(request scope, CancellationToken.None)
+                let! previewCount = countAsync connectionString "SELECT COUNT(*) FROM ops.ChargePreviewLine;"
+                let! chargeCount = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! closedCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match result with
+                             | BillingPeriodCloseResult.Blocked _ -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(previewCount, Is.Zero)
+                        Assert.That(chargeCount, Is.Zero)
+                        Assert.That(evidenceCount, Is.Zero)
+                        Assert.That(closedCount, Is.Zero))
                 )
             })
 
@@ -929,4 +1171,460 @@ FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@Organizatio
                         Assert.That(chargeCount, Is.EqualTo(1))
                         Assert.That(evidenceCount, Is.EqualTo(1)))
                 )
+            })
+
+    /// Proves a persisted arithmetic overflow is retryable and corrected committed pricing posts exactly once.
+    [<Test>]
+    member _.ArithmeticOverflowBlocksThenCorrectedPricingRetriesExactlyOnce() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+
+                do!
+                    acceptAsync
+                        connectionString
+                        (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 4) Int64.MaxValue)
+
+                do! addPricingAsync connectionString scope
+
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+                use setOverflowPrice = connection.CreateCommand()
+                setOverflowPrice.CommandText <- "UPDATE ops.PricingRate SET UnitPriceMicros=@Price;"
+                setOverflowPrice.Parameters.Add("@Price", System.Data.SqlDbType.BigInt).Value <- Int64.MaxValue
+                let! _ = setOverflowPrice.ExecuteNonQueryAsync CancellationToken.None
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! blocked = closer.CloseAsync(request scope, CancellationToken.None)
+                let! blockedCharges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+
+                let! overflowDiagnostic =
+                    countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE RetryDiagnostic IS NOT NULL AND State IN (0,1);"
+
+                use setCorrectPrice = connection.CreateCommand()
+                setCorrectPrice.CommandText <- "UPDATE ops.PricingRate SET UnitPriceMicros=1;"
+                let! _ = setCorrectPrice.ExecuteNonQueryAsync CancellationToken.None
+                let! retried = closer.CloseAsync(request scope, CancellationToken.None)
+                let! replay = closer.CloseAsync(request scope, CancellationToken.None)
+                let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+
+                let! clearedDiagnostic =
+                    countAsync
+                        connectionString
+                        "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2 AND RetryDiagnostic IS NULL AND RetryDiagnosticAtUtc IS NULL;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            (match blocked with
+                             | BillingPeriodCloseResult.Blocked _ -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(blockedCharges, Is.Zero)
+                        Assert.That(overflowDiagnostic, Is.EqualTo(1))
+                        Assert.That(closedChargeCount retried, Is.EqualTo(1))
+                        Assert.That(closedChargeCount replay, Is.EqualTo(1))
+                        Assert.That(charges, Is.EqualTo(1))
+                        Assert.That(clearedDiagnostic, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves accepted-delivery replay and a conflicting cross-scope fact identity cannot enqueue late work.
+    [<Test>]
+    member _.DuplicateIncludedAndCrossScopeFactIdentityCreateNoLateWork() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let factId = Guid.NewGuid()
+                let included = usageFact factId ownerId organizationId repositoryId (monthStart + Duration.FromDays 4) 5L
+                do! acceptAsync connectionString included
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! closed = closer.CloseAsync(request scope, CancellationToken.None)
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! duplicate = journal.ProcessAsync(included, Array.empty, CancellationToken.None)
+
+                let conflicting = usageFact factId (Guid.NewGuid()) (Guid.NewGuid()) (Guid.NewGuid()) (monthStart + Duration.FromDays 4) 5L
+
+                let! crossScopeAppend =
+                    task {
+                        try
+                            let! result = journal.AppendAsync(conflicting, CancellationToken.None)
+
+                            return
+                                match result with
+                                | Error _ -> true
+                                | Ok _ -> false
+                        with
+                        | :? InvalidOperationException -> return true
+                    }
+
+                let! originalLateWork = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
+                let! allLateWork = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
+                let! rawFacts = countAsync connectionString "SELECT COUNT(*) FROM ops.RawUsageFact;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(closedChargeCount closed, Is.EqualTo(1))
+                        Assert.That(duplicate, Is.EqualTo(UsageFactJournalProcessResult.AlreadyAccepted))
+                        Assert.That(crossScopeAppend, Is.True)
+                        Assert.That(originalLateWork, Is.Zero)
+                        Assert.That(allLateWork, Is.Zero)
+                        Assert.That(rawFacts, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves a later accepted fact creates one minimal handoff without changing any initial close value or evidence.
+    [<Test>]
+    member _.CloseFirstKeepsInitialPreviewPostingEvidenceTimestampAndProvenanceUnchanged() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let initial = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 2) 7L
+                do! acceptAsync connectionString initial
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! closed = closer.CloseAsync(request scope, CancellationToken.None)
+
+                let snapshotSql =
+                    """
+SELECT CONCAT('period|',BillingPeriodId,'|',State,'|',ISNULL(RetryDiagnostic,''),'|',CONVERT(varchar(33),CreatedAtUtc,126),'|',CONVERT(varchar(33),UpdatedAtUtc,126)) COLLATE Latin1_General_100_BIN2 FROM ops.BillingPeriod
+UNION ALL SELECT CONCAT('preview|',ChargePreviewLineId,'|',OwnerId,'|',OrganizationId,'|',RepositoryId,'|',PeriodFromUtc,'|',PeriodToUtc,'|',FactKind,'|',BillableUsageKindMappingId,'|',BillableUsageKind,'|',PricingAssignmentId,'|',PricingPlanId,'|',PricingRateId,'|',CurrencyCode,'|',UnitName,'|',UnitQuantity,'|',UnitPriceMicros,'|',EffectiveFromUtc,'|',EffectiveToUtc,'|',TotalQuantity,'|',ChargeMicros) COLLATE Latin1_General_100_BIN2 FROM ops.ChargePreviewLine
+UNION ALL SELECT CONCAT('charge|',ChargeId,'|',BillingPeriodId,'|',ChargePreviewLineId,'|',CurrencyCode,'|',ChargeMicros,'|',CONVERT(varchar(33),CreatedAtUtc,126)) COLLATE Latin1_General_100_BIN2 FROM ops.Charge
+UNION ALL SELECT CONCAT('evidence|',BillingPeriodId,'|',AcceptedFactDigestSha256Hex,'|',PricingPreviewDigestSha256Hex,'|',CONVERT(varchar(33),ClosedAtUtc,126),'|',ScheduledOperationProvenance) COLLATE Latin1_General_100_BIN2 FROM ops.BillingPeriodCloseEvidence
+ORDER BY 1;
+"""
+
+                let! before = stringsAsync connectionString snapshotSql
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 3) 9L)
+                let! after = stringsAsync connectionString snapshotSql
+                let! lateWork = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodLateWork;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(closedChargeCount closed, Is.EqualTo(1))
+                        Assert.That(before, Is.EqualTo(after :> obj))
+                        Assert.That(lateWork, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves cancellation after each close staging point rolls the entire real SQL transaction back to its prior durable truth.
+    [<TestCase("preview")>]
+    [<TestCase("ledger")>]
+    [<TestCase("evidence")>]
+    member _.CancellationAfterEveryCloseStageRollsBackAllDurableState(stage: string) =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let fact = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 9) 17L
+                do! acceptAsync connectionString fact
+                do! addPricingAsync connectionString scope
+                let! before = durableCloseSnapshotAsync connectionString
+                use cancellation = new CancellationTokenSource()
+                let interleaving = BillingCloseCancellationInterleaving(stage, cancellation)
+
+                let closer =
+                    SqlBillingPeriodCloser.CreateForTest(connectionString, interleaving :> IBillingPeriodCloseTransactionInterleaving) :> IBillingPeriodCloser
+
+                Assert.ThrowsAsync<OperationCanceledException>(Func<Task>(fun () -> closer.CloseAsync(request scope, cancellation.Token) :> Task))
+                |> ignore
+
+                let! _ = interleaving.Reached
+                let! after = durableCloseSnapshotAsync connectionString
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(cancellation.IsCancellationRequested, Is.True)
+                        Assert.That(after, Is.EqualTo(before :> obj)))
+                )
+            })
+
+    /// Proves cancellation after late-work staging rolls raw, aggregate, handoff, rejection, and journal mutations back together.
+    [<Test>]
+    member _.CancellationAfterLateWorkStagingPreservesEveryDurableRecord() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 10) 19L)
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! _ = closer.CloseAsync(request scope, CancellationToken.None)
+                let lateFact = usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 11) 23L
+                let journal = SqlOperationsUsageJournalStore(connectionString)
+                let! appended = journal.AppendAsync(lateFact, CancellationToken.None)
+
+                match appended with
+                | Ok UsageFactJournalAppendResult.AppendedPending -> ()
+                | unexpected -> Assert.Fail($"Expected a newly appended Pending journal row but received {unexpected}.")
+
+                let! before = durableCloseSnapshotAsync connectionString
+                use cancellation = new CancellationTokenSource()
+                let interleaving = UsageJournalCancellationInterleaving(cancellation)
+
+                let cancellingJournal =
+                    SqlOperationsUsageJournalStore.CreateForTest(connectionString, interleaving :> IOperationsUsageJournalTransactionInterleaving)
+
+                Assert.ThrowsAsync<OperationCanceledException>(
+                    Func<Task>(fun () -> cancellingJournal.ProcessAsync(lateFact, Array.empty, cancellation.Token) :> Task)
+                )
+                |> ignore
+
+                let! _ = interleaving.Reached
+                let! after = durableCloseSnapshotAsync connectionString
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(cancellation.IsCancellationRequested, Is.True)
+                        Assert.That(after, Is.EqualTo(before :> obj)))
+                )
+            })
+
+    /// Proves a genuinely concurrent second close waits on the exact shared SQL application lock before both callers converge.
+    [<Test>]
+    member _.CompetingCloseWaitsOnTheExactSqlApplicationLockThenConverges() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 12) 29L)
+                do! addPricingAsync connectionString scope
+                let firstInterleaving = BillingCloseInterleaving("preview", true)
+
+                let first =
+                    (SqlBillingPeriodCloser.CreateForTest(connectionString, firstInterleaving :> IBillingPeriodCloseTransactionInterleaving)
+                    :> IBillingPeriodCloser)
+                        .CloseAsync(request scope, CancellationToken.None)
+
+                do! firstInterleaving.Reached.WaitAsync(CancellationToken.None)
+                let secondStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+                secondStarted.TrySetResult() |> ignore
+
+                let second: Task<BillingPeriodCloseResult> =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(request scope, CancellationToken.None)
+
+                do! secondStarted.Task.WaitAsync(CancellationToken.None)
+                let! exactScopeProbe = probeScopeLockAsync connectionString scope
+
+                let! lockRows =
+                    stringsAsync
+                        connectionString
+                        """
+SELECT CONCAT(request_status,'|',request_mode,'|',request_session_id,'|',resource_description)
+FROM sys.dm_tran_locks
+WHERE resource_type='APPLICATION' AND resource_database_id=DB_ID()
+ORDER BY request_status,request_session_id;
+"""
+
+                let observedGrantAndWait =
+                    lockRows
+                    |> List.exists (fun value -> value.StartsWith("GRANT|X|", StringComparison.Ordinal))
+                    && lockRows
+                       |> List.exists (fun value -> value.StartsWith("WAIT|X|", StringComparison.Ordinal))
+
+                try
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That<bool>(first.IsCompleted, Is.False)
+                            Assert.That<bool>(second.IsCompleted, Is.False)
+                            Assert.That(exactScopeProbe, Is.EqualTo(-1), "The exact expected shared application lock must reject a competing transaction.")
+                            Assert.That(observedGrantAndWait, Is.True, $"Expected SQL to report a granted and waiting application lock, got {lockRows}."))
+                    )
+                finally
+                    firstInterleaving.Release()
+
+                let! completed = Task.WhenAll(first, second)
+                let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+                let! closed = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That<int array>(completed |> Array.map closedChargeCount, Is.EqualTo<int>([| 1; 1 |]))
+                        Assert.That(charges, Is.EqualTo(1))
+                        Assert.That(evidence, Is.EqualTo(1))
+                        Assert.That(closed, Is.EqualTo(1)))
+                )
+            })
+
+    /// Exercises every current close-owned SQL rejection and immutability rule against migrated physical tables.
+    [<Test>]
+    member _.LivePhysicalCloseRejectionMatrixPreservesAllOriginalDurableValues() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 13) 31L)
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! closed = closer.CloseAsync(request scope, CancellationToken.None)
+
+                let companionPeriodId = Guid.NewGuid()
+                let companionOwnerId = Guid.NewGuid()
+
+                use setupConnection = new SqlConnection(connectionString)
+                do! setupConnection.OpenAsync CancellationToken.None
+                use setup = setupConnection.CreateCommand()
+
+                setup.CommandText <-
+                    """
+INSERT INTO ops.BillingPeriod
+    (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
+VALUES
+    (@BillingPeriodId,@OwnerId,@OrganizationId,@RepositoryId,'2026-06-01T00:00:00','2026-07-01T00:00:00',0,NULL,NULL);
+"""
+
+                setup.Parameters.Add("@BillingPeriodId", System.Data.SqlDbType.UniqueIdentifier).Value <- companionPeriodId
+                setup.Parameters.Add("@OwnerId", System.Data.SqlDbType.UniqueIdentifier).Value <- companionOwnerId
+                setup.Parameters.Add("@OrganizationId", System.Data.SqlDbType.UniqueIdentifier).Value <- Guid.NewGuid()
+                setup.Parameters.Add("@RepositoryId", System.Data.SqlDbType.UniqueIdentifier).Value <- Guid.NewGuid()
+                let! _ = setup.ExecuteNonQueryAsync CancellationToken.None
+
+                let validDigest = String.replicate 64 "A"
+                let companionPeriod = companionPeriodId.ToString("D")
+
+                let closedPeriod =
+                    match closed with
+                    | BillingPeriodCloseResult.Closed (periodId, _) -> periodId.ToString("D")
+                    | unexpected ->
+                        Assert.Fail($"Expected the physical rejection fixture to close, got {unexpected}.")
+                        String.Empty
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "BillingPeriod rejects an unknown state."
+                        """
+INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
+VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'2026-06-01T00:00:00','2026-07-01T00:00:00',3,NULL,NULL);
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "BillingPeriod rejects a non-month-aligned range."
+                        """
+INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
+VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'2026-06-02T00:00:00','2026-07-02T00:00:00',0,NULL,NULL);
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "BillingPeriod rejects a diagnostic on a Closed row."
+                        """
+INSERT INTO ops.BillingPeriod (BillingPeriodId,OwnerId,OrganizationId,RepositoryId,MonthStartUtc,NextMonthStartUtc,State,RetryDiagnostic,RetryDiagnosticAtUtc)
+VALUES (NEWID(),NEWID(),NEWID(),NEWID(),'2026-06-01T00:00:00','2026-07-01T00:00:00',2,'must remain retryable',SYSUTCDATETIME());
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Charge rejects a negative amount with otherwise valid foreign keys."
+                        $"""
+INSERT INTO ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros)
+SELECT NEWID(),'{companionPeriod}',ChargePreviewLineId,'USD',-1 FROM ops.ChargePreviewLine;
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "ChargePreviewLine rejects a negative total quantity."
+                        """
+INSERT INTO ops.ChargePreviewLine
+    (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros)
+SELECT NEWID(),OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,-1,ChargeMicros
+FROM ops.ChargePreviewLine;
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Close evidence rejects a malformed digest."
+                        $"""
+INSERT INTO ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance)
+VALUES ('{companionPeriod}','NOT-A-DIGEST','{validDigest}',SYSUTCDATETIME(),'physical-matrix');
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Close evidence rejects blank provenance."
+                        $"""
+INSERT INTO ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance)
+VALUES ('{companionPeriod}','{validDigest}','{validDigest}',SYSUTCDATETIME(),'   ');
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Charge rejects a duplicate immutable initial-posting identity."
+                        $"""
+INSERT INTO ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros)
+SELECT NEWID(),BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros FROM ops.Charge WHERE BillingPeriodId='{closedPeriod}';
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Charge rejects a missing BillingPeriod foreign key."
+                        """
+INSERT INTO ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros)
+SELECT NEWID(),NEWID(),ChargePreviewLineId,'USD',0 FROM ops.ChargePreviewLine;
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Charge rejects a missing ChargePreviewLine foreign key."
+                        $"""
+INSERT INTO ops.Charge (ChargeId,BillingPeriodId,ChargePreviewLineId,CurrencyCode,ChargeMicros)
+VALUES (NEWID(),'{companionPeriod}',NEWID(),'USD',0);
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Close evidence rejects a missing BillingPeriod foreign key."
+                        $"""
+INSERT INTO ops.BillingPeriodCloseEvidence (BillingPeriodId,AcceptedFactDigestSha256Hex,PricingPreviewDigestSha256Hex,ClosedAtUtc,ScheduledOperationProvenance)
+VALUES (NEWID(),'{validDigest}','{validDigest}',SYSUTCDATETIME(),'physical-matrix');
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Late work rejects a missing BillingPeriod foreign key."
+                        """
+INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId)
+SELECT NEWID(),UsageFactId FROM ops.RawUsageFact;
+"""
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Late work rejects a missing RawUsageFact foreign key."
+                        $"""
+INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId,UsageFactId)
+VALUES ('{closedPeriod}',NEWID());
+"""
+
+                do! rejectSqlAndPreserveAsync connectionString "Immutable Charge rejects update." "UPDATE ops.Charge SET ChargeMicros=99;"
+
+                do! rejectSqlAndPreserveAsync connectionString "Immutable Charge rejects delete." "DELETE FROM ops.Charge;"
+
+                do!
+                    rejectSqlAndPreserveAsync
+                        connectionString
+                        "Immutable close evidence rejects update."
+                        "UPDATE ops.BillingPeriodCloseEvidence SET ScheduledOperationProvenance='tampered';"
+
+                do! rejectSqlAndPreserveAsync connectionString "Immutable close evidence rejects delete." "DELETE FROM ops.BillingPeriodCloseEvidence;"
             })

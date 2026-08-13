@@ -18,6 +18,37 @@ module private ChargePreviewTestData =
 
     let multiple action = Assert.Multiple(Action action)
 
+    /// Derives only absent primitive store types and canonicalizes exact CLR aliases without collapsing distinct SQL types.
+    let normalizedStoreType (clrType: Type) (columnType: string) (maxLength: string) (isUnicode: string) (isFixedLength: string) =
+        let providerType =
+            if String.IsNullOrWhiteSpace columnType then
+                if clrType = typeof<string> then
+                    let prefix =
+                        match isUnicode.Trim().ToUpperInvariant(), isFixedLength.Trim().ToUpperInvariant() with
+                        | "FALSE", "TRUE" -> "char"
+                        | "FALSE", _ -> "varchar"
+                        | _, "TRUE" -> "nchar"
+                        | _ -> "nvarchar"
+
+                    let length = if String.IsNullOrWhiteSpace maxLength then "max" else maxLength
+                    $"{prefix}({length})"
+                else
+                    clrType.FullName
+            else
+                columnType
+
+        match providerType.Trim().ToUpperInvariant() with
+        | "SYSTEM.BOOLEAN" -> "bit"
+        | "SYSTEM.BYTE" -> "tinyint"
+        | "SYSTEM.INT16" -> "smallint"
+        | "SYSTEM.INT32" -> "int"
+        | "SYSTEM.INT64" -> "bigint"
+        | "SYSTEM.SINGLE" -> "real"
+        | "SYSTEM.DOUBLE" -> "float"
+        | "SYSTEM.DECIMAL" -> "decimal"
+        | "SYSTEM.GUID" -> "uniqueidentifier"
+        | other -> other.ToLowerInvariant()
+
     let utc day hour = DateTime(2026, 7, day, hour, 0, 0, DateTimeKind.Utc)
 
     let scope =
@@ -297,9 +328,15 @@ type OperationsChargePreviewTests() =
                             [|
                                 property.ClrType.FullName
                                 string property.IsNullable
-                                string (property.GetColumnType())
+                                ChargePreviewTestData.normalizedStoreType
+                                    property.ClrType
+                                    (property.GetColumnType())
+                                    (string (property.GetMaxLength()))
+                                    (string (property.IsUnicode()))
+                                    (string (property.IsFixedLength()))
                                 string (property.GetMaxLength())
                                 string (property.IsUnicode())
+                                string (property.IsFixedLength())
                                 string (property.GetCollation())
                                 string (property.GetDefaultValueSql())
                             |]
@@ -340,9 +377,40 @@ type OperationsChargePreviewTests() =
                 entity.Name, entity.GetSchema(), entity.GetTableName(), keys, properties, indexes, foreignKeys, checkConstraints, triggers)
             |> Set.ofSeq
 
+        /// Isolates property parity so a provider-type drift identifies the exact persisted property without weakening full-model parity.
+        let persistedPropertyShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
+            model.GetEntityTypes()
+            |> Seq.collect (fun entity ->
+                entity.GetProperties()
+                |> Seq.map (fun property ->
+                    entity.Name,
+                    property.Name,
+                    String.Join(
+                        "|",
+                        [|
+                            property.ClrType.FullName
+                            string property.IsNullable
+                            ChargePreviewTestData.normalizedStoreType
+                                property.ClrType
+                                (property.GetColumnType())
+                                (string (property.GetMaxLength()))
+                                (string (property.IsUnicode()))
+                                (string (property.IsFixedLength()))
+                            string (property.GetMaxLength())
+                            string (property.IsUnicode())
+                            string (property.IsFixedLength())
+                            string (property.GetCollation())
+                            string (property.GetDefaultValueSql())
+                        |]
+                    )))
+            |> Set.ofSeq
+
         let runtimeShape = modelShape runtime
         let snapshotShape = modelShape snapshot
         let migrationShape = modelShape migration
+        let runtimeProperties = persistedPropertyShape runtime
+        let snapshotProperties = persistedPropertyShape snapshot
+        let migrationProperties = persistedPropertyShape migration
         let preview = runtime.FindEntityType(typeof<ChargePreviewLineEntity>)
         let rejection = runtime.FindEntityType(typeof<UsageFactRejectionEntity>)
 
@@ -382,6 +450,18 @@ type OperationsChargePreviewTests() =
                     .GetDeclaredTriggers()
                 |> Seq.map (fun trigger -> trigger.ModelName),
                 Does.Contain("TR_ops_BillingPeriodCloseEvidence_Immutable")
+            )
+
+            Assert.That(
+                (migrationProperties = runtimeProperties),
+                Is.True,
+                $"Migration-only properties: {Set.difference migrationProperties runtimeProperties}; runtime-only properties: {Set.difference runtimeProperties migrationProperties}"
+            )
+
+            Assert.That(
+                (migrationProperties = snapshotProperties),
+                Is.True,
+                $"Migration-only properties: {Set.difference migrationProperties snapshotProperties}; snapshot-only properties: {Set.difference snapshotProperties migrationProperties}"
             )
 
             Assert.That((migrationShape = snapshotShape), Is.True)
