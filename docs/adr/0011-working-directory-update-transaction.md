@@ -36,8 +36,10 @@ justify three local-integrity implementations.
   mutation plans or database callbacks.
 - A repository ID plus normalized local-root-path hash scopes the exclusive file lease, versioned marker, and completion
   sidecar. Branch identity is excluded from the physical scope.
-- The module rereads selected target and local state after acquiring the lease, builds a fresh plan, mutates only proven
-  paths, verifies object and working bytes with SHA-256 and BLAKE3, and proves the final selected root.
+- The module rereads selected target and local state after acquiring the lease, builds a fresh relevant-topology plan,
+  mutates only proven paths, verifies object and working bytes with SHA-256 and BLAKE3, and proves the final relevant
+  selected root. Unrelated ignored or untracked content remains preserved and excluded unless it is a destructive
+  required-path, case-alias, or replaced-subtree collision.
 - SQLite local completion is the irreversible point. One transaction records matching status, required object-cache
   metadata, Connect's initial cursor when present, and a bounded update completion row.
 - SQLite stores no running operation. It retains the latest terminal row per caller and one unresolved pending
@@ -49,7 +51,9 @@ justify three local-integrity implementations.
   Incomplete outcomes return nonzero. `FinalizationIncomplete` says the working directory was updated and recommends
   `grace doctor --repair-local-state`.
 - The same deterministic operation may adopt a known orphaned marker only after acquiring the lease and performing
-  complete revalidation and replanning. Different or unrecognized markers require Doctor.
+  complete revalidation and replanning. Exact adoption reconciles each requirement as `NeedsApply` or
+  `AlreadySatisfied` from real dual-hash evidence; mixed partial progress is not rewritten. Different or unrecognized
+  markers require Doctor.
 - Doctor first attempts a filesystem-free retry of recorded finalization, then may use exact local-state reconstruction.
   Doctor never rolls back or guesses working-directory content.
 - Connect keeps its zip download. It stages and validates the zip before lease acquisition, performs no network reads
@@ -58,14 +62,17 @@ justify three local-integrity implementations.
 
 ## Serial delivery and proof boundary
 
-The active exact-root packet is serial. #898 owns the finite collision-safe topology planner; #899 owns the real
-five-input transaction through verified pending SQLite completion; #900 owns DirectoryVersion terminalization and
-filesystem-free retry; and #901 owns hash-selected Branch wiring. Closed #870 and PR #895 are historical evidence,
-not active delivery, dependency, or projection artifacts.
+The active exact-root packet is serial. #920 owns the lifecycle correction; #921 owns reconciliation; #922 owns
+held-lease application through opaque `VerifiedLocalRoot`; #923 owns the real five-input transaction through pending
+SQLite completion; #900 owns DirectoryVersion terminalization and filesystem-free retry; and #901 owns hash-selected
+Branch wiring. #898 remains the collision-safe topology predecessor. Closed #870, superseded #899, and PR #895 are
+historical evidence, not active delivery, dependency, or projection artifacts.
 
 Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
 legacy materialization, or WDU leases. Only the WDU transaction holds its local lease for fresh reread, mutation,
-SQLite completion, and terminal outcome. Markers and sidecars are evidence, not leases.
+`VerifiedLocalRoot`, SQLite completion, and terminal outcome. Cancellation controls through the transition into
+`VerifiedLocalRoot`, including zero-action reconciliation; it is non-controlling during pending completion. Markers and
+sidecars are evidence, not leases.
 
 SQLite terminal completion is decisive durable truth. Marker and sidecar evidence cannot manufacture, downgrade, or
 replace it. For DirectoryVersion retry, fresh evidence selects exact-marker cleanup when an exact marker exists or
@@ -84,7 +91,7 @@ The complete requirements, state model, propagation map, and proof contract are 
   "schema": "grace.wdu.lifecycle-projection/v1",
   "artifact": "adr-0011",
   "canonical": "docs/Working Directory Update.md#normative-branch-lifecycle-table",
-  "canonicalContentDigest": "901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7",
+  "canonicalContentDigest": "d0c2bbdd1d9b9ad6d147e2e6dc17c35b0fc92aa1a4cce0724d750119de7d107d",
   "rowIds": [
     "WDU-LC-200",
     "WDU-LC-201",
@@ -96,6 +103,7 @@ The complete requirements, state model, propagation map, and proof contract are 
     "WDU-LC-210",
     "WDU-LC-212",
     "WDU-LC-006",
+    "WDU-LC-007",
     "WDU-LC-010",
     "WDU-LC-015",
     "WDU-LC-020",

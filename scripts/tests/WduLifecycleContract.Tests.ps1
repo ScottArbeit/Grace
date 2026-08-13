@@ -81,10 +81,10 @@ try {
         $copy = Join-Path $directory 'canonical lifecycle.md'
         [IO.File]::Copy($canonicalPath, $copy, $true)
         $contract = Read-WduLifecycleContract -Path $copy
-        Assert-True ($contract.RowIds.Count -eq 67) 'the canonical lifecycle has 67 rows'
-        Assert-True ($contract.RowsById.Count -eq 67) 'the row index has one exact entry for every parsed row'
+        Assert-True ($contract.RowIds.Count -eq 68) 'the canonical lifecycle has 68 rows'
+        Assert-True ($contract.RowsById.Count -eq 68) 'the row index has one exact entry for every parsed row'
         Assert-True ($contract.RowIds.Count -eq $contract.RowsById.Count) 'the returned row IDs and row index have equal cardinality'
-        Assert-True ($contract.ApplicabilityKeys.Count -eq 254) 'the canonical lifecycle has 254 disjoint applicability keys'
+        Assert-True ($contract.ApplicabilityKeys.Count -eq 258) 'the canonical lifecycle has 258 disjoint applicability keys'
         Assert-True ($contract.Digest -match '^[0-9a-f]{64}$') 'the normalized digest is lowercase SHA-256'
     }
 
@@ -102,7 +102,7 @@ try {
         Set-TestText $copy (Replace-Once (Get-TestText $copy) 'retainMarkerEvidence' 'retainedMarkerEvidence')
         $changed = Read-WduLifecycleContract $copy
         Assert-True ($changed.Digest -cne $original.Digest) 'semantic data change changes the digest'
-        Assert-True ($changed.RowIds.Count -eq 67) 'semantic data change remains structurally compilable'
+        Assert-True ($changed.RowIds.Count -eq 68) 'semantic data change remains structurally compilable'
     }
 
     Invoke-Case 'ignores unrelated fenced JSON values and malformed samples' {
@@ -114,7 +114,30 @@ try {
         )
         Set-TestText $copy ((Get-TestText $copy) + "`n# Unicode outside block: é`n" + ($samples -join "`n"))
         $contract = Read-WduLifecycleContract $copy
-        Assert-True ($contract.ApplicabilityKeys.Count -eq 254) 'unrelated JSON never participates in object parsing'
+        Assert-True ($contract.ApplicabilityKeys.Count -eq 258) 'unrelated JSON never participates in object parsing'
+    }
+
+    Invoke-Case 'makes fresh and adopted reconciliation plus zero-action routes structurally reachable' {
+        $contract = Read-WduLifecycleContract $canonicalPath
+        Assert-True ($contract.RowsById['WDU-LC-200'].requiredActions -contains 'reconcileFreshAdmissionAsNeedsApplyOnly') 'fresh admission is NeedsApply only'
+        Assert-True ($contract.RowsById['WDU-LC-201'].requiredActions -contains 'reconcileExactAdoptionAsNeedsApplyOrAlreadySatisfied') 'exact adoption can converge mixed partial progress'
+        Assert-True ($contract.RowsById['WDU-LC-209'].nextRows -contains 'WDU-LC-006') 'zero-action success reaches pending completion'
+        Assert-True ($contract.RowsById['WDU-LC-209'].nextRows -contains 'WDU-LC-007') 'zero-action completion failure is reachable'
+        Assert-True ($contract.RowsById['WDU-LC-209'].nextRows -contains 'WDU-LC-207') 'zero-action cancellation cannot bypass owned-marker rejection'
+    }
+
+    Invoke-Case 'rejects a cancellation bypass from the zero-action verified-root boundary' {
+        $copy = New-CanonicalCopy 'zero-action-cancellation-bypass'
+        $mutated = Replace-Once -Text (Get-TestText $copy) -Old '"WDU-LC-207","WDU-LC-208","WDU-LC-210","WDU-LC-006","WDU-LC-007"' -New '"WDU-LC-208","WDU-LC-210","WDU-LC-006","WDU-LC-007"'
+        Set-TestText $copy $mutated
+        Assert-Fails { Read-WduLifecycleContract $copy } "row 'WDU-LC-209' must route to 'WDU-LC-207'"
+    }
+
+    Invoke-Case 'rejects a post-verified-root completion failure that downgrades to Rejected' {
+        $copy = New-CanonicalCopy 'verified-root-rejected'
+        $mutated = Replace-Once -Text (Get-TestText $copy) -Old '"workingFiles":"verifiedRelevantTarget","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"UpdateIncomplete","exitClass":"nonzero","doctorGuidance":false},' -New '"workingFiles":"verifiedRelevantTarget","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":false},'
+        Set-TestText $copy $mutated
+        Assert-Fails { Read-WduLifecycleContract $copy } "row 'WDU-LC-007' must classify post-VerifiedLocalRoot completion failure"
     }
 
     Invoke-Case 'leaves input bytes unchanged on success and failure' {

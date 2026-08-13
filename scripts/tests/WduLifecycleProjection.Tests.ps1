@@ -12,7 +12,7 @@ $modulePath = Join-Path $repositoryRoot 'scripts/modules/WduLifecycleProjection.
 $canonicalSource = Join-Path $repositoryRoot 'docs/Working Directory Update.md'
 $getCommand = Join-Path $repositoryRoot 'scripts/get-wdu-lifecycle-projection.ps1'
 $checkCommand = Join-Path $repositoryRoot 'scripts/check-wdu-lifecycle-projections.ps1'
-$artifactIds = @('adr-0011', 'epic-835', 'issue-842', 'issue-843', 'issue-846', 'issue-869', 'issue-898', 'issue-899', 'issue-900', 'issue-901', 'issue-871', 'issue-872')
+$artifactIds = @('adr-0011', 'epic-835', 'issue-842', 'issue-843', 'issue-846', 'issue-869', 'issue-898', 'issue-920', 'issue-921', 'issue-922', 'issue-923', 'issue-900', 'issue-901', 'issue-871', 'issue-872')
 
 function Assert-True {
     param([bool] $Condition, [string] $Message)
@@ -106,15 +106,15 @@ try {
 
     Invoke-Case 'checks a complete packet with paths containing spaces and Unicode in arbitrary input order' {
         $packet = New-Packet 'paths with spaces é'
-        $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath @($packet.Paths[11..0]))
-        Assert-True ($result.Count -eq 12) 'complete packet returns one scoped result per assignment'
+        $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath @($packet.Paths[14..0]))
+        Assert-True ($result.Count -eq 15) 'complete packet returns one scoped result per assignment'
         Assert-True (($result | Select-Object -ExpandProperty Artifact) -join '|' -ceq ($artifactIds -join '|')) 'results are in canonical assignment order'
     }
 
     Invoke-Case 'normalizes LF and CRLF only while checking exact blocks' {
         $packet = New-Packet 'crlf packet' -CrLf
         $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath $packet.Paths)
-        Assert-True ($result.Count -eq 12) 'CRLF packet succeeds under the documented normalization'
+        Assert-True ($result.Count -eq 15) 'CRLF packet succeeds under the documented normalization'
     }
 
     }
@@ -125,7 +125,7 @@ try {
             @{ Name = 'duplicate assignment row ID'; Old = '"rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-101","WDU-LC-103"]'; New = '"rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-100","WDU-LC-103"]'; Reason = 'duplicate row ID' },
             @{ Name = 'unknown assignment row ID'; Old = '"WDU-LC-027","WDU-LC-036","WDU-LC-037","WDU-LC-100"'; New = '"WDU-LC-027","WDU-LC-036","WDU-LC-999","WDU-LC-100"'; Reason = 'unknown row ID' },
             @{ Name = 'blank assignment proof'; Old = '"proof":"Consume the completed Branch lifecycle while deferring the first real Watch producer and retry proof to this issue."'; New = '"proof":""'; Reason = 'must be a nonblank' },
-            @{ Name = 'malformed assignment digest'; Old = '901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7'; New = '901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7'; Reason = 'lowercase SHA-256' },
+            @{ Name = 'malformed assignment digest'; Old = 'd0c2bbdd1d9b9ad6d147e2e6dc17c35b0fc92aa1a4cce0724d750119de7d107d'; New = '901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7'; Reason = 'lowercase SHA-256' },
             @{ Name = 'unknown assignment property'; Old = '"schema": "grace.wdu.lifecycle-projection-plan/v1",'; New = '"schema": "grace.wdu.lifecycle-projection-plan/v1", "extra": true,'; Reason = 'unknown property' },
             @{ Name = 'incomplete assignment row coverage'; Old = ',"WDU-LC-037","WDU-LC-100"'; New = ',"WDU-LC-100"'; Reason = 'does not cover canonical row ID' }
         )
@@ -202,7 +202,7 @@ try {
 
     if ($Group -in @('All', 'DriftA', 'DriftB', 'DriftC')) {
     $driftCases = @(
-            @{ Name = 'stale projection digest'; Old = '901fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7'; New = '001fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7'; Reason = 'does not equal' },
+            @{ Name = 'stale projection digest'; Old = 'd0c2bbdd1d9b9ad6d147e2e6dc17c35b0fc92aa1a4cce0724d750119de7d107d'; New = '001fe35f11362c73d7200151e84ee2827dfee965758cb8e42925167c26aee7f7'; Reason = 'does not equal' },
             @{ Name = 'wrong projection artifact'; Old = '"artifact": "issue-842"'; New = '"artifact": "unexpected"'; Reason = 'unexpected artifact' },
             @{ Name = 'wrong projection anchor'; Old = 'docs/Working Directory Update.md#normative-branch-lifecycle-table'; New = 'docs/Working Directory Update.md#wrong-anchor'; Reason = 'does not equal' },
             @{ Name = 'changed projection proof'; Old = 'Prove Branch-only Doctor retry, refusal, cancellation boundaries, terminal replay, and no working-file mutation.'; New = 'changed proof'; Reason = 'does not equal' },
@@ -258,7 +258,7 @@ try {
             Write-TestText $path $block
         }
         $result = @(Test-WduLifecycleProjection -CanonicalPath $packet.Canonical -ArtifactPath $packet.Paths)
-        Assert-True ($result.Count -eq 12) 'empty surrounding content is ignored'
+        Assert-True ($result.Count -eq 15) 'empty surrounding content is ignored'
     }
 
     }
@@ -297,7 +297,7 @@ try {
         Assert-True ($LASTEXITCODE -eq 0) 'second generator invocation succeeds'
         Assert-True ([Convert]::ToHexString([IO.File]::ReadAllBytes($first)) -ceq [Convert]::ToHexString([IO.File]::ReadAllBytes($second))) 'stdout generation is byte-identical'
         $checked = @(& $checkCommand -CanonicalPath $packet.Canonical -ArtifactPath $packet.Paths)
-        Assert-True ($checked.Count -eq 12) 'thin checker returns the twelve scoped results'
+        Assert-True ($checked.Count -eq 15) 'thin checker returns the fifteen scoped results'
     }
     }
 }
