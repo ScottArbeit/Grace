@@ -440,14 +440,28 @@ try {
 
     foreach ($mutation in @(
         @{ Name = 'wrong machine count'; Old = '"rowCount":70'; New = '"rowCount":71'; Reason = 'expectedCounts.rowCount must equal 70' },
-        @{ Name = 'unknown metadata field'; Old = '"requirements": ['; New = '"unknown":true,"requirements": ['; Reason = "machineMetadata has unknown property 'unknown'" },
-        @{ Name = 'wrong metadata raw token'; Old = '"requirements": ['; New = '"requirements": {}'; Reason = 'machineMetadata.requirements must be a JSON array' }
+        @{ Name = 'unknown metadata field'; Old = '"requirements": ['; New = '"unknown":true,"requirements": ['; Reason = "machineMetadata has unknown property 'unknown'" }
     )) {
         Invoke-Case $mutation.Name {
             $copy = New-CanonicalCopy $mutation.Name.Replace(' ', '-')
             Set-TestText $copy (Replace-Once (Get-TestText $copy) $mutation.Old $mutation.New)
             Assert-Fails { Read-WduLifecycleContract $copy } $mutation.Reason
         }
+    }
+
+    Invoke-Case 'rejects an object-valued requirements token in valid machine metadata' {
+        $copy = New-CanonicalCopy 'wrong-metadata-raw-token'
+        $text = Get-TestText $copy
+        $metadataIndex = $text.IndexOf('"machineMetadata"', [StringComparison]::Ordinal)
+        $requirementsIndex = $text.IndexOf('"requirements": [', $metadataIndex, [StringComparison]::Ordinal)
+        $artifactsIndex = $text.IndexOf('"artifacts": [', $requirementsIndex, [StringComparison]::Ordinal)
+        $separatorIndex = $text.LastIndexOf(',', $artifactsIndex)
+        Assert-True ($metadataIndex -ge 0 -and $requirementsIndex -ge 0 -and $artifactsIndex -ge 0 -and $separatorIndex -gt $requirementsIndex) 'machine metadata anchors are present'
+        $requirementsValueIndex = $requirementsIndex + '"requirements": '.Length
+        $objectValuedRequirements = $text.Substring(0, $requirementsValueIndex) + '{}' + $text.Substring($separatorIndex)
+        Assert-True ($objectValuedRequirements.Contains('"artifacts": [', [StringComparison]::Ordinal)) 'the valid raw-token fixture retains machine metadata artifacts'
+        Set-TestText $copy $objectValuedRequirements
+        Assert-Fails { Read-WduLifecycleContract $copy } 'machineMetadata.requirements must be a JSON array'
     }
 
     foreach ($predicateToken in @('true', '[]', '"initial"', 'null')) {
