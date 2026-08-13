@@ -133,9 +133,14 @@ module CacheCommand =
         let correlationId = getCorrelationId parseResult
         let ownerId = parseResult.GetValue(EnrollOptions.ownerId)
         let parsedOrganizationId = parseResult.GetValue(EnrollOptions.organizationId)
+        let hasExplicitOrganizationId = not (isNull (parseResult.GetResult("--organization-id")))
         let organizationId = if parsedOrganizationId = Guid.Empty then None else Some parsedOrganizationId
         let endpoint = parseResult.GetValue(EnrollOptions.endpoint)
         let allowHttp = parseResult.GetValue(EnrollOptions.allowHttp)
+
+        let displayName =
+            (parseResult.GetValue(EnrollOptions.displayName))
+                .Trim()
 
         let repositoryValues =
             parseResult.GetValue(EnrollOptions.repositories)
@@ -146,6 +151,9 @@ module CacheCommand =
 
         if ownerId = Guid.Empty then
             Error(GraceError.Create "--owner-id must be a non-empty GUID." correlationId)
+        elif hasExplicitOrganizationId
+             && parsedOrganizationId = Guid.Empty then
+            Error(GraceError.Create "--organization-id must be a non-empty GUID when supplied." correlationId)
         elif scopes |> Array.exists Option.isNone then
             Error(GraceError.Create "Each --repository value must be organization-GUID/repository-GUID." correlationId)
         else
@@ -161,7 +169,7 @@ module CacheCommand =
                 let request =
                     {
                         Class = nameof CacheEnrollmentRequest
-                        DisplayName = parseResult.GetValue(EnrollOptions.displayName)
+                        DisplayName = displayName
                         BoundaryKind =
                             if organizationId.IsSome then
                                 CacheBoundaryKind.Organization
@@ -262,6 +270,12 @@ module CacheCommand =
     let private renderEnrollmentSuccess parseResult =
         let status = CacheIdentity.status stateRoot
 
+        if
+            not (hasSelect parseResult)
+            && parseResult |> hasOutput
+        then
+            renderHumanStatus status
+
         let renderExitCode =
             GraceReturnValue.Create (statusValue status) (getCorrelationId parseResult)
             |> Ok
@@ -271,8 +285,8 @@ module CacheCommand =
         elif status.Enrollment = "enrolled" then 0
         else -1
 
-    /// Completes the one-shot enrollment transition without retries, reconciliation, repository configuration, or invocation history.
-    let private enrollHandler (parseResult: ParseResult) (cancellationToken: CancellationToken) =
+    /// Executes the one-shot enrollment transition without retries, reconciliation, repository configuration, or invocation history.
+    let private enrollTransition (parseResult: ParseResult) (cancellationToken: CancellationToken) =
         task {
             let placeholder: Grace.Cache.CacheIdentityPublicKey = { PublicKeyX = String.replicate 43 "a"; PublicKeyY = String.replicate 43 "a" }
 
@@ -396,6 +410,16 @@ module CacheCommand =
                                     CacheIdentity.discardClaimedAttempt claim stateRoot stagedKey
 
                                 CacheIdentity.releaseEnrollmentClaim claim
+        }
+
+    /// Projects cancellation from every enrollment phase through the redacted Cache output contract after claimed cleanup completes.
+    let private enrollHandler (parseResult: ParseResult) (cancellationToken: CancellationToken) =
+        task {
+            try
+                return! enrollTransition parseResult cancellationToken
+            with
+            | :? OperationCanceledException ->
+                return renderOutput parseResult (Error(GraceError.Create "Cache enrollment was cancelled." (getCorrelationId parseResult)))
         }
 
     /// Invokes the one-shot cache enrollment action through repository-independent root dispatch.

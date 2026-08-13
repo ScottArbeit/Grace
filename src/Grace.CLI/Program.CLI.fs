@@ -258,6 +258,7 @@ module GraceCommand =
     /// Evaluates is ignorable introspection parse error against parsed options and command state.
     let private isIgnorableIntrospectionParseError (error: ParseError) =
         error.Message.StartsWith("Required argument missing for command:", StringComparison.Ordinal)
+        || error.Message.StartsWith("Required option missing for command:", StringComparison.Ordinal)
 
     /// Evaluates has blocking introspection parse errors against parsed options and command state.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =

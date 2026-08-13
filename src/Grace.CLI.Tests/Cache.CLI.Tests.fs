@@ -188,8 +188,8 @@ module CacheCliTests =
             do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length)
         }
 
-    /// Constructs a strictly accepted enrollment response from the exact production request sent by the CLI.
-    let private acceptedEnrollmentResponse (request: ReceivedRequest) =
+    /// Constructs a strictly accepted enrollment response after applying the production server's display-name normalization.
+    let private acceptedEnrollmentResponseWithDisplayName (normalizeDisplayName: string -> string) (request: ReceivedRequest) =
         let enrollment = JsonSerializer.Deserialize<CacheEnrollmentRequest>(request.Body, Constants.JsonSerializerOptions)
         Assert.That(enrollment, Is.Not.Null, "The enrollment responder received an invalid request body.")
         let now = SystemClock.Instance.GetCurrentInstant()
@@ -198,7 +198,7 @@ module CacheCliTests =
             {
                 Class = nameof CacheRegistration
                 CacheId = Guid.Parse("11111111-1111-1111-1111-111111111111")
-                DisplayName = enrollment.DisplayName
+                DisplayName = normalizeDisplayName enrollment.DisplayName
                 BoundaryKind = enrollment.BoundaryKind
                 OwnerId = enrollment.OwnerId
                 OrganizationId = enrollment.OrganizationId
@@ -222,8 +222,11 @@ module CacheCliTests =
         |> fun result -> GraceReturnValue.Create result "test-correlation"
         |> fun result -> JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
 
+    /// Constructs a strictly accepted enrollment response from the exact production request sent by the CLI.
+    let private acceptedEnrollmentResponse (request: ReceivedRequest) = acceptedEnrollmentResponseWithDisplayName id request
+
     /// Hosts local OAuth and enrollment endpoints used to prove real credential producers through root command dispatch.
-    let private withEnrollmentResponder (action: Uri -> ConcurrentQueue<ReceivedRequest> -> unit) =
+    let private withEnrollmentResponderWith enrollmentResponse (action: Uri -> ConcurrentQueue<ReceivedRequest> -> unit) =
         use listener = new TcpListener(IPAddress.Loopback, 0)
         use cancellation = new CancellationTokenSource()
         let requests = ConcurrentQueue<ReceivedRequest>()
@@ -256,7 +259,7 @@ module CacheCliTests =
                                 200,
                                 "{\"access_token\":\"interactive-access-token\",\"refresh_token\":\"interactive-refresh-token\",\"expires_in\":3600,\"scope\":\"openid offline_access\",\"token_type\":\"Bearer\"}"
                             | "/oauth/token" -> 200, "{\"access_token\":\"m2m-access-token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}"
-                            | "/cache/enroll" -> 200, acceptedEnrollmentResponse request
+                            | "/cache/enroll" -> 200, enrollmentResponse request
                             | _ -> 404, "{\"error\":\"not_found\"}"
 
                         do! writeResponse client (fst response) (snd response)
@@ -276,6 +279,28 @@ module CacheCliTests =
 
             if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
                 Assert.Fail("Timed out waiting for the local OAuth/enrollment responder to stop.")
+
+    /// Hosts the standard strict enrollment responder used by credential and output tests.
+    let private withEnrollmentResponder (action: Uri -> ConcurrentQueue<ReceivedRequest> -> unit) =
+        withEnrollmentResponderWith acceptedEnrollmentResponse action
+
+    /// Applies an isolated PAT-only credential environment to an enrollment command test.
+    let private withPatEnrollmentEnvironment (serverUri: Uri) (pat: string) action =
+        withEnvironment
+            [
+                Constants.EnvironmentVariables.GraceServerUri, Some serverUri.AbsoluteUri
+                Constants.EnvironmentVariables.GraceToken, Some pat
+                Constants.EnvironmentVariables.GraceTokenFile, None
+                Constants.EnvironmentVariables.GraceAuthOidcAuthority, None
+                Constants.EnvironmentVariables.GraceAuthOidcAudience, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientId, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret, None
+                Constants.EnvironmentVariables.GraceAuthOidcM2mScopes, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliClientId, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort, None
+                Constants.EnvironmentVariables.GraceAuthOidcCliScopes, None
+            ]
+            action
 
     /// Supplies the closed Product V1 enrollment grammar with one Linux HTTP test endpoint.
     let private enrollmentArguments =
@@ -1053,3 +1078,126 @@ module CacheCliTests =
                                 "/cache/enroll"
                             |]
                             requestPaths)))
+
+    /// Verifies an explicitly empty organization selector fails before credential lookup, transport, or protected-state effects.
+    [<Test>]
+    let ``Linux cache enroll rejects an explicit empty organization id before effects`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let pat = Grace.Types.PersonalAccessToken.formatToken "cache-test-user" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withRoot (fun root _ ->
+            let before = snapshot root
+            let arguments = Array.copy enrollmentArguments
+            arguments[7] <- Guid.Empty.ToString("D")
+
+            withEnrollmentResponder (fun serverUri requests ->
+                withPatEnrollmentEnvironment serverUri pat (fun () ->
+                    let exitCode, output = run arguments
+                    assertRedactedError exitCode output
+                    Assert.That(output, Does.Contain("--organization-id must be a non-empty GUID when supplied."))
+                    Assert.That(requests.IsEmpty, Is.True, "An invalid organization selector made an enrollment request.")
+                    Assert.That(snapshot root = before, Is.True, "An invalid organization selector changed protected state."))))
+
+    /// Verifies request canonicalization matches server display-name normalization before strict response comparison.
+    [<Test>]
+    let ``Linux cache enroll canonicalizes padded display names before the request`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let pat = Grace.Types.PersonalAccessToken.formatToken "cache-test-user" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        withRoot (fun root _ ->
+            withEnrollmentResponderWith (acceptedEnrollmentResponseWithDisplayName (fun displayName -> displayName.Trim())) (fun serverUri requests ->
+                withPatEnrollmentEnvironment serverUri pat (fun () ->
+                    let arguments =
+                        Array.append
+                            enrollmentArguments
+                            [|
+                                "--display-name"
+                                "  Seattle cache  "
+                            |]
+
+                    let exitCode, output = run arguments
+                    Assert.That(exitCode, Is.EqualTo(0), output)
+                    assertSuccessfulEnrollment pat root requests
+                    let firstRequest: ReceivedRequest = requests.ToArray() |> Array.head
+                    let sent = JsonSerializer.Deserialize<CacheEnrollmentRequest>(firstRequest.Body, Constants.JsonSerializerOptions)
+                    Assert.That(sent.DisplayName, Is.EqualTo("Seattle cache")))))
+
+    /// Verifies the enrollment success value follows the existing Cache-status renderer in every supported output mode.
+    [<Test>]
+    let ``Linux cache enroll renders the ready status in every output mode and preserves selectors`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        let pat = Grace.Types.PersonalAccessToken.formatToken "cache-test-user" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        for mode in
+            [
+                "Normal"
+                "Minimal"
+                "Silent"
+                "Verbose"
+                "Json"
+            ] do
+            withRoot (fun root _ ->
+                withEnrollmentResponder (fun serverUri requests ->
+                    withPatEnrollmentEnvironment serverUri pat (fun () ->
+                        let arguments = Array.copy enrollmentArguments
+                        arguments[1] <- mode
+                        let exitCode, output = run arguments
+                        Assert.That(exitCode, Is.EqualTo(0), $"{mode}: {output}")
+                        assertSuccessfulEnrollment pat root requests
+
+                        match mode with
+                        | "Normal" -> Assert.That(output, Does.Contain("Enrollment: enrolled"))
+                        | "Verbose" ->
+                            Assert.That(output, Does.Contain("Enrollment: enrolled"))
+                            Assert.That(output, Does.Contain("EventTime:"))
+                        | "Json" -> assertStatus "enrolled" "available" 0 output
+                        | "Minimal"
+                        | "Silent" -> Assert.That(output, Is.Empty)
+                        | _ -> Assert.Fail($"Unexpected output mode {mode}"))))
+
+        for mode in
+            [
+                "Normal"
+                "Minimal"
+                "Silent"
+                "Verbose"
+                "Json"
+            ] do
+            withRoot (fun root _ ->
+                withEnrollmentResponder (fun serverUri requests ->
+                    withPatEnrollmentEnvironment serverUri pat (fun () ->
+                        let arguments = Array.append enrollmentArguments [| "--select"; "Enrollment" |]
+                        arguments[1] <- mode
+                        let exitCode, output = run arguments
+                        Assert.That(exitCode, Is.EqualTo(0), $"{mode} selector: {output}")
+                        assertSuccessfulEnrollment pat root requests
+                        Assert.That(output.Trim(), Is.EqualTo("\"enrolled\""), $"{mode} selector must override human output."))))
+
+    /// Verifies bare enrollment introspection bypasses mutation validation and reports the finalized local-and-server contract.
+    [<Test>]
+    let ``Linux cache enroll schema and examples are inert and describe the completed contract`` () =
+        if not (OperatingSystem.IsLinux()) then
+            Assert.Ignore("Cache enrollment Product V1 supports Linux only.")
+
+        withRoot (fun root _ ->
+            let before = snapshot root
+
+            for arguments in
+                [
+                    [| "cache"; "enroll"; "--schema" |]
+                    [| "cache"; "enroll"; "--examples" |]
+                ] do
+                let exitCode, output = run arguments
+                Assert.That(exitCode, Is.EqualTo(0), output)
+                use document = JsonDocument.Parse(output)
+                let registry = document.RootElement.GetProperty("Registry")
+                Assert.That(registry.GetProperty("ExecutionScope").GetString(), Is.EqualTo("composite_local_server"))
+                Assert.That(registry.GetProperty("Schema").GetString(), Is.EqualTo("ExistingBehavior"))
+                Assert.That(registry.GetProperty("Examples").GetString(), Is.EqualTo("ExistingBehavior"))
+                Assert.That(snapshot root = before, Is.True, "Enrollment introspection changed protected state."))

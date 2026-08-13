@@ -174,7 +174,7 @@ starting the watcher.
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
 
-`cache status` and `cache enroll` are JSON-ready and share the same redacted ready-status `ReturnValue` schema.
+`cache status` and `cache enroll` are JSON-ready, support inert `--schema` and `--examples` inspection, and share the same redacted ready-status `ReturnValue` schema.
 `cache status` is repository-independent and reads only protected local Cache identity state. `cache enroll` resolves one
 existing credential before a root-local protected enrollment attempt and sends one selected-server request. Their closed
 `oneOf` schema emits `Class`, `Enrollment`, and `Key` for every state; only an enrolled ready state includes `CacheId`,

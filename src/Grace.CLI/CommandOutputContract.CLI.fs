@@ -1059,6 +1059,7 @@ module CommandOutputContract =
                 if
                     identity.CommandId.Equals("doctor", StringComparison.Ordinal)
                     || identity.CommandId.Equals("cache.status", StringComparison.Ordinal)
+                    || identity.CommandId.Equals("cache.enroll", StringComparison.Ordinal)
                 then
                     { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
                 else
@@ -1092,7 +1093,7 @@ module CommandOutputContract =
 
     let entries =
         [
-            row [ "cache" ] "enroll" true true common_renderOutput_envelope mutating_state_transition server_via_sdk RequiresCliDto
+            row [ "cache" ] "enroll" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "cache" ] "status" true false common_renderOutput_envelope read_list_search local_client NoServerDto
             row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
