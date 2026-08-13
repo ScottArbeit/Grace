@@ -176,6 +176,13 @@ module internal WorkingDirectoryUpdate =
                     else
                         actual[string path] <- entry
 
+                let exactSpelling =
+                    requirements
+                    |> List.forall (fun requirement ->
+                        match actual.TryGetValue(string requirement.Path) with
+                        | true, entry -> String.Equals(string requirement.Path, string (entryPath entry), StringComparison.Ordinal)
+                        | false, _ -> true)
+
                 let expectedAt path =
                     requirements
                     |> List.filter (fun requirement -> String.Equals(string requirement.Path, string path, StringComparison.OrdinalIgnoreCase))
@@ -209,6 +216,7 @@ module internal WorkingDirectoryUpdate =
                                 && expectedAt path |> Option.isNone)))
 
                 not ambiguous
+                && exactSpelling
                 && not destructiveDescendant
                 && (requirements
                     |> List.map (fun requirement -> requirement.Path)
@@ -350,6 +358,69 @@ module internal WorkingDirectoryUpdate =
 
             rejection, actual, entries
 
+        /// Rejects a Windows-stable lookup match whose normalized spelling differs from the accepted or selected path.
+        let private firstCaseAlias
+            (trackedFiles: Dictionary<string, RelativePath * Sha256Hash * Blake3Hash>)
+            (trackedDirectories: Dictionary<string, RelativePath>)
+            (targetFiles: Dictionary<string, RelativePath * Sha256Hash * Blake3Hash>)
+            (targetDirectories: Dictionary<string, RelativePath>)
+            (entries: RelevantEntry list)
+            =
+            let comparePaths left right =
+                let keyOrder = StringComparer.Ordinal.Compare(key left, key right)
+
+                if keyOrder <> 0 then
+                    keyOrder
+                else
+                    StringComparer.Ordinal.Compare(string left, string right)
+
+            let expectedPaths =
+                seq {
+                    yield!
+                        trackedFiles.Values
+                        |> Seq.map (fun (path, _, _) -> path)
+
+                    yield! trackedDirectories.Values
+
+                    yield!
+                        targetFiles.Values
+                        |> Seq.map (fun (path, _, _) -> path)
+
+                    yield! targetDirectories.Values
+                }
+                |> Seq.sortWith comparePaths
+                |> Seq.toList
+
+            let conflictingExpected =
+                expectedPaths
+                |> List.pairwise
+                |> List.tryPick (fun (left, right) ->
+                    if
+                        key left = key right
+                        && not (String.Equals(string left, string right, StringComparison.Ordinal))
+                    then
+                        Some { Path = right; Classification = AmbiguousTarget }
+                    else
+                        None)
+
+            let expectedAt path =
+                expectedPaths
+                |> List.tryFind (fun expected -> key expected = key path)
+
+            let conflictingObserved =
+                entries
+                |> List.sortBy (entryPath >> key)
+                |> List.tryPick (fun entry ->
+                    let path = entryPath entry
+
+                    match expectedAt path with
+                    | Some expected when not (String.Equals(string expected, string path, StringComparison.Ordinal)) ->
+                        Some { Path = path; Classification = AmbiguousTarget }
+                    | _ -> None)
+
+            conflictingExpected
+            |> Option.orElse conflictingObserved
+
         /// Rejects non-tracked content beneath a directory that remains destructive at the current prefix.
         let private firstUnsafeDescendant
             (trackedFiles: Dictionary<string, RelativePath * Sha256Hash * Blake3Hash>)
@@ -388,12 +459,14 @@ module internal WorkingDirectoryUpdate =
             let trackedRejection, trackedFiles, trackedDirectories = trackedTopology acceptedStatus
             let targetRejection, targetFiles, targetDirectories = targetTopology manifest
             let actualRejection, actual, entries = actualTopology topology
+            let caseAlias = firstCaseAlias trackedFiles trackedDirectories targetFiles targetDirectories entries
 
-            match trackedRejection, targetRejection, actualRejection with
-            | Some rejection, _, _
-            | _, Some rejection, _
-            | _, _, Some rejection -> Rejected rejection
-            | None, None, None ->
+            match trackedRejection, targetRejection, actualRejection, caseAlias with
+            | Some rejection, _, _, _
+            | _, Some rejection, _, _
+            | _, _, Some rejection, _
+            | _, _, _, Some rejection -> Rejected rejection
+            | None, None, None, None ->
                 let mutable rejection = None
                 let removals = ResizeArray<Requirement>()
                 let creates = ResizeArray<Requirement>()
@@ -468,6 +541,12 @@ module internal WorkingDirectoryUpdate =
                             creates.Add(requirement path ExpectedEntry.Directory ExpectedEntry.Directory Retained state admissionMode)
                         | Some ExpectedEntry.Directory when acceptedFile && admissionMode = ExactAdoption ->
                             creates.Add(requirement path ExpectedEntry.Directory ExpectedEntry.Directory CreateDirectory AlreadySatisfied admissionMode)
+                        | Some ExpectedEntry.Directory when
+                            not acceptedFile
+                            && not acceptedDirectory
+                            && admissionMode = ExactAdoption
+                            ->
+                            creates.Add(requirement path ExpectedEntry.Directory ExpectedEntry.Directory CreateDirectory AlreadySatisfied admissionMode)
                         | Some (ExpectedEntry.File _) when acceptedFile ->
                             creates.Add(requirement path ExpectedEntry.Absent ExpectedEntry.Directory CreateDirectory NeedsApply admissionMode)
                         | Some ExpectedEntry.Directory when
@@ -507,6 +586,12 @@ module internal WorkingDirectoryUpdate =
                                 rejection <- Some { Path = path; Classification = IdentityDrift }
                         | Some actual, (false, _) when
                             acceptedDirectory
+                            && admissionMode = ExactAdoption
+                            && equalsExpected final (Some actual)
+                            ->
+                            copies.Add(requirement path final final Copy AlreadySatisfied admissionMode)
+                        | Some actual, (false, _) when
+                            not acceptedDirectory
                             && admissionMode = ExactAdoption
                             && equalsExpected final (Some actual)
                             ->

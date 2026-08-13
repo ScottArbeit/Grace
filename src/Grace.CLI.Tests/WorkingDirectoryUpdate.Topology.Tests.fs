@@ -164,6 +164,30 @@ module WorkingDirectoryUpdateTopologyTests =
         | WorkingDirectoryUpdate.Topology.Rejected _ -> ()
         | _ -> Assert.Fail("Expected rejection.")
 
+    /// Asserts the deterministic path and classification selected for unsafe topology evidence.
+    let private rejectedAs (path: string) classification =
+        function
+        | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+            WorkingDirectoryUpdate.Topology.Rejection.path rejection
+            |> should equal (RelativePath path)
+
+            WorkingDirectoryUpdate.Topology.Rejection.classification rejection
+            |> should equal classification
+        | _ -> Assert.Fail("Expected rejection.")
+
+    /// Projects every immutable requirement field so the tests retain identity, role, mode, and convergence assertions.
+    let private details requirements =
+        requirements
+        |> WorkingDirectoryUpdate.Topology.Requirements.items
+        |> List.map (fun item ->
+            WorkingDirectoryUpdate.Topology.Requirement.path item,
+            WorkingDirectoryUpdate.Topology.Requirement.expectedCurrent item,
+            WorkingDirectoryUpdate.Topology.Requirement.expectedFinal item,
+            WorkingDirectoryUpdate.Topology.Requirement.role item,
+            WorkingDirectoryUpdate.Topology.Requirement.state item,
+            WorkingDirectoryUpdate.Topology.Requirement.admissionMode item)
+
+    /// Projects application role and convergence state for concise matrix assertions.
     let private states requirements =
         requirements
         |> WorkingDirectoryUpdate.Topology.Requirements.items
@@ -532,6 +556,292 @@ module WorkingDirectoryUpdateTopologyTests =
             [
                 WorkingDirectoryUpdate.Topology.Role.Retained, WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
                 WorkingDirectoryUpdate.Topology.Role.Retained, WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+            ]
+
+    [<Test>]
+    let ``exact adoption ordinary file and directory creates converge only on their exact selected identities`` () =
+        let accepted = status [] []
+        let fileSha256, fileBlake3 = hashes "new"
+        let fileFinal = WorkingDirectoryUpdate.Topology.ExpectedEntry.File(fileSha256, fileBlake3)
+        let fileTarget = manifest [ targetFile "created.txt" "new" ]
+        let directoryTarget = manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "created") ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted fileTarget []
+        |> planned
+        |> details
+        |> should
+            equal
+            [
+                RelativePath "created.txt",
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                fileFinal,
+                WorkingDirectoryUpdate.Topology.Role.Copy,
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+            ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted fileTarget [ file "created.txt" "new" ]
+        |> planned
+        |> details
+        |> should
+            equal
+            [
+                RelativePath "created.txt",
+                fileFinal,
+                fileFinal,
+                WorkingDirectoryUpdate.Topology.Role.Copy,
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied,
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+            ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted directoryTarget []
+        |> planned
+        |> details
+        |> should
+            equal
+            [
+                RelativePath "created",
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory,
+                WorkingDirectoryUpdate.Topology.Role.CreateDirectory,
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+            ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted directoryTarget [ directory "created" ]
+        |> planned
+        |> details
+        |> should
+            equal
+            [
+                RelativePath "created",
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory,
+                WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory,
+                WorkingDirectoryUpdate.Topology.Role.CreateDirectory,
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied,
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+            ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted fileTarget [ file "created.txt" "wrong" ]
+        |> rejectedAs "created.txt" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted directoryTarget [ file "created" "wrong" ]
+        |> rejectedAs "created" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+    [<Test>]
+    let ``exact adoption same-kind file replacement preserves old identity across old absent and selected-final evidence`` () =
+        let accepted =
+            status [] [
+                trackedFile "replace.txt" "old"
+            ]
+
+        let oldSha256, oldBlake3 = hashes "old"
+        let finalSha256, finalBlake3 = hashes "new"
+        let oldIdentity = WorkingDirectoryUpdate.Topology.ExpectedEntry.File(oldSha256, oldBlake3)
+        let finalIdentity = WorkingDirectoryUpdate.Topology.ExpectedEntry.File(finalSha256, finalBlake3)
+        let selected = manifest [ targetFile "replace.txt" "new" ]
+
+        let expected current state =
+            [
+                RelativePath "replace.txt",
+                current,
+                finalIdentity,
+                WorkingDirectoryUpdate.Topology.Role.Copy,
+                state,
+                WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+            ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted selected [ file "replace.txt" "old" ]
+        |> planned
+        |> details
+        |> should equal (expected oldIdentity WorkingDirectoryUpdate.Topology.Convergence.NeedsApply)
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted selected []
+        |> planned
+        |> details
+        |> should equal (expected WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent WorkingDirectoryUpdate.Topology.Convergence.NeedsApply)
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted selected [ file "replace.txt" "new" ]
+        |> planned
+        |> details
+        |> should equal (expected finalIdentity WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied)
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption accepted selected [ file "replace.txt" "wrong" ]
+        |> rejectedAs "replace.txt" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+    [<Test>]
+    let ``fresh admission rejects a missing accepted file or directory with deterministic identity drift`` () =
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            (status [] [
+                trackedFile "required.txt" "old"
+             ])
+            (manifest [ targetFile "required.txt" "old" ])
+            []
+        |> rejectedAs "required.txt" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            (status [ "required" ] [])
+            (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "required") ])
+            []
+        |> rejectedAs "required" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+    [<Test>]
+    let ``single case-only aliases reject reconciliation and cannot satisfy prefix assertions`` () =
+        let accepted =
+            status [] [
+                trackedFile "case.txt" "same"
+            ]
+
+        let selected = manifest [ targetFile "case.txt" "same" ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh accepted selected [ file "Case.txt" "same" ]
+        |> rejectedAs "Case.txt" WorkingDirectoryUpdate.Topology.RejectionClassification.AmbiguousTarget
+
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+            (status [] [
+                trackedFile "Case.txt" "same"
+             ])
+            (manifest [ targetFile "case.txt" "same" ])
+            [ file "Case.txt" "same" ]
+        |> rejectedAs "case.txt" WorkingDirectoryUpdate.Topology.RejectionClassification.AmbiguousTarget
+
+        let requirements =
+            reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh accepted selected [ file "case.txt" "same" ]
+            |> planned
+
+        WorkingDirectoryUpdate.Topology.Requirements.matchesExpected requirements (snapshot [ file "Case.txt" "same" ])
+        |> should equal false
+
+    [<Test>]
+    let ``requirements have deterministic normalized path ordering and retain all assertion fields`` () =
+        let aSha256, aBlake3 = hashes "a"
+        let zSha256, zBlake3 = hashes "z"
+
+        let requirements =
+            reconcile
+                WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh
+                (status [] [])
+                (manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "z")
+                            WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "a/b")
+                            targetFile "z.txt" "z"
+                            targetFile "a.txt" "a" ])
+                []
+            |> planned
+
+        details requirements
+        |> should
+            equal
+            [
+                (RelativePath "a",
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory,
+                 WorkingDirectoryUpdate.Topology.Role.CreateDirectory,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+                (RelativePath "z",
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory,
+                 WorkingDirectoryUpdate.Topology.Role.CreateDirectory,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+                (RelativePath "a/b",
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Directory,
+                 WorkingDirectoryUpdate.Topology.Role.CreateDirectory,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+                (RelativePath "a.txt",
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.File(aSha256, aBlake3),
+                 WorkingDirectoryUpdate.Topology.Role.Copy,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+                (RelativePath "z.txt",
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.Absent,
+                 WorkingDirectoryUpdate.Topology.ExpectedEntry.File(zSha256, zBlake3),
+                 WorkingDirectoryUpdate.Topology.Role.Copy,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+            ]
+
+    [<Test>]
+    let ``false-positive resistance keeps admission modes retained assertions and one-action prefix advancement distinct`` () =
+        let accepted =
+            status [ "retained" ] [
+                trackedFile "retained/keep.txt" "same"
+                trackedFile "changed.txt" "old"
+            ]
+
+        let selected =
+            manifest [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "retained")
+                       targetFile "retained/keep.txt" "same"
+                       targetFile "changed.txt" "new" ]
+
+        let observed =
+            [
+                directory "retained"
+                file "retained/keep.txt" "same"
+                file "changed.txt" "old"
+            ]
+
+        let retained =
+            reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh accepted selected observed
+            |> planned
+
+        details retained
+        |> List.map (fun (path, _, _, role, state, mode) -> path, role, state, mode)
+        |> should
+            equal
+            [
+                (RelativePath "retained",
+                 WorkingDirectoryUpdate.Topology.Role.Retained,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+                (RelativePath "changed.txt",
+                 WorkingDirectoryUpdate.Topology.Role.Copy,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+                (RelativePath "retained/keep.txt",
+                 WorkingDirectoryUpdate.Topology.Role.Retained,
+                 WorkingDirectoryUpdate.Topology.Convergence.NeedsApply,
+                 WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh)
+            ]
+
+        let first =
+            retained
+            |> WorkingDirectoryUpdate.Topology.Requirements.items
+            |> List.find (fun item -> WorkingDirectoryUpdate.Topology.Requirement.role item = WorkingDirectoryUpdate.Topology.Role.Copy)
+
+        WorkingDirectoryUpdate.Topology.Requirements.advance first retained
+        |> required
+        |> WorkingDirectoryUpdate.Topology.Requirements.items
+        |> List.map WorkingDirectoryUpdate.Topology.Requirement.state
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
+                WorkingDirectoryUpdate.Topology.Convergence.NeedsApply
+            ]
+
+        reconcile WorkingDirectoryUpdate.Topology.AdmissionMode.Fresh (status [] []) (manifest [ targetFile "mode.txt" "new" ]) [ file "mode.txt" "new" ]
+        |> rejectedAs "mode.txt" WorkingDirectoryUpdate.Topology.RejectionClassification.IdentityDrift
+
+        reconcile
+            WorkingDirectoryUpdate.Topology.AdmissionMode.ExactAdoption
+            (status [] [])
+            (manifest [ targetFile "mode.txt" "new" ])
+            [ file "mode.txt" "new" ]
+        |> planned
+        |> details
+        |> List.map (fun (_, _, _, _, state, _) -> state)
+        |> should
+            equal
+            [
+                WorkingDirectoryUpdate.Topology.Convergence.AlreadySatisfied
             ]
 
     [<Test>]
