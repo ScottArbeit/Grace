@@ -35,9 +35,10 @@ This repo is primarily **F#** and targets **.NET 10**.
   editing.
 - Use a focused branch for each issue. Maintainers and agents should use issue-owned worktrees for repo-local work.
 - Prefer vertical slices with focused validation and a commit after each completed slice.
-- Before treating coding work as complete, run one fresh current-head review subagent as described in
-  `docs/Development process.md`, concurrently with required PR checks. Address every fix-now finding, then require a
-  fresh reviewer and fresh checks for the new head.
+- Before treating coding work as complete, follow the bounded review protocol in
+  `docs/Development process.md`: run one R1 Discovery Review of the coherent candidate, freeze the accepted finite
+  ledger, route accepted findings through one consolidated repair pass, and run one R2 Closure Review only when repairs
+  were required. Do not restart an unlimited whole-feature review after every changed head.
 - Open normal ready-for-review pull requests unless a maintainer explicitly asks for a draft pull request.
 - Add or update tests when changing behavior.
 - Please add any useful AI prompts you used for diagnosis or implementation to the PR description.
@@ -333,8 +334,9 @@ Prometheus:
 
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
 - [ ] Focused validation for the touched behavior is listed in the PR
-- [ ] Required GitHub `Validate` passed for the current PR revision
-- [ ] Fresh review-subagent verdict and required checks passed for the same current PR revision
+- [ ] R1 Discovery Review completed for the coherent candidate
+- [ ] Accepted R1 findings, if any, were repaired in one consolidated pass and verified by R2 Closure Review
+- [ ] Required GitHub `Validate` passed for the final PR revision
 - [ ] Any genuinely required validation not run is listed with a reason
 - [ ] Documentation updated (if behavior changed)
 - [ ] Docs impact, residual risk, and rollback or recovery notes are recorded when relevant

@@ -1,4 +1,3 @@
-
 # Agent Instructions
 
 Other `AGENTS.md` files exist in subdirectories, refer to them for more specific context.
@@ -35,11 +34,10 @@ Use GitHub issues and pull requests as the active coordination surface for imple
 For non-trivial work, follow `docs/Development process.md`: create or confirm a GitHub issue, declare owned paths,
 create an issue-owned branch/worktree, validate in focused slices, commit after each completed slice, and record docs
 impact and skipped validation.
-For multi-step implementation plans, create an epic parent issue with linked sub-issues for each implementation step,
-assign each sub-issue's parent issue relationship to the epic in GitHub Relationships, and include a DAG in the parent
-issue that shows dependencies and parallelization opportunities. As sub-issues complete, update the epic checklist so
-completed sub-issues are checked. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md`
-when creating the native parent/child relationships.
+For multi-step implementation plans, create an epic parent issue, but initially create only the earliest tracer and
+prerequisites proven necessary by current evidence. Use native GitHub parent relationships and a compact dependency
+map for created work. Do not pre-create a broad horizontal issue forest. Re-plan and create later child issues after the
+tracer runs. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` for each created child.
 When planning a feature or epic, and when creating issue or pull request bodies, include why the change matters for
 Grace and its users. Use that purpose to help implementation agents make better local decisions when the plan leaves a
 gap or an acceptance criterion is ambiguous.
@@ -69,10 +67,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - When the user asks to create a GitHub issue, use the Grace agent task template and stop before implementation edits
   unless they also ask you to implement.
 - For tracked implementation work, keep one visible task record: the GitHub issue.
-- For multi-step implementation plans, use an epic parent issue, linked sub-issues, native GitHub parent relationships,
-  and a DAG in the parent issue that shows dependencies and parallelization opportunities. As each sub-issue completes,
-  check its box in the epic. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when
-  creating the native parent/child relationships.
+- For multi-step implementation plans, use an epic parent issue and native GitHub parent relationships, but initially
+  create only the earliest tracer and prerequisites proven necessary by current evidence. Keep a compact dependency map
+  for created work, re-plan after the tracer, and avoid pre-creating a horizontal issue forest. Use the concrete
+  `addSubIssue` GraphQL workflow in `docs/Development process.md` for each created child.
 - When planning features or epics, include why the work benefits Grace and its users before decomposing implementation
   steps. Carry that purpose into parent issues, child issues, and PR bodies so implementation agents understand the
   goal behind the requested change, not only the files and tests to touch.
@@ -83,11 +81,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - For epic plus child issue creation, prefer separate temporary Markdown body files and `gh issue create --body-file`
   over a giant inline PowerShell script containing all issue bodies. After the child issue numbers exist, patch the epic
   body with those real numbers, then use GraphQL `addSubIssue` for the native parent relationships.
-- Before assigning or starting a coding issue or sub-issue, apply the minimum detail gate from
-  `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
-  tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
-  implementable from its body alone without hidden project context. Write the gate as review-prevention guidance that
-  predicts likely current-head review findings without adding new issue-template ceremony.
+- Before assigning behavior-changing work, require the compact Issue Readiness gate in
+  `docs/Development process.md`: one user-visible outcome, supported world, Product V1 capability budget, primary
+  invariant and authority, explicit non-goals, algorithm-witness result when required, focused proof, and owner stop
+  conditions. Do not paste broad adversarial checklists or require exhaustive N/A inventories.
 
 - Before turning a product spec or implementation plan into tracked work, record decision closure. Name product
   decisions that are accepted, recommended, deferred, or waived; include the recommended default when the plan makes a
@@ -121,104 +118,60 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   broad preflight; Full is for local integration reproduction or diagnosis. Use either only for concrete escalation,
   such as unavailable CI, broad compile fan-out, a requested gate, or local investigation.
 - When a focused `dotnet test` command uses `--no-build`, run the matching Release build first. If Fast or Full is
-  intentionally selected, it replaces—not supplements—the routine focused build/test gate for that checkpoint.
+  intentionally selected, it replaces, rather than supplements, the routine focused build/test gate for that checkpoint.
 - Treat parallel work as two separate decisions: product/DAG independence and merge/write-set independence. Run
   branches in parallel only when their write sets are disjoint enough to avoid predictable churn. Serialize or
   merge-queue branches that touch shared project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper
   files. For broad waves, consider a preparatory compile-item or file-scaffold slice before later branches edit
   separate files.
-- Before the completion review gate, update against the required base, inspect ahead/behind, the scoped diff, unexpected
-  deletions, and relevant conflict resolutions, then rerun focused proof if they affect the slice. Push and require
-  current GitHub `Validate` plus a fresh review-subagent verdict for that revision.
-- Commit after each completed slice; push one or more completed local commits as a coherent, reviewable checkpoint.
-- When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
-  subagent. The main orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the
-  worker, or commit code changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work,
-  or cannot be resumed, assign the continuation to a fresh worker subagent with the existing worktree/branch context
-  and required validation. The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status,
-  docs/process updates, fresh review-subagent sessions, and final integration evidence. Follow the required review loop
-  in `docs/Development process.md`.
-- Apply the `dev-process` issue-level execution budget before every implementation or fix subagent start. Grace
-  defaults to four worker starts, cumulative across branches, PRs, replacements, compactions, and model changes. Record
-  usage in the issue and PR `Review Status`.
-- Aspire starts are uncapped for Grace and do not count against the worker-start budget. Start or restart Aspire as
-  often as needed for in-scope diagnosis and proof, record each run and outcome, and avoid overlapping instances unless
-  the accepted scenario requires concurrency.
-- The active worker owns local implementation and validation failures. Do not fan out one issue/head. At the limit or
-  any stop condition, preserve state, update GitHub, and return to the owner; no further worker or replacement is
-  authorized without an explicit new numbered worker limit.
-- When assigning a worker subagent, include an explicit status protocol in the prompt. For Grace work, ask the worker to
-  create or update a temp status file outside the repo, for example
-  `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with `phase`, `lastUpdate`, `changedFiles`, `validation`,
-  `blockers`, and `nextStep`. Require updates before code edits, before and after long validation/generation commands,
-  before commit/push/handoff steps, and before the final response. Also ask the worker to send a short chat heartbeat
-  roughly every five minutes while still working so the orchestrator can distinguish active progress from a stalled or
-  lost worker without interrupting it.
-- Agents must never sleep or poll for more than 120 seconds in one command. This includes `Start-Sleep`, `wait_agent`,
-  long-polling commands, watch loops, and tool waits. Use repeated shorter checks instead, updating the status file
-  between checks when the wait is part of a long-running workflow.
-- Worker subagents should finish their assigned implementation or fix as soon as they have a validated result and a
-  handoff. By default, do not make workers update GitHub issues, pull request bodies, review comments, conversation
-  resolution, labels, checklists, or merge/cleanup state. The orchestrator owns those GitHub coordination updates and
-  may schedule the next independent worker from the handoff before finishing wrap-up for the previous worker when the
-  dependency graph and write sets allow it.
-- Before handoff, require the worker to run a review-prevention self-review over the actual diff using the declared
-  quality contract, fix likely findings it discovers, and report first-pass review readiness with residual risks.
-- If a PR reaches three substantive review cycles, or two cycles on the same invariant family, stop ordinary
-  review-fix churn. Mine the originating issue and review findings, name the invariant family, post or update a
-  stabilization ledger, and update active/future sibling issues or agent guidance before requesting another normal review.
-  Treat repeated review findings as a planning defect until proven otherwise.
-
-- After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
-  ready-for-review pull request. Keep it open while the step is still in progress so review findings, fixes, validation
-  evidence, and the final current-head verdict can be recorded on the pull request instead of only on the issue.
-- For every Grace PR head, start exactly one fresh review subagent. Give it the full issue, PR, worktree, branch, base, head SHA, validation, and quality-contract context, and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
-- Start the review subagent after the current head is pushed and run it concurrently with required PR checks. Wait for
-  both the review verdict and the checks. A result from either gate becomes stale when the head changes; restart both
-  gates for the new head.
-- When a worker handoff requires PR coordination, favor the review start over tracker latency: create the PR first only
-  when no PR exists, then start the fresh current-head reviewer immediately after the pushed head is verified. Do this
-  before editing the issue, PR body, review status, or follow-up comments; record those GitHub updates while the review
-  and required checks run. For an existing PR after a fix push, start the reviewer before every GitHub update.
-- The review subagent is read-only. It returns the structured verdict, findings, accepted risks, deferred hardening,
-  proof gaps, and merge-readiness evidence required by `CODE_REVIEW.md`; the orchestrator records the result in the PR.
-- For Grace PR review-fix routing, wait for the current-head review subagent to finish before deciding the action set.
-  A fresh finding belongs to that completed review on the exact head. Findings from earlier heads are stale unless the
-  current review repeats them. Route valid fix-now findings to a fresh implementation/fix subagent; do not make code
-  changes from the orchestrator role.
-- When a required PR check fails, inspect the most recent failed workflow for the current head before classifying or
-  assigning a fix. Identify every failed test or job, its failing assertion or error, and whether it is caused by the
-  PR's owned diff. Record unrelated failures as such; route only a grounded in-scope failure to a fresh fix worker.
-- For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
-  assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
-  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
-  and do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
-  assigning it when the finding reveals missing acceptance criteria, adversarial cases, or risk-surface traps.
-- Do not defer a finding to a future leaf issue when it challenges the current leaf's trust contract. If later leaves
-  consume a fact, authority signal, persisted field, status flag, or trust predicate produced by the current leaf, the
-  current leaf owns making that surface reliable before merge.
-- Track substantive review cycles. A substantive cycle is a latest-head behavior, correctness,
-  concurrency, recovery, durability, authority, contract, or maintainability finding, followed by a worker fix, followed
-  by another substantive latest-head finding. Do not count duplicate findings, stale resolved threads, formatting-only
-  comments, administrative comments, CI flakes, invalid findings, or maintainer-accepted deferrals.
-- Use repeated-review stabilization thresholds: after the first substantive cycle, continue the normal fix loop; after
-  the second cycle, add a short repeated-theme prevention note to `Review Status`; after the third cycle, stop one-off
-  patching and post a review stabilization ledger to the issue and PR before assigning more fix work; after the fourth
-  cycle, hard stop until the ledger is implemented, proven, and self-reviewed.
-- Start the stabilization pass after two substantive cycles for high-risk surfaces, including Watch state, IPC/status
-  contracts, branch-switch safety, local working-tree mutation, runtime timers, storage, actors, retries,
-  idempotency, authorization, public contracts, persisted shapes, concurrency, recovery, or side-effect ordering.
-- If a pull request has more than three completed review-subagent sessions even without three counted substantive
-  cycles, pause before assigning another routine fix worker. Audit the review timeline, separate stale/duplicate/invalid
-  sessions from fresh findings, and decide whether the issue needs a missing invariant, sibling-issue deferral, or
-  structural stabilization ledger before the next review request.
-- Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
-  fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
-  review surface. After a fix worker pushes, start the new fresh review subagent and required checks for the verified
-  head before recording the fresh finding disposition or updating `Review Status`.
-- After each fix subagent completes a review-requested fix and hands off, the orchestrator starts the new-head review
-  gate first, then records the outcome, fix commit, validation evidence, finding disposition, and required prevention
-  line in the PR while review and checks run.
+- Before tracked implementation, freeze a Factory Run Charter from `dev-process/TEMPLATES.md`: issue and outcome,
+  base SHA, supported world, quality contract, algorithm-witness result, agent topology, review protocol, and stop
+  conditions. Do not change these rules inside the run. A material process change stops the run and starts a new charter.
+- For stateful, destructive, filesystem, retry, recovery, concurrent, background, or multi-authority work, require the
+  `dev-process` Algorithm Readiness Gate before production coding. Use a disposable executable witness that injects
+  failure at meaningful effect boundaries and restarts from captured state. Do not use review to discover the algorithm.
+- Default to one active high-risk epic or factory-calibration stream. Parallelize only when the owner explicitly approves
+  independent outcomes, authority models, write sets, and integration paths.
+- Use one short-lived controller per issue or pull request. The controller is the only agent allowed to spawn subagents.
+  Workers and reviewers must not spawn agents. Do not keep one root controller alive across an entire epic.
+- Use one issue-owner implementation worker. That worker owns the implementation, focused proof, self-review, and all
+  accepted in-scope repairs. Do not start a fresh worker for each finding. Use one replacement only when the original
+  worker is genuinely unavailable or its context is unusable, and record why.
+- The controller may inspect code, diffs, logs, tests, and validation evidence and may run read-only or validation
+  commands. It coordinates GitHub state, CI, review ledgers, merge, and cleanup. It must not silently replace the issue
+  owner's implementation work.
+- Do not require temp status files or fixed-interval worker heartbeats. Require concise updates before a long-running
+  command, when a material finding or blocker appears, and at handoff. Never sleep or poll for more than 120 seconds in
+  one command.
+- Before handoff, require the issue owner to inspect the actual diff against the outcome, non-goals, quality contract,
+  authority and effect model, contract propagation, proof truth, and owned paths. The worker must not start an independent
+  review agent.
+- Open one coherent ready-for-review pull request after the first validated candidate. Do not use the PR as a scratchpad
+  for discovering the architecture.
+- Run one independent **R1 discovery review** of the complete candidate using `dev-process/CODE_REVIEW.md` in a
+  fresh, read-only review context supplied only with the complete run packet and repository evidence needed for the
+  review. It must produce a finite Review Discovery Ledger. If R1 passes and current-head GitHub `Validate` passes,
+  the PR may proceed without R2.
+- Classify the R1 ledger once. Reject unsupported-path hardening, stale or duplicate findings, and product decisions
+  presented as defects. Freeze accepted findings for the run.
+- Route the accepted ledger back to the same issue-owner worker for one consolidated repair pass. Do not restart broad
+  discovery review after each repair commit.
+- When repairs were required, run one independent **R2 closure review** on the repaired current head. R2 verifies accepted
+  ledger items, repair hunks, direct repair regressions, current-head proof, required CI, and scope preservation. R2 must
+  not reopen untouched parts of the original diff for another unconstrained search.
+- There is no automatic R3. If R2 incidentally exposes a supported-world merge blocker outside the frozen ledger and
+  direct repair-regression scope, record one `DISCOVERY ESCAPE` and stop. Do not ignore it or keep searching. A new
+  material invariant, authority boundary, state machine, product semantic, or scope expansion is likewise an owner stop
+  and requires a new charter, split, or supersession.
+- Required GitHub `Validate` must pass on the final head. R1 remains valid as the finite discovery ledger; R2 and final CI
+  certify the repaired head. A repair commit does not by itself authorize another whole-diff review.
+- When a required check fails, inspect the newest failed workflow for the final head and classify actual owned-diff
+  failures separately from unrelated repository or environment failures before assigning repair work.
+- For epic-branch pull requests, defer a finding only when it is outside the current leaf and a named future issue owns
+  the exact behavior and proof. Do not defer a prerequisite that makes the current leaf's produced facts untrustworthy.
+- Stop regardless of review count when the issue gains another primary invariant, durable state machine, authority
+  boundary, or product semantic; when a third enabling PR is proposed before the tracer; when process rules must change;
+  or when review is writing the product model. Preserve a salvage map before superseding.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup

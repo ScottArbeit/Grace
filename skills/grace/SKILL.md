@@ -46,7 +46,7 @@ Use these installed or sibling skills when the task needs a specialized workflow
 | Canonical specification creation, update, lifecycle audit, traceability, and Plan-ready handoff | Installed `specification` skill plus [specification-profile.md](references/specification-profile.md) |
 | Open product/domain/architecture decisions, capability pruning, focused owner interview, or multi-session design map | Installed `design-readiness` skill plus [specification-profile.md](references/specification-profile.md) |
 | Implementation plans, spec-to-plan compilation, issues, implementation orchestration, review budgets, merge, and cleanup | Installed `dev-process` skill plus [workflow.md](references/workflow.md) |
-| Repeated review-subagent findings, review/fix loop monitoring, stabilization ledgers, hard-stop review thresholds | [code-review-stabilizer](../code-review-stabilizer/SKILL.md) |
+| Product V1 capability budgets, algorithm readiness, Factory Run Charters, bounded R1/R2 review, stop conditions, and review recovery | Installed `dev-process` skill plus [workflow.md](references/workflow.md) |
 
 ## Grace Defaults
 
@@ -56,16 +56,20 @@ Use these installed or sibling skills when the task needs a specialized workflow
   webhooks, approval policies, approval requests, UploadSessions, FileManifests, ContentBlocks, and
   ManifestContributionWorkflows.
 - Keep changes vertically sliced through the nearest public boundary whenever possible.
-- For non-trivial epic plans, identify an early tracer-bullet vertical slice before broad parallelization, then use its
-  evidence to refine child issues, owned paths, validation profiles, and parallelization boundaries.
-- For tracked coding issues, write existing issue-detail fields as review-prevention guidance and require worker
-  handoffs to include review-prevention self-review evidence before the pull request review loop.
+- For non-trivial epic plans, identify the earliest value-bearing tracer and permit at most two production PRs before
+  it. Prefer zero or one. Re-plan later issues from the running tracer instead of pre-creating a horizontal issue forest.
+- Apply the Product V1 capability budget by default: one outcome, one primary invariant family, one supported topology,
+  one primary authority, at most one new durable partial-state lifecycle, and explicit exclusion of optional automation.
+- For stateful, destructive, filesystem, retry, recovery, concurrent, background, or multi-authority work, require the
+  `dev-process` Algorithm Readiness Gate before production coding.
+- For tracked coding issues, use the compact Issue Readiness and Factory Run Charter from `dev-process`. Do not paste
+  broad risk checklists, require fixed worker heartbeats, or start a fresh worker for every review finding.
 - When implementing an epic, always use the `epic/<parent-issue>-<slug>` integration branch mode described in
   `references/workflow.md`. Route sub-issue pull requests to that epic branch; do not use direct-to-`main` epic slices.
 - Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests
   when one surface changes another.
-- Prefer `pwsh ./scripts/validate.ps1 -Fast`; use `-Full` when Aspire, emulators, Service Bus, storage, Redis,
-  deployment/runtime behavior, or cross-service integration is affected.
+- Prefer the smallest focused proof. GitHub `Validate` is the required broad current-head gate. Use local `-Fast` only
+  as an explicit broad preflight and `-Full` for local integration reproduction or diagnosis.
 - Use PowerShell examples before bash / zsh in docs.
 
 ## PowerShell Text Editing and Quoting
@@ -116,12 +120,13 @@ plan, or audit an issue packet.
    installed `design-readiness` skill. Propagate every resolution into one canonical specification.
 6. Use the shared `specification` audit to classify the artifact Exploratory, Design-ready, or Plan-ready. Do not
    maintain a separate Grace lifecycle checklist in this router.
-7. Only after a Plan-ready verdict, use `dev-process` to compile the specification into a value-bearing tracer,
-   vertical slices, dependency DAG, requirements coverage matrix, and issue packet.
-8. Before coding each slice, apply the issue-level Implementation Readiness Gate from `dev-process` and the repository
-   minimum-detail gate.
-9. Create GitHub issues, branches, worktrees, or pull requests only when the user explicitly requests tracked work or
-   implementation.
+7. Before production planning for Tier 2 behavior, use `dev-process` and `prototype` to pass the Algorithm Readiness
+   Gate. Propagate the witness verdict into the canonical specification.
+8. Only after Plan-ready and algorithm-ready verdicts, use `dev-process` to compile the specification into the earliest
+   value-bearing tracer, no more than two enabling PRs, and only the later slices current evidence justifies.
+9. Before coding each slice, apply the compact Issue Readiness Gate and freeze a Factory Run Charter.
+10. Create GitHub issues, branches, worktrees, or pull requests only when the user explicitly requests tracked work or
+    implementation.
 
 The canonical specification owns product behavior and proof traceability. GitHub issues own the executable slice
 contract once tracked work begins. Repository guidance owns branch, validation, review, merge, and cleanup mechanics.
