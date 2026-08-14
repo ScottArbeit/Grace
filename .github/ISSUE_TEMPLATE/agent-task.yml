@@ -1,131 +1,133 @@
-
 name: Agent Task
-description: Coordinate a Grace implementation task for a human or AI agent.
-labels:
-  - ready-for-agent
+description: Deliver one bounded Grace outcome through a Factory V2 run.
+title: ""
+labels: []
+assignees: []
 body:
-  - type: textarea
-    id: objective
+  - type: markdown
     attributes:
-      label: Objective
-      description: What should change, in one concrete slice?
-    validations:
-      required: true
+      value: |
+        Use one issue for one user-visible outcome and one primary invariant family. Remove unrelated prompts rather
+        than filling them with speculative N/A answers. Stateful, destructive, filesystem, retry, recovery,
+        concurrency, background, or multi-authority work requires an algorithm-witness result before coding.
+
   - type: textarea
-    id: context
+    id: outcome
     attributes:
-      label: Context and evidence
-      description: Include relevant logs, files, symptoms, prior PRs, or decisions. Do not paste secrets.
-    validations:
-      required: true
-  - type: textarea
-    id: decision-closure
-    attributes:
-      label: Decision closure and contract propagation
-      description: Required for product, contract, durable, public, or cross-project work. Use N/A only with a reason.
+      label: Outcome
+      description: What can one supported user or system actor observe when this issue is complete?
       placeholder: |
-        - Product decisions accepted or assumed:
-          - ...
-        - Product decisions deferred or waived:
-          - ...
-        - Supported inputs / rejected inputs / informational inputs:
-          - ...
-        - Contract propagation map:
-          - shared DTOs/parameters/events/persisted state:
-          - HTTP route/authorization/error shape:
-          - CLI JSON/stdout/stderr/help:
-          - SDK/facade client:
-          - OpenAPI/generated clients:
-          - events/webhooks/SignalR/watch/search/projections:
-          - docs/ADRs/agent guidance:
+        User-visible outcome:
+        Why this matters for Grace:
+        Stable public or behavioral proof seam:
     validations:
       required: true
 
   - type: textarea
-    id: owned-paths
+    id: supported-world
     attributes:
-      label: Owned paths
-      description: Files or directories this task may edit.
+      label: Supported world and quality contract
+      description: Define the exact world Product V1 must support for this issue.
       placeholder: |
-        - src/Grace.Server/...
-        - src/Grace.Server.Tests/...
+        - Baseline quality contract and overrides:
+        - Supported actor or client:
+        - Environment and topology:
+        - Supported producer paths:
+        - Valuable data or irreversible effects:
+        - Retry, restart, and recovery promise:
     validations:
       required: true
+
   - type: textarea
-    id: forbidden-paths
+    id: scope
     attributes:
-      label: Forbidden or sensitive paths
-      description: Paths the agent must not edit unless the issue is updated.
+      label: Scope, capability budget, and explicit non-goals
+      description: Keep one outcome, one primary invariant, and at most one new durable partial-state lifecycle.
       placeholder: |
-        - .github/workflows/*
-        - src/Grace.Actors/*
-        - src/Grace.Shared/*
+        Required now:
+        - ...
+
+        Deferred, rejected, or out of scope:
+        - ...
+
+        Capability-budget result:
+        - New durable partial-state lifecycles: 0 or 1
+        - Pre-tracer enabling PR count after this issue: 0, 1, or 2
+        - Optional automation deliberately excluded:
     validations:
       required: true
-  - type: dropdown
-    id: risk-surfaces
-    attributes:
-      label: Risk surfaces
-      description: Select every area this task touches. Choose no special risk only when the other options do not apply.
-      multiple: true
-      options:
-        - Proof/test work
-        - DTO or contract work
-        - Auth, authorization, tenant, or secret handling
-        - Storage, Cosmos DB, Service Bus, Redis, or Aspire
-        - Storage or materialization work
-        - CLI public contract
-        - Server or API contract
-        - Orleans actor behavior
-        - Async or runtime behavior
-        - Algorithm behavior
-        - History or traversal behavior
-        - SDK or client contract
-        - Deployment, Docker, or GitHub Actions
-        - Final audit or docs evidence
-        - Docs or workflow
-        - No special risk surface expected
-    validations:
-      required: true
+
   - type: textarea
-    id: minimum-detail-gate
+    id: invariant
     attributes:
-      label: Minimum detail gate
-      description: Required for implementation tasks before assignment or claim. Use N/A only with a reason.
+      label: Primary invariant and authority
+      description: State the one invariant family this issue owns and what source is authoritative.
       placeholder: |
-        - Invariant tuple:
-          - actor/route/command/DTO/state:
-          - identity dimensions:
-          - durable source of truth:
-        - Forbidden implementation shapes:
-          - ...
-        - Expected tests:
-          - positive:
-          - negative:
-          - regression:
-          - boundary:
-        - High-risk adversarial examples:
-          - ...
-        - Selected risk-surface traps:
-          - proof/test:
-          - DTO/contract:
-          - CLI:
-          - server/API:
-          - storage/materialization:
-          - async/runtime:
-          - algorithm:
-          - history/traversal:
-          - stale-authority / revalidation:
-          - final audit/docs:
-        - Explicit N/A waivers with reasons:
-          - ...
+        - Primary invariant:
+        - Authoritative source at the decision point:
+        - Identity dimensions:
+        - Commit point, when relevant:
+        - Observable success and failure states:
     validations:
       required: true
+
+  - type: textarea
+    id: algorithm-readiness
+    attributes:
+      label: Algorithm readiness
+      description: Link the executable witness and verdict, or explain precisely why the gate does not apply.
+      placeholder: |
+        - Required: yes or no
+        - Witness location and run command, or N/A rationale:
+        - Verdict: proven, simplified, or blocked
+        - Effect order and commit point propagated into this issue:
+        - Failure residue, restart, retry, cleanup, cancellation, and concurrency rules:
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance sequence and required failures
+      description: Include only failures produced by the supported world or intrinsic to selected capabilities.
+      placeholder: |
+        Acceptance sequence:
+        1. ...
+        2. ...
+        3. ...
+
+        Required failure behavior:
+        | Supported producer or failure | Expected result | Proof |
+        | --- | --- | --- |
+        | ... | ... | ... |
+    validations:
+      required: true
+
+  - type: textarea
+    id: propagation-paths
+    attributes:
+      label: Contract propagation and paths
+      description: Name only surfaces the slice actually changes or must prove unchanged.
+      placeholder: |
+        Updated public, durable, generated, or documentation surfaces:
+        - ...
+
+        Unchanged or N/A surfaces and reason:
+        - ...
+
+        Owned paths:
+        - ...
+
+        Sensitive or forbidden paths:
+        - ...
+    validations:
+      required: true
+
   - type: dropdown
     id: validation-profile
     attributes:
       label: Validation profile
-      description: Choose the profile from docs/Development process.md that best matches this task.
+      description: Select the narrowest applicable profile from docs/Development process.md.
       options:
         - docs-only
         - domain-contract
@@ -136,63 +138,39 @@ body:
         - deployment-runtime
     validations:
       required: true
+
   - type: textarea
-    id: public-behavior
+    id: proof
     attributes:
-      label: Public behavior under test
-      description: Name the stable boundary, behavior, invariant, transition, or docs-only validation target.
+      label: Proof and validation
       placeholder: |
-        - Boundary:
-        - Behavior:
-        - RED evidence expected:
+        - Focused failing proof or prior regression evidence:
+        - Positive, negative, and boundary proof:
+        - Failure-injection, restart, replay, or concurrency proof when included:
+        - Formatting, generated-artifact, freshness, or syntax checks:
+        - Required GitHub Validate expectation:
+        - Manual or runtime proof:
     validations:
       required: true
-  - type: dropdown
-    id: conflict-score
-    attributes:
-      label: Path lease conflict score
-      description: Choose the score and explain the reason below.
-      options:
-        - 0 - leaf code or docs
-        - 1 - same project or fixture area
-        - 2 - shared contracts or shared repo structure
-        - 3 - high-risk operational surface
-    validations:
-      required: true
+
   - type: textarea
-    id: conflict-score-reason
+    id: stop-done
     attributes:
-      label: Conflict score reason
-      description: Explain why this path lease can run alone or in parallel, including expected overlap.
-    validations:
-      required: true
-  - type: textarea
-    id: validation
-    attributes:
-      label: Expected validation
+      label: Owner stop conditions and definition of done
       placeholder: |
-        - required focused local proof
-        - required formatting, linting, generated-file, or syntax checks
-        - required GitHub Validate expectation for the current pull-request revision
-        - exceptional local Fast or Full requirement with reason, or N/A
-        - manual validation, if any
-    validations:
-      required: true
-  - type: textarea
-    id: docs-impact
-    attributes:
-      label: Docs impact
-      description: State whether README, CONTRIBUTING, AGENTS, runbook, or product docs updates are expected.
-    validations:
-      required: true
-  - type: textarea
-    id: done
-    attributes:
-      label: Definition of done
-      placeholder: |
-        - behavior changed
-        - tests added or updated
-        - PR opened and linked
-        - residual risks documented
+        Stop and return to the owner if:
+        - a second primary invariant, durable state machine, or authority boundary is needed
+        - a new product semantic or public contract is needed
+        - supported topology or owned paths must expand materially
+        - the algorithm witness is contradicted
+        - a third enabling PR would precede the tracer
+
+        Done when:
+        - the acceptance sequence works through the stable boundary
+        - focused proof and final-head GitHub Validate pass
+        - explicit non-goals remain absent
+        - R1 discovery review is complete
+        - accepted ledger items, if any, are repaired and R2 closure-reviewed
+        - residual risk and skipped proof are recorded
     validations:
       required: true
