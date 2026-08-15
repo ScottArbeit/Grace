@@ -1,212 +1,225 @@
-# Grace Cache Implementation Audit
+# Grace Cache implementation audit
 
-## Purpose and status vocabulary
+## Purpose
 
-This is the canonical Product V1 completion audit for Grace Cache Epic #597. It records what current source and
-proof already establish, what the approved recovery plan still requires, and which work is intentionally absent. It is
-not a historical addendum and does not turn an old issue, branch, or pull request into a current requirement.
+This audit distinguishes independently proven foundations from active Product V1 behavior after the Factory V2 reset.
+It is evidence, not a second specification. `docs/Grace Cache.md` is the canonical product contract.
 
-- `implemented and proven`: current implementation and focused proof are recorded.
-- `planned`: accepted Product V1 work without an implementation claim.
-- `blocked`: accepted work that cannot begin until its named dependency is complete.
-- `deferred`: intentionally not a Product V1 outcome.
-- `out of scope`: intentionally absent from Product V1.
-- `superseded`: older work that must not be resumed as the implementation path.
+Status vocabulary:
 
-Every final-audit row must cite its implementation seam, proof seam, current issue or pull request evidence, and any
-remaining risk. Checkbox state alone is not evidence.
+- **Proven foundation:** merged or otherwise reproducibly demonstrated and eligible for salvage after current-head audit.
+- **Calibration requirement:** required by GC-CAL-01 #965.
+- **Deferred:** intentionally absent from the calibration increment.
+- **Historical evidence:** useful design, code, fixture, test, or review material that is not current authority.
+- **Unverified:** requires exact branch and commit inspection in GC-CAL-00.
 
-## Product V1 baseline
+## Factory V2 baseline
 
-Product V1 uses one Linux x64 cache host under systemd and a system-managed account, with an OS-protected private
-cache/key directory. A cache has one static P-256 service identity until manual revocation and re-enrollment. Grace
-does not export that private key and makes no hardware-backed custody promise.
+- Quality contract: Product V1 internal tracer slice for GC-CAL-01 #965.
+- Active production outcome: one immutable `DirectoryVersionZip` reaches artifact-local `Complete` only after exact
+  final-file and SQLite agreement, then classifies correctly after process reopen.
+- Active sequence: completed Discovery issue #964, followed by implementation issue #965 only.
+- Agent topology: one short-lived controller per issue or pull request, one issue-owner implementation worker, optionally one independent reviewer, no child
+  spawning, maximum two live agents.
+- Review: one R1 Discovery Review frozen ledger; when R1 accepts repairs, one repair pass and one targeted R2 Closure Review.
+- Process rules are frozen for the run.
 
-The included user value is a server-resolved immutable full-root plan, Direct, CachePreferred, and CacheRequired mode
-behavior, static enrollment and truthful status, bounded registration liveness, validated local storage, authorized
-read-through, and the full-root miss-fill-serve-hit tracer. Each cache request remains subject to its current grant and
-holder proof; cached bytes alone are never permission to serve an artifact.
+## Current tracker disposition
 
-Automatic or startup cache identity rotation, candidate promotion, prefetch, scheduled retention or eviction, Watch
-integration, Grace.Operations integration, broad platform parity, HA/DR, and hostile-root defense are not Product V1
-outcomes. Correctness cleanup for incomplete staging or failed commits remains part of the included store behavior.
+| Tracker item | Reset disposition |
+| --- | --- |
+| #597 | Keep as product parent; replace body with Factory V2 reset contract. |
+| #601 and #602 | Historical mini-epics; pause or close as superseded by the calibration shape. |
+| #623 | Proven-foundation candidate; schema and tests require exact current-branch audit. |
+| #624 | Superseded design evidence; its supported filesystem cases feed #965 without preserving its old issue shape. |
+| #625 | Superseded horizontal endpoint issue; accepted grant-validation details remain evidence. |
+| #626 | Superseded horizontal source-authority issue; exact revalidation rules remain evidence. |
+| #627 | Superseded horizontal fill issue; failure cases remain evidence. |
+| #857 and #958 | Deferred from calibration. Do not continue enrollment or liveness implementation. |
+| #628 through #637 | Deferred pending a successful tracer and new capability decisions. |
+| #554 and #835 | No dependency for GC-CAL-01. Keep their production work paused during calibration. |
 
-## Current tracker and dependency state
+## GC-CAL-00 artifact algorithm calibration
 
-| Evidence | Current state | Audit use |
-| --- | --- | --- |
-| [Owner decision for #597](https://github.com/ScottArbeit/Grace/issues/597#issuecomment-5263063211) | Product V1 is approved as the governing contract. The final `epic/597` to `main` pull request still needs explicit maintainer approval at its reviewed, validated current head. | Final release gate. |
-| [Epic #597](https://github.com/ScottArbeit/Grace/issues/597) | The approved decision governs over older rotation text. | Scope source. |
-| [Mini-epic #601](https://github.com/ScottArbeit/Grace/issues/601) | Open parent for replacement runtime and store work. | Owns the replacement leaf sequence. |
-| [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
-| [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
-| [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0 static-contract pruning. | Required predecessor completed. |
-| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Superseded; the current R1 tracker record replaces its mixed scope. | Do not resume it. |
-| [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
-| [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
+- **Status classification:** implemented and proven as disposable Discovery evidence; not production code.
+- **Issue:** [#964](https://github.com/ScottArbeit/Grace/issues/964).
+- **Base:** `origin/epic/601-grace-cache-runtime-store` at
+  `8852de4665372f438075fc6952410ea02902f8e6`.
+- **Result:** one Linux x64 `DirectoryVersionZip` tuple is proven through `Absent -> Staging -> Complete` with 16
+  before/after crash injections, restart, retry, conflict, path, and disagreement controls.
+- **Commit point:** the exact `Complete` SQLite transaction after verified final-file publication.
+- **Production destination:** #965 resets the development-only Cache store to artifact-local publication and adds the
+  managed filesystem effect seam. Recursive metadata and complete-root publication are deferred.
+- **Packet SHA-256:** `58C854F457DC72AD4D6C10ABAABBD171BA6F421EC21439ABCAAB2B9BEDAE413B`.
 
-### Current R1 tracker record
+## Proven-foundation candidates
 
-| Tracker | Current classification | Scope and sequence |
-| --- | --- | --- |
-| #886 | Implemented and proven; completed evidence. | R1A static enrollment identity is complete. |
-| PR #888 | Merged implementation and proof for #886. | Records the completed R1A implementation and focused proof. |
-| #887 | Superseded mixed enrollment/status issue. | It does not own current delivery work. |
-| PR #896 | Closed superseded mixed enrollment/status implementation. | Evidence only; do not reuse it wholesale. |
-| #904 | Superseded status issue. | It does not own current delivery work. |
-| PR #907 | Closed superseded status implementation. | Evidence only; do not reuse it wholesale. |
-| #913 / #914 | Current docs-only correction; planned pure local status follows. | #913 reconciles this record; #914 then owns status only. |
-| #905 | Planned one-shot enrollment after #913 and #914. | It owns enrollment only after the docs and status leaves complete. |
+GC-CAL-00 must verify these against exact branches and commits rather than assuming all are safely composable.
 
-### Enrollment ambiguity disposition
+### Server-resolved materialization plans
 
-An inactive accepted server enrollment is unselectable. Fresh manual enrollment is allowed. Server expiry performs
-eventual cleanup. Grace Cache adds no automatic enrollment retry or reconciliation.
+Candidate behavior already exists for:
 
-## Implemented and proven server foundations
+- immutable target-root resolution
+- Direct, CachePreferred, and CacheRequired vocabulary
+- target-root artifact descriptors
+- cache-required-unavailable behavior
+- client-facing source-shape constraints
 
-### Server-resolved materialization plans and execution modes
+Calibration use:
 
-- **Implementation seam:** `src/Grace.Server/Materialization.Server.fs` resolves the target root and creates Direct,
-  CachePreferred, or CacheRequired plan shapes. Root artifact validation requires the DirectoryVersion zip and recursive
-  metadata artifacts. CacheRequired availability uses the existing `cacheRequiredUnavailable` error contract.
-- **Proof seam:** `src/Grace.Server.Unit.Tests/MaterializationPlan.Server.Tests.fs` and
-  `src/Grace.Types.Tests/MaterializationPlan.Types.Tests.fs` cover the public plan and mode contract.
-- **Status classification:** `implemented and proven` for server plan resolution and source selection. This does not
-  claim a cache-host fetch, store, or local materialization implementation.
-- **Residual risk:** The cache tracer must extend these server foundations through an actual authorized cache request.
+- reuse Direct and CacheRequired
+- narrow the active cached artifact to `DirectoryVersionZip`
+- leave CachePreferred inert or deferred rather than half-active
 
 ### Artifact grants and holder proofs
 
-- **Implementation seam:** `Grace.Types.ArtifactGrant`, `Grace.Shared.ArtifactGrant`,
-  `src/Grace.Actors/ArtifactGrantSigningKey.Actor.fs`, and
-  `src/Grace.Server.Security/ArtifactGrantKeys.Server.fs` define and publish the signed artifact-grant contract. Grants
-  bind the requester, selected cache, immutable target root, execution mode, and artifact identity; request proofs bind
-  the grant to the exact method, route, and artifact.
-- **Proof seam:** Artifact-grant validation, request-proof validation, signing-key actor, and integration tests cover
-  valid and rejected grants, holder mismatch, binding mismatch, expiry, overlap validation keys, and unknown-key
-  fail-closed behavior. #619 and PR #697 recorded the focused proof and generated-contract evidence.
-- **Status classification:** `implemented and proven`.
-- **Residual risk:** Artifact-grant validation-key rollover remains an existing server capability. It is separate from
-  cache service identity and must survive R0 pruning.
+Candidate behavior already exists for:
 
-### Server cache-registration foundation
+- cache, root, artifact, requester, and holder binding
+- canonical grant digest and P-256 signatures
+- request-specific proof binding to method and normalized route
+- validation-key publication and rollover rules
+- generated-client canonicalization proof
 
-- **Implementation seam:** `src/Grace.Actors/CacheRegistration.Actor.fs` and
-  `src/Grace.Server/CacheRegistration.Server.fs` provide administrator-controlled enrollment, refresh, revocation,
-  assignment, durable registration state, and proof verification. Selection is limited to an eligible current
-  registration with its explicit repository assignments.
-- **Proof seam:** `CacheRegistrationLifecycleTests` and registration type tests cover enrollment facts, refresh,
-  revocation, repository selection, malformed and duplicate inputs, durable state, and proof verification. #600 and
-  PR #706 recorded the server-foundation validation.
-- **Status classification:** `implemented and proven` for the server foundation.
-- **Residual risk:** The completed R1A identity foundation and planned R2 liveness leaf still precede later runtime
-  participation. Artifact-grant validation-key rollover remains separate.
+Calibration use:
+
+- preserve the existing approved validator and generated contract
+- reject before local existence disclosure
+- make no synchronous server validation call for a hit
+
+GC-CAL-00 must detect current-source drift from the accepted #625 handoff and return an owner decision if two competing
+contracts exist.
+
+### Server cache registration and selection
+
+Candidate behavior already exists for:
+
+- server-created cache identity and registration
+- repository assignment
+- health, revocation, expiry, and selection
+- server-side cache authorization seams
+
+Calibration use:
+
+- provision one current registration explicitly
+- do not implement enrollment CLI, reconciliation, or liveness scheduling
+- fail closed when the pre-provisioned registration is stale, revoked, or mismatched
+
+### Grace.Cache project and local SQLite store
+
+Candidate behavior exists on the ME3 branch for:
+
+- Grace.Cache process and tests
+- machine-scoped SQLite store
+- pending and valid local state
+- startup recovery and exclusive-store protection
+
+Known design conflict:
+
+- current store publication couples artifact validity to recursive metadata and a complete root set
+- the calibration contract requires one `DirectoryVersionZip` artifact to become complete independently
+
+GC-CAL-00 must select the minimal safe reshaping. Do not patch #624 around the conflict without a witness.
 
 ### Direct materialization
 
-- **Implementation seam:** `grace connect` consumes a Direct plan, validates the selected root artifacts, stages
-  content, and publishes local state only after validation succeeds.
-- **Proof seam:** `Grace.CLI.Tests.ConnectTests` covers Direct plan shape, root-consistency rejection, integrity,
-  staged extraction, retry behavior, and byte equivalence.
-- **Status classification:** `implemented and proven` for Direct materialization.
-- **Residual risk:** This does not establish CachePreferred or CacheRequired host execution.
+Direct is a proven regression boundary. Calibration work must not route Direct through cache registration, grant,
+validation-key, read-through, or local cache state.
 
-## Accepted Product V1 work
+## Historical work that is not automatically reusable
 
-### R0: static contract pruning (#855)
+Do not cherry-pick or merge these surfaces wholesale without the GC-CAL-00 salvage map:
 
-- **Status classification:** `implemented and proven`.
-- **Recorded result:** #855 removed cache service-identity rotation and candidate surfaces while retaining the separate
-  artifact-grant validation-key rollover behavior.
-- **Recorded proof:** #855 records its inventory, generated-contract freshness, and focused grant-key validation proof;
-  the current source has no active cache service-identity rotation surface.
+- superseded enrollment and crash-recovery implementations
+- automatic or candidate identity lifecycle
+- bounded liveness scheduler code not required by calibration
+- store APIs that require recursive metadata for every artifact commit
+- issue-specific status ledgers and worker-control machinery
+- open leaf branches produced under the previous review protocol
+- review fixes whose surrounding architecture was later replaced
 
-### R1A: static enrollment identity foundation (#886)
+A merged child pull request is evidence of review and validation on its target branch. It is not proof that its behavior
+belongs in the reset capability budget.
 
-- **Status classification:** `implemented and proven`.
-- **Completed result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration before
-  success, and existing selection excludes it. The internal Linux-only identity primitive stages one `0700` attempt
-  directory with a flushed `0600` PKCS#8 P-256 key, then publishes `0700` ready only after a flushed `0600`
-  registration configuration matches the derived base64url SHA-256 `X || Y` fingerprint.
-- **Completed proof:** Actor persistence failure cannot advance in-memory selection; raw JSON `Health` cannot make a new
-  registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without mutation;
-  Linux tests restore modified modes before cleanup. PR #888 merged the implementation and proof.
-- **Current sequence:** #913 owns the canonical completion record, #914 owns pure local status only, #905 owns one-shot
-  enrollment only after #913 and #914, #857 owns signed refreshes that remain `Unhealthy`, and #625 publishes `Healthy`
-  only after serving readiness is proven. R1A added no serving, rotation, reconciliation, non-Linux support, or
-  CacheStore behavior.
+## GC-CAL-00 audit checklist
 
-### R2: registration liveness (#857)
+### Branch and commit salvage
 
-- **Status classification:** `planned`.
-- **Required result:** One cache process uses one bounded scheduler with server-issued liveness times, signed refreshes
-  that remain `Unhealthy`, bounded retry, and terminal fail-closed behavior at expiry, revocation, or definitive
-  rejection. #625, not #857, publishes `Healthy` after serving readiness is proven.
-- **Gate:** Before implementation, record the current registration response classes, timestamps, selection behavior,
-  clock model, retry schedule, and expiry cap.
-- **Proof:** Startup, endpoint validation, guard conflict, refresh, temporary retry, capped `Retry-After`, revocation,
-  expiry, shutdown race, restart, and server selection with an injectable clock.
+- [ ] Fetch and prune all current refs.
+- [ ] Record exact SHAs for `main`, top-level Epic #597 branch, ME3 branch, and any open cache pull-request heads.
+- [ ] Compare unique commits with `git log --left-right --cherry-pick` and inspect merge ancestry.
+- [ ] Map independently proven foundations to originating PRs and current files.
+- [ ] Identify superseded lifecycle and process code to exclude.
+- [ ] Select one exact production base or return an owner decision.
+- [ ] Prove the selected base builds before new semantic work.
 
-### Artifact store, read-through, and tracer
+### Artifact algorithm witness
 
-- **Status classification:** `planned`.
-- **Required result:** A selected cache accepts only a current authorized request for the exact full-root plan. On a
-  miss, it fetches the exact server-selected artifacts, validates hash and size, atomically commits a complete set,
-  serves the bytes, and returns a hit for the same authorized artifact on the next request.
-- **Proof:** The tracer must demonstrate `miss -> fill -> serve -> hit`, plus rejected grant, holder proof, route,
-  artifact, hash, size, partial-staging, incomplete-store, stale-registration, and CacheRequired no-fallback cases.
-- **Residual risk:** Local bytes do not prove entitlement, completeness, or current liveness.
+- [ ] Model `Absent -> Staging -> Complete` for one immutable target-root ZIP.
+- [ ] Route every meaningful SQLite and filesystem effect through deterministic tracing.
+- [ ] Inject failure after staging creation, byte write/close, digest validation, final-file publication, SQLite mutation,
+  and terminal completion.
+- [ ] Restart after every injected failure.
+- [ ] Prove incomplete state is never a hit.
+- [ ] Prove complete state survives restart.
+- [ ] Prove same-tuple retry is safe.
+- [ ] Prove conflicting metadata cannot replace valid content.
+- [ ] Decide whether blob publication or SQLite completion is the commit point and how disagreement is handled.
+- [ ] Record exact production seams and tests implied.
 
-### Later local materialization
+### Readiness output
 
-- **Status classification:** `blocked`.
-- **Required result:** Cache-aware local execution prepares exact validated content and calls
-  `WorkingDirectoryUpdate.run`; it does not create a second working-tree, SQLite, Branch, Watch, or recovery path.
-- **Dependency:** Do not begin #628 to #630 or #634 until #835 merges to `main` and the Epic #597 branch is refreshed.
+- [ ] Update `docs/Grace Cache.md` only with accepted evidence.
+- [ ] Record the exact branch base and commit salvage map.
+- [ ] State whether GC-CAL-01 remains one coherent production issue.
+- [ ] Return an owner decision when more than two enabling production changes are needed.
 
-## Deferred and out-of-scope work
+## GC-CAL-01 #965 implementation matrix
 
-| Capability | Status classification | Product V1 disposition |
+| Requirement | Current foundation | #965 work | Required proof |
+| --- | --- | --- | --- |
+| Artifact-local tuple | #623 recursive-metadata-coupled store | Reset development-only schema/API to exact kind, canonical identity, represented root, SHA-256, and size | Tuple validation and conflict cases |
+| Artifact state | #623 pending/valid foundation | Replace with exact `Absent -> Staging -> Complete` transitions | State and valid-lookup tests |
+| Managed filesystem | #624 design evidence only | Add opaque paths, same-root staging, streaming verification, and no-replace publication | Path, integrity, and publication-order cases |
+| Restart classification | #623 acquire-before-recovery | Apply the finite GC-CAL-00 residue table | All 16 injected crash cases after store reopen |
+| Retry and conflict | GC-CAL-00 evidence | Preserve exact content; allow same-tuple retry; reject conflicting tuples | Nine controls, including digest, size, root, kind, and identity conflicts |
+| Complete disagreement | GC-CAL-00 evidence | Return recovery-required and preserve metadata for local reset | Missing/corrupt final-file proof |
+| Process ownership | Merged #623 proof | Preserve without semantic expansion | Existing lock, WAL, foreign-key, busy, path, and operation-lifetime tests |
+| Deferred surfaces | Existing server, CLI, and later Cache designs | Make no change | Static write-set and forbidden-capability scan |
+
+## Deferred capability ledger
+
+| Capability | Why absent now | Re-entry gate |
 | --- | --- | --- |
-| Automatic or startup cache identity rotation, candidate promotion, and rotation recovery | deferred | No active lifecycle, route, setting, timer, or retry surface remains after R0. |
-| Prefetch | deferred | Read-through is the supported acquisition path. |
-| Scheduled retention or eviction | deferred | Only correctness cleanup for incomplete staging or failed commits is included. |
-| Watch integration | deferred | No cache-facing Watch contract is required for Product V1. |
-| Grace.Operations integration | deferred | No Operations contract is required for Product V1. |
-| Platform parity | out of scope | The selected Linux x64 deployment profile is the only advertised host profile. |
-| HA/DR | out of scope | No high-availability or disaster-recovery outcome is promised. |
-| Hostile-root defense | out of scope | Product V1 uses the stated OS-protected local deployment boundary. |
+| Recursive metadata and complete-root projection | It created the current store contract conflict before one artifact worked. | Separate Outcome Charter and witness after tracer. |
+| CachePreferred | It adds fallback behavior beyond the forced cache path. | Tracer merged and Direct/CacheRequired measurements reviewed. |
+| Enrollment CLI and status | Provisioning UX is not needed to prove artifact behavior. | Deployable operator increment selected. |
+| Registration liveness | Scheduler and expiry transitions add another state machine. | Static process path proven and liveness value accepted. |
+| WDU local materialization | Separate destructive working-tree transaction and #835 dependency. | #835 merged and cache artifact path proven. |
+| Watch and Operations | Cross-epic contracts and additional authorities. | Separate owner decision after both product paths stabilize. |
+| Prefetch and retention | Optional optimization and scheduler state. | Measured need after read-through operation. |
+| HA/DR and platform parity | Hardened or broader deployment concerns. | Explicit Hardened or platform contract. |
 
-## Contract propagation and final gates
+## Review and merge audit
 
-Every accepted change must classify the following surfaces as updated, unchanged with reason, deferred to a named
-issue, or not applicable: shared types, persisted state/events, server routes and error envelopes, CLI, SDK, OpenAPI
-and generated clients, cache host/configuration, storage, diagnostics, tests, and documentation. No accepted field,
-route, state, command, or setting may remain half-active.
+GC-CAL-01 #965 is merge-ready only when:
 
-The final Epic #597 release candidate requires all of the following:
+- [ ] the Factory Run Charter is frozen and unchanged
+- [ ] the production diff implements no deferred capability
+- [ ] all 25 witness-derived cases pass through focused production seams
+- [ ] existing #623 connection and process-lock proof remains green
+- [ ] no route, serving, network fill, grant, enrollment, liveness, recursive metadata, or complete-root behavior enters
+      the slice
+- [ ] current GitHub `Validate` passes or a concrete unrelated failure is documented
+- [ ] R1 Discovery Review produced one finite frozen ledger
+- [ ] when R1 accepted repairs, the issue-owner worker repaired them in one coherent pass
+- [ ] when R1 accepted repairs, R2 Closure Review closed the ledger without a new major design surface
+- [ ] public, durable, generated, and documentation surfaces are current
+- [ ] residual risks match explicit deferrals
 
-1. Each accepted audit row has current-head implementation and proof evidence.
-2. The authorized full-root miss-fill-serve-hit tracer passes.
-3. #835 sequencing is honored for later local materialization.
-4. Generated-contract and documentation checks pass where a public surface changed.
-5. Current-head validation and a fresh review complete for every relevant pull request.
-6. The final `epic/597` to `main` pull request receives explicit maintainer approval at that reviewed, validated head.
+## Post-artifact-slice decision
 
-## R1A completed proof
-
-PR #888 merged the R1A source, contract, generated-artifact, and focused-proof changes. Its completed evidence includes
-targeted F# formatting, affected Release builds and tests, OpenAPI/generated freshness, MarkdownLint, `git diff --check`,
-and a passing current-head GitHub `Validate` run with Linux permission and inaccessible-state cases. Windows focused
-identity proof skipped Linux-only cases and was supplemented by the hosted Linux evidence.
-
-The following documentation checks remain part of the current canonical-record proof:
-
-```powershell
-npx --yes markdownlint-cli2 "docs/Grace Cache.md" "docs/Grace Cache implementation audit.md"
-git diff --check
-```
-
-This completed proof does not claim #914 status, #905 enrollment, R2 liveness, serving, rotation, reconciliation,
-non-Linux support, or CacheStore behavior.
+Do not automatically resume the old mini-epic DAG. Measure #965, re-plan the broader miss-to-restart-hit tracer, and
+choose exactly one next capability. The next specification update owns its own quality contract, capability budget,
+readiness, witness, and tracer.
