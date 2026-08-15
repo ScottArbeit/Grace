@@ -30,15 +30,10 @@ module WorkItemCommandParsingTests =
         let parseResult = GraceCommand.rootCommand.Parse(args)
         parseResult.Errors.Count |> should equal 0
 
-    /// Builds attach args for test scenarios.
-    let private buildAttachArgs (noun: string) (attachmentType: string) (workItemIdentifier: string) (extraArgs: string array) =
-        [|
-            noun
-            "attach"
-            attachmentType
-            workItemIdentifier
-            yield! extraArgs
-        |]
+    /// Asserts that the actual root parser rejects the supplied command line.
+    let private assertRejected (args: string array) =
+        let parseResult = GraceCommand.rootCommand.Parse(args)
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
     /// Builds attachments args for test scenarios.
     let private buildAttachmentsArgs (noun: string) (verb: string) (workItemIdentifier: string) (extraArgs: string array) =
@@ -83,6 +78,134 @@ module WorkItemCommandParsingTests =
                        "Alias command" |]
         )
 
+    /// Verifies that work-item description set parses every supported noun alias and identifier form.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description set parses supported aliases`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            withIds [| commandAlias
+                       "description"
+                       "set"
+                       workItemIdentifier
+                       "--text"
+                       "A durable work-item description." |]
+        )
+
+    /// Verifies that description set parses each accepted Markdown source without reading local input during parsing.
+    [<TestCase("--text", "A durable work-item description.")>]
+    [<TestCase("--file", "C:\\temp\\description.md")>]
+    [<TestCase("--stdin", "")>]
+    let ``workitem description set parses every supported input source`` (optionName: string, optionValue: string) =
+        let sourceArgs =
+            if optionName = "--stdin" then
+                [| optionName |]
+            else
+                [| optionName; optionValue |]
+
+        [|
+            "workitem"
+            "description"
+            "set"
+            "42"
+            yield! sourceArgs
+        |]
+        |> withIds
+        |> assertParsesWithoutErrors
+
+    /// Verifies that every work-item alias accepts every description source with GUID and positive-number identifiers.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description set parses every source across aliases`` (commandAlias: string, workItemIdentifier: string) =
+        let inputSources =
+            [|
+                [|
+                    "--text"
+                    "A durable work-item description."
+                |]
+                [|
+                    "--file"
+                    "C:\\temp\\description.md"
+                |]
+                [| "--stdin" |]
+            |]
+
+        for inputSource in inputSources do
+            [|
+                commandAlias
+                "description"
+                "set"
+                workItemIdentifier
+                yield! inputSource
+            |]
+            |> withIds
+            |> assertParsesWithoutErrors
+
+    /// Verifies that work-item description clear parses every supported noun alias and identifier form.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description clear parses supported aliases`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            withIds [| commandAlias
+                       "description"
+                       "clear"
+                       workItemIdentifier |]
+        )
+
+    /// Verifies that work-item description set leaves missing text to its action so introspection remains inert.
+    [<Test>]
+    let ``workitem description set parses missing text for action validation`` () =
+        withIds [| "workitem"
+                   "description"
+                   "set"
+                   "42" |]
+        |> assertParsesWithoutErrors
+
+    /// Verifies that every supported status value routes through set-status for both work item identifier shapes.
+    [<TestCase("42", "--status", "Active")>]
+    [<TestCase("43", "--status", "Backlog")>]
+    [<TestCase("44", "--status", "Blocked")>]
+    [<TestCase("45", "--status", "Canceled")>]
+    [<TestCase("46", "--status", "Done")>]
+    [<TestCase("9e4c0f72-9b4f-4f28-8d8f-d7d73ec4f6fd", "-s", "InReview")>]
+    let ``workitem set-status accepts every status exactly once plus guid and positive-number identifiers``
+        (
+            workItemIdentifier: string,
+            statusOption: string,
+            status: string
+        )
+        =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "workitem"
+                           "set-status"
+                           workItemIdentifier
+                           statusOption
+                           status |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Name
+        |> should equal "set-status"
+
+    /// Verifies that missing and unsupported status values are rejected by the actual root parser.
+    [<TestCase("workitem", "set-status", "42")>]
+    [<TestCase("workitem", "set-status", "42", "--status")>]
+    [<TestCase("workitem", "set-status", "42", "--status", "Unknown")>]
+    let ``workitem set-status rejects missing or unsupported status values`` ([<ParamArray>] args: string array) = args |> withIds |> assertRejected
+
+    /// Verifies that neither the old command nor the old option remains registered.
+    [<TestCase("workitem", "status", "42", "--set", "Done")>]
+    [<TestCase("workitem", "status", "42", "--status", "Done")>]
+    [<TestCase("workitem", "set-status", "42", "--set", "Done")>]
+    let ``workitem status and set option are unavailable`` ([<ParamArray>] args: string array) = args |> withIds |> assertRejected
+
     /// Verifies that workitem link ref parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "40")>]
     [<TestCase("workitem", "9e4c0f72-9b4f-4f28-8d8f-d7d73ec4f6fd")>]
@@ -111,37 +234,118 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
-    /// Verifies that workitem attach parses with file text and stdin modes.
-    [<TestCase("workitem", "summary")>]
-    [<TestCase("workitem", "prompt")>]
-    [<TestCase("workitem", "notes")>]
-    [<TestCase("wi", "summary")>]
-    [<TestCase("work-item", "prompt")>]
-    let ``workitem attach parses with file text and stdin modes`` (commandAlias: string, attachmentType: string) =
-        let workItemIdentifier = Guid.NewGuid().ToString()
-
-        let fileArgs =
-            buildAttachArgs
-                commandAlias
-                attachmentType
-                workItemIdentifier
+    /// Verifies that the canonical attachment route accepts every type, input source, alias, and identifier shape.
+    [<TestCase("workitem", "summary", "42")>]
+    [<TestCase("work", "prompt", "43")>]
+    [<TestCase("work-item", "notes", "9e4c0f72-9b4f-4f28-8d8f-d7d73ec4f6fd")>]
+    [<TestCase("wi", "summary", "4f2e4a67-4b51-4c7a-b866-f82638852e9d")>]
+    let ``workitem attachments add parses every type and input source`` (commandAlias: string, attachmentType: string, workItemIdentifier: string) =
+        let inputSources =
+            [|
                 [|
                     "--file"
                     "C:\\temp\\attachment.txt"
                 |]
-            |> withIds
+                [| "--text"; "inline content" |]
+                [| "--stdin" |]
+            |]
 
-        let textArgs =
-            buildAttachArgs commandAlias attachmentType workItemIdentifier [| "--text"; "inline content" |]
-            |> withIds
+        for inputSource in inputSources do
+            assertParsesWithoutErrors (
+                buildAttachmentsArgs
+                    commandAlias
+                    "add"
+                    workItemIdentifier
+                    [|
+                        "--type"
+                        attachmentType
+                        yield! inputSource
+                    |]
+                |> withIds
+            )
 
-        let stdinArgs =
-            buildAttachArgs commandAlias attachmentType workItemIdentifier [| "--stdin" |]
+    /// Verifies that attachment creation requires the canonical lower-case type values.
+    [<TestCase("summary")>]
+    [<TestCase("prompt")>]
+    [<TestCase("notes")>]
+    let ``workitem attachments add accepts canonical lower-case type values`` (attachmentType: string) =
+        let parseResult =
+            buildAttachmentsArgs
+                "workitem"
+                "add"
+                "42"
+                [|
+                    "--type"
+                    attachmentType
+                    "--text"
+                    "content"
+                |]
             |> withIds
+            |> GraceCommand.rootCommand.Parse
 
-        assertParsesWithoutErrors fileArgs
-        assertParsesWithoutErrors textArgs
-        assertParsesWithoutErrors stdinArgs
+        parseResult.Errors.Count |> should equal 0
+
+        let expected =
+            match attachmentType with
+            | "summary" -> Grace.CLI.Command.WorkItemCommand.AttachmentType.Summary
+            | "prompt" -> Grace.CLI.Command.WorkItemCommand.AttachmentType.Prompt
+            | "notes" -> Grace.CLI.Command.WorkItemCommand.AttachmentType.Notes
+            | value -> failwith $"Unexpected test attachment type: {value}"
+
+        parseResult.GetValue<Grace.CLI.Command.WorkItemCommand.AttachmentType>("--type")
+        |> should equal expected
+
+    /// Verifies that normal and JSON modes bind the same one generic attachment action.
+    [<TestCase(false)>]
+    [<TestCase(true)>]
+    let ``workitem attachments add binds one generic action in normal and json modes`` (jsonOutput: bool) =
+        let args = ResizeArray<string>()
+
+        args.AddRange(
+            buildAttachmentsArgs
+                "workitem"
+                "add"
+                "42"
+                [|
+                    "--type"
+                    "summary"
+                    "--text"
+                    "content"
+                |]
+            |> withIds
+        )
+
+        if jsonOutput then
+            args.Add("--output")
+            args.Add("Json")
+
+        let parseResult = GraceCommand.rootCommand.Parse(args.ToArray())
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Action.GetType()
+        |> should equal typeof<Grace.CLI.Command.WorkItemCommand.AttachmentsAdd>
+
+    /// Verifies that missing, unknown, and non-canonical attachment type spellings fail in the root parser.
+    [<TestCase("--text", "content")>]
+    [<TestCase("--type", "binary", "--text", "content")>]
+    [<TestCase("--type", "Summary", "--text", "content")>]
+    let ``workitem attachments add rejects missing invalid or non-canonical type values`` ([<ParamArray>] extraArgs: string array) =
+        buildAttachmentsArgs "workitem" "add" "42" extraArgs
+        |> withIds
+        |> assertRejected
+
+    /// Verifies that the removed singular attach tree is not retained as an alias.
+    [<TestCase("summary")>]
+    [<TestCase("prompt")>]
+    [<TestCase("notes")>]
+    let ``workitem old attach syntax is unavailable`` (attachmentType: string) =
+        withIds [| "workitem"
+                   "attach"
+                   attachmentType
+                   "42"
+                   "--text"
+                   "content" |]
+        |> assertRejected
 
     /// Verifies that workitem links list parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "44")>]
@@ -239,19 +443,13 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
-    /// Verifies that workitem links remove artifact type aliases parse for guid and numeric work item identifiers.
+    /// Verifies that workitem links remove artifact type aliases are unavailable.
     [<TestCase("workitem", "summary", "50")>]
     [<TestCase("workitem", "prompt", "6a635cbe-19ce-4e5f-a0fd-f1c1d1d468ea")>]
     [<TestCase("wi", "notes", "51")>]
     [<TestCase("work", "summary", "fdb37dfa-699d-4f8f-80f0-6e2eb6222596")>]
-    let ``workitem links remove artifact-type aliases parse for guid and numeric work item identifiers``
-        (
-            commandAlias: string,
-            linkType: string,
-            workItemIdentifier: string
-        )
-        =
-        assertParsesWithoutErrors (
+    let ``workitem links remove artifact-type aliases are unavailable`` (commandAlias: string, linkType: string, workItemIdentifier: string) =
+        assertRejected (
             withIds [| commandAlias
                        "links"
                        "remove"
@@ -300,13 +498,56 @@ module WorkItemCommandParsingTests =
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
-    /// Verifies that workitem links remove summary parses numeric work item.
+    /// Verifies that attachment delete and undelete expose only the required specific-artifact inputs.
     [<Test>]
-    let ``workitem links remove summary parses numeric work item`` () =
+    let ``workitem attachment delete and undelete parse exact artifact identity`` () =
+        let artifactId = Guid.NewGuid().ToString()
+
         assertParsesWithoutErrors (
-            withIds [| "workitem"
-                       "links"
-                       "remove"
-                       "summary"
-                       "123" |]
+            buildAttachmentsArgs
+                "workitem"
+                "delete"
+                "123"
+                [|
+                    "--artifact-id"
+                    artifactId
+                    "--delete-reason"
+                    "superseded"
+                |]
+            |> withIds
         )
+
+        assertParsesWithoutErrors (
+            buildAttachmentsArgs "workitem" "undelete" "123" [| "--artifact-id"; artifactId |]
+            |> withIds
+        )
+
+    /// Verifies that deletion rejects missing reason or artifact identity before invoking SDK behavior.
+    [<Test>]
+    let ``workitem attachment delete requires artifact id and reason`` () =
+        buildAttachmentsArgs
+            "workitem"
+            "delete"
+            "123"
+            [|
+                "--artifact-id"
+                Guid.NewGuid().ToString()
+            |]
+        |> withIds
+        |> assertRejected
+
+        buildAttachmentsArgs "workitem" "delete" "123" [| "--delete-reason"; "superseded" |]
+        |> withIds
+        |> assertRejected
+
+    /// Verifies that removed bulk attachment unlink commands are absent from the public command tree.
+    [<TestCase("summary")>]
+    [<TestCase("prompt")>]
+    [<TestCase("notes")>]
+    let ``workitem links remove bulk attachment paths are unavailable`` (attachmentType: string) =
+        withIds [| "workitem"
+                   "links"
+                   "remove"
+                   attachmentType
+                   "123" |]
+        |> assertRejected

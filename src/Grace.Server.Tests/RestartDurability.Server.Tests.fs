@@ -27,7 +27,7 @@ open System.Text
 open System.Text.RegularExpressions
 
 /// Groups shared helpers for restart durability helpers.
-module private RestartDurabilityHelpers =
+module RestartDurabilityHelpers =
     /// Requires ok and fails the test when missing.
     let requireOkAsync (response: HttpResponseMessage) =
         task {
@@ -76,6 +76,9 @@ module private RestartDurabilityHelpers =
                 App = app
                 Client = Client
                 GraceServerBaseAddress = graceServerBaseAddress
+                CosmosConnectionString = String.Empty
+                CosmosDatabaseName = String.Empty
+                CosmosContainerName = String.Empty
                 ServiceBusConnectionString = serviceBusConnectionString
                 ServiceBusTopic = serviceBusTopic
                 ServiceBusServerSubscription = serviceBusServerSubscription
@@ -87,8 +90,8 @@ module private RestartDurabilityHelpers =
             Assert.Fail("Aspire test host was not started by the shared setup fixture.")
             Unchecked.defaultof<TestHostState>
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync () = AspireTestHost.restartGraceServerAsync (getSharedHostState ())
+    /// Restarts Grace.Server with a scenario label for durability assertions.
+    let restartGraceServerAsync restartContext = AspireTestHost.restartGraceServerAsync (getSharedHostState ()) restartContext
 
     /// Builds a deterministic repository for integration setup fixture for the server integration restart Durability assertions.
     let createRepositoryAsync repositoryNamePrefix =
@@ -481,7 +484,7 @@ type RestartDurabilityServer() =
             let! before = Client.GetAsync("/healthz")
             Assert.That(before.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            do! RestartDurabilityHelpers.restartGraceServerAsync ()
+            do! RestartDurabilityHelpers.restartGraceServerAsync "RestartDurabilityServer.GraceServerProjectResourceRestartsAndReturnsHealthyResponses"
 
             let! after = Client.GetAsync("/healthz")
             Assert.That(after.StatusCode, Is.EqualTo(HttpStatusCode.OK))
@@ -504,7 +507,7 @@ type RestartDurabilityServer() =
             let reminderFireAt = Instant.FromUtc(2035, 6, 1, 12, 0, 0)
             let! reminderId = RestartDurabilityHelpers.createReminderAsync reminderActorName reminderActorId reminderFireAt
 
-            do! RestartDurabilityHelpers.restartGraceServerAsync ()
+            do! RestartDurabilityHelpers.restartGraceServerAsync "RestartDurabilityServer.DurableActorStateRehydratesAcrossGraceServerProjectRestart"
 
             let! ownerAfterRestart = RestartDurabilityHelpers.getOwnerAsync ()
             Assert.That(ownerAfterRestart.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))

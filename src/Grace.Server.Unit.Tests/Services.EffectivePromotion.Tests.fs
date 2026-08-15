@@ -144,58 +144,8 @@ type ServicesEffectivePromotionTests() =
 
         Assert.That(selected, Is.EqualTo(Some previousActive))
 
-    /// Verifies that direct Reference Projection Hydrates Legacy Empty Blake3 From Root Sha Prefix.
+    /// Verifies that direct Reference projection rejects a Created event without BLAKE3.
     [<Test>]
-    member _.DirectReferenceProjectionHydratesLegacyEmptyBlake3FromRootShaPrefix() =
-        task {
-            let rootDirectoryVersion = rootDirectoryVersionWithHashes fullSha256Hash blake3Hash
-
-            let getDirectoryVersion
-                (requestedRepositoryId: RepositoryId)
-                (requestedDirectoryVersionId: DirectoryVersionId)
-                (requestedCorrelationId: CorrelationId)
-                =
-                Assert.That(requestedRepositoryId, Is.EqualTo(repositoryId))
-                Assert.That(requestedDirectoryVersionId, Is.EqualTo(directoryVersionId))
-                Assert.That(requestedCorrelationId, Is.EqualTo(correlationId))
-                Task.FromResult(Some rootDirectoryVersion)
-
-            let! referenceDto =
-                Services.projectReferenceEventsWithLegacyBlake3Hydration
-                    getDirectoryVersion
-                    correlationId
-                    [|
-                        legacyCreatedReferenceEvent prefixSha256Hash
-                    |]
-
-            Assert.That(referenceDto.Sha256Hash, Is.EqualTo(fullSha256Hash))
-            Assert.That(referenceDto.Blake3Hash, Is.EqualTo(blake3Hash))
-        }
-
-    /// Verifies that direct Reference Projection Leaves Legacy Empty Blake3 For Non Root Or Wrong Sha Prefix.
-    [<Test>]
-    member _.DirectReferenceProjectionLeavesLegacyEmptyBlake3ForNonRootOrWrongShaPrefix() =
-        task {
-            let getChildDirectoryVersion _ _ _ = Task.FromResult(Some(childDirectoryVersionWithHashes fullSha256Hash blake3Hash))
-
-            let! nonRootReferenceDto =
-                Services.projectReferenceEventsWithLegacyBlake3Hydration
-                    getChildDirectoryVersion
-                    correlationId
-                    [|
-                        legacyCreatedReferenceEvent prefixSha256Hash
-                    |]
-
-            let getRootDirectoryVersion _ _ _ = Task.FromResult(Some(rootDirectoryVersionWithHashes fullSha256Hash blake3Hash))
-
-            let! wrongPrefixReferenceDto =
-                Services.projectReferenceEventsWithLegacyBlake3Hydration
-                    getRootDirectoryVersion
-                    correlationId
-                    [|
-                        legacyCreatedReferenceEvent (Sha256Hash "123456")
-                    |]
-
-            Assert.That(nonRootReferenceDto.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
-            Assert.That(wrongPrefixReferenceDto.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
-        }
+    member _.DirectReferenceProjectionRejectsCreatedEventWithoutBlake3() =
+        Assert.ThrowsAsync<ArgumentException>(Func<Task>(fun () -> Services.projectReferenceEvents [| legacyCreatedReferenceEvent prefixSha256Hash |] :> Task))
+        |> ignore

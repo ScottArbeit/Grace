@@ -28,7 +28,6 @@ open System.IO
 open System.Linq
 open System.Text.Json
 open System.Text.RegularExpressions
-open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Caching.Memory
 open System.CommandLine.Help
@@ -52,9 +51,6 @@ module Configuration =
 module GraceCommand =
 
     exception private IntrospectionExit of int
-
-    /// Defines structured data exchanged by CLI helpers.
-    type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
 
     /// Defines root parser delete grace watch ipc file if owned behavior for Grace CLI startup and help output.
     let private deleteGraceWatchIpcFileIfOwned () =
@@ -227,17 +223,22 @@ module GraceCommand =
             let groupPath = path |> List.take (path.Length - 1)
             CommandOutputContract.commandIdentity groupPath commandName
 
-    /// Determines whether the parser recognized one occurrence of the supplied root option.
-    let private isOptionRequested (option: Option) (parseResult: ParseResult) =
-        let optionResult = parseResult.GetResult(option)
+    /// Defines root parser introspection request from tokens behavior for Grace CLI startup and help output.
+    let private introspectionRequestFromTokens (args: string array) =
+        let tokens =
+            if isNull args then
+                Array.empty
+            else
+                args
+                |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
 
-        not (isNull optionResult)
-        && optionResult.IdentifierTokenCount > 0
+        /// Defines the contains option used by this command parser.
+        let containsOption optionName =
+            tokens
+            |> Array.exists (fun token -> token.Equals(optionName, StringComparison.OrdinalIgnoreCase))
 
-    /// Classifies the parsed introspection options without inspecting parser message text.
-    let private introspectionRequest (parseResult: ParseResult) =
-        let schema = isOptionRequested Options.schema parseResult
-        let examples = isOptionRequested Options.examples parseResult
+        let schema = containsOption OptionName.Schema
+        let examples = containsOption OptionName.Examples
 
         match schema, examples with
         | false, false -> None
@@ -251,35 +252,24 @@ module GraceCommand =
         Common.writeJsonErrorStdout error
         -1
 
-    /// Identifies a missing required command argument through System.CommandLine parser metadata.
-    let private isMissingRequiredArgument (error: ParseError) =
-        match error.SymbolResult with
-        | :? ArgumentResult as argumentResult ->
-            argumentResult.Tokens.Count = 0
-            && argumentResult.Argument.Arity.MinimumNumberOfValues > 0
-        | _ -> false
+    /// Evaluates is ignorable introspection parse error against parsed options and command state.
+    let private isIgnorableIntrospectionParseError (error: ParseError) =
+        error.Message.StartsWith("Required argument missing for command:", StringComparison.Ordinal)
 
-    /// Determines whether introspection has a parser failure other than a missing execution argument.
+    /// Evaluates has blocking introspection parse errors against parsed options and command state.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =
         parseResult.Errors
-        |> Seq.exists (isMissingRequiredArgument >> not)
+        |> Seq.exists (isIgnorableIntrospectionParseError >> not)
 
-    /// Writes the typed blocking parser failures for schema and examples requests.
-    let private writeBlockingIntrospectionParseErrors (parseResult: ParseResult) =
+    /// Writes introspection parse error data through the CLI output contract.
+    let private writeIntrospectionParseError (parseResult: ParseResult) =
         let message =
             parseResult.Errors
-            |> Seq.filter (isMissingRequiredArgument >> not)
+            |> Seq.filter (isIgnorableIntrospectionParseError >> not)
             |> Seq.map (fun error -> error.Message)
             |> String.concat Environment.NewLine
 
         writeIntrospectionError parseResult message
-
-    /// Rejects execution projection selection for schema and examples requests before document rendering.
-    let private tryGetIntrospectionExecutionSelectorError (parseResult: ParseResult) =
-        if isOptionRequested Options.select parseResult then
-            Some "--select cannot be used with --schema or --examples."
-        else
-            None
 
     /// Coordinates the introspection request command path, including validation, service calls, and output.
     let private handleIntrospectionRequest (parseResult: ParseResult) kind =
@@ -558,7 +548,6 @@ module GraceCommand =
                         "history"
                         "maintenance"
                         "alias"
-                        "cache"
                     ]
             }
         ]
@@ -677,17 +666,8 @@ module GraceCommand =
 
     let private workItemHelpSections =
         [
-            { Heading = "Create and update"; CommandNames = [ "create"; "show"; "status" ] }
-            {
-                Heading = "Link and attach"
-                CommandNames =
-                    [
-                        "link"
-                        "attach"
-                        "attachments"
-                        "links"
-                    ]
-            }
+            { Heading = "Create and update"; CommandNames = [ "create"; "show"; "set-status" ] }
+            { Heading = "Link and attach"; CommandNames = [ "link"; "attachments"; "links" ] }
         ]
 
     let private groupedHelpSectionsByCommandName =
@@ -860,11 +840,7 @@ module GraceCommand =
 
         current
 
-    /// Supplies the small set of host dependencies needed to construct and execute the production root graph.
-    type internal RootDependencies = { CreateCacheCommand: unit -> Command; InitializeExecution: unit -> unit; AfterCommandExit: int -> Task<unit> }
-
-    /// Builds the Grace command graph from host dependencies shared by production and focused host tests.
-    let internal createRoot (dependencies: RootDependencies) =
+    let rootCommand =
         // Create the root of the command tree.
         let rootCommand = new RootCommand("Grace Version Control System")
 
@@ -893,7 +869,6 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(Doctor.Build)
-        rootCommand.Subcommands.Add(dependencies.CreateCacheCommand())
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)
@@ -911,24 +886,6 @@ module GraceCommand =
         Alias.Subcommands.Add(ListAliases)
         rootCommand.Subcommands.Add(Alias)
         rootCommand
-
-    /// Performs the process-wide initialization required by commands other than the pure local Cache status leaf.
-    let private initializeProductionExecution () =
-        Auth.configureSdkAuth ()
-        Services.configureSdkClientIdentity ()
-        Services.resetInvocationCorrelationId ()
-        Common.resetLifecycleWarningSuppression ()
-
-    /// Provides the production command factory and execution initialization for the retained root command value.
-    let private productionDependencies =
-        {
-            CreateCacheCommand = (fun () -> CacheCommand.Build)
-            InitializeExecution = initializeProductionExecution
-            AfterCommandExit = (fun _ -> Task.FromResult(()))
-        }
-
-    /// Retains the production root command graph for existing callers and parser tests.
-    let rootCommand = createRoot productionDependencies
 
     ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
     //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
@@ -1048,22 +1005,62 @@ module GraceCommand =
         else
             false
 
-    /// Checks whether the parsed command is the pure local Cache status leaf.
-    let isGraceCacheStatus (parseResult: ParseResult) =
-        if isNull parseResult then
-            false
-        else
-            let commands =
-                Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
-                |> Seq.map (fun command -> command.Name)
-                |> Set.ofSeq
+    /// Canonicalizes documented output values before parser validation on platforms with case-insensitive CLI policy.
+    let internal normalizeOutputArguments (args: string array) (isCaseInsensitive: bool) =
+        let normalizedArgs = args |> Array.copy
 
-            Set.contains "cache" commands
-            && Set.contains "status" commands
+        if isCaseInsensitive then
+            let canonicalOutputFormats = listCases<OutputFormat> () |> Seq.toArray
 
-    /// Invokes an asynchronous command action through the configured root exception boundary.
-    let private invokeAsync (parseResult: ParseResult) (invocationConfiguration: InvocationConfiguration) (cancellationToken: CancellationToken) =
-        parseResult.InvokeAsync(invocationConfiguration, cancellationToken)
+            /// Maps a recognized output spelling to the canonical value advertised by CLI help.
+            let tryCanonicalOutputFormat value =
+                canonicalOutputFormats
+                |> Array.tryFind (fun canonical -> canonical.Equals(value, StringComparison.InvariantCultureIgnoreCase))
+
+            /// Walks option tokens until the end-of-options marker while preserving unrelated arguments.
+            let rec normalize index =
+                if index < normalizedArgs.Length
+                   && normalizedArgs[index] <> "--" then
+                    let token = normalizedArgs[index]
+                    let equalsIndex = token.IndexOf('=')
+
+                    if equalsIndex > 0 then
+                        let optionName = token.Substring(0, equalsIndex)
+
+                        if
+                            optionName.Equals(OptionName.Output, StringComparison.InvariantCultureIgnoreCase)
+                            || optionName.Equals("-o", StringComparison.InvariantCultureIgnoreCase)
+                        then
+                            let suppliedValue = token.Substring(equalsIndex + 1)
+
+                            match tryCanonicalOutputFormat suppliedValue with
+                            | Some canonical -> normalizedArgs[index] <- $"{optionName}={canonical}"
+                            | None -> ()
+
+                        normalize (index + 1)
+                    elif
+                        token.Equals(OptionName.Output, StringComparison.InvariantCultureIgnoreCase)
+                        || token.Equals("-o", StringComparison.InvariantCultureIgnoreCase)
+                    then
+                        if index + 1 < normalizedArgs.Length then
+                            let nextToken = normalizedArgs[index + 1]
+
+                            if nextToken.StartsWith("-", StringComparison.Ordinal) then
+                                normalize (index + 1)
+                            else
+                                match tryCanonicalOutputFormat nextToken with
+                                | Some canonical -> normalizedArgs[index + 1] <- canonical
+                                | None -> ()
+
+                                normalize (index + 2)
+                        else
+                            normalize (index + 1)
+                    else
+                        normalize (index + 1)
+
+            normalize 0
+
+        normalizedArgs
 
     /// Models feedback section values passed between the parser and program handlers.
     type FeedbackSection(action: HelpAction) =
@@ -1084,14 +1081,9 @@ module GraceCommand =
 
             result
 
-    /// Executes one Grace command graph with caller cancellation and the production invocation configuration.
-    let internal run (dependencies: RootDependencies) (args: string array) (cancellationToken: CancellationToken) =
-        let rootCommand = createRoot dependencies
-
-        let invocationConfiguration = InvocationConfiguration()
-        invocationConfiguration.EnableDefaultExceptionHandler <- false
-        invocationConfiguration.ProcessTerminationTimeout <- Nullable(TimeSpan.FromSeconds(2.0))
-
+    /// This is the main entry point for Grace CLI.
+    [<EntryPoint>]
+    let main args =
         let startTime = getCurrentInstant ()
 
         // Create a MemoryCache instance.
@@ -1199,7 +1191,7 @@ module GraceCommand =
                         properCasedArgs
                 | None -> properCasedArgs
 
-        let mutable argvNormalized = normalizeArgsForHistory args
+        let mutable argvNormalized = normalizeArgsForHistory (normalizeOutputArguments args isCaseInsensitive)
 
         (task {
             let mutable parseResult: ParseResult = null
@@ -1209,6 +1201,11 @@ module GraceCommand =
 
             try
                 try
+                    Auth.configureSdkAuth ()
+                    Services.configureSdkClientIdentity ()
+                    Services.resetInvocationCorrelationId ()
+                    Common.resetLifecycleWarningSuppression ()
+
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
                     let argvToParse = if args.Length = 0 then [| helpOptions[0] |] else argvNormalized
@@ -1216,18 +1213,16 @@ module GraceCommand =
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
 
-                    match introspectionRequest parseResult with
+                    match introspectionRequestFromTokens argvToParse with
                     | Some (Ok kind) ->
                         isIntrospection <- true
                         Services.parseResult <- parseResult
 
                         returnValue <-
                             if hasBlockingIntrospectionParseErrors parseResult then
-                                writeBlockingIntrospectionParseErrors parseResult
+                                writeIntrospectionParseError parseResult
                             else
-                                match tryGetIntrospectionExecutionSelectorError parseResult with
-                                | Some message -> writeIntrospectionError parseResult message
-                                | None -> handleIntrospectionRequest parseResult kind
+                                handleIntrospectionRequest parseResult kind
 
                         raise (IntrospectionExit returnValue)
                     | Some (Error message) ->
@@ -1238,9 +1233,6 @@ module GraceCommand =
                     | None ->
                         // Write the ParseResult to Services as global context for the CLI.
                         Services.parseResult <- parseResult
-
-                        if not (parseResult |> isGraceCacheStatus) then
-                            dependencies.InitializeExecution()
 
                         if parseResult.Errors.Count > 0
                            && isJsonOutputRequestedFromTokens argvToParse then
@@ -1255,10 +1247,7 @@ module GraceCommand =
                                 raise (IntrospectionExit returnValue)
                             | None -> ()
 
-                        if
-                            not (parseResult |> isGraceDoctor)
-                            && not (parseResult |> isGraceCacheStatus)
-                        then
+                        if not (parseResult |> isGraceDoctor) then
                             LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
@@ -1358,33 +1347,13 @@ module GraceCommand =
                         //   "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
                         //   i.e. whatever the generated Guid value on create might be.
                         let optionsToUpdate =
-                            [
-                                {
-                                    optionAlias = OptionName.CorrelationId
-                                    display = "new NanoId"
-                                    displayOnCreate = "new NanoId"
-                                    createParentCommand = String.Empty
-                                }
-                                { optionAlias = OptionName.OwnerId; display = "current OwnerId"; displayOnCreate = "new Guid"; createParentCommand = "owner" }
-                                {
-                                    optionAlias = OptionName.OrganizationId
-                                    display = "current OrganizationId"
-                                    displayOnCreate = "new Guid"
-                                    createParentCommand = "organization"
-                                }
-                                {
-                                    optionAlias = OptionName.RepositoryId
-                                    display = "current RepositoryId"
-                                    displayOnCreate = "new Guid"
-                                    createParentCommand = "repository"
-                                }
-                                {
-                                    optionAlias = OptionName.BranchId
-                                    display = "current BranchId"
-                                    displayOnCreate = "new Guid"
-                                    createParentCommand = "branch"
-                                }
-                            ]
+                            {
+                                OptionAlias = OptionName.CorrelationId
+                                CurrentDisplay = "new NanoId"
+                                CreateDisplay = "new NanoId"
+                                CreateParentCommand = String.Empty
+                            }
+                            :: Common.hierarchyIdentityDefaultDisplays
 
                         let isCreate = helpCommand.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
 
@@ -1396,17 +1365,17 @@ module GraceCommand =
                                 let useCreateDisplay =
                                     isCreate
                                     && not
-                                       <| String.IsNullOrWhiteSpace(optionToUpdate.createParentCommand)
+                                       <| String.IsNullOrWhiteSpace(optionToUpdate.CreateParentCommand)
                                     && parentCommands.Any (fun parent ->
-                                        parent.Name.Equals(optionToUpdate.createParentCommand, StringComparison.OrdinalIgnoreCase))
+                                        parent.Name.Equals(optionToUpdate.CreateParentCommand, StringComparison.OrdinalIgnoreCase))
 
                                 let defaultValueText =
                                     if useCreateDisplay then
-                                        optionToUpdate.displayOnCreate
+                                        optionToUpdate.CreateDisplay
                                     else
-                                        optionToUpdate.display
+                                        optionToUpdate.CurrentDisplay
 
-                                optionToUpdate.optionAlias, defaultValueText)
+                                optionToUpdate.OptionAlias, defaultValueText)
                             |> dict
 
                         use writer = new StringWriter()
@@ -1429,10 +1398,6 @@ module GraceCommand =
 
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
-                    else if parseResult |> isGraceCacheStatus then
-                        let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
-                        returnValue <- invokedReturnValue
-                        do! dependencies.AfterCommandExit returnValue
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
@@ -1445,7 +1410,7 @@ module GraceCommand =
                             //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
                             if (parseResult |> json)
-                               && (parseResult |> isGraceWatch) then
+                               && (parseResult |> isGraceWatchForeground) then
                                 let error =
                                     GraceError.Create
                                         "watch is a continuous foreground workflow; JSON mode requires a cancellation-aware automation host in this release."
@@ -1454,7 +1419,10 @@ module GraceCommand =
                                 Common.writeJsonErrorStdout error
                                 returnValue <- -1
                             else
-                                if parseResult |> hasOutput then
+                                if
+                                    (parseResult |> hasOutput)
+                                    && not (parseResult |> json)
+                                then
                                     if parseResult |> verbose then
                                         AnsiConsole.Write(
                                             (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
@@ -1474,9 +1442,8 @@ module GraceCommand =
                                     | None -> ()
 
                                 // Now we can invoke the command!
-                                let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
+                                let! invokedReturnValue = parseResult.InvokeAsync()
                                 returnValue <- invokedReturnValue
-                                do! dependencies.AfterCommandExit returnValue
 
                                 // Stuff to do after the command has been invoked:
 
@@ -1486,7 +1453,10 @@ module GraceCommand =
                                     logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
                                 // If we're writing output, write the final Rule() to the console.
-                                if parseResult |> hasOutput then
+                                if
+                                    (parseResult |> hasOutput)
+                                    && not (parseResult |> json)
+                                then
                                     let finishTime = getCurrentInstant ()
 
                                     let elapsed =
@@ -1528,19 +1498,27 @@ module GraceCommand =
                         let isAllowed =
                             let command = parseResult.CommandResult.Command
 
-                            Seq.append [ command ] (command.Parents.OfType<Command>())
-                            |> Seq.exists (fun cmd ->
-                                allowedCommands
-                                |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+                            let commandLineage = Seq.append [ command ] (command.Parents.OfType<Command>())
+
+                            let isAgentBootstrap =
+                                (commandLineage
+                                 |> Seq.exists (fun cmd -> cmd.Name.Equals("agent", comparison)))
+                                && (commandLineage
+                                    |> Seq.exists (fun cmd -> cmd.Name.Equals("bootstrap", comparison)))
+
+                            isAgentBootstrap
+                            || (commandLineage
+                                |> Seq.exists (fun cmd ->
+                                    allowedCommands
+                                    |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison))))
                             || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
                                 |> Option.exists (fun topLevel ->
                                     allowedCommands
                                     |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
 
                         if isAllowed then
-                            let! invokedReturnValue = invokeAsync parseResult invocationConfiguration cancellationToken
+                            let! invokedReturnValue = parseResult.InvokeAsync()
                             returnValue <- invokedReturnValue
-                            do! dependencies.AfterCommandExit returnValue
                             ()
                         else
                             let message = getLocalizedString StringResourceName.GraceConfigFileNotFound
@@ -1568,19 +1546,6 @@ module GraceCommand =
                     return returnValue
                 with
                 | IntrospectionExit exitCode -> return exitCode
-                | :? OperationCanceledException as ex when ex.CancellationToken.IsCancellationRequested ->
-                    let correlationId =
-                        if isNull parseResult then
-                            generateCorrelationId ()
-                        else
-                            getCorrelationId parseResult
-
-                    Common.writeJsonErrorStdout (GraceError.Create "The command was canceled." correlationId)
-                    returnValue <- -1
-                    return returnValue
-                | :? OperationCanceledException ->
-                    returnValue <- -1
-                    return returnValue
                 | ex ->
                     if isJsonOutputRequestedFromTokens argvNormalized then
                         returnValue <- writeJsonException parseResult ex
@@ -1601,7 +1566,6 @@ module GraceCommand =
                 if
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
-                    && not (parseResult |> isGraceCacheStatus)
                 then
                     HistoryStorage.tryRecordInvocation
                         {
@@ -1620,9 +1584,4 @@ module GraceCommand =
                    && parseResult |> isGraceWatchForeground then
                     deleteGraceWatchIpcFileIfOwned ()
         })
-
-    /// Starts the production root graph with process cancellation handled by System.CommandLine invocation configuration.
-    [<EntryPoint>]
-    let main args =
-        run productionDependencies args CancellationToken.None
-        |> fun invocation -> invocation.GetAwaiter().GetResult()
+            .Result

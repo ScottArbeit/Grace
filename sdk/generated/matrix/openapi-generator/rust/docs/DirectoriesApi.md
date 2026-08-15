@@ -109,7 +109,7 @@ Name | Type | Description  | Required | Notes
 > models::DirectoryVersionSha256HashLookupReturnValue get_directory_version_by_sha256_hash(get_by_sha256_hash_parameters)
 Get a directory version by SHA-256 hash.
 
-Gets a directory version DTO by SHA-256 hash.
+Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
 
 ### Parameters
 

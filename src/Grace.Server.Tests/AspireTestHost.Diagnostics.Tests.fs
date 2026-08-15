@@ -4,10 +4,56 @@ open Grace.Server.Tests
 open Grace.Shared
 open NUnit.Framework
 open System
+open System.Threading.Tasks
 
 /// Covers aspire test host diagnostics scenarios.
 [<TestFixture>]
 type AspireTestHostDiagnosticsTests() =
+
+    /// Verifies isolated lifecycle cleanup attempts every step and preserves both failures.
+    [<Test>]
+    member _.IsolatedLifecycleCleanupAttemptsEveryStepAndPreservesFailures() =
+        let calls = ResizeArray<string>()
+
+        let disposeAsync () =
+            task {
+                calls.Add("dispose")
+                invalidOp "dispose failed"
+            }
+
+        let cleanupAsync () =
+            task {
+                calls.Add("docker")
+                invalidOp "docker cleanup failed"
+            }
+
+        let operation = Func<Task>(fun () -> AspireTestHost.FixtureLifecycle.cleanupAsync disposeAsync cleanupAsync :> Task)
+
+        let error = Assert.ThrowsAsync<AggregateException>(operation)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(String.Join("|", calls), Is.EqualTo("dispose|docker"))
+                Assert.That(error.InnerExceptions, Has.Count.EqualTo(2))
+                Assert.That(error.InnerExceptions[0].Message, Is.EqualTo("dispose failed"))
+                Assert.That(error.InnerExceptions[1].Message, Is.EqualTo("docker cleanup failed")))
+        )
+
+    /// Verifies a nonzero Docker command result is rejected as a cleanup failure.
+    [<Test>]
+    member _.DockerCleanupCommandFailureIsRejected() =
+        let result: AspireTestHost.ProcessResult = { ExitCode = Some 17; StdOut = ""; StdErr = "daemon rejected cleanup"; TimedOut = false; Error = None }
+
+        let error =
+            Assert.Throws<InvalidOperationException>(
+                Action(fun () -> AspireTestHost.FixtureLifecycle.requireProcessSuccess "docker rm -f test-container" result)
+            )
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(error.Message, Does.Contain("docker rm -f test-container exited with 17"))
+                Assert.That(error.Message, Does.Contain("daemon rejected cleanup")))
+        )
 
     /// Verifies the redacts connection string secrets but keeps actionable endpoints scenario.
     [<Test>]
@@ -120,4 +166,48 @@ type AspireTestHostDiagnosticsTests() =
                 Assert.That(message, Does.Contain("GRACE_TEST_SKIP_SERVICEBUS=1"))
                 Assert.That(message, Does.Contain("unsupported for Grace.Server.Tests"))
                 Assert.That(message, Does.Contain("Owner Created event")))
+        )
+
+    /// Verifies ordinary resource health progress keeps the startup wording scenario.
+    [<Test>]
+    member _.ResourceHealthProgressKeepsOrdinaryStartupWording() =
+        let startMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitStartMessage "azurite" None
+        let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "azurite" None
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(startMessage, Is.EqualTo("waiting for resource 'azurite' to become healthy."))
+                Assert.That(healthyMessage, Is.EqualTo("resource 'azurite' is healthy."))
+                Assert.That(startMessage, Does.Not.Contain("restart"))
+                Assert.That(healthyMessage, Does.Not.Contain("restart")))
+        )
+
+    /// Verifies deliberate Grace.Server restart progress identifies the test operation scenario.
+    [<Test>]
+    member _.ResourceHealthProgressNamesIntentionalGraceServerRestartContext() =
+        let context = "RestartDurabilityServer.DurableActorStateRehydratesAcrossGraceServerProjectRestart"
+        let startMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitStartMessage "grace-server" (Some context)
+        let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "grace-server" (Some context)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(startMessage, Does.Contain("intentional Grace.Server restart"))
+                Assert.That(startMessage, Does.Contain(context))
+                Assert.That(startMessage, Does.Contain("waiting for resource 'grace-server' to become healthy"))
+                Assert.That(healthyMessage, Does.Contain("recovered after intentional Grace.Server restart"))
+                Assert.That(healthyMessage, Does.Contain(context)))
+        )
+
+    /// Verifies restart context does not relabel non Grace.Server resource waits scenario.
+    [<Test>]
+    member _.ResourceHealthProgressDoesNotRelabelNonGraceServerResourcesAsRestarts() =
+        let startMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitStartMessage "servicebus-emulator" (Some "RestartDurability")
+        let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "servicebus-emulator" (Some "RestartDurability")
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(startMessage, Is.EqualTo("waiting for resource 'servicebus-emulator' to become healthy."))
+                Assert.That(healthyMessage, Is.EqualTo("resource 'servicebus-emulator' is healthy."))
+                Assert.That(startMessage, Does.Not.Contain("Grace.Server restart"))
+                Assert.That(healthyMessage, Does.Not.Contain("Grace.Server restart")))
         )

@@ -16,6 +16,7 @@ Name | Type | Description | Notes
 **branch_name** | Option<**String**> |  | [optional]
 **parent_branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **parent_branch_name** | Option<**String**> |  | [optional]
+**reference_id** | **uuid::Uuid** |  | 
 **initial_permissions** | Option<[**Vec<models::ReferenceType>**](ReferenceType.md)> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

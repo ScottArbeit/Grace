@@ -1382,12 +1382,13 @@ type EndpointAuthorizationTests() =
 
     /// Builds create branch commit parameters for route calls.
     let createBranchCommitParameters (branch: BranchDto) =
-        let parameters = Parameters.Branch.CreateReferenceParameters()
+        let parameters = Parameters.Branch.CommitReferenceParameters()
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- $"{branch.RepositoryId}"
         parameters.BranchId <- $"{branch.BranchId}"
         parameters.BranchName <- $"{branch.BranchName}"
+        parameters.ReferenceId <- Guid.NewGuid()
         parameters.DirectoryVersionId <- branch.LatestPromotion.DirectoryId
         parameters.Sha256Hash <- $"{branch.LatestPromotion.Sha256Hash}"
         parameters.Message <- "Commit from test"

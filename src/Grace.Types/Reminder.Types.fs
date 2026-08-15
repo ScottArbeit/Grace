@@ -2,6 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared.Utilities
 open Grace.Types.Branch
+open Grace.Types.Artifact
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
 open Grace.Types.Organization
@@ -31,6 +32,7 @@ module Reminder =
         | DirectoryVersionDeleteZipFile of DirectoryVersion.PhysicalDeletionReminderState
         | DiffDeleteCachedState of Diff.DeleteCachedStateReminderState
         | UploadSessionPhysicalDeletion of UploadSession.PhysicalDeletionReminderState
+        | ArtifactPhysicalDeletion of Artifact.PhysicalDeletionReminderState
 
     /// Defines all reminders used in Grace.
     type ReminderDto =
@@ -66,11 +68,11 @@ module Reminder =
                 State = ReminderState.EmptyReminderState
             }
 
-        /// Builds a ReminderDto from the validated inputs used by this contract.
-        static member Create actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =
+        /// Builds a ReminderDto with the caller-selected identity used for replay-safe reminder creation.
+        static member CreateWithId reminderId actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =
             {
                 Class = nameof ReminderDto
-                ReminderId = ReminderId.NewGuid()
+                ReminderId = reminderId
                 ActorName = actorName
                 ActorId = actorId
                 OwnerId = ownerId
@@ -82,6 +84,10 @@ module Reminder =
                 CorrelationId = correlationId
                 State = state
             }
+
+        /// Builds a ReminderDto with a newly allocated identity for ordinary create semantics.
+        static member Create actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =
+            ReminderDto.CreateWithId (ReminderId.NewGuid()) actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId
 
         /// Returns the display representation for this value.
         override this.ToString() = serialize this

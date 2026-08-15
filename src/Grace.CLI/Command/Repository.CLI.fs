@@ -9,6 +9,7 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Parameters
 open Grace.Types.Common
+open Grace.Types.Reference
 open Grace.Shared.Utilities
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.DirectoryVersion
@@ -263,6 +264,26 @@ module Repository =
             if parseResult < 0.0f || parseResult > 1.0f then
                 optionResult.AddError("The confidence threshold must be between 0.0 and 1.0."))
 
+    /// Builds the repository create request from the single identity resolved for verbose output and server submission.
+    let internal buildCreateParameters (graceIds: GraceIds) =
+        let ownerId = if graceIds.HasOwner then graceIds.OwnerIdString else $"{Current().OwnerId}"
+
+        let organizationId =
+            if graceIds.HasOrganization then
+                graceIds.OrganizationIdString
+            else
+                $"{Current().OrganizationId}"
+
+        Repository.CreateRepositoryParameters(
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            OwnerId = ownerId,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = organizationId,
+            OrganizationName = graceIds.OrganizationName,
+            CorrelationId = graceIds.CorrelationId
+        )
+
     // Create subcommand.
     /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
@@ -272,15 +293,10 @@ module Repository =
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
-                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = resolveCreateGraceIds OptionName.RepositoryId parseResult
 
-                    // In a Create() command, if --repository-id is implicit, that's actually the old RepositoryId taken from graceconfig.json,
-                    //   and we need to set RepositoryId to a new Guid.
-                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
-
-                    if parseResult.GetResult(Options.ownerId).Implicit then
-                        let repositoryId = Guid.NewGuid()
-                        graceIds <- { graceIds with RepositoryId = repositoryId; RepositoryIdString = $"{repositoryId}" }
+                    if parseResult |> verbose then
+                        printParseResultWithResolvedValues parseResult (Some graceIds)
 
                     let validateIncomingParameters =
                         parseResult
@@ -288,33 +304,7 @@ module Repository =
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let repositoryIdOption = parseResult.GetResult(Options.repositoryId)
-
-                        let repositoryId =
-                            if isNull repositoryIdOption
-                               || repositoryIdOption.Implicit then
-                                Guid.NewGuid().ToString()
-                            else
-                                graceIds.RepositoryIdString
-
-                        let ownerId = if graceIds.HasOwner then graceIds.OwnerIdString else $"{Current().OwnerId}"
-
-                        let organizationId =
-                            if graceIds.HasOrganization then
-                                graceIds.OrganizationIdString
-                            else
-                                $"{Current().OrganizationId}"
-
-                        let parameters =
-                            Repository.CreateRepositoryParameters(
-                                RepositoryId = repositoryId,
-                                RepositoryName = graceIds.RepositoryName,
-                                OwnerId = ownerId,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = organizationId,
-                                OrganizationName = graceIds.OrganizationName,
-                                CorrelationId = getCorrelationId parseResult
-                            )
+                        let parameters = buildCreateParameters graceIds
 
                         if parseResult |> hasOutput then
                             let! result =
@@ -386,6 +376,14 @@ module Repository =
         else
             Ok parseResult
 
+    let mutable private beforeRepositoryInitializationSave = fun () -> ()
+
+    /// Installs the deterministic seam used to prove initialization publication failures cannot create trusted local state.
+    let internal setBeforeRepositoryInitializationSaveForTests probe = beforeRepositoryInitializationSave <- probe
+
+    /// Restores the production repository-initialization publication path after deterministic failure tests.
+    let internal resetBeforeRepositoryInitializationSaveForTests () = beforeRepositoryInitializationSave <- fun () -> ()
+
     /// Routes the init command from parsed options through validation, the SDK call, and result rendering.
     let private initHandler (parseResult: ParseResult) (parameters: InitParameters) =
         task {
@@ -420,9 +418,21 @@ module Repository =
                             if isEmpty.ReturnValue = true then
                                 let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
-                                if parseResult |> hasOutput then
+                                match parseResult |> hasOutput with
+                                | showProgress ->
+                                    let initializationProgress =
+                                        if showProgress then
+                                            progress
+                                        else
+                                            let settings = AnsiConsoleSettings()
+                                            settings.Out <- AnsiConsoleOutput(TextWriter.Null)
+
+                                            AnsiConsole
+                                                .Create(settings)
+                                                .Progress(AutoRefresh = false, AutoClear = true, HideCompleted = true)
+
                                     let! graceStatus =
-                                        progress
+                                        initializationProgress
                                             .Columns(progressColumns)
                                             .StartAsync(fun progressContext ->
                                                 task {
@@ -470,10 +480,7 @@ module Repository =
 
                                                     t1.Value <- 100.0
 
-                                                    // Write the new Grace status file to disk.
-                                                    t2.StartTask()
-                                                    do! writeGraceStatusFile graceStatus
-                                                    t2.Value <- 100.0
+                                                    // Local status is committed only after the complete tree and matching Reference succeed.
 
                                                     // Ensure all files are in the object cache.
                                                     t3.StartTask()
@@ -521,6 +528,7 @@ module Repository =
                                                     // Ensure all files are uploaded to object storage.
                                                     t5.StartTask()
                                                     let incrementAmount = 100.0 / double fileVersions.Count
+                                                    let mutable fileUploadFailed = false
 
                                                     match Current().ObjectStorageProvider with
                                                     | ObjectStorageProvider.Unknown -> ()
@@ -601,7 +609,11 @@ module Repository =
                                                                                             ))
                                                                                     )
 
-                                                                            | Error error -> AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
+                                                                            | Error error ->
+                                                                                fileUploadFailed <- true
+
+                                                                                if showProgress then
+                                                                                    AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
                                                                         }
                                                                     ))
                                                             )
@@ -610,19 +622,24 @@ module Repository =
                                                         if errors |> Seq.isEmpty then
                                                             ()
                                                         else
-                                                            AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
+                                                            fileUploadFailed <- true
+                                                            if showProgress then AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
 
                                                             let mutable error = GraceError.Create String.Empty String.Empty
 
                                                             while not <| errors.IsEmpty do
                                                                 if errors.TryDequeue(&error) then
-                                                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+                                                                    if showProgress then
+                                                                        AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
                                                             ()
                                                     | AWSS3 -> ()
                                                     | GoogleCloudStorage -> ()
 
                                                     t5.Value <- 100.0
+
+                                                    if fileUploadFailed then
+                                                        invalidOp "Repository initialization could not upload every file."
 
                                                     // Ensure all directory versions are uploaded to Grace Server.
                                                     t6.StartTask()
@@ -681,8 +698,10 @@ module Repository =
 
                                                     t6.Value <- 100.0
 
-                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]")
+                                                    if showProgress then
+                                                        AnsiConsole.MarkupLine($"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]")
 
+                                                    let directoryUploadFailed = not errors.IsEmpty
                                                     let mutable error = GraceError.Create String.Empty String.Empty
 
                                                     while not <| errors.IsEmpty do
@@ -690,9 +709,84 @@ module Repository =
 
                                                         if error.Error.Contains("TRetval") then logToConsole $"********* {error.Error}"
 
-                                                        AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+                                                        if showProgress then
+                                                            AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
-                                                    return graceStatus
+                                                    if directoryUploadFailed then
+                                                        invalidOp "Repository initialization could not publish every directory version."
+
+                                                    let rootDirectoryVersion =
+                                                        graceStatus.Index.Values.First (fun directoryVersion ->
+                                                            directoryVersion.RelativePath = Constants.RootDirectoryPath)
+
+                                                    let enableSaveParameters =
+                                                        Parameters.Branch.EnableFeatureParameters(
+                                                            OwnerId = parameters.OwnerId,
+                                                            OwnerName = parameters.OwnerName,
+                                                            OrganizationId = parameters.OrganizationId,
+                                                            OrganizationName = parameters.OrganizationName,
+                                                            RepositoryId = parameters.RepositoryId,
+                                                            RepositoryName = parameters.RepositoryName,
+                                                            BranchId = $"{Current().BranchId}",
+                                                            BranchName = Current().BranchName,
+                                                            Enabled = true,
+                                                            CorrelationId = getCorrelationId parseResult
+                                                        )
+
+                                                    match! Grace.SDK.Branch.EnableSave enableSaveParameters with
+                                                    | Error error -> invalidOp $"Repository initialization could not enable its first Save: {error.Error}"
+                                                    | Ok _ -> ()
+
+                                                    beforeRepositoryInitializationSave ()
+
+                                                    match!
+                                                        createSaveReference
+                                                            rootDirectoryVersion
+                                                            "Initialized repository from the existing working tree."
+                                                            (getCorrelationId parseResult)
+                                                        with
+                                                    | Error error -> return invalidOp $"Repository initialization could not publish its Save: {error.Error}"
+                                                    | Ok save ->
+                                                        let referenceId =
+                                                            match parseCreatedReferenceId (getCorrelationId parseResult) save with
+                                                            | Ok value -> value
+                                                            | Error error -> invalidOp error.Error
+
+                                                        let boundaryParameters =
+                                                            Parameters.Branch.GetReferenceMaterializationBoundaryParameters(
+                                                                OwnerId = parameters.OwnerId,
+                                                                OwnerName = parameters.OwnerName,
+                                                                OrganizationId = parameters.OrganizationId,
+                                                                OrganizationName = parameters.OrganizationName,
+                                                                RepositoryId = parameters.RepositoryId,
+                                                                RepositoryName = parameters.RepositoryName,
+                                                                BranchId = $"{Current().BranchId}",
+                                                                BranchName = Current().BranchName,
+                                                                ReferenceId = $"{referenceId}",
+                                                                CorrelationId = getCorrelationId parseResult
+                                                            )
+
+                                                        match! Grace.SDK.Branch.GetReferenceMaterializationBoundary boundaryParameters with
+                                                        | Error error ->
+                                                            return
+                                                                invalidOp
+                                                                    $"Repository initialization could not resolve its published event boundary: {error.Error}"
+                                                        | Ok boundaryResult ->
+                                                            let boundary = boundaryResult.ReturnValue
+
+                                                            if boundary.DirectoryId
+                                                               <> rootDirectoryVersion.DirectoryVersionId
+                                                               || boundary.Sha256Hash
+                                                                  <> rootDirectoryVersion.Sha256Hash
+                                                               || boundary.Blake3Hash
+                                                                  <> rootDirectoryVersion.Blake3Hash
+                                                               || String.IsNullOrWhiteSpace boundary.EventCursor then
+                                                                invalidOp "Repository initialization received a mismatched event boundary."
+
+                                                            t2.StartTask()
+                                                            do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary CancellationToken.None
+                                                            t2.Value <- 100.0
+                                                            return graceStatus
 
                                                 })
 
@@ -707,13 +801,14 @@ module Repository =
 
                                     let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
-                                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
+                                    if showProgress then
+                                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
 
-                                    AnsiConsole.MarkupLine(
-                                        $"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]"
-                                    )
+                                        AnsiConsole.MarkupLine(
+                                            $"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]"
+                                        )
 
-                                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
+                                        AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
 
                                     let output: LocalOutputDto.RepositoryInitDto =
                                         {
@@ -722,18 +817,6 @@ module Repository =
                                             FileCount = Some fileCount
                                             TotalFileSize = Some totalFileSize
                                             RootSha256Hash = Some rootDirectoryVersion.Sha256Hash
-                                        }
-
-                                    return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))
-                                else
-                                    // Do the whole thing with no output
-                                    let output: LocalOutputDto.RepositoryInitDto =
-                                        {
-                                            Message = "Initialized repository."
-                                            DirectoryCount = None
-                                            FileCount = None
-                                            TotalFileSize = None
-                                            RootSha256Hash = None
                                         }
 
                                     return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))

@@ -166,12 +166,13 @@ type ManifestUploadSdkTests() =
         Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("Dockerfile_sha256-value"))
         Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("Dockerfile_sha256-value_blake3-value"))
 
-    /// Verifies that whole file local object cache name keeps legacy sha only name without blake3.
+    /// Verifies that whole file local object cache names include the required BLAKE3 hash.
     [<Test>]
-    member _.WholeFileLocalObjectCacheNameKeepsLegacyShaOnlyNameWithoutBlake3() =
-        let fileVersion = FileVersion.Create (RelativePath "src/cache/legacy-file.txt") (Sha256Hash "sha256-value") String.Empty false 10L
+    member _.WholeFileLocalObjectCacheNameIncludesRequiredBlake3() =
+        let fileVersion =
+            FileVersion.CreateWithHashes (RelativePath "src/cache/file.txt") (Sha256Hash "sha256-value") (Blake3Hash "blake3-value") String.Empty false 10L
 
-        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo(fileVersion.GetObjectFileName))
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("file_sha256-value_blake3-value.txt"))
 
     /// Verifies that upload metadata matching includes blake3 when path and sha collide.
     [<Test>]
@@ -246,7 +247,14 @@ type ManifestUploadSdkTests() =
             try
                 File.WriteAllBytes(tempPath, payload)
 
-                let fileVersion = FileVersion.Create "large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                let fileVersion =
+                    FileVersion.CreateWithHashes
+                        "large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -351,7 +359,14 @@ type ManifestUploadSdkTests() =
             try
                 File.WriteAllBytes(tempPath, payload)
 
-                let fileVersion = FileVersion.Create "Tiny.fs" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty false (int64 payload.Length)
+                let fileVersion =
+                    FileVersion.CreateWithHashes
+                        "Tiny.fs"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        false
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -398,7 +413,14 @@ type ManifestUploadSdkTests() =
             try
                 File.WriteAllBytes(tempPath, payload)
 
-                let fileVersion = FileVersion.Create "large.txt" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty false (int64 payload.Length)
+                let fileVersion =
+                    FileVersion.CreateWithHashes
+                        "large.txt"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        false
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -438,8 +460,8 @@ type ManifestUploadSdkTests() =
     member _.UploadFilesToObjectStorageFallsBackOnlyForNonManifestResults() =
         task {
             let correlationId = "corr-cli-manifest-fallback-routing"
-            let manifestFile = FileVersion.Create "large.bin" (Sha256Hash "manifest-sha") String.Empty true 2048L
-            let ineligibleFile = FileVersion.Create "small.fs" (Sha256Hash "ineligible-sha") String.Empty false 128L
+            let manifestFile = FileVersion.CreateWithHashes "large.bin" (Sha256Hash "manifest-sha") (Blake3Hash "manifest-blake3") String.Empty true 2048L
+            let ineligibleFile = FileVersion.CreateWithHashes "small.fs" (Sha256Hash "ineligible-sha") (Blake3Hash "ineligible-blake3") String.Empty false 128L
             let manifestAttempts = ResizeArray<string>()
             let wholeFileFallbacks = ResizeArray<FileVersion array>()
 
@@ -508,7 +530,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "reuse-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "reuse-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -627,7 +655,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "one-chunk-reuse-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "one-chunk-reuse-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -744,7 +778,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "partial-reuse-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "partial-reuse-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -852,7 +892,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "discovery-failure-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "discovery-failure-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -913,7 +959,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "short-reuse-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "short-reuse-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -1011,7 +1063,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "bounded-proof-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "bounded-proof-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -1103,7 +1161,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "stale-reuse-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "stale-reuse-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
@@ -1193,7 +1257,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "existing-block-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "existing-block-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -1259,7 +1329,13 @@ type ManifestUploadSdkTests() =
                 File.WriteAllBytes(tempPath, payload)
 
                 let fileVersion =
-                    FileVersion.Create "duplicate-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                    FileVersion.CreateWithHashes
+                        "duplicate-large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {

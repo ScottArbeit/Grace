@@ -13,7 +13,29 @@ open Orleans
 open Orleans.Runtime
 open System
 open System.Collections.Generic
+open System.Threading
 open System.Threading.Tasks
+
+/// Provides short-lived replay results without making Redis part of repository manifest membership.
+type IRepositoryCounterRecentResult =
+
+    /// Returns a cached result or `None` when the operation is unknown, expired, malformed, or unavailable.
+    abstract member TryGetAsync:
+        repositoryId: RepositoryId *
+        storagePoolId: StoragePoolId *
+        manifestAddress: ManifestAddress *
+        operationId: RepositoryContentCounterOperationId *
+        cancellationToken: CancellationToken ->
+            Task<RepositoryContentCounterCompletedChange option>
+
+    /// Attempts to cache one completed result for ten minutes and reports whether Redis accepted the write.
+    abstract member TrySetAsync:
+        repositoryId: RepositoryId *
+        storagePoolId: StoragePoolId *
+        manifestAddress: ManifestAddress *
+        change: RepositoryContentCounterCompletedChange *
+        cancellationToken: CancellationToken ->
+            Task<bool>
 
 /// Groups Orleans actor helpers for repository content counter keys, proxies, state, or workflow transitions.
 module RepositoryContentCounter =
@@ -21,6 +43,11 @@ module RepositoryContentCounter =
     /// Coordinates primary key logic for the RepositoryContentCounter actor.
     let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
+
+    /// Builds the stable identity for one exact positive logical count replacement.
+    let repairOperationId (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) expectedRevision rebuiltCount =
+        RepositoryContentCounterOperationId
+            $"manifest-logical-repair:{repositoryId:N}:{storagePoolId}:{manifestAddress}:revision:{expectedRevision}:count:{rebuiltCount}"
 
     /// Maps a RepositoryContentCounter command case to the operation name used in idempotency and diagnostics.
     let commandName command =
@@ -40,22 +67,30 @@ module RepositoryContentCounter =
         | RepositoryContentCounterCommand.AddReference (_, repositoryId, storagePoolId, manifestAddress)
         | RepositoryContentCounterCommand.RemoveReference (_, repositoryId, storagePoolId, manifestAddress) -> repositoryId, storagePoolId, manifestAddress
 
-    /// Coordinates event operation id logic for the RepositoryContentCounter actor.
-    let private eventOperationId counterEvent =
-        match counterEvent.Event with
-        | RepositoryContentCounterEventType.ReferenceAdded (operationId, _, _, _) -> operationId
-        | RepositoryContentCounterEventType.ReferenceRemoved operationId -> operationId
+    /// Attempts to find the bounded completed change for one operation.
+    let private tryFindCompletedChange (counter: RepositoryContentCounterDto) operationId =
+        counter.LastCompletedChange
+        |> Option.filter (fun change -> change.OperationId = operationId)
 
-    /// Coordinates event command name logic for the RepositoryContentCounter actor.
-    let private eventCommandName counterEvent =
-        match counterEvent.Event with
-        | RepositoryContentCounterEventType.ReferenceAdded _ -> "AddReference"
-        | RepositoryContentCounterEventType.ReferenceRemoved _ -> "RemoveReference"
+    /// Returns whether the completed change matches the requested counter direction.
+    let private changeMatchesCommand change command =
+        match change.Operation, command with
+        | RepositoryContentCounterChangeOperation.Added, RepositoryContentCounterCommand.AddReference _
+        | RepositoryContentCounterChangeOperation.Removed, RepositoryContentCounterCommand.RemoveReference _ -> true
+        | _ -> false
 
-    /// Attempts to find applied operation and returns no value when the required invariant is not met.
-    let private tryFindAppliedOperation (events: seq<RepositoryContentCounterEvent>) operationId =
-        events
-        |> Seq.tryFind (fun counterEvent -> eventOperationId counterEvent = operationId)
+    /// Recreates only the zero-transition intent carried by an original completed result.
+    let private intentsForCompletedChange repositoryId storagePoolId manifestAddress change =
+        match change.Operation, change.PreviousCount, change.CurrentCount with
+        | RepositoryContentCounterChangeOperation.Added, 0L, 1L ->
+            [
+                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress, change.Revision)
+            ]
+        | RepositoryContentCounterChangeOperation.Removed, 1L, 0L ->
+            [
+                RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress, change.Revision)
+            ]
+        | _ -> []
 
     /// Applies events changes to the RepositoryContentCounter actor state.
     let private applyEvents (events: RepositoryContentCounterEvent list) (counter: RepositoryContentCounterDto) =
@@ -92,9 +127,34 @@ module RepositoryContentCounter =
         | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId storagePoolId manifestAddress, StringComparison.Ordinal))
         | None -> false
 
+    /// Validates a counter command before either Redis replay or durable mutation.
+    let private validateCommandTarget
+        (expectedPrimaryKey: string option)
+        (counter: RepositoryContentCounterDto)
+        (command: RepositoryContentCounterCommand)
+        (metadata: EventMetadata)
+        =
+        let operationId = operationId command
+        let repositoryId, storagePoolId, manifestAddress = commandTarget command
+
+        if String.IsNullOrWhiteSpace operationId then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty operation id.")
+        elif repositoryId = RepositoryId.Empty then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty RepositoryId.")
+        elif String.IsNullOrWhiteSpace storagePoolId then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty StoragePoolId.")
+        elif String.IsNullOrWhiteSpace manifestAddress then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty ManifestAddress.")
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the grain key.")
+        elif targetMismatch counter repositoryId storagePoolId manifestAddress then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the initialized counter.")
+        else
+            None
+
     let decideCommandForKey
         (expectedPrimaryKey: string option)
-        (events: seq<RepositoryContentCounterEvent>)
+        (_events: seq<RepositoryContentCounterEvent>)
         (counter: RepositoryContentCounterDto)
         (command: RepositoryContentCounterCommand)
         (metadata: EventMetadata)
@@ -104,26 +164,20 @@ module RepositoryContentCounter =
         /// Coordinates repository id logic for the RepositoryContentCounter actor.
         let repositoryId, storagePoolId, manifestAddress = commandTarget command
 
-        if String.IsNullOrWhiteSpace operationId then
-            Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty operation id.")
-        elif repositoryId = RepositoryId.Empty then
-            Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty RepositoryId.")
-        elif String.IsNullOrWhiteSpace storagePoolId then
-            Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty StoragePoolId.")
-        elif String.IsNullOrWhiteSpace manifestAddress then
-            Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty ManifestAddress.")
-        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress then
-            Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the grain key.")
-        elif targetMismatch counter repositoryId storagePoolId manifestAddress then
-            Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the initialized counter.")
-        else
-            match tryFindAppliedOperation events operationId with
-            | Some counterEvent when
-                eventCommandName counterEvent
-                <> commandName command
-                ->
+        match validateCommandTarget expectedPrimaryKey counter command metadata with
+        | Some error -> Error error
+        | None ->
+            match tryFindCompletedChange counter operationId with
+            | Some change when not (changeMatchesCommand change command) ->
                 Error(graceError metadata.CorrelationId "RepositoryContentCounter operation id was already used for a different command.")
-            | Some _ -> okDecision counter operationId [] [] true "Repository content counter command replayed."
+            | Some change ->
+                okDecision
+                    counter
+                    operationId
+                    []
+                    (intentsForCompletedChange repositoryId storagePoolId manifestAddress change)
+                    true
+                    "Repository content counter command replayed."
             | None ->
                 match command with
                 | RepositoryContentCounterCommand.AddReference _ ->
@@ -136,7 +190,12 @@ module RepositoryContentCounter =
                     let intents =
                         if counter.ReferenceCount = 0L then
                             [
-                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
+                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(
+                                    repositoryId,
+                                    storagePoolId,
+                                    manifestAddress,
+                                    counter.Revision + 1L
+                                )
                             ]
                         else
                             []
@@ -151,7 +210,12 @@ module RepositoryContentCounter =
                         let intents =
                             if counter.ReferenceCount = 1L then
                                 [
-                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
+                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(
+                                        repositoryId,
+                                        storagePoolId,
+                                        manifestAddress,
+                                        counter.Revision + 1L
+                                    )
                                 ]
                             else
                                 []
@@ -161,10 +225,186 @@ module RepositoryContentCounter =
     /// Validates a RepositoryContentCounter command and derives the events needed for a state transition.
     let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
+    /// Validates and decides one atomic positive logical count replacement without normal accounting events or intents.
+    let decideRepairForKey
+        (expectedPrimaryKey: string option)
+        (counter: RepositoryContentCounterDto)
+        (command: RepositoryContentCounterRepairCommand)
+        (metadata: EventMetadata)
+        =
+        let expectedOperationId =
+            repairOperationId command.RepositoryId command.StoragePoolId command.ManifestAddress command.ExpectedRevision command.RebuiltCount
+
+        let completedReplay =
+            counter.LastCompletedChange
+            |> Option.filter (fun change ->
+                change.OperationId = command.OperationId
+                && change.CurrentCount = command.RebuiltCount
+                && change.Revision = command.ExpectedRevision + 1L
+                && counter.Count = command.RebuiltCount
+                && counter.Revision = change.Revision)
+
+        if String.IsNullOrWhiteSpace command.OperationId then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair requires a non-empty operation id.")
+        elif command.OperationId <> expectedOperationId then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair operation id is not deterministic for the requested transition.")
+        elif command.RepositoryId = RepositoryId.Empty
+             || String.IsNullOrWhiteSpace command.StoragePoolId
+             || String.IsNullOrWhiteSpace command.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair requires an exact repository, StoragePool, and manifest target.")
+        elif command.ExpectedRevision < 0L then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair expected revision must not be negative.")
+        elif command.RebuiltCount <= 0L then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair rebuilt count must be positive.")
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey command.RepositoryId command.StoragePoolId command.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair target does not match the grain key.")
+        elif counter.RepositoryId = RepositoryId.Empty
+             || targetMismatch counter command.RepositoryId command.StoragePoolId command.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair target does not match the initialized counter.")
+        else
+            match completedReplay with
+            | Some _ ->
+                Ok
+                    {
+                        Counter = counter
+                        OperationId = command.OperationId
+                        Events = []
+                        Intents = []
+                        WasIdempotentReplay = true
+                        Message = "Repository content logical count repair replayed."
+                    }
+            | None when counter.Revision <> command.ExpectedRevision ->
+                Error(
+                    graceError
+                        metadata.CorrelationId
+                        $"RepositoryContentCounter repair expected revision {command.ExpectedRevision}, but current revision is {counter.Revision}."
+                )
+            | None when counter.Count = command.RebuiltCount ->
+                Error(graceError metadata.CorrelationId "RepositoryContentCounter logical count already matches the rebuilt count.")
+            | None ->
+                let operation =
+                    if command.RebuiltCount > counter.Count then
+                        RepositoryContentCounterChangeOperation.Added
+                    else
+                        RepositoryContentCounterChangeOperation.Removed
+
+                let repaired =
+                    { counter with
+                        Count = command.RebuiltCount
+                        Revision = counter.Revision + 1L
+                        LastCompletedChange =
+                            Some
+                                {
+                                    OperationId = command.OperationId
+                                    Operation = operation
+                                    PreviousCount = counter.Count
+                                    CurrentCount = command.RebuiltCount
+                                    Revision = counter.Revision + 1L
+                                }
+                    }
+
+                Ok
+                    {
+                        Counter = repaired
+                        OperationId = command.OperationId
+                        Events = []
+                        Intents = []
+                        WasIdempotentReplay = false
+                        Message = "Repository content logical count repaired."
+                    }
+
+    /// Persists at most one snapshot for an accepted repair-only logical count replacement.
+    let handlePositiveCountRepair (persistSnapshot: RepositoryContentCounterDto -> Task) expectedPrimaryKey counter command metadata =
+        task {
+            match decideRepairForKey expectedPrimaryKey counter command metadata with
+            | Error error -> return Error error
+            | Ok decision when decision.WasIdempotentReplay -> return Ok decision
+            | Ok decision ->
+                do! persistSnapshot decision.Counter
+                return Ok decision
+        }
+
+    /// Resolves Redis replay, bounded persistence, and safe removal gating for one normal counter command.
+    let handleWithRecentResult
+        (recentResult: IRepositoryCounterRecentResult)
+        (persistSnapshot: RepositoryContentCounterDto -> Task)
+        expectedPrimaryKey
+        counter
+        command
+        metadata
+        cancellationToken
+        =
+        task {
+            match validateCommandTarget expectedPrimaryKey counter command metadata with
+            | Some error -> return Error error
+            | None ->
+                let repositoryId, storagePoolId, manifestAddress = commandTarget command
+                let operationId = operationId command
+
+                match! recentResult.TryGetAsync(repositoryId, storagePoolId, manifestAddress, operationId, cancellationToken) with
+                | Some cachedChange when cachedChange.OperationId <> operationId ->
+                    return
+                        Error(graceError metadata.CorrelationId "RepositoryContentCounter recent result operation id does not match the requested operation.")
+                | Some cachedChange when not (changeMatchesCommand cachedChange command) ->
+                    return Error(graceError metadata.CorrelationId "RepositoryContentCounter operation id was already used for a different command.")
+                | Some cachedChange ->
+                    return
+                        okDecision
+                            counter
+                            operationId
+                            []
+                            (intentsForCompletedChange repositoryId storagePoolId manifestAddress cachedChange)
+                            true
+                            "Repository content counter command replayed from recent result."
+                | None ->
+                    match decideCommandForKey expectedPrimaryKey Seq.empty counter command metadata with
+                    | Error error -> return Error error
+                    | Ok localDecision ->
+                        let isRemoval =
+                            match command with
+                            | RepositoryContentCounterCommand.RemoveReference _ -> true
+                            | RepositoryContentCounterCommand.AddReference _ -> false
+
+                        let! previousResultCached =
+                            match counter.LastCompletedChange with
+                            | Some previousChange when previousChange.OperationId <> operationId ->
+                                recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, previousChange, cancellationToken)
+                            | Some _
+                            | None -> Task.FromResult true
+
+                        if isRemoval && not previousResultCached then
+                            return
+                                Error(
+                                    graceError
+                                        metadata.CorrelationId
+                                        "RepositoryContentCounter removal paused because Redis could not preserve the previous completed result."
+                                )
+                        else
+                            if not localDecision.Events.IsEmpty then
+                                do! persistSnapshot localDecision.Counter
+
+                            match localDecision.Counter.LastCompletedChange with
+                            | None -> return Error(graceError metadata.CorrelationId "RepositoryContentCounter completed without a bounded result.")
+                            | Some completedChange ->
+                                let! completedResultCached =
+                                    recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, completedChange, cancellationToken)
+
+                                if isRemoval && not completedResultCached then
+                                    return
+                                        Error(
+                                            graceError
+                                                metadata.CorrelationId
+                                                "RepositoryContentCounter removal was retained safely because Redis did not confirm the completed result."
+                                        )
+                                else
+                                    return Ok localDecision
+        }
+
     /// Implements the Orleans grain for repository content counter actor.
     type RepositoryContentCounterActor
         (
-            [<PersistentState(StateName.RepositoryContentCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryContentCounterEvent>>
+            [<PersistentState(StateName.RepositoryContentCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<RepositoryContentCounterDto>,
+            recentResult: IRepositoryCounterRecentResult
         ) =
         inherit Grain()
 
@@ -177,19 +417,18 @@ module RepositoryContentCounter =
             let activateStartTime = getCurrentInstant ()
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            counter <-
-                state.State
-                |> Seq.fold (fun dto event -> RepositoryContentCounterDto.UpdateDto event dto) RepositoryContentCounterDto.Default
+            counter <- if state.RecordExists then state.State else RepositoryContentCounterDto.Default
 
             Task.CompletedTask
 
-        /// Replays persisted RepositoryContentCounter events into an in-memory state snapshot.
-        member private this.ApplyEvents(events: RepositoryContentCounterEvent list) =
-            task {
-                state.State.AddRange(events)
+        /// Overwrites the bounded RepositoryContentCounter snapshot after one completed transition.
+        member private this.ApplySnapshot(snapshot: RepositoryContentCounterDto) : Task =
+            (task {
+                state.State <- snapshot
                 do! state.WriteStateAsync()
-                counter <- applyEvents events counter
+                counter <- snapshot
             }
+            :> Task)
 
         interface IRepositoryContentCounterActor with
             /// Reports whether this RepositoryContentCounter actor has persisted state.
@@ -206,11 +445,11 @@ module RepositoryContentCounter =
                 this.correlationId <- correlationId
                 counter |> returnTask
 
-            /// Returns the persisted RepositoryContentCounter event stream for replay or audit.
+            /// Returns no lifetime events because the actor persists only its bounded current snapshot.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
-                (state.State :> IReadOnlyList<RepositoryContentCounterEvent>)
+                (Array.empty<RepositoryContentCounterEvent> :> IReadOnlyList<RepositoryContentCounterEvent>)
                 |> returnTask
 
             /// Routes a public actor command to the domain operation that validates and persists it.
@@ -219,10 +458,17 @@ module RepositoryContentCounter =
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, commandName command)
 
-                    match decideCommandForKey (Some(this.GetPrimaryKeyString())) state.State counter command metadata with
+                    match!
+                        handleWithRecentResult
+                            recentResult
+                            this.ApplySnapshot
+                            (Some(this.GetPrimaryKeyString()))
+                            counter
+                            command
+                            metadata
+                            CancellationToken.None
+                        with
                     | Ok decision ->
-                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
-
                         let returnValue =
                             (GraceReturnValue.Create decision metadata.CorrelationId)
                                 .enhance(nameof RepositoryId, decision.Counter.RepositoryId)
@@ -243,4 +489,23 @@ module RepositoryContentCounter =
                         )
 
                         return Error error
+                }
+
+            /// Applies one repair-only positive logical count replacement without normal contribution intents.
+            member this.ReconcilePositiveCount command metadata =
+                task {
+                    this.correlationId <- metadata.CorrelationId
+                    RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, "ReconcilePositiveCount")
+
+                    match! handlePositiveCountRepair this.ApplySnapshot (Some(this.GetPrimaryKeyString())) counter command metadata with
+                    | Ok decision ->
+                        let returnValue =
+                            (GraceReturnValue.Create decision metadata.CorrelationId)
+                                .enhance(nameof RepositoryId, decision.Counter.RepositoryId)
+                                .enhance(nameof StoragePoolId, decision.Counter.StoragePoolId)
+                                .enhance(nameof ManifestAddress, decision.Counter.ManifestAddress)
+                                .enhance (nameof ReferenceCount, decision.Counter.ReferenceCount)
+
+                        return Ok returnValue
+                    | Error error -> return Error error
                 }

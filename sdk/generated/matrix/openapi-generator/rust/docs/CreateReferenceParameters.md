@@ -14,6 +14,7 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **branch_name** | Option<**String**> |  | [optional]
+**reference_id** | **uuid::Uuid** |  | 
 **directory_version_id** | Option<**uuid::Uuid**> |  | [optional]
 **sha256_hash** | Option<**String**> | Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional]
 **blake3_hash** | Option<**String**> | Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix. | [optional]

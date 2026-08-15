@@ -239,7 +239,7 @@ example().catch(console.error);
 
 Get a directory version by SHA-256 hash.
 
-Gets a directory version DTO by SHA-256 hash.
+Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace\&#39;s normal not-found error.
 
 ### Example
 

@@ -35,9 +35,10 @@ This repo is primarily **F#** and targets **.NET 10**.
   editing.
 - Use a focused branch for each issue. Maintainers and agents should use issue-owned worktrees for repo-local work.
 - Prefer vertical slices with focused validation and a commit after each completed slice.
-- Before treating coding work as complete, run the local review-only subagent loop described in
-  `docs/Development process.md`; use the dedicated Code Review capability when available, address every issue, and stop
-  only after the reviewer reports no issues.
+- Before treating coding work as complete, follow the bounded review protocol in
+  `docs/Development process.md`: run one R1 Discovery Review of the coherent candidate, freeze the accepted finite
+  ledger, route accepted findings through one consolidated repair pass, and run one R2 Closure Review only when repairs
+  were required. Do not restart an unlimited whole-feature review after every changed head.
 - Open normal ready-for-review pull requests unless a maintainer explicitly asks for a draft pull request.
 - Add or update tests when changing behavior.
 - Please add any useful AI prompts you used for diagnosis or implementation to the PR description.
@@ -98,7 +99,7 @@ Grace can be run locally using **Docker containers and emulators**, via the Aspi
 Where to look in the repo:
 
 - `Grace.Aspire.AppHost/Properties/launchSettings.json`
-- `Grace.Aspire.AppHost/Program.Aspire.AppHost.fs`
+- `Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`
 
 Aspire:
 
@@ -333,8 +334,9 @@ Prometheus:
 
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
 - [ ] Focused validation for the touched behavior is listed in the PR
-- [ ] Required GitHub `Validate` passed for the current PR revision
-- [ ] Local review-only subagent loop completed with no remaining issues
+- [ ] R1 Discovery Review completed for the coherent candidate
+- [ ] Accepted R1 findings, if any, were repaired in one consolidated pass and verified by R2 Closure Review
+- [ ] Required GitHub `Validate` passed for the final PR revision
 - [ ] Any genuinely required validation not run is listed with a reason
 - [ ] Documentation updated (if behavior changed)
 - [ ] Docs impact, residual risk, and rollback or recovery notes are recorded when relevant

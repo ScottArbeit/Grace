@@ -197,6 +197,8 @@ module WebhookApprovalCommandTests =
                            "wait"
                            "--request"
                            requestId.ToString()
+                           "--branch-id"
+                           branchId.ToString()
                            "--wait-timeout-seconds"
                            "1"
                            "--poll-seconds"

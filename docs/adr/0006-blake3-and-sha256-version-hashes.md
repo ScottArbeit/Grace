@@ -52,6 +52,10 @@ Grace supports version hashes as an explicit version-object concept rather than 
 After epic #343:
 
 - New `FileVersion`, `DirectoryVersion`, and `Reference` version hash calculations use BLAKE3 by default.
+- Every current `FileVersion`, `LocalFileVersion`, `DirectoryVersion`, `LocalDirectoryVersion`, and `Reference` root
+  must carry both BLAKE3 and SHA-256 before creation, persistence, projection, clean local-state publication, or
+  materialization. Empty hash fields are initialization sentinels only and are rejected at durable and public
+  boundaries.
 - SHA-256 values remain retained where Grace needs persisted fields, verification workflows, comparison, lookup parity,
   or non-version SHA-256 uses such as security and payload integrity.
 - A file's current SHA-256 value is computed from the file byte stream only.
@@ -62,6 +66,9 @@ After epic #343:
 
 Epic #343 introduced explicit fields for multiple version-hash algorithms. It did not require a global rename of
 existing `Sha256Hash` or `FileContentHash` terms.
+
+Grace has no old data to migrate or preserve. Missing BLAKE3 values are invalid current data and are not repaired,
+hydrated, grandfathered, or accepted through compatibility paths.
 
 ## Non-Goals
 

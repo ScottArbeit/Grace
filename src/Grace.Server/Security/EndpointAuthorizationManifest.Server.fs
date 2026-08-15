@@ -42,6 +42,8 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/authorize/upsert-path-permission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/admin/manifest-contribution/diagnose" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/admin/manifest-contribution/repair" (Authorized(SystemAdmin, System))
             endpoint "POST" "/approval/policy/create" (Authorized(ApprovalPolicyManage, Repository))
             endpoint "POST" "/approval/policy/list" (Authorized(ApprovalPolicyManage, Repository))
             endpoint "POST" "/approval/policy/show" (Authorized(ApprovalPolicyManage, Repository))
@@ -123,6 +125,9 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/branch/getCommits" Authenticated
             endpoint "POST" "/branch/getDiffsForReferenceType" Authenticated
             endpoint "POST" "/branch/getEvents" Authenticated
+            endpoint "POST" "/branch/getReferenceMaterializationBoundary" (Authorized(BranchRead, Branch))
+            endpoint "POST" "/branch/resolveReferenceEventBoundary" (Authorized(BranchRead, Branch))
+            endpoint "POST" "/branch/replayReferenceEvents" (Authorized(BranchRead, Branch))
             endpoint "POST" "/branch/getExternals" Authenticated
             endpoint "POST" "/branch/getParentBranch" Authenticated
             endpoint "POST" "/branch/getPromotions" Authenticated
@@ -309,6 +314,8 @@ module EndpointAuthorizationManifest =
                 "/work/create"
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
+            endpoint "POST" "/work/description/set" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/description/clear" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/add-summary" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/get" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/work/link/artifact" (Authorized(RepositoryWrite, Repository))
@@ -318,6 +325,8 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/work/attachments/list" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/work/attachments/show" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/work/attachments/download" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/attachments/delete" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/attachments/undelete" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/links/remove/artifact" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/links/remove/artifact-type" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/links/remove/promotion-set" (Authorized(RepositoryWrite, Repository))

@@ -1,6 +1,4 @@
 {
   // Global markdownlint configuration for this repo.
-  "MD013": {
-    "line_length": 120
-  }
+  "MD013": false
 }

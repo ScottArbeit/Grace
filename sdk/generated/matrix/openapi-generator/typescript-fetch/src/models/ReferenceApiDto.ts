@@ -32,79 +32,79 @@ export interface ReferenceApiDto {
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    _class?: string;
+    _class: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    referenceId?: string;
+    referenceId: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    ownerId?: string;
+    ownerId: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    organizationId?: string;
+    organizationId: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    repositoryId?: string;
+    repositoryId: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    branchId?: string;
+    branchId: string;
     /**
      * DirectoryVersionId represented by the current server DTO field name.
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    directoryId?: string;
+    directoryId: string;
     /**
-     * Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    sha256Hash?: string;
+    sha256Hash: string;
     /**
-     * Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    blake3Hash?: string;
+    blake3Hash: string;
     /**
      * 
      * @type {ReferenceType}
      * @memberof ReferenceApiDto
      */
-    referenceType?: ReferenceType;
+    referenceType: ReferenceType;
     /**
      * 
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    referenceText?: string;
+    referenceText: string;
     /**
      * 
      * @type {Array<string>}
      * @memberof ReferenceApiDto
      */
-    links?: Array<string>;
+    links: Array<string>;
     /**
      * 
      * @type {Date}
      * @memberof ReferenceApiDto
      */
-    createdAt?: Date;
+    createdAt: Date;
     /**
      * 
      * @type {Date}
@@ -122,7 +122,7 @@ export interface ReferenceApiDto {
      * @type {string}
      * @memberof ReferenceApiDto
      */
-    deleteReason?: string;
+    deleteReason: string;
 }
 
 
@@ -131,6 +131,20 @@ export interface ReferenceApiDto {
  * Check if a given object implements the ReferenceApiDto interface.
  */
 export function instanceOfReferenceApiDto(value: object): value is ReferenceApiDto {
+    if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
+    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
+    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
+    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
+    if (!('branchId' in value) || value['branchId'] === undefined) return false;
+    if (!('directoryId' in value) || value['directoryId'] === undefined) return false;
+    if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
+    if (!('referenceType' in value) || value['referenceType'] === undefined) return false;
+    if (!('referenceText' in value) || value['referenceText'] === undefined) return false;
+    if (!('links' in value) || value['links'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
+    if (!('deleteReason' in value) || value['deleteReason'] === undefined) return false;
     return true;
 }
 
@@ -144,22 +158,22 @@ export function ReferenceApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boo
     }
     return {
         
-        '_class': json['Class'] == null ? undefined : json['Class'],
-        'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
-        'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
-        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
-        'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
-        'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
-        'directoryId': json['DirectoryId'] == null ? undefined : json['DirectoryId'],
-        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
-        'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
-        'referenceText': json['ReferenceText'] == null ? undefined : json['ReferenceText'],
-        'links': json['Links'] == null ? undefined : json['Links'],
-        'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
+        '_class': json['Class'],
+        'referenceId': json['ReferenceId'],
+        'ownerId': json['OwnerId'],
+        'organizationId': json['OrganizationId'],
+        'repositoryId': json['RepositoryId'],
+        'branchId': json['BranchId'],
+        'directoryId': json['DirectoryId'],
+        'sha256Hash': json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'],
+        'referenceType': ReferenceTypeFromJSON(json['ReferenceType']),
+        'referenceText': json['ReferenceText'],
+        'links': json['Links'],
+        'createdAt': (new Date(json['CreatedAt'])),
         'updatedAt': json['UpdatedAt'] == null ? undefined : (new Date(json['UpdatedAt'])),
         'deletedAt': json['DeletedAt'] == null ? undefined : (new Date(json['DeletedAt'])),
-        'deleteReason': json['DeleteReason'] == null ? undefined : json['DeleteReason'],
+        'deleteReason': json['DeleteReason'],
     };
 }
 
@@ -186,7 +200,7 @@ export function ReferenceApiDtoToJSONTyped(value?: ReferenceApiDto | null, ignor
         'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
         'ReferenceText': value['referenceText'],
         'Links': value['links'],
-        'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'CreatedAt': value['createdAt'].toISOString(),
         'UpdatedAt': value['updatedAt'] == null ? value['updatedAt'] : value['updatedAt'].toISOString(),
         'DeletedAt': value['deletedAt'] == null ? value['deletedAt'] : value['deletedAt'].toISOString(),
         'DeleteReason': value['deleteReason'],

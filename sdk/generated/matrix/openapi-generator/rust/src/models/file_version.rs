@@ -13,40 +13,40 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FileVersion {
-    #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
-    pub class: Option<String>,
-    #[serde(rename = "RelativePath", skip_serializing_if = "Option::is_none")]
-    pub relative_path: Option<String>,
+    #[serde(rename = "Class")]
+    pub class: String,
+    #[serde(rename = "RelativePath")]
+    pub relative_path: String,
     /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
-    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
-    pub sha256_hash: Option<String>,
-    /// Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
-    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
-    pub blake3_hash: Option<String>,
-    #[serde(rename = "IsBinary", skip_serializing_if = "Option::is_none")]
-    pub is_binary: Option<bool>,
-    #[serde(rename = "Size", skip_serializing_if = "Option::is_none")]
-    pub size: Option<i64>,
-    #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    #[serde(rename = "BlobUri", skip_serializing_if = "Option::is_none")]
-    pub blob_uri: Option<String>,
-    #[serde(rename = "ContentReference", skip_serializing_if = "Option::is_none")]
-    pub content_reference: Option<Box<models::FileContentReference>>,
+    #[serde(rename = "Sha256Hash")]
+    pub sha256_hash: String,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
+    #[serde(rename = "IsBinary")]
+    pub is_binary: bool,
+    #[serde(rename = "Size")]
+    pub size: i64,
+    #[serde(rename = "CreatedAt")]
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(rename = "BlobUri")]
+    pub blob_uri: String,
+    #[serde(rename = "ContentReference")]
+    pub content_reference: Box<models::FileContentReference>,
 }
 
 impl FileVersion {
-    pub fn new() -> FileVersion {
+    pub fn new(class: String, relative_path: String, sha256_hash: String, blake3_hash: String, is_binary: bool, size: i64, created_at: chrono::DateTime<chrono::FixedOffset>, blob_uri: String, content_reference: models::FileContentReference) -> FileVersion {
         FileVersion {
-            class: None,
-            relative_path: None,
-            sha256_hash: None,
-            blake3_hash: None,
-            is_binary: None,
-            size: None,
-            created_at: None,
-            blob_uri: None,
-            content_reference: None,
+            class,
+            relative_path,
+            sha256_hash,
+            blake3_hash,
+            is_binary,
+            size,
+            created_at,
+            blob_uri,
+            content_reference: Box::new(content_reference),
         }
     }
 }

@@ -168,11 +168,11 @@ type CommonTypesTests() =
     /// Verifies that file version create defaults content reference to whole file content.
     [<Test>]
     member _.FileVersionCreateDefaultsContentReferenceToWholeFileContent() =
-        let fileVersion = FileVersion.Create "src/app.fs" "abc123" "https://example.test/blob" false 123L
+        let fileVersion = FileVersion.CreateWithHashes "src/app.fs" "abc123" "def456" "https://example.test/blob" false 123L
 
         Assert.That(fileVersion.ContentReference, Is.EqualTo(FileContentReference.WholeFileContent))
         Assert.That(fileVersion.Sha256Hash, Is.EqualTo(Sha256Hash "abc123"))
-        Assert.That(fileVersion.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
+        Assert.That(fileVersion.Blake3Hash, Is.EqualTo(Blake3Hash "def456"))
 
     /// Verifies that file version create populates both hash fields.
     [<Test>]

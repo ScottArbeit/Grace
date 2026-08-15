@@ -7,6 +7,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.ManifestContributionAccounting
 open Grace.Types.UploadSession
 open Grace.Types.Common
 open NUnit.Framework
@@ -164,7 +165,7 @@ type StorageWholeFileCompatibility() =
             let relativePath = $"{relativeDirectory}/small.bin"
             let payload = Encoding.UTF8.GetBytes($"Grace whole-file missing BLAKE3 {Guid.NewGuid():N}")
             let sha256Hash = computeSha256Hash payload
-            let fileVersion = FileVersion.Create relativePath sha256Hash String.Empty true (int64 payload.Length)
+            let fileVersion = FileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) String.Empty true (int64 payload.Length)
 
             let! uploadResponse = Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId fileVersion))
             let! uploadContent = uploadResponse.Content.ReadAsStringAsync()
@@ -1697,6 +1698,7 @@ type StorageManifestUploadSessionRoutes() =
     [<Test>]
     member _.RepositoriesInSameStoragePoolReuseDurableContentBlockPlacementAcrossManifests() =
         task {
+            let! state = AspireTestHost.startAsync testUserId
             let firstRepositoryId = repositoryIds[0]
             let secondRepositoryId = repositoryIds[1]
             let firstCorrelationId = generateCorrelationId ()
@@ -1753,6 +1755,30 @@ type StorageManifestUploadSessionRoutes() =
 
             Assert.That(firstFinalize.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some firstManifest.ManifestAddress))
             Assert.That(firstFinalize.ReturnValue.Session.StoragePoolId, Is.EqualTo(sharedStoragePoolId))
+
+            let firstManifestFileVersion = manifestBackedFileVersion (RelativePath firstScope) payload firstManifest
+            let firstRoot = BranchServerTestHelpers.createRootDirectoryVersion firstRepositoryId firstManifestFileVersion
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync firstRepositoryId [ firstRoot ]
+
+            let! firstParentBranch = BranchServerTestHelpers.getBranchAsync firstRepositoryId repositoryDefaultBranchIds[0]
+            let! firstBranch = BranchServerTestHelpers.createBranchAsync firstRepositoryId firstParentBranch $"CrossRepositoryReuse{Guid.NewGuid():N}"
+
+            let! firstSaveResponse =
+                BranchServerTestHelpers.saveReferenceResponseAsync firstRepositoryId firstBranch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+
+            let! firstSaveBody = firstSaveResponse.Content.ReadAsStringAsync()
+            Assert.That(firstSaveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstSaveBody)
+
+            do!
+                AspireTestHost.waitForExactRelationshipAsync
+                    state
+                    (ExactRelationship.DirectoryVersionManifest
+                        {
+                            RepositoryId = Guid.Parse firstRepositoryId
+                            StoragePoolId = firstManifest.StoragePoolId
+                            ManifestAddress = firstManifest.ManifestAddress
+                            DirectoryVersionId = firstRoot.DirectoryVersionId
+                        })
 
             let! discovery = discoverContentBlocks secondRepositoryId block
             let candidates = discovery.ReturnValue.CandidateContentBlocks
@@ -1914,6 +1940,7 @@ type StorageManifestUploadSessionRoutes() =
     [<Test>]
     member _.LargeBinarySaveLifecycleRequiresFinalizedManifestAndDownloadsAfterRouteChange() =
         task {
+            let! state = AspireTestHost.startAsync testUserId
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let correlationId = generateCorrelationId ()
@@ -2033,6 +2060,17 @@ type StorageManifestUploadSessionRoutes() =
             let! saveBody = saveResponse.Content.ReadAsStringAsync()
             Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
 
+            do!
+                AspireTestHost.waitForExactRelationshipAsync
+                    state
+                    (ExactRelationship.DirectoryVersionManifest
+                        {
+                            RepositoryId = Guid.Parse repositoryId
+                            StoragePoolId = manifest.StoragePoolId
+                            ManifestAddress = manifest.ManifestAddress
+                            DirectoryVersionId = child.DirectoryVersionId
+                        })
+
             let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
             Assert.That(savedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
             Assert.That(savedBranch.LatestSave.Sha256Hash, Is.EqualTo(root.Sha256Hash))
@@ -2139,9 +2177,9 @@ type StorageManifestUploadSessionRoutes() =
             )
         }
 
-    /// Verifies the confirm content block upload rejects a racing confirm after finalization and retains final shared CAS.
+    /// Verifies the confirm content block upload deletes final CAS when actor rejects after confirm race scenario.
     [<Test>]
-    member _.ConfirmContentBlockUploadRejectsRacingConfirmAndRetainsFinalSharedCas() =
+    member _.ConfirmContentBlockUploadDeletesFinalCasWhenActorRejectsAfterConfirmRace() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -2261,13 +2299,16 @@ type StorageManifestUploadSessionRoutes() =
             let! racingBody = racingResponse.Content.ReadAsStringAsync()
             Assert.That(racingResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), racingBody)
 
-            let! finalBlockExists = finalContentBlockExistsByAddress racingUploadUri racingBlock.Address
+            Assert.That(
+                (deserialize<GraceError> racingBody).Error,
+                Is.AnyOf(
+                    "UploadSession must be active before confirming a ContentBlock upload; current state is RetentionPending.",
+                    "UploadSession is waiting for cleanup and cannot be changed by ConfirmBlockUploaded."
+                )
+            )
 
-            match (deserialize<GraceError> racingBody).Error with
-            | "UploadSession is waiting for cleanup and cannot be changed by ConfirmBlockUploaded." -> Assert.That(finalBlockExists, Is.True)
-            | "UploadSession must be active before confirming a ContentBlock upload; current state is RetentionPending." ->
-                Assert.That(finalBlockExists, Is.False)
-            | error -> Assert.Fail($"Unexpected racing confirm error: {error}")
+            let! finalBlockExists = finalContentBlockExistsByAddress racingUploadUri racingBlock.Address
+            Assert.That(finalBlockExists, Is.False)
         }
 
     /// Verifies the confirm content block upload rejects terminal session before final CAS materialization scenario.

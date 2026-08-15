@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "1.0",
+  "sourceGitSha": "60da9740236e36bfab770a1f246f0d993740b7fc",
+  "sourceGitBranch": "agent/752-mca-exact-sha-evidence",
+  "sourceDirty": false,
+  "command": "pwsh ./scripts/measure-manifest-contribution-accounting.ps1 -OutputDirectory './artifacts/manifest-accounting-measurements'",
+  "outputDirectory": "C:\\Source\\Grace-gh-752-mca-exact-sha-evidence\\artifacts\\manifest-accounting-measurements",
+  "startedAtUtc": "2026-08-01T18:50:46.6150424+00:00",
+  "finishedAtUtc": "2026-08-01T18:56:12.5893880+00:00",
+  "scenarioIds": [
+    "baseline",
+    "hot-manifest",
+    "highly-shared",
+    "duplicate-backlog",
+    "redis-restart",
+    "server-restart",
+    "repair",
+    "dead-letter"
+  ],
+  "dotnetVersion": "10.0.302",
+  "dockerVersion": "29.6.2",
+  "machine": "WORKSTATION",
+  "os": "Microsoft Windows NT 10.0.28120.0",
+  "cpuCount": 24,
+  "memoryBytes": 68339376128,
+  "rawArtifactHashes": {
+    "run.ndjson": "22fb89da68cbf586e728888a426e8dd45fe934c83667d9107b28d5ef9016a693",
+    "samples.ndjson": "024d7ec670cd4e9e43c1ffbf32f9f0b65dd6770393312eb1c577e383364942f3",
+    "assertions.ndjson": "c908c2ae25d29d75a1edc0c1fd78dec4d384f4c01307f7f1c156101bab78c2d8",
+    "summaries.ndjson": "5cf1d79e29fda6585bc01567940f43cc3c0fe02d6288e567b41a0df83cadd5a8",
+    "artifact-hashes.json": "b996715d70c42d619d471d83c9161ab94ae06d9204fdf76520e3ca97ab331a88"
+  },
+  "localClaims": [
+    "foreground call count and local latency distribution",
+    "relationship writes and convergence outcomes",
+    "worker throughput and backlog drain time",
+    "serialized actor-document sizes exposed by the fixture",
+    "direct exact-relationship and measurement-query Cosmos request charge when exposed",
+    "local operation concentration",
+    "Redis reconnect observations",
+    "ContentBlock sharing results",
+    "emulator broker delivery and dead-letter behavior",
+    "deterministic correctness assertions"
+  ],
+  "azureOnlyUnknowns": [
+    "complete Orleans actor-persistence request charge",
+    "Azure partition heat, throttling, failover, and availability",
+    "cross-region behavior",
+    "production SLO thresholds",
+    "HA/DR guarantees",
+    "long-handler lock renewal outside the deterministic fixture"
+  ]
+}

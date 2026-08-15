@@ -94,6 +94,73 @@ type ReferenceDtoTests() =
         let roundTripWithoutCreator = deserialize<ReferenceDto> withoutCreatorJson
         Assert.That(roundTripWithoutCreator.CreatedBy, Is.EqualTo(Option.None))
 
+    /// Verifies that current-branch notification JSON carries lookup fields without transport details.
+    [<Test>]
+    member _.CurrentBranchReferenceNotificationJsonCarriesLookupFieldsOnly() =
+        let payload =
+            { CurrentBranchReferenceNotification.Default with
+                ReferenceId = referenceId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                BranchId = branchId
+                BranchName = BranchName "feature/current"
+                DirectoryId = directoryId
+                Sha256Hash = rootSha256Hash
+                Blake3Hash = rootBlake3Hash
+                ReferenceType = ReferenceType.Save
+                ReferenceText = ReferenceText "watch save"
+                CorrelationId = "corr-current-branch"
+            }
+
+        let json = serialize payload
+        let roundTrip = deserialize<CurrentBranchReferenceNotification> json
+
+        Assert.Multiple(
+            System.Action (fun () ->
+                Assert.That(roundTrip.ReferenceId, Is.EqualTo(referenceId))
+                Assert.That(roundTrip.RepositoryId, Is.EqualTo(repositoryId))
+                Assert.That(roundTrip.BranchId, Is.EqualTo(branchId))
+                Assert.That(roundTrip.BranchName, Is.EqualTo(BranchName "feature/current"))
+                Assert.That(roundTrip.DirectoryId, Is.EqualTo(directoryId))
+                Assert.That(roundTrip.ReferenceType, Is.EqualTo(ReferenceType.Save))
+                Assert.That(roundTrip.CorrelationId, Is.EqualTo("corr-current-branch"))
+                Assert.That(json, Does.Not.Contain("Sas"))
+                Assert.That(json, Does.Not.Contain("Download"))
+                Assert.That(json, Does.Not.Contain("BlobUri")))
+        )
+
+    /// Verifies that current-branch notifications stay limited to Reference kinds Watch can materialize later.
+    [<Test>]
+    member _.CurrentBranchReferenceNotificationEligibilityExcludesPromotionAndMetadataReferences() =
+        let eligible =
+            [|
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+            |]
+
+        let ineligible =
+            [|
+                ReferenceType.Promotion
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            |]
+
+        Assert.Multiple(
+            System.Action (fun () ->
+                for referenceType in eligible do
+                    Assert.That(CurrentBranchReferenceNotification.IsEligibleReferenceType referenceType, Is.True, $"Expected {referenceType} to be eligible.")
+
+                for referenceType in ineligible do
+                    Assert.That(
+                        CurrentBranchReferenceNotification.IsEligibleReferenceType referenceType,
+                        Is.False,
+                        $"Expected {referenceType} to be ineligible."
+                    ))
+        )
+
     /// Verifies that update events do not overwrite created by.
     [<Test>]
     member _.UpdateEventsDoNotOverwriteCreatedBy() =

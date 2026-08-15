@@ -1,143 +1,134 @@
-
 # Grace Workflow
 
-Load this reference for non-trivial planning, issue orchestration, implementation, review, PR, or cleanup work.
+This reference is a Grace-specific router. It does not duplicate the portable development process or the complete
+repository workflow.
 
-## Current Source Of Truth
+## Current Sources Of Truth
 
-- Root instructions: `AGENTS.md`
-- Code instructions: `src/AGENTS.md`
-- Process details: `docs/Development process.md`
-- Contributor docs: `CONTRIBUTING.md`
+Use, in order:
 
-Re-read these files during the current session before relying on older memory or this summary.
+1. current owner request and decisions;
+2. root and nearest `AGENTS.md`;
+3. `docs/Development process.md`;
+4. installed `dev-process` skill, including `QUALITY-CONTRACTS.md`, `CODE_REVIEW.md`, and `TEMPLATES.md`;
+5. the linked issue, pull request, and canonical specification;
+6. current source, tests, contracts, generated artifacts, CI, and GitHub state.
 
-## Generic Orchestration And Grace Overlay
-
-Load the installed `dev-process` skill for generic GitHub development orchestration: executable issue contracts,
-worktree isolation, worker boundaries, current-head review evidence, generic stabilization, merge readiness, and cleanup.
-This reference contains only Grace-specific deltas. `AGENTS.md` and `docs/Development process.md` remain authoritative for
-Grace topology, worker status paths, bounded waits, validation, review guards, deferral, and completion rules.
+`dev-process` owns quality contracts, capability budgets, algorithm readiness, tracer selection, agent topology, bounded
+R1/R2 review, review recovery, and owner stop conditions. This file records only Grace repository mechanics and useful
+routing reminders.
 
 ## Planning Versus Tracked Work
 
-- When the user says `Plan <work item>`, plan in chat and stop. Do not create GitHub issues unless asked.
-- When asked to create issues, use the Grace agent task shape and stop before implementation unless asked to implement.
-- For tracked multi-step work, create an epic parent issue, one linked sub-issue per implementation step, native GitHub
-  parent relationships, a DAG in the parent issue, and an epic checklist that is updated as sub-issues complete. Use the
-  concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when creating the native parent/child
-  relationships.
-- For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. The slice should
-  prove one narrow user-visible behavior through the closest stable public boundary, crossing the main contract,
-  runtime, persistence, validation, and documentation surfaces that later slices are likely to reuse. Use the result to
-  refine child issues, owned paths, validation profiles, and parallelization boundaries.
-- When creating an epic plus child issues from PowerShell, write each issue body to a separate temporary Markdown file
-  with `Set-Content` or equivalent small commands, then call `gh issue create --body-file` for each issue. Do not build
-  one huge inline script containing all issue bodies. After the child issue numbers exist, patch the epic body with the
-  real numbers, then use GraphQL `addSubIssue` for the native parent relationships.
-- When implementing an epic, always use an explicit `epic-integration-branch`. Create
-  `epic/<parent-issue>-<short-slug>` from `origin/main`, route sub-issue pull requests to that branch, and use the
-  final epic-to-`main` pull request as the production release candidate. Do not use direct-to-`main` epic slices.
-- Before assigning a sub-issue, require the minimum detail gate:
-  - invariant tuple
-  - forbidden implementation shapes
-  - positive, negative, regression, and boundary tests
-  - high-risk adversarial examples
-  - selected risk-surface traps
-  - explicit N/A waivers with reasons
-- Write the minimum detail gate as review-prevention guidance. Predict likely Codex Code Review Bot findings, such as
-  weak tests, stale identity assumptions, contract drift, auth or materialization ordering mistakes, async gaps,
-  stale generated artifacts, or validation gaps, using the existing issue fields instead of adding more ceremony.
+- Planning-only requests stay in chat or the canonical specification.
+- Create GitHub issues, branches, worktrees, or pull requests only when the user requests tracked work or implementation.
+- Use GitHub issues and pull requests as the durable implementation coordination surfaces.
+- Do not create a parallel durable task ledger.
+- For multi-step work, use an epic plus linked child issues only after `dev-process` has selected the earliest
+  value-bearing tracer and proven the prerequisites.
+- Permit at most two production PRs before the tracer, and prefer zero or one.
+- Do not pre-create a broad horizontal issue forest that delays user-observable value.
 
-## Issue-Owned Implementation
+## Product V1 And Issue Readiness
 
-For non-trivial tracked work:
+Grace defaults to Product V1 unless the tracked work explicitly selects another profile.
 
-1. Confirm or create the GitHub issue.
-1. Declare objective, context, owned paths, forbidden paths, risk surfaces, validation, docs impact, and definition of
-   done.
-1. Claim the issue with a comment, assign it to the authenticated GitHub user, and create an issue-owned
-   branch/worktree from the selected base.
-1. Inspect `git status --short --branch` before editing.
-1. Work in vertical slices through the closest stable public boundary.
-1. Run formatting or freshness checks first, then exactly one final build/test gate.
-1. Commit after each completed slice.
-1. Open a normal ready-for-review PR. Do not open draft PRs unless the user asks for a draft.
+Use the Product V1 capability budget:
 
-When a PR targets the default branch and should close an issue, reference the issue with one of GitHub's supported
-closing keywords: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, or `resolved`. For
-epic-branch PRs, use non-closing wording such as `Related to #123` or `Part of #249`, then close the sub-issue manually
-after merge.
+- one user-visible outcome;
+- one primary invariant family;
+- one supported environment and topology;
+- one primary authority at each decision point;
+- at most one new durable partial-state lifecycle;
+- explicit exclusion of optional automation and generalized recovery.
 
-For parallel work, separate product/DAG independence from merge/write-set independence. Parallelize only when the
-expected write sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared
-project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
-preparatory compile-item or file-scaffold slice before later branches edit separate files.
+Use the compact issue template and Issue Readiness gate in `docs/Development process.md`. Do not paste every possible
+risk surface into every issue.
 
-For standalone non-epic issues, create issue branches from `origin/main` and target pull requests to `main`. For epics,
-create `epic/<parent-issue>-<short-slug>` from `origin/main`, create sub-issue branches from the current
-`origin/epic/...`, target sub-issue PRs to the epic branch, and use the final epic-to-`main` PR as the production
-release candidate. Keep the epic branch refreshed from `origin/main`; ensure CI validates PRs targeting `epic/**`, or
-record the CI gap and required local validation before assigning workers.
+For stateful, destructive, filesystem, retry, recovery, concurrent, background, or multi-authority work, require the
+`dev-process` Algorithm Readiness Gate and the `prototype` algorithm-witness branch before production coding.
 
-## Orchestration And Review
+## Branch And Worktree Mechanics
 
-When acting as the main implementation orchestrator, follow the repo policy:
+For a standalone issue:
 
-- Delegate coding and fixing tasks to worker subagents when the available tools and user authorization allow
-  delegation.
-- Do not replace the worker by locally implementing or validating code fixes from the orchestrator role.
-- Include a status-reporting protocol in worker prompts. Ask the worker to maintain a temp status file outside the repo,
-  for example `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with `phase`, `lastUpdate`, `changedFiles`,
-  `validation`, `blockers`, and `nextStep`. Require updates before edits, before and after long validation or generation
-  commands, before commit/push/handoff steps, and before the final response. Also ask for a short chat heartbeat
-  roughly every five minutes while work continues.
-- Require a lightweight implementation preflight before coding: acceptance criteria to prove, contract surfaces to
-  update or waive, existing tests to fail or extend, adversarial cases, global options or modes, validation, touched
-  paths, and any issue-owned path expansion needed before editing.
-- Require a bot-prevention self-review before worker handoff. The worker should inspect the actual diff for likely
-  Codex Code Review Bot findings, fix anything found before push or handoff, and report first-pass review readiness
-  plus residual risks.
-- Ask worker subagents to finish with a handoff as soon as their assigned implementation or fix is validated and pushed.
-  By default, the orchestrator owns GitHub issue updates, PR body updates, review-comment replies, conversation
-  resolution, labels, checklists, merge state, and cleanup records. The orchestrator can start the next independent
-  worker from a sufficient handoff before finishing wrap-up for the previous worker when dependencies and write sets
-  make that safe.
-- Use Codex Code Review Bot as the blocking PR review gate. Do not spawn local review-only subagents by default. For
-  high-risk slices, the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that
-  is cheaper than a likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
-- Monitor the PR body reactions: 👀 means the bot saw the latest commit and is reviewing; 👍🏻 means it found no issues.
-- Inspect both top-level PR comments and inline comments attached to the bot pull request review; `gh pr view --json
-  comments` alone can miss review-thread findings.
-- If the bot writes findings in a top-level PR comment or inline pull-request-review comment, route the fix to a fresh
-  worker subagent. After the worker hands off, the orchestrator replies to the bot comment with the fix commit and
-  validation evidence, includes the prevention line from `docs/Development process.md`, resolves the conversation,
-  updates `Review Status`, and waits for the next bot review.
-- When stabilization reveals a new product construct, persisted shape, semantic role, or business rule, stop coding.
-  Resume only from recorded maintainer approval. When the user invokes `#unblock`, use its approval packet to capture
-  that approval without turning routine implementation choices into maintainer questions.
+1. fetch current `origin/main`;
+2. create `agent/<issue-number>-<slug>` from `origin/main`;
+3. create or use an issue-owned worktree;
+4. target the pull request to `main`;
+5. use `Closes #<issue>` when merge should close the issue.
 
-If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
-rest of the Grace workflow as far as possible.
+For an epic:
+
+1. create `epic/<parent-issue>-<slug>` from current `origin/main`;
+2. create child issue branches from the current epic branch;
+3. target child pull requests to the epic branch;
+4. use `Related to #<child>` or `Part of #<parent>` for non-default-branch PRs;
+5. keep the epic branch refreshed from `origin/main`;
+6. use the final epic-to-`main` PR as the release candidate.
+
+Parallelize only when product outcomes, authority models, write sets, and integration paths are independently safe.
+Serialize work that touches shared project files such as `*.fsproj`, `Startup.Server.fs`, shared fixtures, generated
+registries, or the same contract files.
+
+When an assigned worktree differs from the session root, use absolute paths under the assigned worktree for patches and
+verify git status in both locations after the first edit.
+
+## Factory Run Topology
+
+Freeze a Factory Run Charter before coding:
+
+- one short-lived controller for one issue or PR;
+- one active issue-owner implementation worker;
+- no nested agent spawning;
+- one read-only R1 discovery reviewer;
+- one read-only R2 closure reviewer only when R1 produced accepted repairs;
+- no process-rule changes inside the run.
+
+The controller may inspect source, diffs, logs, tests, and validation evidence. The issue owner implements and repairs.
+Do not start a fresh worker for each finding. Do not keep one root controller alive across an entire epic.
+
+Default to one active high-risk Grace epic or factory-calibration stream. Additional Tier 2 streams require explicit
+owner approval and independent authority and write-set proof.
+
+## Bounded Review
+
+Use `dev-process/CODE_REVIEW.md`.
+
+1. Push one coherent candidate.
+2. Run one R1 discovery review of the supported world and freeze its finite ledger.
+3. If R1 passes and final-head GitHub `Validate` passes, no R2 is required.
+4. When R1 has accepted findings, route one consolidated repair pass to the same issue owner.
+5. Run one R2 closure review of accepted ledger items, repair hunks, direct repair regressions, final-head proof, and
+   scope preservation.
+6. Do not reopen untouched portions of the original diff during R2.
+7. There is no automatic R3. If R2 incidentally exposes a supported-world merge blocker outside the frozen ledger and
+   direct repair-regression scope, record one `DISCOVERY ESCAPE` and stop. Do not ignore it or keep searching. A new
+   material invariant, authority boundary, state machine, product semantic, or scope expansion also requires a new
+   owner-approved charter, split, or supersession.
+
+Use a fresh, read-only review context that receives the complete run packet instead of inheriting hidden implementation
+conversation. A repository or client may choose its strongest suitable review model and isolation controls, but durable
+workflow guidance must not depend on a particular model name or client setting.
 
 ## Validation Profiles
 
-Use the profile from `docs/Development process.md`:
+Use the profile selected in `docs/Development process.md`:
 
-| Profile | Use For |
-| ------- | ------- |
-| `docs-only` | Markdown, HTML, static guidance, workflow docs |
-| `domain-contract` | Types, DTOs, validators, serializers, hashes, shared helpers |
-| `cli-command` | Grace CLI command behavior |
-| `server-api` | HTTP handlers, server services, auth, persistence boundaries, API contracts |
+| Profile | Primary surface |
+| --- | --- |
+| `docs-only` | Markdown, HTML, static guidance, and workflow docs |
+| `domain-contract` | Types, DTOs, validators, serializers, hashes, and shared helpers |
+| `cli-command` | Grace CLI behavior |
+| `server-api` | HTTP handlers, server services, auth, persistence boundaries, and API contracts |
 | `actor-workflow` | Orleans actor behavior and durable state transitions |
-| `sdk-client` | SDK surface or client contract changes |
-| `deployment-runtime` | Aspire, emulators, Docker, Azure resources, scripts, runtime config |
+| `sdk-client` | SDK and client contracts |
+| `deployment-runtime` | Aspire, emulators, Docker, Azure resources, scripts, and runtime configuration |
 
-Focused proof comes first. The broad commands below are optional local escalation tools; GitHub `Validate` is the
-authoritative broad gate for the current pull-request revision.
+Focused proof comes first. GitHub `Validate` is the required broad gate for the final PR head. Use local Fast as an
+explicit broad preflight and Full for local integration reproduction or diagnosis, not as routine duplicate work.
 
-Commands:
+Common commands:
 
 ```powershell
 pwsh ./scripts/bootstrap.ps1
@@ -147,39 +138,44 @@ npx --yes markdownlint-cli2 "**/*.md"
 git diff --check
 ```
 
-Use Fast for a concrete optional broad preflight, such as unavailable CI or unusually broad compile fan-out. Use Full
-for local integration reproduction or diagnosis, not merely because an integration-related path was touched. Avoid
-routine local broad validation immediately followed by required CI. Focused project build/test, formatting, freshness
-checks, and `git diff --check` are required before commit; build the focused project before `--no-build` tests.
+Format touched F# files before build and test proof. Build the focused project before a `--no-build` test.
 
-Before the Grace completion review gate, update the branch against its required base: current `origin/main` for
-standalone non-epic issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration
-branch, and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that
-no unexpected deletions are present, and rerun focused proof when relevant changes affect the slice. Push the refreshed
-head, then require current GitHub `Validate` and Codex Code Review Bot state. A bot reaction or CI result on a stale
-revision does not satisfy completion.
+## Pull Request Evidence
+
+Keep the PR compact:
+
+- linked issue and user-visible outcome;
+- supported world, quality contract, and explicit non-goals;
+- primary invariant and algorithm-witness result;
+- changed paths and contract propagation;
+- focused proof and final-head CI;
+- R1 verdict and frozen ledger;
+- repair commits and R2 closure verdict when applicable;
+- residual risks, skipped proof, and recovery notes.
+
+Do not append an agent transcript or one status comment per internal action.
 
 ## Merge Cleanup
 
-When the user says a PR is merged:
+After merge or intentional closure:
 
-1. Verify the destination branch contains the change.
-1. Confirm no uncommitted or unpushed task work is stranded.
-1. Remove task worktrees that are no longer needed.
-1. Delete the issue branch locally and remotely when appropriate.
-1. Run `git fetch --prune`.
-1. Run `git pull --ff-only` in the main repo.
-1. Update the task record with final status and follow-ups.
+1. verify the destination contains the change;
+2. confirm no uncommitted or unpushed task work is stranded;
+3. remove the task worktree;
+4. delete local and remote issue branches when appropriate;
+5. run `git fetch --prune`;
+6. update the local destination branch with `git pull --ff-only`;
+7. update the issue and epic checklist;
+8. record residual follow-ups that are real and explicitly out of scope.
 
-## Plan Quality Before Assignment
+## Owner Stops
 
-Before assigning a product-derived issue, check that the issue records:
+Stop and use `dev-process` when:
 
-- product decisions accepted, recommended, deferred, and waived
-- supported, rejected, and informational inputs
-- contract propagation across DTOs, routes, CLI, SDK, OpenAPI/generated artifacts, projections, docs, and tests
-- stale-authority/revalidation points for runtime, storage, materialization, Watch, auth, and eventing work
-- negative proof for hidden, missing, malformed, stale, duplicate, cross-scope, and partial-failure cases
-
-When a similar recent PR required three or more review cycles, mine that PR and convert its root-cause lanes into issue
-acceptance criteria before assignment.
+- a second primary invariant, durable state machine, or authority boundary appears;
+- a new product semantic or public contract is needed;
+- the algorithm witness is contradicted;
+- a third enabling PR would precede the tracer;
+- review is defining lifecycle, ordering, recovery, or product behavior;
+- process rules must change during the run;
+- the current PR should be simplified, split, or superseded.

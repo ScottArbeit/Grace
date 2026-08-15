@@ -14,6 +14,8 @@ module ContentBlockMetadataActor = Grace.Actors.ContentBlockMetadata
 
 module ContentBlockMetadataTypes = Grace.Types.ContentBlockMetadata
 
+module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
+
 /// Covers content Block Metadata Actor behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ContentBlockMetadataActorTests() =
@@ -121,10 +123,219 @@ type ContentBlockMetadataActorTests() =
 
     let setChurnState operationId churnState = ContentBlockMetadataCommand.SetCompactionChurnState { OperationId = operationId; ChurnState = churnState }
 
+    /// Builds a deterministic active-manifest-count delta command for every physical range in one ContentBlock.
+    let adjust operationId expectedVersion delta =
+        ContentBlockMetadataCommand.AdjustActiveManifestCount
+            {
+                OperationId = operationId
+                ExpectedMetadataVersion = expectedVersion
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                Delta = delta
+            }
+
     /// Applies all inputs to drive the server unit content Block Metadata Actor state transition under test.
     let applyAll events current =
         events
         |> List.fold (fun state event -> ContentBlockMetadataDto.UpdateDto event state) current
+
+    /// Verifies deterministic contribution deltas mutate authoritative ContentBlock counts and replay once.
+    [<Test>]
+    member _.ActiveManifestCountDeltaMutatesMetadataAndReplayDoesNotApplyTwice() =
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let command = adjust "workflow-range-1" 7L 1
+        let first = ContentBlockMetadataActor.decideCommand [] current command (metadata "corr-delta")
+
+        match first with
+        | Error error -> Assert.Fail($"Expected active-count delta to succeed, got {error.Error}.")
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(3))
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(8L))
+
+            let replayed = ContentBlockMetadataActor.decideCommand decision.Events (applyAll decision.Events current) command (metadata "corr-delta-replay")
+
+            match replayed with
+            | Error error -> Assert.Fail($"Expected active-count delta replay to succeed, got {error.Error}.")
+            | Ok replay ->
+                Assert.That(replay.WasIdempotentReplay, Is.True)
+                Assert.That(replay.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(3))
+
+            let replayAfterUnknownOutcome =
+                ContentBlockMetadataActor.decideCommand
+                    decision.Events
+                    (applyAll decision.Events current)
+                    (adjust "workflow-range-1" 8L 1)
+                    (metadata "corr-delta-unknown-outcome")
+
+            match replayAfterUnknownOutcome with
+            | Error error -> Assert.Fail($"Expected active-count delta unknown-outcome replay to succeed, got {error.Error}.")
+            | Ok replay ->
+                Assert.That(replay.WasIdempotentReplay, Is.True)
+                Assert.That(replay.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(3))
+
+    /// Verifies one ContentBlock contribution changes every authoritative physical range exactly once through replay and reversal.
+    [<Test>]
+    member _.ActiveManifestCountDeltaCoversEveryPhysicalRangeExactlyOnce() =
+        let firstRange = { activeRange with ActiveManifestCount = 1 }
+        let secondRange = { reclaimableRange with ActiveManifestCount = 1 }
+
+        let currentMetadata =
+            recordWithTotals
+                [| firstRange; secondRange |]
+                (firstRange.PhysicalLength
+                 + secondRange.PhysicalLength)
+                (firstRange.PhysicalLength
+                 + secondRange.PhysicalLength)
+                timestamp
+                7L
+
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let increment = adjust "workflow-all-ranges-increment" 7L 1
+
+        let incremented =
+            match ContentBlockMetadataActor.decideCommand [] current increment (metadata "corr-all-ranges-increment") with
+            | Ok decision -> decision
+            | Error error -> failwith $"Expected every-range increment to succeed, got {error.Error}."
+
+        Assert.That(incremented.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(2))
+        Assert.That(incremented.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(2))
+
+        let afterIncrement = applyAll incremented.Events current
+
+        let replayed =
+            match
+                ContentBlockMetadataActor.decideCommand
+                    incremented.Events
+                    afterIncrement
+                    (adjust "workflow-all-ranges-increment" 8L 1)
+                    (metadata "corr-all-ranges-replay")
+                with
+            | Ok decision -> decision
+            | Error error -> failwith $"Expected every-range replay to succeed, got {error.Error}."
+
+        Assert.That(replayed.WasIdempotentReplay, Is.True)
+
+        Assert.That(replayed.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(2))
+        Assert.That(replayed.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(2))
+
+        let decrement =
+            match
+                ContentBlockMetadataActor.decideCommand
+                    incremented.Events
+                    afterIncrement
+                    (adjust "workflow-all-ranges-decrement" 8L -1)
+                    (metadata "corr-all-ranges-decrement")
+                with
+            | Ok decision -> decision
+            | Error error -> failwith $"Expected every-range decrement to succeed, got {error.Error}."
+
+        Assert.That(decrement.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(decrement.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(1))
+
+    /// Verifies a later add after removal and Redis loss remains distinct and reactivates every physical range once.
+    [<Test>]
+    member _.CounterRevisionReactivatesEveryRangeAfterRemovalAndRedisLoss() =
+        let firstRange = { activeRange with ActiveManifestCount = 0 }
+        let secondRange = { reclaimableRange with ActiveManifestCount = 0 }
+
+        let currentMetadata =
+            recordWithTotals
+                [| firstRange; secondRange |]
+                (firstRange.PhysicalLength
+                 + secondRange.PhysicalLength)
+                0L
+                timestamp
+                7L
+
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let workflowOperationId = "stable-workflow"
+        let addV1OperationId = ManifestContributionWorkflowActor.contentBlockOperationId workflowOperationId 1L 0
+        let removeV2OperationId = ManifestContributionWorkflowActor.contentBlockOperationId workflowOperationId 2L 0
+        let addV3OperationId = ManifestContributionWorkflowActor.contentBlockOperationId workflowOperationId 3L 0
+
+        let addV1 =
+            ContentBlockMetadataActor.decideCommand [] current (adjust addV1OperationId 7L 1) (metadata "corr-add-v1")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-1 add to succeed, got {error.Error}.")
+
+        let afterAddV1 = applyAll addV1.Events current
+
+        let removeV2 =
+            ContentBlockMetadataActor.decideCommand addV1.Events afterAddV1 (adjust removeV2OperationId 8L -1) (metadata "corr-remove-v2")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-2 removal to succeed, got {error.Error}.")
+
+        let throughRemovalEvents = addV1.Events @ removeV2.Events
+        let afterRemoveV2 = applyAll removeV2.Events afterAddV1
+
+        let addV3AfterRedisLoss =
+            ContentBlockMetadataActor.decideCommand throughRemovalEvents afterRemoveV2 (adjust addV3OperationId 9L 1) (metadata "corr-add-v3")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-3 add after Redis loss to succeed, got {error.Error}.")
+
+        Assert.That(addV3AfterRedisLoss.WasIdempotentReplay, Is.False)
+
+        Assert.That(
+            addV3AfterRedisLoss.Metadata.Ranges
+            |> Array.forall (fun range -> range.ActiveManifestCount = 1),
+            Is.True
+        )
+
+        let allEvents = throughRemovalEvents @ addV3AfterRedisLoss.Events
+        let afterAddV3 = applyAll addV3AfterRedisLoss.Events afterRemoveV2
+
+        let replayedAddV3 =
+            ContentBlockMetadataActor.decideCommand allEvents afterAddV3 (adjust addV3OperationId 10L 1) (metadata "corr-add-v3-replay")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-3 replay to succeed, got {error.Error}.")
+
+        Assert.That(replayedAddV3.WasIdempotentReplay, Is.True)
+
+        Assert.That(
+            replayedAddV3.Metadata.Ranges
+            |> Array.forall (fun range -> range.ActiveManifestCount = 1),
+            Is.True
+        )
+
+    /// Verifies decrement deltas fail closed instead of making a reclaimable range negative.
+    [<Test>]
+    member _.ActiveManifestCountDeltaRejectsUnderflow() =
+        let currentMetadata = recordWithTotals [| reclaimableRange |] reclaimableRange.PhysicalLength 0L timestamp 4L
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let result = ContentBlockMetadataActor.decideCommand [] current (adjust "workflow-underflow" 4L -1) (metadata "corr-underflow")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected active-count underflow to reject.")
+        | Error error -> Assert.That(error.Error, Does.Contain("outside its valid range"))
+
+    /// Verifies a stale workflow delta cannot overwrite a newer ContentBlock metadata revision.
+    [<Test>]
+    member _.ActiveManifestCountDeltaRejectsStaleMetadataVersion() =
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let result = ContentBlockMetadataActor.decideCommand [] current (adjust "workflow-stale" 6L 1) (metadata "corr-stale-delta")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected stale active-count delta to reject.")
+        | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata active-count delta"))
+
+    /// Verifies operation reuse cannot replay a different delta payload.
+    [<Test>]
+    member _.ActiveManifestCountDeltaRejectsOperationReuseWithDifferentPayload() =
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let firstCommand = adjust "workflow-reused" 7L 1
+        let first = ContentBlockMetadataActor.decideCommand [] current firstCommand (metadata "corr-reused-first")
+
+        match first with
+        | Error error -> Assert.Fail($"Expected first active-count delta to succeed, got {error.Error}.")
+        | Ok decision ->
+            let afterFirst = applyAll decision.Events current
+            let differentPayload = adjust "workflow-reused" 8L -1
+            let replay = ContentBlockMetadataActor.decideCommand decision.Events afterFirst differentPayload (metadata "corr-reused-second")
+
+            match replay with
+            | Ok _ -> Assert.Fail("Expected operation reuse with a different active-count payload to reject.")
+            | Error error -> Assert.That(error.Error, Does.Contain("different active-count payload"))
 
     /// Verifies that create Whole Record Stamps Version And Reports Active Presence.
     [<Test>]

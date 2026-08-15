@@ -9,6 +9,68 @@ open System
 [<TestFixture>]
 [<NonParallelizable>]
 module CommandParsingTests =
+    /// Parses arguments after applying the selected platform output-value policy.
+    let private parseWithOutputPolicy isCaseInsensitive args =
+        GraceCommand.normalizeOutputArguments args isCaseInsensitive
+        |> GraceCommand.rootCommand.Parse
+
+    /// Verifies that direct lowercase verbose output selects the existing Verbose behavior.
+    [<Test>]
+    let ``direct lowercase verbose output selects Verbose behavior`` () =
+        let parseResult =
+            parseWithOutputPolicy
+                true
+                [|
+                    "branch"
+                    "get"
+                    "--output"
+                    "verbose"
+                |]
+
+        parseResult.Errors.Count |> should equal 0
+        parseResult |> Common.verbose |> should equal true
+
+    /// Verifies that unknown output values retain native canonical parser diagnostics.
+    [<Test>]
+    let ``unknown output value retains native parser error`` () =
+        let parseResult =
+            parseWithOutputPolicy
+                true
+                [|
+                    "branch"
+                    "get"
+                    "--output=Jsonish"
+                |]
+
+        parseResult.Errors.Count |> should equal 1
+
+        parseResult.Errors[0].Message
+        |> should contain "Jsonish"
+
+        parseResult.Errors[0].Message
+        |> should contain "Normal"
+
+        parseResult.Errors[0].Message
+        |> should contain "Verbose"
+
+    /// Verifies that case-sensitive policy still rejects non-canonical output casing.
+    [<Test>]
+    let ``case-sensitive output policy retains exact-case parser behavior`` () =
+        let parseResult =
+            parseWithOutputPolicy
+                false
+                [|
+                    "branch"
+                    "get"
+                    "--output"
+                    "verbose"
+                |]
+
+        parseResult.Errors.Count |> should equal 1
+
+        parseResult.Errors[0].Message
+        |> should contain "verbose"
+
     /// Runs the supplied action with environment variable applied.
     let private withEnvironmentVariable (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
@@ -259,6 +321,7 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client
@@ -431,6 +494,7 @@ module HelpDoesNotReadConfigTests =
             action tempDir
         finally
             Environment.CurrentDirectory <- originalDir
+            resetConfiguration ()
 
             if Directory.Exists(tempDir) then
                 try
@@ -910,7 +974,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Schema")
                 .GetProperty("Status")
                 .GetString()
-            |> should equal "metadata-incomplete"
+            |> should equal "schema-ready"
 
             rootElement.GetProperty("Schema").GetProperty(
                 "SuccessSchema"
@@ -960,7 +1024,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Document")
                 .GetProperty("ReturnValue")
                 .GetString()
-            |> should equal "Signed out.")
+            |> should equal "example")
 
     /// Verifies that root login alias emits schema introspection.
     [<Test>]
@@ -1035,9 +1099,9 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "authenticate.logout")
 
-    /// Verifies that examples for missing dto metadata emit explicit unsupported document.
+    /// Verifies that examples for existing DTO results emit a successful Grace envelope.
     [<Test>]
-    let ``examples for missing dto metadata emit explicit unsupported document`` () =
+    let ``examples for DTO results emit type-derived success envelope`` () =
         withTempDir (fun _ ->
             /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
@@ -1056,19 +1120,22 @@ module HelpDoesNotReadConfigTests =
             let examples = rootElement.GetProperty("Examples")
 
             examples[ 0 ].GetProperty("Name").GetString()
-            |> should equal "metadata-incomplete"
+            |> should equal "success-envelope-shape"
 
-            examples[0]
-                .GetProperty("Document")
-                .GetProperty("Status")
-                .GetString()
-            |> should equal "metadata-incomplete"
+            examples[0].GetProperty("Document").GetProperty(
+                "ReturnValue"
+            )
+                .GetProperty(
+                "WorkItemId"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.String
 
-            examples[0]
-                .GetProperty("Document")
-                .GetProperty("CommandId")
-                .GetString()
-            |> should equal "workitem.show")
+            examples[0].GetProperty("Document").GetProperty(
+                "Properties"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.Array)
 
     /// Verifies that nested command schema resolves full command id.
     [<Test>]
@@ -1077,8 +1144,13 @@ module HelpDoesNotReadConfigTests =
             /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "workitem"
-                                         "attach"
+                                         "attachments"
+                                         "add"
+                                         "42"
+                                         "--type"
                                          "summary"
+                                         "--text"
+                                         "content"
                                          "--schema" |]
 
             exitCode |> should equal 0
@@ -1093,7 +1165,92 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Command")
                 .GetProperty("Id")
                 .GetString()
-            |> should equal "workitem.attach.summary")
+            |> should equal "workitem.attachments.add")
+
+    /// Verifies that set-status machine-readable introspection resolves the renamed command without runtime setup.
+    [<TestCase("--schema", "schema")>]
+    [<TestCase("--examples", "examples")>]
+    let ``workitem set-status introspection is inert and uses the renamed identity`` (introspectionOption: string, expectedKind: string) =
+        withTempDir (fun root ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "workitem"
+                                         "set-status"
+                                         "42"
+                                         "--status"
+                                         "Done"
+                                         introspectionOption |]
+
+            exitCode |> should equal 0
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal expectedKind
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "workitem.set-status"
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
+    /// Verifies that attachment help and machine-readable introspection never execute the mutation handler.
+    [<TestCase("--help")>]
+    [<TestCase("--schema")>]
+    [<TestCase("--examples")>]
+    let ``workitem attachments add help schema and examples are inert`` (introspectionOption: string) =
+        withTempDir (fun root ->
+            let args =
+                if introspectionOption = "--help" then
+                    [|
+                        "workitem"
+                        "attachments"
+                        "add"
+                        introspectionOption
+                    |]
+                else
+                    [|
+                        "workitem"
+                        "attachments"
+                        "add"
+                        "42"
+                        "--type"
+                        "summary"
+                        "--text"
+                        "content"
+                        introspectionOption
+                    |]
+
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, _ = runWithCapturedOutput args
+            exitCode |> should equal 0
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
+    /// Verifies that parser rejection stops attachment creation before local or remote setup begins.
+    [<Test>]
+    let ``workitem attachments add parse failure is inert`` () =
+        withTempDir (fun root ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, _, _ =
+                runWithCapturedStdoutAndStderr [| "workitem"
+                                                  "attachments"
+                                                  "add"
+                                                  "42"
+                                                  "--type"
+                                                  "binary"
+                                                  "--text"
+                                                  "content" |]
+
+            exitCode |> should not' (equal 0)
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
 
     /// Verifies that root output json is honored for nested commands before config errors.
     [<Test>]
@@ -1111,9 +1268,11 @@ module HelpDoesNotReadConfigTests =
                 |]
                 [|
                     "workitem"
-                    "attach"
-                    "summary"
+                    "attachments"
+                    "add"
                     "123"
+                    "--type"
+                    "summary"
                     "--text"
                     "summary text"
                 |]
@@ -1879,6 +2038,42 @@ module HelpDoesNotReadConfigTests =
 
             standardOut |> should not' (contain "Elapsed:"))
 
+    /// Verifies that quiet configuration lookup reports a missing repository without creating configuration files.
+    [<Test>]
+    let ``configuration lookup reports missing config without creating files`` () =
+        withTempDir (fun root ->
+            match tryCurrent () with
+            | Error (ConfigurationFileNotFound message) -> message |> should contain "graceconfig.json"
+            | Error (ConfigurationFileMalformed _) -> failwith "Expected a missing configuration result."
+            | Ok _ -> failwith "Expected configuration lookup to fail in an empty directory."
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal false)
+
+    /// Verifies that agent bootstrap remains config-independent through the public CLI entry point.
+    [<Test>]
+    let ``agent bootstrap succeeds without config through program entry point`` () =
+        withTempDir (fun root ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "agent"
+                                                  "bootstrap"
+                                                  "--agent-id"
+                                                  "11111111-1111-1111-1111-111111111111"
+                                                  "--display-name"
+                                                  "Codex"
+                                                  "--output"
+                                                  "Silent" |]
+
+            exitCode |> should equal 0
+            standardOut |> should equal String.Empty
+            standardError |> should equal String.Empty
+
+            File.Exists(Path.Combine(root, ".grace", "agent-session-state.json"))
+            |> should equal true
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal false)
+
     /// Verifies that missing config in json equals mode emits one error document on stdout.
     [<Test>]
     let ``missing config in json equals mode emits one error document on stdout`` () =
@@ -1894,6 +2089,30 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut
             |> should contain "graceconfig.json")
+
+    /// Verifies that the status alias accepts direct lowercase verbose output and selects human-readable verbose mode.
+    [<Test>]
+    let ``status accepts direct lowercase verbose output`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "status"
+                                                  "--output"
+                                                  "verbose" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                standardOut |> should contain "graceconfig.json"
+                standardOut |> should contain "Elapsed:"
+
+                standardOut
+                |> should not' (contain "Argument 'verbose' not recognized")
+            else
+                standardOut
+                |> should contain "Argument 'verbose' not recognized"
+
+                standardOut |> should contain "'Verbose'")
 
     /// Verifies that missing config in mixed case json equals mode emits one error document on stdout.
     [<Test>]
@@ -2016,21 +2235,30 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut |> ignore)
 
-    /// Verifies that lowercase json value is rejected with json error envelope.
+    /// Verifies that lowercase json selects the JSON error envelope on case-insensitive platforms.
     [<Test>]
-    let ``lowercase json value is rejected with json error envelope`` () =
+    let ``lowercase json value selects json error envelope`` () =
         withTempDir (fun _ ->
             /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "--output=json"
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "json"
                                                   "repository"
                                                   "init" |]
 
             exitCode |> should equal -1
             standardError |> should equal String.Empty
 
-            assertJsonErrorOutput standardOut
-            |> should contain "json")
+            if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                assertJsonErrorOutput standardOut
+                |> should contain "graceconfig.json"
+            else
+                let error = assertJsonErrorOutput standardOut
+
+                error
+                |> should contain "Argument 'json' not recognized"
+
+                error |> should contain "'Json'")
 
     /// Verifies that catch all exception in json mode emits one error document on stdout.
     [<Test>]
@@ -2101,6 +2329,260 @@ module HelpDoesNotReadConfigTests =
             output |> should contain $"{orgId}"
             output |> should contain $"{repoId}"
             output |> should contain $"{branchId}")
+
+    /// Verifies that verbose parse output shows the exact implicit or explicit correlation ID used by the command.
+    [<Test>]
+    let ``verbose parse result shows effective correlation id`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let implicitParseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "status"
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            implicitParseResult.Errors.Count |> should equal 0
+
+            let implicitCorrelationId = Common.getCorrelationId implicitParseResult
+            let implicitOutput = captureOutput (fun () -> Common.printParseResult implicitParseResult)
+
+            implicitOutput
+            |> should contain $"--correlation-id <{implicitCorrelationId}>"
+
+            implicitOutput
+            |> should contain $"--correlation-id: {implicitCorrelationId}"
+
+            implicitOutput
+            |> should not' (contain "--correlation-id <>")
+
+            let explicitCorrelationId = "verbose-correlation-id"
+
+            let explicitParseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "status"
+                        "--correlation-id"
+                        explicitCorrelationId
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            explicitParseResult.Errors.Count |> should equal 0
+
+            let explicitOutput = captureOutput (fun () -> Common.printParseResult explicitParseResult)
+
+            explicitOutput
+            |> should contain $"--correlation-id <{explicitCorrelationId}>"
+
+            explicitOutput
+            |> should contain $"--correlation-id: {explicitCorrelationId}")
+
+    /// Verifies that verbose create output describes deferred hierarchy identities instead of the empty parser sentinel.
+    [<Test>]
+    let ``verbose repository create describes implicit hierarchy identities symbolically`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "repository"
+                        "create"
+                        "--repository-name"
+                        "truthful-identities"
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Common.resolveCreateGraceIdsWith (fun () -> Guid.Parse("99999999-9999-9999-9999-999999999999")) OptionName.RepositoryId parseResult
+
+            let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+            output
+            |> should contain "owner-id: current OwnerId"
+
+            output
+            |> should contain "organization-id: current OrganizationId"
+
+            output |> should contain "repository-id: new Guid"
+
+            output
+            |> should not' (contain "00000000-0000-0000-0000-000000000000"))
+
+    /// Verifies that every hierarchy create request reuses the exact ID shown in resolved verbose output.
+    [<Test>]
+    let ``hierarchy create requests reuse their single resolved identity`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+            let createdId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+            let cases =
+                [
+                    [|
+                        "owner"
+                        "create"
+                        "--owner-name"
+                        "owner-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.OwnerId,
+                    "OwnerId",
+                    (fun _ graceIds ->
+                        (Grace.CLI.Command.Owner.buildCreateParameters graceIds)
+                            .OwnerId)
+                    [|
+                        "organization"
+                        "create"
+                        "--organization-name"
+                        "organization-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.OrganizationId,
+                    "OrganizationId",
+                    (fun _ graceIds ->
+                        (Grace.CLI.Command.Organization.buildCreateParameters graceIds)
+                            .OrganizationId)
+                    [|
+                        "repository"
+                        "create"
+                        "--repository-name"
+                        "repository-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.RepositoryId,
+                    "RepositoryId",
+                    (fun _ graceIds ->
+                        (Grace.CLI.Command.Repository.buildCreateParameters graceIds)
+                            .RepositoryId)
+                    [|
+                        "branch"
+                        "create"
+                        "--branch-name"
+                        "branch-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.BranchId,
+                    "BranchId",
+                    (fun parseResult graceIds ->
+                        (Grace.CLI.Command.Branch.buildCreateParameters parseResult graceIds String.Empty String.Empty)
+                            .BranchId)
+                ]
+
+            for args, createdIdOptionName, resolvedLabel, requestId in cases do
+                let parseResult = GraceCommand.rootCommand.Parse(args)
+                parseResult.Errors.Count |> should equal 0
+                let mutable generatedCount = 0
+
+                let graceIds =
+                    Common.resolveCreateGraceIdsWith
+                        (fun () ->
+                            generatedCount <- generatedCount + 1
+                            createdId)
+                        createdIdOptionName
+                        parseResult
+
+                generatedCount |> should equal 1
+
+                let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+                output
+                |> should contain $"{resolvedLabel}: {createdId}"
+
+                requestId parseResult graceIds
+                |> should equal (createdId.ToString())
+
+                output
+                |> should contain $"{createdIdOptionName}: new Guid"
+
+                output
+                |> should not' (contain $"{resolvedLabel}: {Guid.Empty}"))
+
+    /// Verifies that an explicit create ID remains unchanged and bypasses ID generation.
+    [<Test>]
+    let ``explicit repository create identity is displayed and sent unchanged`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+            let explicitId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "repository"
+                        "create"
+                        "--repository-name"
+                        "explicit-identity"
+                        "--repository-id"
+                        explicitId.ToString()
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds =
+                Common.resolveCreateGraceIdsWith
+                    (fun () ->
+                        Assert.Fail("Explicit identity must not generate a replacement GUID.")
+                        Guid.Empty)
+                    OptionName.RepositoryId
+                    parseResult
+
+            let parameters = Grace.CLI.Command.Repository.buildCreateParameters graceIds
+            let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+            parameters.RepositoryId
+            |> should equal (explicitId.ToString())
+
+            output
+            |> should contain $"--repository-id: {explicitId}"
+
+            output
+            |> should contain $"RepositoryId: {explicitId}"
+
+            output
+            |> should not' (contain "--repository-id: new Guid"))
+
+    /// Verifies that omitted non-hierarchy GUID inputs are described as absent rather than as semantic zero GUIDs.
+    [<Test>]
+    let ``verbose output describes unrelated omitted guid inputs as not supplied`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "create"
+                        "--branch-name"
+                        "child"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Common.resolveCreateGraceIdsWith (fun () -> Guid.NewGuid()) OptionName.BranchId parseResult
+            let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+            output
+            |> should contain "--parent-branch-id: not supplied"
+
+            output
+            |> should not' (contain $"--parent-branch-id: {Guid.Empty}"))
 
     /// Verifies that get normalized ids and names falls back to config ids.
     [<Test>]
@@ -2176,6 +2658,14 @@ module RootHelpGroupingTests =
                         "Create and inspect:"
                         "Settings:"
                         "Lifecycle:"
+                    ]
+            }
+            {
+                Args = [| "workitem"; "-h" |]
+                Headings =
+                    [
+                        "Create and update:"
+                        "Link and attach:"
                     ]
             }
         ]
@@ -2338,6 +2828,40 @@ module RootHelpGroupingTests =
 
                 for heading in expectation.Headings do
                     output |> should contain heading)
+
+    /// Verifies that work item help exposes only the explicit status mutation verb in its update group.
+    [<Test>]
+    let ``workitem help groups set-status without the old status command`` () =
+        withGraceUserFileBackups (fun () ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "workitem"
+                                         "-h" |]
+
+            exitCode |> should equal 0
+
+            let createAndUpdate = sliceBetween output "Create and update:" "Link and attach:"
+            createAndUpdate |> should contain "set-status"
+
+            createAndUpdate
+            |> should not' (contain $"{Environment.NewLine}    status "))
+
+    /// Verifies that grouped work-item help exposes only the canonical attachment command tree.
+    [<Test>]
+    let ``workitem help groups attachments without the old attach command`` () =
+        withGraceUserFileBackups (fun () ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "workitem"
+                                         "-h" |]
+
+            exitCode |> should equal 0
+
+            let linkAndAttach = output.Substring(output.IndexOf("Link and attach:", StringComparison.Ordinal))
+            linkAndAttach |> should contain "attachments"
+
+            linkAndAttach
+            |> should not' (contain $"{Environment.NewLine}    attach "))
 
 
 namespace Grace.CLI.Tests

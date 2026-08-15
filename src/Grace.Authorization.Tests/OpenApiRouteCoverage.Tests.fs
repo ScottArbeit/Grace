@@ -144,8 +144,7 @@ type OpenApiRouteCoverageTests() =
 
         routes
         |> Seq.toList
-        |> List.append [ route "GET" "/metrics"
-                         route "GET" "/notifications" ]
+        |> List.append [ route "GET" "/metrics"; route "GET" "/notifications" ]
 
     /// Gets required string.
     let getRequiredString (parent: JsonElement) (propertyName: string) =
@@ -160,15 +159,10 @@ type OpenApiRouteCoverageTests() =
     let routeClassificationGroups () =
         use document = JsonDocument.Parse(File.ReadAllText(routeClassificationRegistryPath))
 
-        document
-            .RootElement
-            .GetProperty("classifications")
-            .EnumerateArray()
+        document.RootElement.GetProperty("classifications").EnumerateArray()
         |> Seq.map (fun classificationElement ->
             let traceIds =
-                classificationElement
-                    .GetProperty("traceIds")
-                    .EnumerateArray()
+                classificationElement.GetProperty("traceIds").EnumerateArray()
                 |> Seq.map (fun traceIdElement ->
                     let traceId = traceIdElement.GetString()
 
@@ -179,27 +173,21 @@ type OpenApiRouteCoverageTests() =
                 |> Seq.toList
 
             let routes =
-                classificationElement
-                    .GetProperty("routes")
-                    .EnumerateArray()
+                classificationElement.GetProperty("routes").EnumerateArray()
                 |> Seq.map (fun routeElement -> { Method = getRequiredString routeElement "method"; Path = getRequiredString routeElement "path" })
                 |> Seq.toList
 
-            {
-                Classification = getRequiredString classificationElement "classification"
-                Reason = getRequiredString classificationElement "reason"
-                TraceIds = traceIds
-                Routes = routes
-            })
+            { Classification = getRequiredString classificationElement "classification"
+              Reason = getRequiredString classificationElement "reason"
+              TraceIds = traceIds
+              Routes = routes })
         |> Seq.toList
 
     /// Asserts route security.
     let assertRouteSecurity method_ path (expectedSecurity: EndpointSecurity) =
         let matchingDefinitions =
             definitions
-            |> List.filter (fun definition ->
-                definition.Method = method_
-                && definition.Path = path)
+            |> List.filter (fun definition -> definition.Method = method_ && definition.Path = path)
 
         match matchingDefinitions with
         | [ definition ] ->
@@ -215,40 +203,31 @@ type OpenApiRouteCoverageTests() =
     [<Test>]
     member _.OpenApiCoversAdrStorageRoutes() =
         let expectedStorageRoutes =
-            [
-                "/storage/getUploadMetadataForFiles"
-                "/storage/getUploadUri"
-                "/storage/getDownloadUri"
-                "/storage/getContentBlockUploadUri"
-                "/storage/getContentBlockDownloadUri"
-                "/storage/discoverContentBlocks"
-                "/storage/startManifestUploadSession"
-                "/storage/issueDedupeDiscovery"
-                "/storage/claimReuseRanges"
-                "/storage/registerContentBlockUpload"
-                "/storage/confirmContentBlockUpload"
-                "/storage/finalizeManifestUpload"
-            ]
+            [ "/storage/getUploadMetadataForFiles"
+              "/storage/getUploadUri"
+              "/storage/getDownloadUri"
+              "/storage/getContentBlockUploadUri"
+              "/storage/getContentBlockDownloadUri"
+              "/storage/discoverContentBlocks"
+              "/storage/startManifestUploadSession"
+              "/storage/issueDedupeDiscovery"
+              "/storage/claimReuseRanges"
+              "/storage/registerContentBlockUpload"
+              "/storage/confirmContentBlockUpload"
+              "/storage/finalizeManifestUpload" ]
             |> Set.ofList
 
         let missing = expectedStorageRoutes - openApiPaths ()
 
         if missing.Count > 0 then
-            let missingText =
-                missing
-                |> Seq.sort
-                |> String.concat Environment.NewLine
+            let missingText = missing |> Seq.sort |> String.concat Environment.NewLine
 
             Assert.Fail($"OpenAPI is missing ADR-0001 storage routes:{Environment.NewLine}{missingText}")
 
     /// Verifies that bundled OpenAPI branch request schemas remain unique under components schemas.
     [<Test>]
     member _.BundledOpenApiBranchRequestSchemasRemainUniqueUnderComponentsSchemas() =
-        for artifactPath in
-            [
-                openApiBundlePath
-                openApiProjectionPath
-            ] do
+        for artifactPath in [ openApiBundlePath; openApiProjectionPath ] do
             assertBundledSchemaIsUnique artifactPath "GetReferencesParameters"
             assertBundledSchemaIsUnique artifactPath "AnnotateParameters"
 
@@ -296,13 +275,11 @@ type OpenApiRouteCoverageTests() =
     [<Test>]
     member _.RouteClassificationRegistryUsesKnownClassificationsAndHasNoDuplicateRoutes() =
         let knownClassifications =
-            [
-                "debugTestOnlyRoute"
-                "incompleteUnimplementedSurface"
-                "internalOnlyContract"
-                "intentionallyExcludedOperationalSurface"
-                "staleArtifact"
-            ]
+            [ "debugTestOnlyRoute"
+              "incompleteUnimplementedSurface"
+              "internalOnlyContract"
+              "intentionallyExcludedOperationalSurface"
+              "staleArtifact" ]
             |> Set.ofList
 
         let groups = routeClassificationGroups ()
@@ -360,16 +337,12 @@ type OpenApiRouteCoverageTests() =
             startupRoutes
             |> Set.filter (fun route -> not (openApiPaths.Contains route.Path))
 
-        let missingRegistryClassifications =
-            implementedRoutesAbsentFromOpenApi
-            - registryNonPublicRoutes
+        let missingRegistryClassifications = implementedRoutesAbsentFromOpenApi - registryNonPublicRoutes
 
         if missingRegistryClassifications.Count > 0 then
             failWithRoutes "Implemented non-OpenAPI routes need explicit RouteClassification.json exclusion reasons" missingRegistryClassifications
 
-        let registryRoutesNotImplemented =
-            registryNonPublicRoutes
-            - implementedRoutesAbsentFromOpenApi
+        let registryRoutesNotImplemented = registryNonPublicRoutes - implementedRoutesAbsentFromOpenApi
 
         if registryRoutesNotImplemented.Count > 0 then
             failWithRoutes "RouteClassification.json non-public routes must match implemented non-OpenAPI routes" registryRoutesNotImplemented
@@ -385,10 +358,7 @@ type OpenApiRouteCoverageTests() =
     /// Verifies that OpenAPI stale paths are explicitly classified.
     [<Test>]
     member _.OpenApiStalePathsAreExplicitlyClassified() =
-        let implementedPaths =
-            parseStartupRoutes ()
-            |> Seq.map (fun route -> route.Path)
-            |> Set.ofSeq
+        let implementedPaths = parseStartupRoutes () |> Seq.map (fun route -> route.Path) |> Set.ofSeq
 
         let staleOpenApiPaths = openApiPaths () - implementedPaths
 
@@ -402,10 +372,7 @@ type OpenApiRouteCoverageTests() =
         let missingStaleClassifications = staleOpenApiPaths - staleRegistryPaths
 
         if missingStaleClassifications.Count > 0 then
-            let missingText =
-                missingStaleClassifications
-                |> Seq.sort
-                |> String.concat Environment.NewLine
+            let missingText = missingStaleClassifications |> Seq.sort |> String.concat Environment.NewLine
 
             Assert.Fail($"OpenAPI paths not implemented by Startup.Server.fs must be classified as stale:{Environment.NewLine}{missingText}")
 
@@ -434,9 +401,7 @@ type OpenApiRouteCoverageTests() =
 
         let debugAdminRoutes =
             groups
-            |> List.collect (fun group ->
-                group.Routes
-                |> List.map (fun route -> group.Classification, route))
+            |> List.collect (fun group -> group.Routes |> List.map (fun route -> group.Classification, route))
             |> List.choose (fun (classification, route) ->
                 if
                     classification = "debugTestOnlyRoute"
@@ -452,3 +417,20 @@ type OpenApiRouteCoverageTests() =
 
         Assert.That(openApiPaths.Contains "/metrics", Is.False, "GET /metrics is an operational surface, not a public OpenAPI path.")
         assertRouteSecurity "GET" "/metrics" (Authorized(Operation.SystemAdmin, ResourceKind.System))
+
+    /// Verifies manifest contribution repair remains an internal SystemAdmin operation rather than a generated client contract.
+    [<Test>]
+    member _.ManifestContributionRepairRequiresSystemAdminAndStaysOutOfOpenApi() =
+        let route = route "POST" "/admin/manifest-contribution/repair"
+        let classifiedRoutes = routeClassificationGroups () |> List.collect (fun group -> group.Routes)
+
+        Assert.That(openApiPaths().Contains route.Path, Is.False, $"{formatRoute route} must stay out of public OpenAPI.")
+
+        Assert.That(
+            classifiedRoutes
+            |> List.exists (fun candidate -> candidate.Method = route.Method && candidate.Path = route.Path),
+            Is.True,
+            $"{formatRoute route} must retain an explicit non-public classification."
+        )
+
+        assertRouteSecurity route.Method route.Path (Authorized(Operation.SystemAdmin, ResourceKind.System))

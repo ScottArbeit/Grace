@@ -73,32 +73,126 @@ open System.Security.Claims
 /// Contains Grace Server application behavior and supporting helpers.
 module Application =
 
+    /// Waits until a local Cosmos sentinel write and its cleanup have both completed successfully.
+    let internal waitForLocalCosmosWriteReadiness
+        maxAttempts
+        (writeSentinel: CancellationToken -> Task)
+        (deleteSentinel: CancellationToken -> Task)
+        (delay: CancellationToken -> Task)
+        (log: ILogger)
+        (ct: CancellationToken)
+        =
+        task {
+            let mutable attempt = 0
+            let mutable writeConfirmed = false
+            let mutable ready = false
+            let mutable lastFailure: exn = null
+
+            while not ready && attempt < maxAttempts do
+                ct.ThrowIfCancellationRequested()
+                attempt <- attempt + 1
+
+                try
+                    if not writeConfirmed then
+                        do! writeSentinel ct
+                        writeConfirmed <- true
+
+                    do! deleteSentinel ct
+                    writeConfirmed <- false
+                    ready <- true
+                with
+                | ex ->
+                    lastFailure <- ex
+                    log.LogWarning("Cosmos DB container write probe not ready, retry {Try}...", attempt)
+
+                    if attempt < maxAttempts then do! delay ct
+
+            if not ready then
+                return raise (TimeoutException("Cosmos DB container did not become write-ready in time.", lastFailure))
+        }
+
     /// Represents cosmos warmup used by Grace Server APIs and background services.
-    type CosmosWarmup(cosmosClient: CosmosClient, log: ILogger<CosmosWarmup>) =
+    type CosmosWarmup(cosmosClient: CosmosClient, configuration: IConfiguration, log: ILogger<CosmosWarmup>) =
         interface IHostedService with
             /// Starts the host service after configuration bootstrap has completed.
             member _.StartAsync(ct: CancellationToken) : Task =
                 log.LogInformation("Waiting for Cosmos DB emulator to be ready...")
 
-                /// Implements rec for the server request pipeline.
-                let rec loop i =
-                    task {
-                        if i > 120 || ct.IsCancellationRequested then
-                            log.LogError("Cosmos DB emulator was not ready in time.")
+                let debugEnvironment = configuration[getConfigKey Constants.EnvironmentVariables.DebugEnvironment]
+                let isLocal = String.Equals(debugEnvironment, "Local", StringComparison.OrdinalIgnoreCase)
+
+                if isLocal then
+                    let databaseName = configuration[getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName]
+                    let containerName = configuration[getConfigKey Constants.EnvironmentVariables.AzureCosmosDBContainerName]
+
+                    if
+                        String.IsNullOrWhiteSpace(databaseName)
+                        || String.IsNullOrWhiteSpace(containerName)
+                    then
+                        invalidOp "Local Cosmos DB database and container names are required for write-readiness probing."
+
+                    let container = cosmosClient.GetContainer(databaseName, containerName)
+                    let sentinelId = $"grace-write-readiness-{Guid.NewGuid():N}"
+                    let sentinelPartitionKey = sentinelId
+                    let sentinel = Dictionary<string, obj>()
+                    sentinel["id"] <- sentinelId
+                    sentinel["PartitionKey"] <- sentinelPartitionKey
+                    sentinel["kind"] <- "grace-cosmos-write-readiness"
+
+                    /// Confirms the configured local Cosmos container accepts a durable item write.
+                    let writeSentinel probeCt =
+                        task {
+                            let! _ = cosmosClient.ReadAccountAsync()
+
+                            let! _ = container.UpsertItemAsync(sentinel, PartitionKey sentinelPartitionKey, cancellationToken = probeCt)
+
                             return ()
-                        else
+                        }
+                        :> Task
+
+                    /// Removes the local readiness sentinel, accepting confirmed absence after an uncertain delete response.
+                    let deleteSentinel probeCt =
+                        task {
                             try
-                                let! _ = cosmosClient.ReadAccountAsync()
-                                log.LogInformation("Cosmos DB emulator ready.")
+                                let! _ =
+                                    container.DeleteItemAsync<Dictionary<string, obj>>(
+                                        sentinelId,
+                                        PartitionKey sentinelPartitionKey,
+                                        cancellationToken = probeCt
+                                    )
+
                                 return ()
                             with
-                            | ex ->
-                                log.LogWarning("Cosmos DB emulator not ready, retry {Try}...", i)
-                                do! Task.Delay(1000, ct)
-                                return! loop (i + 1)
-                    }
+                            | :? CosmosException as ex when ex.StatusCode = System.Net.HttpStatusCode.NotFound ->
+                                // A previous delete may have committed before its response was lost.
+                                // NotFound confirms that cleanup is complete.
+                                return ()
 
-                loop 1 :> Task
+                        }
+                        :> Task
+
+                    waitForLocalCosmosWriteReadiness 120 writeSentinel deleteSentinel (fun probeCt -> Task.Delay(250, probeCt)) log ct :> Task
+                else
+
+                    /// Implements rec for the server request pipeline.
+                    let rec loop i =
+                        task {
+                            if i > 120 || ct.IsCancellationRequested then
+                                log.LogError("Cosmos DB emulator was not ready in time.")
+                                return ()
+                            else
+                                try
+                                    let! _ = cosmosClient.ReadAccountAsync()
+                                    log.LogInformation("Cosmos DB emulator ready.")
+                                    return ()
+                                with
+                                | ex ->
+                                    log.LogWarning("Cosmos DB emulator not ready, retry {Try}...", i)
+                                    do! Task.Delay(1000, ct)
+                                    return! loop (i + 1)
+                        }
+
+                    loop 1 :> Task
 
             /// Stops the host service during graceful server shutdown.
             member _.StopAsync(_ct: CancellationToken) : Task = Task.CompletedTask
@@ -1244,6 +1338,15 @@ module Application =
                                route "/getEvents" Branch.GetEvents
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
+                               route "/getReferenceMaterializationBoundary" (composeHandlers requireBranchRead Branch.GetReferenceMaterializationBoundary)
+                               |> addMetadata typeof<Branch.GetReferenceMaterializationBoundaryParameters>
+
+                               route "/resolveReferenceEventBoundary" (composeHandlers requireBranchRead Branch.ResolveReferenceEventBoundary)
+                               |> addMetadata typeof<Branch.ResolveReferenceEventBoundaryParameters>
+
+                               route "/replayReferenceEvents" (composeHandlers requireBranchRead Branch.ReplayReferenceEvents)
+                               |> addMetadata typeof<Branch.ReplayReferenceEventsParameters>
+
                                route "/getExternals" Branch.GetExternals
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 
@@ -1456,6 +1559,12 @@ module Application =
                                route "/update" (composeHandlers requireRepositoryWrite WorkItem.Update)
                                |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
 
+                               route "/description/set" (composeHandlers requireRepositoryWrite WorkItem.SetDescription)
+                               |> addMetadata typeof<WorkItem.SetWorkItemDescriptionParameters>
+
+                               route "/description/clear" (composeHandlers requireRepositoryWrite WorkItem.ClearDescription)
+                               |> addMetadata typeof<WorkItem.ClearWorkItemDescriptionParameters>
+
                                route "/add-summary" (composeHandlers requireRepositoryWrite WorkItem.AddSummary)
                                |> addMetadata typeof<WorkItem.AddSummaryParameters>
 
@@ -1479,6 +1588,12 @@ module Application =
 
                                route "/attachments/download" (composeHandlers requireRepositoryRead WorkItem.DownloadAttachment)
                                |> addMetadata typeof<WorkItem.DownloadWorkItemAttachmentParameters>
+
+                               route "/attachments/delete" (composeHandlers requireRepositoryWrite WorkItem.DeleteAttachment)
+                               |> addMetadata typeof<WorkItem.DeleteWorkItemAttachmentParameters>
+
+                               route "/attachments/undelete" (composeHandlers requireRepositoryWrite WorkItem.UndeleteAttachment)
+                               |> addMetadata typeof<WorkItem.UndeleteWorkItemAttachmentParameters>
 
                                route "/links/remove/reference" (composeHandlers requireRepositoryWrite WorkItem.RemoveReferenceLink)
                                |> addMetadata typeof<WorkItem.RemoveReferenceLinkParameters>
@@ -1800,7 +1915,8 @@ module Application =
                 subRoute
                     "/admin"
                     [
-                        POST [
+                        POST [ route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
+                               route "/manifest-contribution/repair" (composeHandlers requireSystemAdmin ManifestContributionRepair.Repair)
 #if DEBUG
                                route "/deleteAllFromCosmosDB" (composeHandlers requireSystemAdmin Storage.DeleteAllFromCosmosDB)
                                route "/deleteAllRemindersFromCosmosDB" (composeHandlers requireSystemAdmin Storage.DeleteAllRemindersFromCosmosDB)
@@ -1854,6 +1970,10 @@ module Application =
                 invalidOp "Grace configuration not found in memory cache."
 
             let configuration = configurationObj :?> IConfigurationRoot
+
+            match TextContentStorage.getMaximumCharacters () with
+            | Ok _ -> ()
+            | Error error -> invalidOp error
 
             let azureMonitorConnectionString =
                 let connectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString
@@ -1909,6 +2029,7 @@ module Application =
                         .AddAspNetCoreInstrumentation()
                         .AddMeter("Microsoft.AspNetCore.Hosting")
                         .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
+                        .AddMeter(ManifestContributionTelemetry.InstrumentationName)
                         .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
                     |> ignore
 
@@ -1925,6 +2046,7 @@ module Application =
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
                         .AddSource(graceServerAppId)
+                        .AddSource(ManifestContributionTelemetry.InstrumentationName)
                     |> ignore
 
                     if
@@ -2089,6 +2211,28 @@ module Application =
                         invalidOp "Azure Cosmos DB connection string is required when managed identity is disabled."
 
                     new CosmosClient(cosmosConnectionString, options))
+            |> ignore
+
+            services.AddSingleton<IRepositoryCounterRecentResult> (fun serviceProvider ->
+                let redisHost = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.RedisHost)
+
+                let redisPort = configuration.GetValue<int>(getConfigKey Constants.EnvironmentVariables.RedisPort)
+
+                if String.IsNullOrWhiteSpace redisHost then
+                    RepositoryCounterRecentResult.UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
+                else
+                    let effectivePort = if redisPort > 0 then redisPort else 6379
+
+                    let redisLog =
+                        serviceProvider
+                            .GetRequiredService<ILoggerFactory>()
+                            .CreateLogger("RepositoryCounterRecentResult.Server")
+
+                    new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog) :> IRepositoryCounterRecentResult)
+            |> ignore
+
+            services.AddSingleton<IExactRelationshipStore> (fun _ ->
+                ManifestContributionAccounting.CosmosExactRelationshipStore(ApplicationContext.cosmosContainer) :> IExactRelationshipStore)
             |> ignore
 
             let apiVersioningBuilder =

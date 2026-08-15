@@ -16,8 +16,8 @@ open System.Threading.Tasks
 /// Groups shared helpers for approval test helpers.
 module private ApprovalTestHelpers =
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync () =
+    /// Restarts Grace.Server with a scenario label for process-local approval assertions.
+    let restartGraceServerAsync restartContext =
         let state =
             match App with
             | Some app ->
@@ -25,6 +25,9 @@ module private ApprovalTestHelpers =
                     App = app
                     Client = Client
                     GraceServerBaseAddress = graceServerBaseAddress
+                    CosmosConnectionString = String.Empty
+                    CosmosDatabaseName = String.Empty
+                    CosmosContainerName = String.Empty
                     ServiceBusConnectionString = serviceBusConnectionString
                     ServiceBusTopic = serviceBusTopic
                     ServiceBusServerSubscription = serviceBusServerSubscription
@@ -36,7 +39,7 @@ module private ApprovalTestHelpers =
                 Assert.Fail("Aspire test host was not started by the shared setup fixture.")
                 Unchecked.defaultof<TestHostState>
 
-        AspireTestHost.restartGraceServerAsync state
+        AspireTestHost.restartGraceServerAsync state restartContext
 
     /// Builds a deterministic authenticated client for integration setup fixture for the server integration approval assertions.
     let createAuthenticatedClient (userId: string) =
@@ -81,6 +84,25 @@ module private ApprovalTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
+        }
+
+    /// Creates a repository and returns its fresh repository and default branch scope identities.
+    let createRepositoryScopeAsync () =
+        task {
+            let repositoryId = $"{Guid.NewGuid()}"
+            let parameters = Parameters.Repository.CreateRepositoryParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.RepositoryName <- $"ApprovalRepository{Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/repository/create", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+            let returnValue = deserialize<GraceReturnValue<string>> responseText
+            let branchId = Common.requireGuidProperty (nameof BranchId) returnValue.Properties[nameof BranchId]
+            return repositoryId, $"{branchId}"
         }
 
     /// Builds create policy parameters for route calls.
@@ -337,7 +359,7 @@ type ApprovalApiIntegrationTests() =
                 Does.Contain(created.ApprovalPolicyId)
             )
 
-            do! ApprovalTestHelpers.restartGraceServerAsync ()
+            do! ApprovalTestHelpers.restartGraceServerAsync "Approval.ApprovalPolicyStoreIsProcessLocalWhileGeneratedRequestsRemainActorBackedAcrossRestart"
 
             // Contract: approval policies are process-local configuration and are intentionally lost on Grace.Server restart.
             let! listPoliciesAfterRestart =
@@ -700,8 +722,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.ResponseRejectsResponderRoleCallerWhenSelectorDoesNotMatch() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId "group:release-managers"
 
@@ -721,8 +742,7 @@ type ApprovalApiIntegrationTests() =
     [<TestCase("role:ApprovalResponder", "branch", "BranchApprovalResponder", true)>]
     member _.ResponseAcceptsApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string, grantAtBranch: bool) =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
 
@@ -743,8 +763,7 @@ type ApprovalApiIntegrationTests() =
     [<TestCase("role:BranchApprovalResponder", "repo", "RepositoryApprovalResponder")>]
     member _.ResponseRejectsMismatchedSplitApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string) =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
 
@@ -769,8 +788,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.BodySuppliedScopeEscalationDoesNotBypassStoredScope() =
         task {
-            let repositoryId = repositoryIds[0]
-            let allowedBranchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, allowedBranchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let storedBranchId = $"{Guid.NewGuid()}"
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId storedBranchId $"user:{userId}"
@@ -790,8 +808,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.DuplicateResponseIsIdempotentAfterTerminalDecision() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
 
@@ -812,8 +829,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.RequestHistoryReturnsActorBackedEventsFromStoredRepositoryPartition() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
 

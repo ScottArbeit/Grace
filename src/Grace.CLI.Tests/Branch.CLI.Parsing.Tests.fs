@@ -279,6 +279,70 @@ module BranchCommandParsingTests =
                         blake3Hash |]
         |> ignore
 
+    /// Verifies every public Branch Reference producer accepts and preserves an explicit retry identity.
+    [<Test>]
+    let ``branch reference producers preserve explicit reference identity`` () =
+        let producerArguments =
+            [|
+                [|
+                    "branch"
+                    "create"
+                    "--branch-name"
+                    "stable-reference"
+                |]
+                [| "branch"; "assign" |]
+                [| "branch"; "promote" |]
+                [|
+                    "branch"
+                    "commit"
+                    "--message"
+                    "commit"
+                |]
+                [| "branch"; "checkpoint" |]
+                [| "branch"; "save" |]
+                [|
+                    "branch"
+                    "tag"
+                    "--message"
+                    "tag"
+                |]
+                [|
+                    "branch"
+                    "create-external"
+                    "--message"
+                    "external"
+                |]
+                [| "branch"; "rebase" |]
+            |]
+
+        for producerArgs in producerArguments do
+            let parseResult =
+                Array.append
+                    producerArgs
+                    [|
+                        "--reference-id"
+                        referenceId.ToString()
+                    |]
+                |> assertParses
+
+            parseResult.GetValue<Guid>("--reference-id")
+            |> should equal referenceId
+
+    /// Verifies both CLI implementations allocate a non-empty identity when callers omit the retry option.
+    [<Test>]
+    let ``reference producer CLI helpers allocate non-empty identity by default`` () =
+        let branchParseResult = assertParses [| "branch"; "save" |]
+
+        let referenceParseResult =
+            assertReferenceSourceParses [| "reference"
+                                           "save" |]
+
+        Branch.getOrCreateReferenceId branchParseResult
+        |> should not' (equal Guid.Empty)
+
+        Reference.getOrCreateReferenceId referenceParseResult
+        |> should not' (equal Guid.Empty)
+
     /// Verifies that branch switch keeps branch name precedence options available beside blake3 locator.
     [<Test>]
     let ``branch switch keeps branch name precedence options available beside BLAKE3 locator`` () =
@@ -349,13 +413,21 @@ module BranchCommandParsingTests =
                 true
                 DateTime.UtcNow
 
-        let legacy =
-            LocalFileVersion.Create (RelativePath "src/conflict.txt") sharedSha256 false 12L (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 2)) true DateTime.UtcNow
+        let matching =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "src/conflict.txt")
+                sharedSha256
+                (Blake3Hash "first-blake3")
+                false
+                12L
+                (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 2))
+                true
+                DateTime.UtcNow
 
         Branch.fileContentHashesMatch first second
         |> should equal false
 
-        Branch.fileContentHashesMatch first legacy
+        Branch.fileContentHashesMatch first matching
         |> should equal true
 
     /// Verifies that reference assign parses blake3 hash option.

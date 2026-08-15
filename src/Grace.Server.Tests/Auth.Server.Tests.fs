@@ -128,6 +128,30 @@ type AuthEndpoints() =
             Assert.That(meValue.ReturnValue.GraceUserId, Is.EqualTo(testUserId))
         }
 
+    /// Verifies a real case-insensitive duplicate PAT name remains a bad request.
+    [<Test>]
+    member _.AuthTokenDuplicateNameRejected() =
+        task {
+            let parameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
+            parameters.TokenName <- $"pat-{System.Guid.NewGuid():N}"
+            let! createResponse = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
+            createResponse.EnsureSuccessStatusCode() |> ignore
+            let! createdReturn = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> createResponse
+
+            let duplicateParameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
+            duplicateParameters.TokenName <- parameters.TokenName.ToUpperInvariant()
+            let! duplicateResponse = Client.PostAsync("/authenticate/token/create", createJsonContent duplicateParameters)
+            let! duplicateBody = duplicateResponse.Content.ReadAsStringAsync()
+
+            Assert.That(duplicateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(duplicateBody, Does.Contain("Token name already exists."))
+
+            let revokeParameters = Grace.Shared.Parameters.Auth.RevokePersonalAccessTokenParameters()
+            revokeParameters.TokenId <- createdReturn.ReturnValue.Summary.TokenId
+            let! revokeResponse = Client.PostAsync("/authenticate/token/revoke", createJsonContent revokeParameters)
+            revokeResponse.EnsureSuccessStatusCode() |> ignore
+        }
+
     /// Verifies the auth token revoke blocks access scenario.
     [<Test>]
     member _.AuthTokenRevokeBlocksAccess() =

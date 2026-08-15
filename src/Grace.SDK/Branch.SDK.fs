@@ -37,6 +37,10 @@ type Branch() =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Promote)}")
 
     /// Records a commit reference in this branch.
+    static member public Commit(parameters: CommitReferenceParameters) =
+        postServer<CommitReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
+
+    /// Keeps existing SDK callers source-compatible while MCA-02 propagates caller-owned Reference identities.
     static member public Commit(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
 
@@ -98,6 +102,27 @@ type Branch() =
     /// Gets the metadata for a specific reference from a branch.
     static member public GetReference(parameters: GetReferenceParameters) =
         postServer<GetReferenceParameters, ReferenceDto> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReference)}")
+
+    /// Resolves the exact root and opaque branch event cursor used by Connect materialization.
+    static member public GetReferenceMaterializationBoundary(parameters: GetReferenceMaterializationBoundaryParameters) =
+        postServer<GetReferenceMaterializationBoundaryParameters, ReferenceMaterializationBoundaryDto> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"branch/{nameof (Branch.GetReferenceMaterializationBoundary)}"
+        )
+
+    /// Resolves an absent Watch cursor by exact root match or conservative server snapshot baseline.
+    static member public ResolveReferenceEventBoundary(parameters: ResolveReferenceEventBoundaryParameters) =
+        postServer<ResolveReferenceEventBoundaryParameters, ReferenceMaterializationBoundaryDto> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"branch/{nameof (Branch.ResolveReferenceEventBoundary)}"
+        )
+
+    /// Replays eligible Reference events after one branch-scoped opaque cursor.
+    static member public ReplayReferenceEvents(parameters: ReplayReferenceEventsParameters) =
+        postServer<ReplayReferenceEventsParameters, ReferenceReplayDto> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"branch/{nameof (Branch.ReplayReferenceEvents)}"
+        )
 
     /// Gets the references from a branch.
     static member public GetReferences(parameters: GetReferencesParameters) =

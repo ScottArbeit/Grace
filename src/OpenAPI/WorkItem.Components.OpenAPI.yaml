@@ -1,0 +1,112 @@
+WorkItemParameters:
+  allOf:
+    - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    - type: object
+      properties:
+        OwnerId:
+          type: string
+          format: uuid
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+          format: uuid
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+          format: uuid
+        RepositoryName:
+          type: string
+        WorkItemId:
+          type: string
+          description: Work-item GUID or positive repository-scoped number.
+      required:
+        - WorkItemId
+DeleteWorkItemAttachmentParameters:
+  allOf:
+    - $ref: '#/WorkItemParameters'
+    - type: object
+      properties:
+        ArtifactId:
+          type: string
+          format: uuid
+        DeleteReason:
+          type: string
+          minLength: 1
+      required:
+        - ArtifactId
+        - DeleteReason
+UndeleteWorkItemAttachmentParameters:
+  allOf:
+    - $ref: '#/WorkItemParameters'
+    - type: object
+      properties:
+        ArtifactId:
+          type: string
+          format: uuid
+      required:
+        - ArtifactId
+SetWorkItemDescriptionParameters:
+  allOf:
+    - $ref: '#/WorkItemParameters'
+    - type: object
+      properties:
+        Text:
+          type: string
+          minLength: 1
+          description: The complete replacement description as UTF-8 text.
+      required:
+        - Text
+ClearWorkItemDescriptionParameters:
+  allOf:
+    - $ref: '#/WorkItemParameters'
+ArtifactDeletionResult:
+  type: object
+  properties:
+    ArtifactId:
+      type: string
+      format: uuid
+    WorkItemId:
+      type: string
+      format: uuid
+    DeletionGeneration:
+      type: string
+      format: uuid
+    DeletedAt:
+      type: string
+      format: date-time
+    PhysicalDeletionAt:
+      type: string
+      format: date-time
+    DeleteReason:
+      type: string
+  required:
+    - ArtifactId
+    - WorkItemId
+    - DeletionGeneration
+    - DeletedAt
+    - PhysicalDeletionAt
+    - DeleteReason
+ArtifactDeletionResponse:
+  description: Attachment deletion accepted with a recoverable cleanup deadline.
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                $ref: '#/ArtifactDeletionResult'
+StringResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                type: string

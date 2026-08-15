@@ -1,8 +1,15 @@
 namespace Grace.CLI
 
 open System
+open System.Collections
 open System.Collections.Generic
 open System.CommandLine
+open System.Reflection
+open System.Text.Json
+open System.Text.Json.Nodes
+open System.Text.Json.Schema
+open System.Text.Json.Serialization.Metadata
+open Microsoft.FSharp.Reflection
 
 /// Groups the command output contract command parser, handlers, and output helpers.
 module CommandOutputContract =
@@ -30,6 +37,7 @@ module CommandOutputContract =
     type CurrentJsonBehavior =
         | CommonRenderOutputEnvelope
         | ImmediateJsonErrorOnly
+        | ConditionalCheckStatusEnvelope
         | HumanProgressOnlySuccess
         | PartialManualSuccess
         | ManualJsonUnenveloped
@@ -65,6 +73,7 @@ module CommandOutputContract =
     /// Models envelope contract values passed between the parser and command output contract handlers.
     type EnvelopeContract =
         | ExistingGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
+        | ConditionalGraceResultEnvelope of dtoDisposition: OutputDtoDisposition * condition: string
         | MigrationRequiredToGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
         | JsonModeErrorOnly of reason: string
         | SourceOnlyUnsupported of disposition: string
@@ -142,6 +151,12 @@ module CommandOutputContract =
     /// Defines structured data exchanged by CLI helpers.
     type CommandExampleDocument = { Name: string; Description: string; Document: obj }
 
+    /// Describes one command-line input accepted by a command-specific machine-readable contract.
+    type CommandInputOptionDocument = { Name: string; ValueKind: string; Description: string }
+
+    /// Describes a command-specific input-selection rule for callers that cannot infer it from an output envelope.
+    type CommandInputDocument = { Selection: string; Description: string; Options: CommandInputOptionDocument list }
+
     /// Models command introspection document values passed between the parser and command output contract handlers.
     type CommandIntrospectionDocument =
         {
@@ -149,6 +164,7 @@ module CommandOutputContract =
             ContractVersion: string
             Command: CommandIdentityDocument
             Registry: CommandRegistryDocument
+            Input: CommandInputDocument option
             Schema: CommandSchemaDocument option
             Examples: CommandExampleDocument list
         }
@@ -164,12 +180,6 @@ module CommandOutputContract =
         schema["type"] <- "object"
         schema["required"] <- required
         schema["properties"] <- Dictionary<string, obj>(properties |> Seq.map KeyValuePair)
-        box schema
-
-    /// Constructs a closed JSON object schema that rejects undeclared command-output properties.
-    let private closedSchemaObject title properties required =
-        let schema = schemaObject title properties required :?> Dictionary<string, obj>
-        schema["additionalProperties"] <- false
         box schema
 
     /// Constructs a JSON schema for scalar command-output fields such as strings, booleans, or numbers.
@@ -189,27 +199,6 @@ module CommandOutputContract =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["type"] <- [| "object"; "null" |]
         schema["description"] <- description
-        box schema
-
-    /// Constructs the nullable nullable string schema used in generated command-output metadata.
-    let private nullableStringSchema description =
-        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
-        schema["type"] <- [| "string"; "null" |]
-        schema["description"] <- description
-        box schema
-
-    /// Constructs an array schema and attaches the item schema used by repeated command-output fields.
-    let private arraySchema itemSchema description =
-        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
-        schema["type"] <- "array"
-        schema["items"] <- itemSchema
-        schema["description"] <- description
-        box schema
-
-    let private stringDateTimeSchema =
-        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
-        schema["type"] <- "string"
-        schema["format"] <- "date-time"
         box schema
 
     let private propertyBagSchema =
@@ -249,403 +238,312 @@ module CommandOutputContract =
     /// Builds command-output contract metadata for unsupported return value example so automation can rely on stable JSON shapes.
     let private unsupportedReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
 
-    let private stringReturnValueSchema = scalarSchema "string"
+    let private reflectionFlags = BindingFlags.Public ||| BindingFlags.NonPublic
 
-    /// Constructs a string schema restricted to one value for conditional command-output variants.
-    let private constantStringSchema value description =
-        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
-        schema["type"] <- "string"
-        schema["const"] <- value
-        schema["description"] <- description
-        box schema
+    let private schemaSerializerOptions =
+        let options = JsonSerializerOptions(Grace.Shared.Constants.JsonSerializerOptions)
 
-    /// Constructs a string schema restricted to the values emitted by one command-output field.
-    let private enumStringSchema values description =
-        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
-        schema["type"] <- "string"
-        schema["enum"] <- values
-        schema["description"] <- description
-        box schema
+        if isNull options.TypeInfoResolver then
+            options.TypeInfoResolver <- DefaultJsonTypeInfoResolver()
 
-    /// Combines mutually exclusive command-output object variants under one named schema.
-    let private oneOfSchema title (variants: obj array) =
-        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
-        schema["$schema"] <- "https://json-schema.org/draft/2020-12/schema"
-        schema["title"] <- title
-        schema["oneOf"] <- variants
-        box schema
+        options
 
-    /// Defines the ready Cache status shape, including the facts that are safe only after protected identity validation.
-    let private cacheStatusReadySchema =
-        closedSchemaObject
-            "CacheStatusReadyDto"
-            [
-                "Class", constantStringSchema "Grace.Cache.Status" "Redacted local Cache status projection."
-                "Enrollment", constantStringSchema "enrolled" "Protected ready state is valid."
-                "CacheId", scalarSchema "string"
-                "Endpoint", scalarSchema "string"
-                "BoundaryKind", enumStringSchema [| "Owner"; "Organization" |] "Accepted Cache enrollment boundary."
-                "RepositoryCount", scalarSchema "integer"
-                "Key", constantStringSchema "available" "The ready identity key is available."
-            ]
-            [|
-                "Class"
-                "Enrollment"
-                "CacheId"
-                "Endpoint"
-                "BoundaryKind"
-                "RepositoryCount"
-                "Key"
-            |]
+    let private schemaExporterOptions = JsonSchemaExporterOptions(TreatNullObliviousAsNonNullable = true)
 
-    /// Defines the non-enrolled Cache status shape, which excludes every ready-only identity fact.
-    let private cacheStatusNotEnrolledSchema =
-        closedSchemaObject
-            "CacheStatusNotEnrolledDto"
-            [
-                "Class", constantStringSchema "Grace.Cache.Status" "Redacted local Cache status projection."
-                "Enrollment", constantStringSchema "notEnrolled" "No valid protected ready identity exists."
-                "Key", enumStringSchema [| "missing"; "available" |] "The missing root or staged attempt key state."
-            ]
-            [| "Class"; "Enrollment"; "Key" |]
+    /// Identifies a closed generic type without relying on its display name.
+    let private isGenericTypeOf genericTypeDefinition (candidate: Type) =
+        candidate.IsGenericType
+        && candidate.GetGenericTypeDefinition() = genericTypeDefinition
 
-    /// Defines the invalid Cache status shape, which excludes every ready-only identity fact.
-    let private cacheStatusInvalidSchema =
-        closedSchemaObject
-            "CacheStatusInvalidDto"
-            [
-                "Class", constantStringSchema "Grace.Cache.Status" "Redacted local Cache status projection."
-                "Enrollment", constantStringSchema "invalid" "The protected root cannot supply a valid ready identity."
-                "Key", enumStringSchema [| "invalid"; "inaccessible" |] "The invalid or inaccessible key state."
-            ]
-            [| "Class"; "Enrollment"; "Key" |]
+    /// Finds the JSON array item type for Grace result collections.
+    let private tryCollectionElementType (candidate: Type) =
+        if candidate = typeof<string> then
+            None
+        elif candidate.IsArray then
+            Some(candidate.GetElementType())
+        elif isGenericTypeOf typedefof<list<_>> candidate then
+            Some(candidate.GetGenericArguments()[0])
+        else
+            candidate.GetInterfaces()
+            |> Array.append [| candidate |]
+            |> Array.tryPick (fun implemented ->
+                if implemented.IsGenericType
+                   && implemented.GetGenericTypeDefinition() = typedefof<IEnumerable<_>> then
+                    Some(implemented.GetGenericArguments()[0])
+                else
+                    None)
 
-    /// Defines every Cache status output variant that the production local inspection can emit.
-    let private cacheStatusSchema =
-        oneOfSchema
-            "CacheStatusDto"
-            [|
-                cacheStatusReadySchema
-                cacheStatusNotEnrolledSchema
-                cacheStatusInvalidSchema
-            |]
+    /// Finds string-keyed dictionary value types whose JSON shape is an object property bag.
+    let private tryStringDictionaryValueType (candidate: Type) =
+        candidate.GetInterfaces()
+        |> Array.append [| candidate |]
+        |> Array.tryPick (fun implemented ->
+            if implemented.IsGenericType then
+                let definition = implemented.GetGenericTypeDefinition()
+                let arguments = implemented.GetGenericArguments()
 
-    /// Provides the representative enrolled Cache status output used by inert command examples.
-    let private cacheStatusExample =
-        box
-            {|
-                Class = "Grace.Cache.Status"
-                Enrollment = "enrolled"
-                CacheId = "11111111-1111-1111-1111-111111111111"
-                Endpoint = "https://cache.example.test"
-                BoundaryKind = "Organization"
-                RepositoryCount = 2
-                Key = "available"
-            |}
+                if (definition = typedefof<IDictionary<_, _>>
+                    || definition = typedefof<IReadOnlyDictionary<_, _>>)
+                   && arguments[0] = typeof<string> then
+                    Some arguments[1]
+                else
+                    None
+            else
+                None)
 
-    /// Provides the representative missing Cache status output used by inert command examples.
-    let private cacheStatusNotEnrolledExample = box {| Class = "Grace.Cache.Status"; Enrollment = "notEnrolled"; Key = "missing" |}
+    /// Applies Grace's configured union-tag naming policy to a discriminated-union case.
+    let private unionCaseName (caseInfo: UnionCaseInfo) =
+        Grace.Shared.Constants.JsonSerializerOptions.Converters
+        |> Seq.tryPick (fun converter ->
+            match converter with
+            | :? System.Text.Json.Serialization.JsonFSharpConverter as fsharpConverter ->
+                let namingPolicy = fsharpConverter.Options.UnionTagNamingPolicy
 
-    let private maintenanceStatsSchema =
-        schemaObject
-            "MaintenanceStatsDto"
-            [
-                "DirectoryCount", scalarSchema "integer"
-                "FileCount", scalarSchema "integer"
-                "TotalFileSize", scalarSchema "integer"
-                "RootSha256Hash", nullableStringSchema "Root directory SHA-256 hash when the local index contains or records it."
-                "RootBlake3Hash", nullableStringSchema "Root directory BLAKE3 hash when the local index contains it."
-            ]
-            [|
-                "DirectoryCount"
-                "FileCount"
-                "TotalFileSize"
-                "RootSha256Hash"
-                "RootBlake3Hash"
-            |]
+                if isNull namingPolicy then
+                    Some caseInfo.Name
+                else
+                    Some(namingPolicy.ConvertName(caseInfo.Name))
+            | _ -> None)
+        |> Option.defaultValue caseInfo.Name
 
-    let private maintenanceStatsExample =
-        box {| DirectoryCount = 1; FileCount = 2; TotalFileSize = 42L; RootSha256Hash = "0123456789abcdef"; RootBlake3Hash = "af1349b9f5f9a1a6" |}
+    /// Derives JSON Schema recursively from a declared result type and Grace's serializer configuration.
+    let rec private schemaForType (visiting: Type list) (resultType: Type) : obj =
+        let nestedSchema nextType = schemaForType (resultType :: visiting) nextType
 
-    let private maintenanceListContentsFileSchema =
-        schemaObject
-            "MaintenanceListContentsFileDto"
-            [
-                "RelativePath", scalarSchema "string"
-                "FileName", scalarSchema "string"
-                "Sha256Hash", scalarSchema "string"
-                "Blake3Hash", scalarSchema "string"
-                "Size", scalarSchema "integer"
-                "LastWriteTimeUtc", stringDateTimeSchema
-            ]
-            [|
-                "RelativePath"
-                "FileName"
-                "Sha256Hash"
-                "Blake3Hash"
-                "Size"
-                "LastWriteTimeUtc"
-            |]
+        if visiting |> List.exists ((=) resultType) then
+            box true
+        elif resultType = typeof<unit> then
+            scalarSchema "null"
+        elif isGenericTypeOf typedefof<option<_>> resultType then
+            let innerSchema = nestedSchema (resultType.GetGenericArguments()[0])
+            let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+            schema["anyOf"] <- [| innerSchema; scalarSchema "null" |]
+            box schema
+        elif isGenericTypeOf typedefof<list<_>> resultType then
+            let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+            schema["type"] <- "array"
+            schema["items"] <- nestedSchema (resultType.GetGenericArguments()[0])
+            box schema
+        elif FSharpType.IsTuple resultType then
+            let itemSchemas =
+                FSharpType.GetTupleElements resultType
+                |> Array.map nestedSchema
 
-    let private maintenanceListContentsDirectorySchema =
-        schemaObject
-            "MaintenanceListContentsDirectoryDto"
-            [
-                "RelativePath", scalarSchema "string"
-                "DirectoryVersionId", scalarSchema "string"
-                "Sha256Hash", scalarSchema "string"
-                "Blake3Hash", scalarSchema "string"
-                "Size", scalarSchema "integer"
-                "LastWriteTimeUtc", stringDateTimeSchema
-                "Files", arraySchema maintenanceListContentsFileSchema "Files in the indexed directory when file listing is enabled."
-            ]
-            [|
-                "RelativePath"
-                "DirectoryVersionId"
-                "Sha256Hash"
-                "Blake3Hash"
-                "Size"
-                "LastWriteTimeUtc"
-                "Files"
-            |]
+            let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+            schema["type"] <- "array"
+            schema["prefixItems"] <- itemSchemas
+            schema["minItems"] <- itemSchemas.Length
+            schema["maxItems"] <- itemSchemas.Length
+            box schema
+        elif FSharpType.IsRecord(resultType, reflectionFlags) then
+            let fields = FSharpType.GetRecordFields(resultType, reflectionFlags)
 
-    let private maintenanceListContentsSchema =
-        schemaObject
-            "MaintenanceListContentsDto"
-            [
-                "Summary", maintenanceStatsSchema
-                "Directories", arraySchema maintenanceListContentsDirectorySchema "Indexed directories returned by maintenance list-contents."
-            ]
-            [| "Summary"; "Directories" |]
+            let properties =
+                fields
+                |> Array.map (fun field -> KeyValuePair(field.Name, nestedSchema field.PropertyType))
 
-    let private maintenanceListContentsExample =
-        box
-            {|
-                Summary = {| DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = "0123456789abcdef"; RootBlake3Hash = "af1349b9f5f9a1a6" |}
-                Directories =
-                    [|
-                        {|
-                            RelativePath = "."
-                            DirectoryVersionId = "11111111-1111-1111-1111-111111111111"
-                            Sha256Hash = "0123456789abcdef"
-                            Blake3Hash = "af1349b9f5f9a1a6"
-                            Size = 12L
-                            LastWriteTimeUtc = "2026-06-05T00:00:00Z"
-                            Files =
-                                [|
-                                    {|
-                                        RelativePath = "README.md"
-                                        FileName = "README.md"
-                                        Sha256Hash = "abcdef0123456789"
-                                        Blake3Hash = "b9f5f9a1a6af1349"
-                                        Size = 12L
-                                        LastWriteTimeUtc = "2026-06-05T00:00:00Z"
-                                    |}
-                                |]
-                        |}
-                    |]
-            |}
+            let required =
+                fields
+                |> Array.filter (fun field -> not (isGenericTypeOf typedefof<option<_>> field.PropertyType))
+                |> Array.map (fun field -> field.Name)
 
-    let private maintenanceIgnoreEntriesSchema =
-        schemaObject
-            "MaintenanceIgnoreEntriesDto"
-            [
-                "DirectoryEntries", arraySchema (scalarSchema "string") "Configured Grace directory ignore entries."
-                "FileEntries", arraySchema (scalarSchema "string") "Configured Grace file ignore entries."
-            ]
-            [| "DirectoryEntries"; "FileEntries" |]
+            let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+            schema["title"] <- resultType.Name
+            schema["type"] <- "object"
+            schema["properties"] <- Dictionary<string, obj>(properties)
+            schema["required"] <- required
+            box schema
+        elif FSharpType.IsUnion(resultType, reflectionFlags) then
+            let cases = FSharpType.GetUnionCases(resultType, reflectionFlags)
+            let onlyCaseFields = if cases.Length = 1 then cases[ 0 ].GetFields() else [||]
 
-    let private maintenanceIgnoreEntriesExample = box {| DirectoryEntries = [| ".git"; ".grace" |]; FileEntries = [| "*.tmp" |] |}
+            if cases.Length = 1 && onlyCaseFields.Length = 1 then
+                nestedSchema onlyCaseFields[0].PropertyType
+            elif cases
+                 |> Array.forall (fun caseInfo -> caseInfo.GetFields().Length = 0) then
+                let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                schema["type"] <- "string"
+                schema["enum"] <- cases |> Array.map unionCaseName
+                box schema
+            else
+                let caseSchemas =
+                    cases
+                    |> Array.map (fun caseInfo ->
+                        let fields = caseInfo.GetFields()
 
-    let private maintenanceScanDifferenceSchema =
-        schemaObject
-            "MaintenanceScanDifferenceDto"
-            [
-                "DifferenceType", scalarSchema "string"
-                "FileSystemEntryType", scalarSchema "string"
-                "RelativePath", scalarSchema "string"
-            ]
-            [|
-                "DifferenceType"
-                "FileSystemEntryType"
-                "RelativePath"
-            |]
+                        if fields.Length = 0 then
+                            let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                            schema["const"] <- unionCaseName caseInfo
+                            box schema
+                        else
+                            let caseValueSchema =
+                                if fields.Length = 1 then
+                                    nestedSchema fields[0].PropertyType
+                                else
+                                    let properties =
+                                        fields
+                                        |> Array.map (fun field -> KeyValuePair(field.Name, nestedSchema field.PropertyType))
 
-    let private maintenanceScanDirectoryVersionSchema =
-        schemaObject
-            "MaintenanceScanDirectoryVersionDto"
-            [
-                "DirectoryVersionId", scalarSchema "string"
-                "RelativePath", scalarSchema "string"
-                "Sha256Hash", scalarSchema "string"
-                "Blake3Hash", scalarSchema "string"
-            ]
-            [|
-                "DirectoryVersionId"
-                "RelativePath"
-                "Sha256Hash"
-                "Blake3Hash"
-            |]
+                                    let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                                    schema["type"] <- "object"
+                                    schema["properties"] <- Dictionary<string, obj>(properties)
+                                    schema["required"] <- fields |> Array.map (fun field -> field.Name)
+                                    box schema
 
-    let private maintenanceScanSchema =
-        schemaObject
-            "MaintenanceScanDto"
-            [
-                "DifferenceCount", scalarSchema "integer"
-                "Differences", arraySchema maintenanceScanDifferenceSchema "Detected filesystem differences compared with the local Grace index."
-                "NewDirectoryVersionCount", scalarSchema "integer"
-                "NewDirectoryVersions", arraySchema maintenanceScanDirectoryVersionSchema "Computed directory versions for detected differences."
-            ]
-            [|
-                "DifferenceCount"
-                "Differences"
-                "NewDirectoryVersionCount"
-                "NewDirectoryVersions"
-            |]
+                            let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                            schema["type"] <- "object"
 
-    let private maintenanceScanExample =
-        box
-            {|
-                DifferenceCount = 1
-                Differences =
-                    [|
-                        {| DifferenceType = "Added"; FileSystemEntryType = "File"; RelativePath = "README.md" |}
-                    |]
-                NewDirectoryVersionCount = 1
-                NewDirectoryVersions =
-                    [|
-                        {|
-                            DirectoryVersionId = "11111111-1111-1111-1111-111111111111"
-                            RelativePath = "."
-                            Sha256Hash = "0123456789abcdef"
-                            Blake3Hash = "af1349b9f5f9a1a6"
-                        |}
-                    |]
-            |}
+                            schema["properties"] <- Dictionary<string, obj>(
+                                [
+                                    KeyValuePair(unionCaseName caseInfo, caseValueSchema)
+                                ]
+                            )
 
-    let private doctorCheckSchema =
-        schemaObject
-            "DoctorCheckDto"
-            [
-                "Id", scalarSchema "string"
-                "Category", scalarSchema "string"
-                "Title", scalarSchema "string"
-                "Description", scalarSchema "string"
-                "DefaultEnabled", scalarSchema "boolean"
-                "SupportsOffline", scalarSchema "boolean"
-            ]
-            [|
-                "Id"
-                "Category"
-                "Title"
-                "Description"
-                "DefaultEnabled"
-                "SupportsOffline"
-            |]
+                            schema["required"] <- [| unionCaseName caseInfo |]
+                            box schema)
 
-    let private doctorCheckResultSchema =
-        schemaObject
-            "DoctorCheckResultDto"
-            [
-                "Id", scalarSchema "string"
-                "Category", scalarSchema "string"
-                "Title", scalarSchema "string"
-                "Status", scalarSchema "string"
-                "Severity", scalarSchema "string"
-                "Summary", scalarSchema "string"
-            ]
-            [|
-                "Id"
-                "Category"
-                "Title"
-                "Status"
-                "Severity"
-                "Summary"
-            |]
+                let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                schema["anyOf"] <- caseSchemas
+                box schema
+        else
+            match tryStringDictionaryValueType resultType, tryCollectionElementType resultType with
+            | Some valueType, _ ->
+                let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                schema["type"] <- "object"
+                schema["additionalProperties"] <- nestedSchema valueType
+                box schema
+            | None, Some elementType ->
+                let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+                schema["type"] <- "array"
+                schema["items"] <- nestedSchema elementType
+                box schema
+            | None, None ->
+                try
+                    box (JsonSchemaExporter.GetJsonSchemaAsNode(schemaSerializerOptions, resultType, schemaExporterOptions))
+                with
+                | _ -> box true
 
-    let private doctorSummarySchema =
-        schemaObject
-            "DoctorSummaryDto"
-            [
-                "Total", scalarSchema "integer"
-                "Ok", scalarSchema "integer"
-                "Warning", scalarSchema "integer"
-                "Failed", scalarSchema "integer"
-                "Skipped", scalarSchema "integer"
-            ]
-            [|
-                "Total"
-                "Ok"
-                "Warning"
-                "Failed"
-                "Skipped"
-            |]
+    /// Constructs a deterministic value that the unchanged Grace serializer can turn into an example document.
+    let rec private representativeValue (visiting: Type list) depth (resultType: Type) : obj =
+        let nestedValue nextType = representativeValue (resultType :: visiting) (depth + 1) nextType
 
-    let private doctorReportSchema =
-        schemaObject
-            "DoctorReportDto"
-            [
-                "ReportVersion", scalarSchema "string"
-                "Status", scalarSchema "string"
-                "ExitCode", scalarSchema "integer"
-                "Full", scalarSchema "boolean"
-                "Offline", scalarSchema "boolean"
-                "Strict", scalarSchema "boolean"
-                "ListOnly", scalarSchema "boolean"
-                "RequestedChecks", arraySchema (scalarSchema "string") "Requested check IDs or categories after token normalization."
-                "Catalog", arraySchema doctorCheckSchema "Inert doctor check catalog entries included in the report."
-                "Checks", arraySchema doctorCheckResultSchema "Scaffolded check results; no real diagnostics run in this slice."
-                "Summary", doctorSummarySchema
-            ]
-            [|
-                "ReportVersion"
-                "Status"
-                "ExitCode"
-                "Full"
-                "Offline"
-                "Strict"
-                "ListOnly"
-                "RequestedChecks"
-                "Catalog"
-                "Checks"
-                "Summary"
-            |]
+        if depth >= 16
+           || visiting |> List.exists ((=) resultType) then
+            null
+        elif resultType = typeof<string> then
+            box "example"
+        elif resultType = typeof<Guid> then
+            box (Guid.Parse("11111111-1111-1111-1111-111111111111"))
+        elif resultType = typeof<Uri> then
+            box (Uri("https://example.invalid/grace"))
+        elif resultType = typeof<DateTime> then
+            box (DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc))
+        elif resultType = typeof<DateTimeOffset> then
+            box (DateTimeOffset(2026, 6, 5, 0, 0, 0, TimeSpan.Zero))
+        elif resultType = typeof<unit> then
+            box ()
+        elif isGenericTypeOf typedefof<option<_>> resultType then
+            null
+        elif resultType.IsArray then
+            box (Array.CreateInstance(resultType.GetElementType(), 0))
+        elif isGenericTypeOf typedefof<list<_>> resultType then
+            let emptyCase =
+                FSharpType.GetUnionCases(resultType, reflectionFlags)
+                |> Array.find (fun caseInfo -> caseInfo.GetFields().Length = 0)
 
-    let private doctorReportExample =
-        box
-            {|
-                ReportVersion = "doctor-report-v1"
-                Status = "Ok"
-                ExitCode = 0
-                Full = false
-                Offline = false
-                Strict = false
-                ListOnly = true
-                RequestedChecks = [| "cli.catalog" |]
-                Catalog =
-                    [|
-                        {|
-                            Id = "cli.catalog"
-                            Category = "CLI"
-                            Title = "CLI command catalog"
-                            Description = "Verifies that the Grace CLI command catalog is available. Scaffold only; no runtime probe is executed."
-                            DefaultEnabled = true
-                            SupportsOffline = true
-                        |}
-                    |]
-                Checks =
-                    [|
-                        {|
-                            Id = "cli.catalog"
-                            Category = "CLI"
-                            Title = "CLI command catalog"
-                            Status = "Ok"
-                            Severity = "Info"
-                            Summary = "Scaffolded check only; no diagnostic probe ran in this slice."
-                        |}
-                    |]
-                Summary = {| Total = 1; Ok = 1; Warning = 0; Failed = 0; Skipped = 0 |}
-            |}
+            FSharpValue.MakeUnion(emptyCase, [||], reflectionFlags)
+        elif FSharpType.IsTuple resultType then
+            let values =
+                FSharpType.GetTupleElements resultType
+                |> Array.map nestedValue
+
+            FSharpValue.MakeTuple(values, resultType)
+        elif FSharpType.IsRecord(resultType, reflectionFlags) then
+            let values =
+                FSharpType.GetRecordFields(resultType, reflectionFlags)
+                |> Array.map (fun field -> nestedValue field.PropertyType)
+
+            FSharpValue.MakeRecord(resultType, values, reflectionFlags)
+        elif FSharpType.IsUnion(resultType, reflectionFlags) then
+            let caseInfo = FSharpType.GetUnionCases(resultType, reflectionFlags)[0]
+
+            let values =
+                caseInfo.GetFields()
+                |> Array.map (fun field -> nestedValue field.PropertyType)
+
+            FSharpValue.MakeUnion(caseInfo, values, reflectionFlags)
+        elif resultType.IsEnum then
+            Enum.GetValues(resultType).GetValue(0)
+        elif resultType = typeof<obj> then
+            box (Dictionary<string, obj>())
+        else
+            match tryStringDictionaryValueType resultType, tryCollectionElementType resultType with
+            | Some valueType, _ ->
+                let dictionaryType = typedefof<Dictionary<_, _>>.MakeGenericType (typeof<string>, valueType)
+                Activator.CreateInstance(dictionaryType)
+            | None, Some elementType ->
+                if resultType.IsInterface then
+                    box (Array.CreateInstance(elementType, 0))
+                else
+                    try
+                        Activator.CreateInstance(resultType)
+                    with
+                    | _ -> box (Array.CreateInstance(elementType, 0))
+            | None, None ->
+                try
+                    Activator.CreateInstance(resultType)
+                with
+                | _ -> null
+
+    /// Serializes a deterministic representative through the same options used by runtime JSON output.
+    let private representativeExample resultType =
+        try
+            let value = representativeValue [] 0 resultType
+            let json = JsonSerializer.Serialize(value, resultType, Grace.Shared.Constants.JsonSerializerOptions)
+            box (JsonNode.Parse(json))
+        with
+        | _ -> null
+
+    /// Formats a declared CLR/F# type as concise CLI contract metadata.
+    let rec private contractTypeName (resultType: Type) =
+        if resultType = typeof<unit> then
+            "unit"
+        elif resultType = typeof<string> then
+            "string"
+        elif resultType = typeof<bool> then
+            "bool"
+        elif resultType = typeof<int> then
+            "int"
+        elif resultType = typeof<int64> then
+            "int64"
+        elif resultType.IsArray then
+            $"{contractTypeName (resultType.GetElementType())} array"
+        elif FSharpType.IsTuple resultType then
+            FSharpType.GetTupleElements resultType
+            |> Array.map contractTypeName
+            |> String.concat " * "
+        elif isGenericTypeOf typedefof<option<_>> resultType then
+            $"{contractTypeName (resultType.GetGenericArguments()[0])} option"
+        elif isGenericTypeOf typedefof<list<_>> resultType then
+            $"{contractTypeName (resultType.GetGenericArguments()[0])} list"
+        elif resultType.IsGenericType then
+            let genericName = resultType.Name.Split('`')[0]
+
+            resultType.GetGenericArguments()
+            |> Array.map contractTypeName
+            |> String.concat ", "
+            |> fun arguments -> $"{genericName}<{arguments}>"
+        else
+            resultType.Name
+
+    /// Resolves private CLI-local result records without making their implementation types public.
+    let private cliLocalResultType fullName =
+        match Assembly
+                  .GetExecutingAssembly()
+                  .GetType(fullName, false)
+            with
+        | null -> invalidOp $"CLI output result type '{fullName}' was not found."
+        | resultType -> resultType
 
     /// Builds command-output contract metadata for supported return value contract so automation can rely on stable JSON shapes.
     let private supportedReturnValueContract name provenance schema example notes =
@@ -690,6 +588,7 @@ module CommandOutputContract =
     let private envelopeContractText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition -> $"ExistingGraceResultEnvelope: {outputDtoDispositionText disposition}"
+        | ConditionalGraceResultEnvelope (disposition, condition) -> $"ConditionalGraceResultEnvelope: {outputDtoDispositionText disposition}; {condition}"
         | MigrationRequiredToGraceResultEnvelope disposition -> $"MigrationRequiredToGraceResultEnvelope: {outputDtoDispositionText disposition}"
         | JsonModeErrorOnly reason -> $"JsonModeErrorOnly: {reason}"
         | SourceOnlyUnsupported reason -> $"SourceOnlyUnsupported: {reason}"
@@ -698,112 +597,227 @@ module CommandOutputContract =
     let private returnValueDispositionText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition
+        | ConditionalGraceResultEnvelope (disposition, _)
         | MigrationRequiredToGraceResultEnvelope disposition -> outputDtoDispositionText disposition
         | JsonModeErrorOnly reason -> $"Unsupported: {reason}"
         | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
 
-    /// Builds command-output contract metadata for return value contract for so automation can rely on stable JSON shapes.
+    /// Maps each JSON-success command to the exact result type declared by its current handler or SDK call.
+    let private declaredResultTypeFor commandId =
+        match commandId with
+        | "authorize.can"
+        | "authorize.check" -> typeof<Grace.Types.Authorization.PermissionCheckResult>
+        | "authorize.grant-role"
+        | "authorize.list-role-assignments"
+        | "authorize.revoke-role"
+        | "authorize.show" -> typeof<Grace.Types.Authorization.RoleAssignment list>
+        | "authorize.list-path-permissions"
+        | "authorize.remove-path-permission"
+        | "authorize.upsert-path-permission" -> typeof<Grace.Types.Common.PathPermission list>
+        | "authorize.list-roles" -> typeof<Grace.Types.Authorization.RoleDefinition list>
+        | "admin.reminder.list" -> typeof<IEnumerable<Grace.Types.Reminder.ReminderDto>>
+        | "admin.reminder.get" -> typeof<Grace.Types.Reminder.ReminderDto>
+        | "admin.reminder.create"
+        | "admin.reminder.delete"
+        | "admin.reminder.reschedule"
+        | "admin.reminder.update-time" -> typeof<string>
+        | "agent.add-summary" -> cliLocalResultType "Grace.CLI.Command.AgentCommand+AddSummaryResult"
+        | "agent.bootstrap"
+        | "agent.work.start"
+        | "agent.work.status"
+        | "agent.work.stop" -> typeof<Grace.Types.Automation.AgentSessionOperationResult>
+        | "alias.list" -> typeof<Grace.CLI.Common.LocalOutputDto.AliasListDto>
+        | "approval.policy.create"
+        | "approval.policy.delete"
+        | "approval.policy.disable"
+        | "approval.policy.enable"
+        | "approval.policy.show"
+        | "approval.policy.update" -> typeof<Grace.Types.Webhooks.ApprovalPolicy>
+        | "approval.policy.evaluate"
+        | "approval.policy.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalPolicy>>
+        | "approval.request.approve"
+        | "approval.request.reject"
+        | "approval.request.show"
+        | "approval.request.wait" -> typeof<Grace.Types.Webhooks.ApprovalRequest>
+        | "approval.request.history"
+        | "approval.request.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalRequest>>
+        | "authenticate.login"
+        | "authenticate.logout"
+        | "authenticate.token.clear"
+        | "authenticate.token.set"
+        | "authenticate.token.status" -> typeof<string>
+        | "authenticate.status" -> typeof<Grace.CLI.Command.Auth.AuthStatusOutput>
+        | "authenticate.token.create" -> typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenCreated>
+        | "authenticate.token.list" -> typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary list>
+        | "authenticate.token.revoke" -> typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary>
+        | "authenticate.whoami" -> typeof<Grace.CLI.Command.Auth.AuthInfo>
+        | "branch.annotate" -> typeof<Grace.Types.Annotation.BranchAnnotationDto>
+        | "branch.assign"
+        | "branch.checkpoint"
+        | "branch.commit"
+        | "branch.create"
+        | "branch.create-external"
+        | "branch.delete"
+        | "branch.enable-assign"
+        | "branch.enable-auto-rebase"
+        | "branch.enable-checkpoints"
+        | "branch.enable-commit"
+        | "branch.enable-external"
+        | "branch.enable-promotion"
+        | "branch.enable-save"
+        | "branch.enable-tag"
+        | "branch.promote"
+        | "branch.save"
+        | "branch.set-name"
+        | "branch.set-promotion-mode"
+        | "branch.tag"
+        | "branch.update-parent-branch" -> typeof<string>
+        | "branch.get" -> typeof<Grace.Types.Branch.BranchDto>
+        | "branch.get-checkpoints"
+        | "branch.get-commits"
+        | "branch.get-externals"
+        | "branch.get-promotions"
+        | "branch.get-references"
+        | "branch.get-saves"
+        | "branch.get-tags" -> typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+        | "branch.get-recursive-size" -> typeof<int64>
+        | "branch.list-contents" -> typeof<IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>>
+        | "candidate.attestations" -> typeof<Grace.Shared.Parameters.Review.CandidateAttestationsResult>
+        | "candidate.cancel"
+        | "candidate.gate.rerun"
+        | "candidate.retry" -> typeof<Grace.Shared.Parameters.Review.CandidateActionResult>
+        | "candidate.get" -> typeof<Grace.Shared.Parameters.Review.CandidateProjectionSnapshotResult>
+        | "candidate.required-actions" -> typeof<Grace.Shared.Parameters.Review.CandidateRequiredActionsResult>
+        | "config.write" -> typeof<unit>
+        | "connect" -> typeof<Grace.CLI.Common.LocalOutputDto.ConnectDto>
+        | "diff.blake3" -> typeof<Grace.Types.Diff.DiffDto>
+        | "directory-version.get-zip-file" -> typeof<Uri>
+        | "history.delete" -> typeof<Grace.CLI.Common.LocalOutputDto.HistoryDeleteDto>
+        | "history.off"
+        | "history.on" -> typeof<Grace.CLI.Common.LocalOutputDto.HistoryRecordingDto>
+        | "history.search"
+        | "history.show" -> typeof<Grace.CLI.Common.LocalOutputDto.HistoryEntriesDto>
+        | "doctor" -> typeof<Grace.CLI.Common.LocalOutputDto.DoctorReportDto>
+        | "maintenance.check-ignore-entries" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceIgnoreEntriesDto>
+        | "maintenance.clear-journal" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceClearJournalDto>
+        | "maintenance.list-contents" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceListContentsDto>
+        | "maintenance.scan" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceScanDto>
+        | "maintenance.show-journal" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceShowJournalDto>
+        | "maintenance.stats"
+        | "maintenance.update-index" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceStatsDto>
+        | "organization.create"
+        | "organization.delete"
+        | "organization.set-description"
+        | "organization.set-name"
+        | "organization.set-search-visibility"
+        | "organization.set-type"
+        | "organization.undelete" -> typeof<string>
+        | "organization.get" -> typeof<Grace.Types.Organization.OrganizationDto>
+        | "owner.create"
+        | "owner.delete"
+        | "owner.set-description"
+        | "owner.set-name"
+        | "owner.set-search-visibility"
+        | "owner.set-type"
+        | "owner.undelete" -> typeof<string>
+        | "owner.get" -> typeof<Grace.Types.Owner.OwnerDto>
+        | "promotion-set.apply"
+        | "promotion-set.conflicts.resolve"
+        | "promotion-set.create"
+        | "promotion-set.delete"
+        | "promotion-set.recompute"
+        | "promotion-set.request-approval"
+        | "promotion-set.update-input-promotions" -> typeof<string>
+        | "promotion-set.conflicts.show" -> cliLocalResultType "Grace.CLI.Command.PromotionSetCommand+ConflictShowResult"
+        | "promotion-set.get"
+        | "promotion-set.show" -> typeof<Grace.Types.PromotionSet.PromotionSetDto>
+        | "promotion-set.get-events" -> typeof<IReadOnlyList<Grace.Types.PromotionSet.PromotionSetEvent>>
+        | "promotion-set.list" -> typeof<(Grace.Types.PromotionSet.PromotionSetDto * Grace.Types.Webhooks.PromotionSetApprovalSummary option) list>
+        | "queue.dequeue"
+        | "queue.enqueue"
+        | "queue.pause"
+        | "queue.resume" -> typeof<string>
+        | "queue.status" -> typeof<Grace.Types.Queue.PromotionQueue>
+        | "repository.create"
+        | "repository.delete"
+        | "repository.set-allows-large-files"
+        | "repository.set-anonymous-access"
+        | "repository.set-checkpoint-days"
+        | "repository.set-conflict-resolution-policy"
+        | "repository.set-default-server-api-version"
+        | "repository.set-description"
+        | "repository.set-diff-cache-days"
+        | "repository.set-directory-version-cache-days"
+        | "repository.set-logical-delete-days"
+        | "repository.set-name"
+        | "repository.set-record-saves"
+        | "repository.set-save-days"
+        | "repository.set-status"
+        | "repository.set-visibility"
+        | "repository.undelete" -> typeof<string>
+        | "repository.get" -> typeof<Grace.Types.Repository.RepositoryDto>
+        | "repository.get-branches" -> typeof<IEnumerable<Grace.Types.Branch.BranchDto>>
+        | "repository.init" -> typeof<Grace.CLI.Common.LocalOutputDto.RepositoryInitDto>
+        | "review.checkpoint"
+        | "review.deepen"
+        | "review.resolve" -> typeof<string>
+        | "review.inbox" -> typeof<obj>
+        | "review.open" -> typeof<Grace.Types.Review.ReviewNotes option>
+        | "review.report.export" -> typeof<Grace.CLI.Common.LocalOutputDto.ReviewReportExportDto>
+        | "review.report.show" -> typeof<Grace.SDK.ReviewReportResult>
+        | "watch" -> cliLocalResultType "Grace.CLI.Command.Watch+WatchCheckStatusDto"
+        | "webhook.create"
+        | "webhook.delete"
+        | "webhook.disable"
+        | "webhook.enable"
+        | "webhook.show"
+        | "webhook.update" -> typeof<Grace.Types.Webhooks.WebhookRule>
+        | "webhook.deliveries" -> typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookDelivery>>
+        | "webhook.delivery.show"
+        | "webhook.test" -> typeof<Grace.Types.Webhooks.WebhookDelivery>
+        | "webhook.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookRule>>
+        | "workitem.attachments.add" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentResult"
+        | "workitem.attachments.download" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentDownloadResult"
+        | "workitem.attachments.delete" -> typeof<Grace.Types.Artifact.ArtifactDeletionResult>
+        | "workitem.attachments.list" -> typeof<Grace.Shared.Parameters.WorkItem.ListWorkItemAttachmentsResult>
+        | "workitem.attachments.show" -> typeof<Grace.Shared.Parameters.WorkItem.ShowWorkItemAttachmentResult>
+        | "workitem.attachments.undelete" -> typeof<string>
+        | "workitem.description.clear"
+        | "workitem.description.set" -> typeof<string>
+        | "workitem.create"
+        | "workitem.link.prset"
+        | "workitem.link.ref"
+        | "workitem.links.remove.prset"
+        | "workitem.links.remove.ref"
+        | "workitem.set-status" -> typeof<string>
+        | "workitem.links.list" -> typeof<Grace.Types.WorkItem.WorkItemLinksDto>
+        | "workitem.show" -> typeof<Grace.Types.WorkItem.WorkItemDto>
+        | unknown -> invalidOp $"JSON-success command '{unknown}' does not declare a ReturnValue type in CommandOutputContract."
+
+    /// Builds type-derived schema and examples for every command that already emits a Grace success envelope.
+    let private typeDerivedReturnValueContract commandId =
+        let resultType = declaredResultTypeFor commandId
+
+        supportedReturnValueContract
+            (contractTypeName resultType)
+            $"Declared ReturnValue type: {resultType.FullName}"
+            (schemaForType [] resultType)
+            (representativeExample resultType)
+            [
+                "ReturnValue schema and example are derived from the declared result type and Grace's configured JSON serializer policy."
+            ]
+
+    /// Selects a derived contract only for commands with a real JSON success path.
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
-        match identity.CommandId, envelopeContract with
-        | "cache.status", ExistingGraceResultEnvelope NoServerDto ->
-            supportedReturnValueContract
-                "CacheStatusDto"
-                "Grace.CLI.Command.CacheCommand"
-                cacheStatusSchema
-                cacheStatusExample
-                [
-                    "The command reads local protected identity state without a repository, server request, credential lookup, or mutation."
-                    "CacheId, Endpoint, BoundaryKind, and RepositoryCount are present only when Enrollment is enrolled."
-                ]
-        | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
-            supportedReturnValueContract
-                "MaintenanceIgnoreEntriesDto"
-                "Grace.CLI.Command.Common.LocalOutputDto"
-                maintenanceIgnoreEntriesSchema
-                maintenanceIgnoreEntriesExample
-                [
-                    "Command-specific CLI DTO emitted by maintenance check-ignore-entries in the common Grace result envelope."
-                ]
-        | "maintenance.list-contents", ExistingGraceResultEnvelope RequiresCliDto ->
-            supportedReturnValueContract
-                "MaintenanceListContentsDto"
-                "Grace.CLI.Command.Common.LocalOutputDto"
-                maintenanceListContentsSchema
-                maintenanceListContentsExample
-                [
-                    "Command-specific CLI DTO emitted by maintenance list-contents in the common Grace result envelope."
-                ]
-        | "maintenance.scan", ExistingGraceResultEnvelope RequiresCliDto ->
-            supportedReturnValueContract
-                "MaintenanceScanDto"
-                "Grace.CLI.Command.Common.LocalOutputDto"
-                maintenanceScanSchema
-                maintenanceScanExample
-                [
-                    "Command-specific CLI DTO emitted by maintenance scan in the common Grace result envelope."
-                ]
-        | "maintenance.stats", ExistingGraceResultEnvelope RequiresCliDto ->
-            supportedReturnValueContract
-                "MaintenanceStatsDto"
-                "Grace.CLI.Command.Common.LocalOutputDto"
-                maintenanceStatsSchema
-                maintenanceStatsExample
-                [
-                    "Command-specific CLI DTO emitted by maintenance stats in the common Grace result envelope."
-                ]
-        | "maintenance.update-index", ExistingGraceResultEnvelope RequiresCliDto ->
-            supportedReturnValueContract
-                "MaintenanceStatsDto"
-                "Grace.CLI.Command.Common.LocalOutputDto"
-                maintenanceStatsSchema
-                maintenanceStatsExample
-                [
-                    "Command-specific CLI DTO emitted by maintenance update-index in the common Grace result envelope after the local index is updated."
-                ]
-        | "doctor", ExistingGraceResultEnvelope RequiresCliDto ->
-            supportedReturnValueContract
-                "DoctorReportDto"
-                "Grace.CLI.Command.Common.LocalOutputDto"
-                doctorReportSchema
-                doctorReportExample
-                [
-                    "Command-specific CLI DTO emitted by grace doctor in the common Grace result envelope."
-                    "Doctor schema and examples are intentionally available in the S0 scaffold because later slices add real diagnostics behind the stable DTO."
-                ]
-        | "repository.get", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            incompleteReturnValueContract
-                "RepositoryDto"
-                "RepositoryDto metadata is incomplete: src/Grace.Types/Repository.Types.fs declares additional emitted fields that are not yet represented in the CLI contract registry."
-        | "workitem.show", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            incompleteReturnValueContract
-                "WorkItemDto"
-                "WorkItemDto metadata is incomplete: src/Grace.Types/WorkItem.Types.fs declares additional emitted fields that are not yet represented in the CLI contract registry."
-        | ("authorize.can"
-          | "authorize.check"),
-          ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            incompleteReturnValueContract
-                "PermissionCheckResult"
-                "PermissionCheckResult metadata is incomplete: src/Grace.Types/Authorization.Types.fs emits the Allowed/Denied discriminated union, not an object with Allowed and Reason fields."
-        | "authenticate.logout", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            supportedReturnValueContract
-                "string"
-                "GraceReturnValue<string>"
-                stringReturnValueSchema
-                (box "Signed out.")
-                [
-                    "Representative scalar ReturnValue schema for a common Grace result envelope command."
-                ]
-        | "watch", JsonModeErrorOnly reason -> unsupportedReturnValueContract "WatchResultDto" reason
-        | _, SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
-        | _, JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
-        | _, MigrationRequiredToGraceResultEnvelope disposition ->
+        match envelopeContract with
+        | ExistingGraceResultEnvelope _
+        | ConditionalGraceResultEnvelope _ -> typeDerivedReturnValueContract identity.CommandId
+        | SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
+        | JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
+        | MigrationRequiredToGraceResultEnvelope disposition ->
             incompleteReturnValueContract
                 (outputDtoDispositionText disposition)
                 "This command is routed, but its JSON success path still requires migration before schema/examples can describe the emitted ReturnValue."
-        | _, ExistingGraceResultEnvelope disposition ->
-            incompleteReturnValueContract
-                (outputDtoDispositionText disposition)
-                "The registry has envelope metadata for this command, but command-specific ReturnValue schema/example metadata has not been declared yet."
 
     /// Builds the command document section of the machine-readable command-output contract.
     let private commandDocument (identity: CommandIdentity) =
@@ -873,6 +887,8 @@ module CommandOutputContract =
             Envelope =
                 match entry.EnvelopeContract with
                 | JsonModeErrorOnly reason -> $"GraceError only in JSON mode for this release; no success ReturnValue envelope is emitted. {reason}"
+                | ConditionalGraceResultEnvelope (_, condition) ->
+                    $"GraceReturnValue<T> status envelope for status checks, including unavailable modes with nonzero exit codes. GraceError remains for parser and command execution errors outside that status-check path. {condition}"
                 | _ -> "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
             ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
             ReturnValueContract = entry.ReturnValueContract.Name
@@ -895,21 +911,6 @@ module CommandOutputContract =
                 box
                     {|
                         ReturnValue = entry.ReturnValueContract.Example
-                        EventTime = "2026-06-05T00:00:00Z"
-                        CorrelationId = "correlation-id"
-                        Properties = cliProperties entry.Identity.CommandId entry.ReturnValueContract.Provenance
-                    |}
-        }
-
-    /// Builds the representative non-enrolled Cache status success envelope alongside the ready success example.
-    let private cacheStatusNotEnrolledSuccessExample (entry: CommandContractEntry) =
-        {
-            Name = "not-enrolled-envelope-shape"
-            Description = "Representative non-enrolled GraceReturnValue<CacheStatusDto> envelope shape from registry metadata."
-            Document =
-                box
-                    {|
-                        ReturnValue = cacheStatusNotEnrolledExample
                         EventTime = "2026-06-05T00:00:00Z"
                         CorrelationId = "correlation-id"
                         Properties = cliProperties entry.Identity.CommandId entry.ReturnValueContract.Provenance
@@ -953,6 +954,23 @@ module CommandOutputContract =
                     |}
         }
 
+    /// Returns command-specific source metadata where output-envelope metadata alone cannot express input exclusivity.
+    let private commandInputDocument (identity: CommandIdentity) =
+        match identity.CommandId with
+        | "workitem.description.set" ->
+            Some
+                {
+                    Selection = "ExactlyOne"
+                    Description = "Supply exactly one complete Markdown source; the selected text is sent unchanged."
+                    Options =
+                        [
+                            { Name = "--text"; ValueKind = "string"; Description = "Use inline Markdown text." }
+                            { Name = "--file"; ValueKind = "path"; Description = "Read complete Markdown text from a file." }
+                            { Name = "--stdin"; ValueKind = "flag"; Description = "Read complete Markdown text from standard input." }
+                        ]
+                }
+        | _ -> None
+
     /// Builds the introspection document section of the machine-readable command-output contract.
     let introspectionDocument (kind: IntrospectionKind) (entry: CommandContractEntry) =
         {
@@ -963,6 +981,7 @@ module CommandOutputContract =
             ContractVersion = "cli-json-v1"
             Command = commandDocument entry.Identity
             Registry = registryDocument entry
+            Input = commandInputDocument entry.Identity
             Schema =
                 match kind with
                 | Schema -> Some(schemaDocument entry)
@@ -975,8 +994,6 @@ module CommandOutputContract =
                     | SchemaReady ->
                         [
                             successExample entry
-                            if entry.Identity.CommandId = "cache.status" then
-                                cacheStatusNotEnrolledSuccessExample entry
                             errorExample entry
                         ]
                     | MetadataIncomplete
@@ -994,8 +1011,8 @@ module CommandOutputContract =
             { JsonMode = UnsupportedUntilRouted; Schema = UnsupportedUntilRouted; Examples = UnsupportedUntilRouted; Select = UnsupportedUntilRouted }
         | ImmediateJsonErrorOnly ->
             { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = RequiresMigration }
-        | CommonRenderOutputEnvelope ->
-            { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = ExistingBehavior }
+        | ConditionalCheckStatusEnvelope -> { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
+        | CommonRenderOutputEnvelope -> { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
         | _ -> { JsonMode = RequiresMigration; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = FutureReturnValueProjection }
 
     /// Builds command-output contract metadata for envelope for so automation can rely on stable JSON shapes.
@@ -1003,6 +1020,11 @@ module CommandOutputContract =
         match routed, behavior with
         | false, _ -> SourceOnlyUnsupported "Defined in source but not root-routed for V1."
         | true, CommonRenderOutputEnvelope -> ExistingGraceResultEnvelope dtoDisposition
+        | true, ConditionalCheckStatusEnvelope ->
+            ConditionalGraceResultEnvelope(
+                dtoDisposition,
+                "`grace watch --check` supports JSON and --select status output; foreground `grace watch` still returns a JSON error because it is a continuous workflow."
+            )
         | true, ImmediateJsonErrorOnly ->
             JsonModeErrorOnly
                 "The command is routed, but --output Json is intentionally short-circuited before command execution because watch is a continuous foreground workflow."
@@ -1053,19 +1075,13 @@ module CommandOutputContract =
             ExecutionScope = executionScope
             Mutating = mutating
             EnvelopeContract = envelopeContract
-            Features =
-                if
-                    identity.CommandId.Equals("doctor", StringComparison.Ordinal)
-                    || identity.CommandId.Equals("cache.status", StringComparison.Ordinal)
-                then
-                    { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
-                else
-                    featuresFor behavior
+            Features = featuresFor behavior
             ReturnValueContract = returnValueContractFor identity envelopeContract
         }
 
     let private common_renderOutput_envelope = CommonRenderOutputEnvelope
     let private immediate_json_error_only = ImmediateJsonErrorOnly
+    let private conditional_check_status_envelope = ConditionalCheckStatusEnvelope
     let private human_progress_only_success = HumanProgressOnlySuccess
     let private partial_manual_success = PartialManualSuccess
     let private manual_json_unenveloped = ManualJsonUnenveloped
@@ -1186,7 +1202,6 @@ module CommandOutputContract =
             row [ "branch" ] "switch" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "branch" ] "tag" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "update-parent-branch" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "cache" ] "status" true false common_renderOutput_envelope read_list_search local_client NoServerDto
             row [ "candidate" ] "attestations" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "cancel" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate"; "gate" ] "rerun" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
@@ -1212,8 +1227,10 @@ module CommandOutputContract =
             row [ "history" ] "show" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [] "doctor" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "check-ignore-entries" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [ "maintenance" ] "clear-journal" true true common_renderOutput_envelope mutating local_client RequiresCliDto
             row [ "maintenance" ] "list-contents" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "scan" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
+            row [ "maintenance" ] "show-journal" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "stats" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "update-index" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
             row [ "organization" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
@@ -1357,7 +1374,7 @@ module CommandOutputContract =
             row [ "review"; "report" ] "export" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review"; "report" ] "show" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review" ] "resolve" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [] "watch" true true immediate_json_error_only progress_local_workflow local_client RequiresCliDto
+            row [] "watch" true true conditional_check_status_envelope progress_local_workflow local_client RequiresCliDto
             row [ "webhook" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "deliveries" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
@@ -1368,34 +1385,26 @@ module CommandOutputContract =
             row [ "webhook" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "test" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "update" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attach" ] "notes" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attach" ] "prompt" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attach" ] "summary" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem"; "attachments" ] "add" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
+            row [ "workitem"; "attachments" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "download" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "workitem"; "attachments" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row
+                [ "workitem"; "attachments" ]
+                "undelete"
+                true
+                true
+                common_renderOutput_envelope
+                mutating_state_transition
+                server_via_sdk
+                ReuseExistingApiOrSdkDto
             row [ "workitem" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem"; "description" ] "clear" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem"; "description" ] "set" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "link" ] "prset" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "link" ] "ref" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "links" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "notes"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "prompt"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
             row
                 [ "workitem"; "links"; "remove" ]
                 "prset"
@@ -1406,17 +1415,8 @@ module CommandOutputContract =
                 server_via_sdk
                 ReuseExistingApiOrSdkDto
             row [ "workitem"; "links"; "remove" ] "ref" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "summary"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
             row [ "workitem" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem" ] "set-status" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
         ]
 
     /// Tries to map find and returns a GraceError instead of throwing on unsupported input.

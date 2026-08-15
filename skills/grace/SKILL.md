@@ -1,4 +1,3 @@
-
 ---
 name: grace
 description: Grace repository workflow, architecture, and implementation guidance. Use when working in a Grace repo or on Grace planning, GitHub issue orchestration, F#/.NET code, Orleans actors, Giraffe HTTP APIs, SDK or CLI surfaces, DTOs/events/parameters, authorization, webhooks and approval requests, manifest-backed storage, tests, Aspire/runtime, docs, CONTRIBUTING, or AGENTS updates.
@@ -27,6 +26,7 @@ Read these files on demand:
 
 | Task | Load |
 | ---- | ---- |
+| Creating or auditing a canonical Grace specification; Grace defaults, propagation surfaces, and readiness traps | [specification-profile.md](references/specification-profile.md) |
 | Issue-owned work, epics, DAGs, review loops, branch/worktree cleanup, validation profiles | [workflow.md](references/workflow.md) |
 | Finding code, choosing project boundaries, understanding the repo layout | [project-map.md](references/project-map.md) |
 | DTOs, domain events, parameters, serializers, shared helpers, role semantics | [contracts-and-shared.md](references/contracts-and-shared.md) |
@@ -39,32 +39,37 @@ Read these files on demand:
 
 ## Sub-skill Router
 
-Use these sibling skills when the task needs a specialized workflow:
+Use these installed or sibling skills when the task needs a specialized workflow:
 
 | Task | Load |
 | ---- | ---- |
-| Repeated Codex Code Review Bot findings, review/fix loop monitoring, stabilization ledgers, hard-stop review thresholds | [code-review-stabilizer](../code-review-stabilizer/SKILL.md) |
+| Canonical specification creation, update, lifecycle audit, traceability, and Plan-ready handoff | Installed `specification` skill plus [specification-profile.md](references/specification-profile.md) |
+| Open product/domain/architecture decisions, capability pruning, focused owner interview, or multi-session design map | Installed `design-readiness` skill plus [specification-profile.md](references/specification-profile.md) |
+| Implementation plans, spec-to-plan compilation, issues, implementation orchestration, review budgets, merge, and cleanup | Installed `dev-process` skill plus [workflow.md](references/workflow.md) |
+| Product V1 capability budgets, algorithm readiness, Factory Run Charters, bounded R1/R2 review, stop conditions, and review recovery | Installed `dev-process` skill plus [workflow.md](references/workflow.md) |
 
 ## Grace Defaults
 
 - Prefer repo evidence over memory, guesses, or old plans.
+- Use Product V1 as the default quality contract for Grace unless the user or tracked work explicitly chooses another profile.
 - Preserve Grace vocabulary: work items, promotion sets, queues, gates, policies, attestations, review reports,
   webhooks, approval policies, approval requests, UploadSessions, FileManifests, ContentBlocks, and
   ManifestContributionWorkflows.
 - Keep changes vertically sliced through the nearest public boundary whenever possible.
-- For non-trivial epic plans, identify an early tracer-bullet vertical slice before broad parallelization, then use its
-  evidence to refine child issues, owned paths, validation profiles, and parallelization boundaries.
-- For tracked coding issues, write existing issue-detail fields as review-prevention guidance and require worker
-  handoffs to include bot-prevention self-review evidence before the pull request review loop.
+- For non-trivial epic plans, identify the earliest value-bearing tracer and permit at most two production PRs before
+  it. Prefer zero or one. Re-plan later issues from the running tracer instead of pre-creating a horizontal issue forest.
+- Apply the Product V1 capability budget by default: one outcome, one primary invariant family, one supported topology,
+  one primary authority, at most one new durable partial-state lifecycle, and explicit exclusion of optional automation.
+- For stateful, destructive, filesystem, retry, recovery, concurrent, background, or multi-authority work, require the
+  `dev-process` Algorithm Readiness Gate before production coding.
+- For tracked coding issues, use the compact Issue Readiness and Factory Run Charter from `dev-process`. Do not paste
+  broad risk checklists, require fixed worker heartbeats, or start a fresh worker for every review finding.
 - When implementing an epic, always use the `epic/<parent-issue>-<slug>` integration branch mode described in
   `references/workflow.md`. Route sub-issue pull requests to that epic branch; do not use direct-to-`main` epic slices.
 - Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests
   when one surface changes another.
-- Require focused local proof first. Use `pwsh ./scripts/validate.ps1 -Fast` only as an optional broad preflight and
-  `-Full` for local integration reproduction or diagnosis. GitHub `Validate` certifies the current PR revision across
-  the repository; successful CI logs need not be ingested unless a failure or warning requires diagnosis.
-- Push one or more completed local commits as a coherent checkpoint. Review fixes use focused regression proof, then
-  the current-revision GitHub `Validate` result.
+- Prefer the smallest focused proof. GitHub `Validate` is the required broad current-head gate. Use local `-Fast` only
+  as an explicit broad preflight and `-Full` for local integration reproduction or diagnosis.
 - Use PowerShell examples before bash / zsh in docs.
 
 ## PowerShell Text Editing and Quoting
@@ -101,20 +106,27 @@ PowerShell, so quoting mistakes can silently flatten Markdown, expand variables,
 - For reviews, lead with findings and include file/line references.
 - For docs-only work, validate Markdown or explain why validation was skipped.
 
-## Plan Review And Spec-Quality Mode
+## Specification And Planning Mode
 
-Use this mode when the user asks to evaluate a product spec, implementation plan, issue packet, or agent guidance.
+Use this mode when the user asks to design a feature, create or review a product specification, produce an implementation
+plan, or audit an issue packet.
 
-1. Read the applicable repo guidance plus `docs/Development process.md`, issue/PR templates, and this skill's workflow
-   reference.
-2. Inspect the current source surface enough to verify paths, symbols, contracts, tests, and docs.
-3. Check decision closure: audience, visibility, ownership, lifecycle, defaults, failure behavior, accepted/rejected
-   inputs, publication timing, billing/retention, and migration/data-reset assumptions.
-4. Check contract propagation: DTOs, parameters, events, persisted shapes, HTTP, CLI, SDK, OpenAPI/generated artifacts,
-   events/webhooks/SignalR/watch/search, docs, and tests.
-5. Check stale-authority and negative-proof obligations for runtime, storage, materialization, Watch, auth, and eventing
-   work.
-6. Mine relevant recent PRs when the task asks for review-cycle reduction or when a similar surface has crossed three
-   substantive review cycles. Use `skills/code-review-stabilizer/SKILL.md` for root-cause lanes and stabilization output.
-7. Produce artifacts that are implementable from their own text: decisions, invariant tuples, forbidden shapes, proof
-   obligations, validation, docs impact, residual risk, and issue/PR handoff.
+1. Read the applicable repo guidance and this skill's relevant references.
+2. Load the installed `dev-process` quality contract.
+3. Load the installed `specification` skill and
+   [specification-profile.md](references/specification-profile.md).
+4. Inspect the current source surface enough to verify paths, symbols, contracts, tests, generated artifacts, and docs.
+5. When product, domain, architecture, authority, state, failure, feasibility, or scope decisions remain, use the
+   installed `design-readiness` skill. Propagate every resolution into one canonical specification.
+6. Use the shared `specification` audit to classify the artifact Exploratory, Design-ready, or Plan-ready. Do not
+   maintain a separate Grace lifecycle checklist in this router.
+7. Before production planning for Tier 2 behavior, use `dev-process` and `prototype` to pass the Algorithm Readiness
+   Gate. Propagate the witness verdict into the canonical specification.
+8. Only after Plan-ready and algorithm-ready verdicts, use `dev-process` to compile the specification into the earliest
+   value-bearing tracer, no more than two enabling PRs, and only the later slices current evidence justifies.
+9. Before coding each slice, apply the compact Issue Readiness Gate and freeze a Factory Run Charter.
+10. Create GitHub issues, branches, worktrees, or pull requests only when the user explicitly requests tracked work or
+    implementation.
+
+The canonical specification owns product behavior and proof traceability. GitHub issues own the executable slice
+contract once tracked work begins. Repository guidance owns branch, validation, review, merge, and cleanup mechanics.

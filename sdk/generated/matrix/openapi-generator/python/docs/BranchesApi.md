@@ -5,9 +5,11 @@ All URIs are relative to *http://localhost:5000*
 Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**annotate_branch**](BranchesApi.md#annotate_branch) | **POST** /branch/annotate | Annotate a branch reference.
+[**assign_branch**](BranchesApi.md#assign_branch) | **POST** /branch/assign | Assign a promotion to a branch.
 [**checkpoint_branch**](BranchesApi.md#checkpoint_branch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 [**commit_branch**](BranchesApi.md#commit_branch) | **POST** /branch/commit | Commit the current branch content.
 [**create_branch**](BranchesApi.md#create_branch) | **POST** /branch/create | Create a branch.
+[**create_external_branch_reference**](BranchesApi.md#create_external_branch_reference) | **POST** /branch/createExternal | Create an external Reference.
 [**delete_branch**](BranchesApi.md#delete_branch) | **POST** /branch/delete | Delete a branch.
 [**enable_branch_checkpoint**](BranchesApi.md#enable_branch_checkpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references.
 [**enable_branch_commit**](BranchesApi.md#enable_branch_commit) | **POST** /branch/enableCommit | Enable or disable commit references.
@@ -17,6 +19,7 @@ Method | HTTP request | Description
 [**get_branch**](BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 [**get_branch_reference**](BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 [**get_parent_branch**](BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+[**get_reference_materialization_boundary**](BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 [**list_branch_checkpoints**](BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 [**list_branch_commits**](BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 [**list_branch_promotions**](BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -25,6 +28,8 @@ Method | HTTP request | Description
 [**list_branch_tags**](BranchesApi.md#list_branch_tags) | **POST** /branch/getTags | List branch tags.
 [**promote_branch**](BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 [**rebase_branch**](BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
+[**replay_reference_events**](BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+[**resolve_reference_event_boundary**](BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 [**save_branch**](BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 [**tag_branch**](BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 
@@ -67,7 +72,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    annotate_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["commit","save"],"MaxReferences":1000,"IncludeLineText":true} # AnnotateParameters | 
+    annotate_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["Commit","Save"],"MaxReferences":1000,"IncludeLineText":true} # AnnotateParameters | 
 
     try:
         # Annotate a branch reference.
@@ -90,6 +95,87 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**BranchAnnotationReturnValue**](BranchAnnotationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **assign_branch**
+> BranchCommandReturnValue assign_branch(assign_parameters)
+
+Assign a promotion to a branch.
+
+Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.assign_parameters import AssignParameters
+from grace_generated_openapi_probe.models.branch_command_return_value import BranchCommandReturnValue
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    assign_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Assign release candidate."} # AssignParameters | 
+
+    try:
+        # Assign a promotion to a branch.
+        api_response = api_instance.assign_branch(assign_parameters)
+        print("The response of BranchesApi->assign_branch:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->assign_branch: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **assign_parameters** | [**AssignParameters**](AssignParameters.md)|  | 
+
+### Return type
+
+[**BranchCommandReturnValue**](BranchCommandReturnValue.md)
 
 ### Authorization
 
@@ -148,7 +234,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Checkpoint release candidate."} # CreateReferenceParameters | 
+    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Checkpoint release candidate."} # CreateReferenceParameters | 
 
     try:
         # Checkpoint the current branch content.
@@ -229,7 +315,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Commit release candidate."} # CreateReferenceParameters | 
+    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Commit release candidate."} # CreateReferenceParameters | 
 
     try:
         # Commit the current branch content.
@@ -310,7 +396,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    create_branch_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","InitialPermissions":["commit","checkpoint","save","tag"]} # CreateBranchParameters | 
+    create_branch_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","InitialPermissions":["Commit","Checkpoint","Save","Tag"]} # CreateBranchParameters | 
 
     try:
         # Create a branch.
@@ -329,6 +415,87 @@ with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **create_branch_parameters** | [**CreateBranchParameters**](CreateBranchParameters.md)|  | 
+
+### Return type
+
+[**BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **create_external_branch_reference**
+> BranchCommandReturnValue create_external_branch_reference(create_reference_parameters)
+
+Create an external Reference.
+
+Creates an external Reference pointing to the supplied root directory version.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.branch_command_return_value import BranchCommandReturnValue
+from grace_generated_openapi_probe.models.create_reference_parameters import CreateReferenceParameters
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Capture external system state."} # CreateReferenceParameters | 
+
+    try:
+        # Create an external Reference.
+        api_response = api_instance.create_external_branch_reference(create_reference_parameters)
+        print("The response of BranchesApi->create_external_branch_reference:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->create_external_branch_reference: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **create_reference_parameters** | [**CreateReferenceParameters**](CreateReferenceParameters.md)|  | 
 
 ### Return type
 
@@ -1082,6 +1249,87 @@ Name | Type | Description  | Notes
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
+# **get_reference_materialization_boundary**
+> ReferenceMaterializationBoundaryReturnValue get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+
+Resolve a Connect materialization boundary.
+
+Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.get_reference_materialization_boundary_parameters import GetReferenceMaterializationBoundaryParameters
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    get_reference_materialization_boundary_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false} # GetReferenceMaterializationBoundaryParameters | 
+
+    try:
+        # Resolve a Connect materialization boundary.
+        api_response = api_instance.get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+        print("The response of BranchesApi->get_reference_materialization_boundary:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->get_reference_materialization_boundary: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **get_reference_materialization_boundary_parameters** | [**GetReferenceMaterializationBoundaryParameters**](GetReferenceMaterializationBoundaryParameters.md)|  | 
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
 # **list_branch_checkpoints**
 > ReferenceListReturnValue list_branch_checkpoints(get_references_parameters)
 
@@ -1606,7 +1854,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Capture release candidate."} # CreateReferenceParameters | 
+    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Capture release candidate."} # CreateReferenceParameters | 
 
     try:
         # Promote the current branch content.
@@ -1687,7 +1935,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    rebase_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","InitialPermissions":["commit","checkpoint","save","tag"],"BasedOn":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a"} # RebaseParameters | 
+    rebase_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"d94dd932-16b8-4f0b-8c2f-7e7f4fe23370","InitialPermissions":["Commit","Checkpoint","Save","Tag"],"BasedOn":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a"} # RebaseParameters | 
 
     try:
         # Rebase a branch.
@@ -1710,6 +1958,168 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **replay_reference_events**
+> ReferenceReplayReturnValue replay_reference_events(replay_reference_events_parameters)
+
+Replay cursor-new Reference events.
+
+Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.reference_replay_return_value import ReferenceReplayReturnValue
+from grace_generated_openapi_probe.models.replay_reference_events_parameters import ReplayReferenceEventsParameters
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    replay_reference_events_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"CursorRepositoryId":"46a7e2f4-58ad-43e8-883e-33c564b4a98b","CursorBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","EventCursor":"branch-event-v1:42"} # ReplayReferenceEventsParameters | 
+
+    try:
+        # Replay cursor-new Reference events.
+        api_response = api_instance.replay_reference_events(replay_reference_events_parameters)
+        print("The response of BranchesApi->replay_reference_events:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->replay_reference_events: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **replay_reference_events_parameters** | [**ReplayReferenceEventsParameters**](ReplayReferenceEventsParameters.md)|  | 
+
+### Return type
+
+[**ReferenceReplayReturnValue**](ReferenceReplayReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **resolve_reference_event_boundary**
+> ReferenceMaterializationBoundaryReturnValue resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
+
+Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+
+Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue
+from grace_generated_openapi_probe.models.resolve_reference_event_boundary_parameters import ResolveReferenceEventBoundaryParameters
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    resolve_reference_event_boundary_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"DirectoryVersionId":"1686fe2c-954c-4f7d-b630-8db88ffc5982","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d"} # ResolveReferenceEventBoundaryParameters | 
+
+    try:
+        # Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+        api_response = api_instance.resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
+        print("The response of BranchesApi->resolve_reference_event_boundary:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->resolve_reference_event_boundary: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **resolve_reference_event_boundary_parameters** | [**ResolveReferenceEventBoundaryParameters**](ResolveReferenceEventBoundaryParameters.md)|  | 
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
 
 ### Authorization
 
@@ -1768,7 +2178,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Save release candidate."} # CreateReferenceParameters | 
+    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Save release candidate."} # CreateReferenceParameters | 
 
     try:
         # Save the current branch content.
@@ -1849,7 +2259,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
-    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Tag release candidate."} # CreateReferenceParameters | 
+    create_reference_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Tag release candidate."} # CreateReferenceParameters | 
 
     try:
         # Tag the current branch content.

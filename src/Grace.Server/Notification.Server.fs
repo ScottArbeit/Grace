@@ -8,7 +8,9 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.DerivedComputation
+open Grace.Server.Security
 open Grace.Shared
+open Grace.Shared.Authorization
 open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
@@ -18,6 +20,7 @@ open Grace.Types.Events
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Authorization
 open Grace.Types.Validation
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.SignalR
@@ -25,7 +28,10 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
+open Microsoft.Extensions.Logging.Abstractions
 open System
+open System.Collections.Generic
+open System.Diagnostics
 open System.Linq
 open System.Text.Json
 open System.Text.RegularExpressions
@@ -35,8 +41,92 @@ open System.Threading.Tasks
 /// Contains Grace Server notification behavior and supporting helpers.
 module Notification =
 
-    let log = loggerFactory.CreateLogger("Notification.Server")
+    let private nullNotificationLogger = NullLoggerFactory.Instance.CreateLogger("Notification.Server")
+
+    /// Resolves notification logging lazily so unit-shaped helpers do not require full server configuration at import time.
+    let private notificationLogger () =
+        try
+            if isNull loggerFactory then
+                nullNotificationLogger
+            else
+                loggerFactory.CreateLogger("Notification.Server")
+        with
+        | _ -> nullNotificationLogger
+
+    let log =
+        { new ILogger with
+            /// Delegates logging scope creation to the configured application logger when one is available.
+            member _.BeginScope<'TState>(state: 'TState) = (notificationLogger ()).BeginScope(state)
+            /// Reports whether notification diagnostics are enabled for the configured application logger.
+            member _.IsEnabled(logLevel) = (notificationLogger ()).IsEnabled(logLevel)
+
+            /// Writes notification diagnostics through the configured application logger when possible.
+            member _.Log(logLevel, eventId, state, ex, formatter) =
+                (notificationLogger ())
+                    .Log(logLevel, eventId, state, ex, formatter)
+        }
+
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
+
+    /// Builds the SignalR group key for same-branch Reference notifications without colliding with raw GUID groups.
+    let internal currentBranchGroupKey (repositoryId: RepositoryId) (branchId: BranchId) = $"current-branch:{repositoryId:N}:{branchId:N}"
+
+    [<Literal>]
+    let private CurrentBranchGroupItemKey = "Grace.Notification.CurrentBranchGroup"
+
+    /// Replaces the current-branch SignalR group for a connection so branch changes cannot retain stale memberships.
+    let internal replaceCurrentBranchGroupMembership
+        (groups: IGroupManager)
+        connectionId
+        (items: IDictionary<obj, obj>)
+        repositoryId
+        branchId
+        cancellationToken
+        =
+        task {
+            let nextGroupKey = currentBranchGroupKey repositoryId branchId
+
+            let previousGroupKey =
+                match items.TryGetValue CurrentBranchGroupItemKey with
+                | true, (:? string as groupKey) when not (String.IsNullOrWhiteSpace(groupKey)) -> Some groupKey
+                | _ -> None
+
+            match previousGroupKey with
+            | Some groupKey when groupKey <> nextGroupKey -> do! groups.RemoveFromGroupAsync(connectionId, groupKey, cancellationToken)
+            | _ -> ()
+
+            do! groups.AddToGroupAsync(connectionId, nextGroupKey, cancellationToken)
+            items[CurrentBranchGroupItemKey] <- nextGroupKey
+        }
+
+    /// Clears per-connection current-branch bookkeeping while leaving SignalR to clean up group membership on disconnect.
+    let internal clearCurrentBranchGroupMembershipState (items: IDictionary<obj, obj>) =
+        match isNull items with
+        | true -> false
+        | false -> items.Remove CurrentBranchGroupItemKey
+
+    /// Checks whether the caller can subscribe to same-branch notifications for the stored branch identity.
+    let internal canRegisterCurrentBranchSubscription
+        (evaluator: IGracePermissionEvaluator)
+        principal
+        (repositoryId: RepositoryId)
+        (branchId: BranchId)
+        (branchDto: Branch.BranchDto)
+        =
+        task {
+            if obj.ReferenceEquals(evaluator, null)
+               || branchDto.RepositoryId <> repositoryId
+               || branchDto.BranchId <> branchId then
+                return false
+            else
+                let principals = PrincipalMapper.getPrincipals principal
+                let claims = PrincipalMapper.getEffectiveClaims principal
+                let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
+
+                match! evaluator.CheckAsync(principals, claims, Operation.BranchRead, resource) with
+                | Allowed _ -> return true
+                | Denied _ -> return false
+        }
 
     /// Defines the contract for igrace client connection.
     type IGraceClientConnection =
@@ -44,8 +134,12 @@ module Notification =
         abstract member RegisterRepository: RepositoryId -> Task
         /// Defines the register parent branch operation for implementers.
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
+        /// Defines the register current branch operation for implementers.
+        abstract member RegisterCurrentBranch: RepositoryId -> BranchId -> Task
         /// Defines the notify repository operation for implementers.
         abstract member NotifyRepository: RepositoryId * ReferenceId -> Task
+        /// Defines the notify current branch reference operation for implementers.
+        abstract member NotifyCurrentBranchReference: Reference.CurrentBranchReferenceNotification -> Task
         /// Defines the notify on commit operation for implementers.
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
         /// Defines the notify on checkpoint operation for implementers.
@@ -71,6 +165,23 @@ module Notification =
                     this.Context.ConnectionId
                 )
             }
+
+        /// Clears per-connection current-branch bookkeeping during normal SignalR disconnect.
+        override this.OnDisconnectedAsync(ex: Exception) =
+            let items = this.Context.Items
+            let connectionId = this.Context.ConnectionId
+            let cleared = clearCurrentBranchGroupMembershipState items
+            Branch.unregisterWatchSourceSubscription connectionId
+
+            if cleared then
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} cleared current-branch SignalR subscription state on disconnect.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    connectionId
+                )
+
+            ``base``.OnDisconnectedAsync(ex)
 
         /// Adds the current SignalR connection to the repository group used for repository-wide notifications.
         member this.RegisterRepository(repositoryId: RepositoryId) =
@@ -99,6 +210,67 @@ module Notification =
 
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
+
+        /// Authorizes and replaces the current-branch subscription before optionally binding its delivery-only process identity.
+        member private this.RegisterCurrentBranchCore(repositoryId: RepositoryId, branchId: BranchId, sourceProcessId: Guid option) =
+            task {
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} registering for current BranchId: {BranchId} in RepositoryId: {RepositoryId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    this.Context.ConnectionId,
+                    branchId,
+                    repositoryId
+                )
+
+                let correlationId = generateCorrelationId ()
+                let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                let! branchDto = branchActorProxy.Get correlationId
+
+                let evaluator =
+                    this
+                        .Context
+                        .GetHttpContext()
+                        .RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+                let! allowed = canRegisterCurrentBranchSubscription evaluator this.Context.User repositoryId branchId branchDto
+
+                if not allowed then
+                    log.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} denied current-branch SignalR registration for BranchId: {BranchId} in RepositoryId: {RepositoryId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        this.Context.ConnectionId,
+                        branchId,
+                        repositoryId
+                    )
+
+                    raise (HubException("Current-branch SignalR registration requires branch read permission."))
+
+                do! replaceCurrentBranchGroupMembership this.Groups this.Context.ConnectionId this.Context.Items repositoryId branchId CancellationToken.None
+
+                match sourceProcessId with
+                | Some processId -> Branch.registerWatchSourceSubscription this.Context.ConnectionId processId repositoryId branchId
+                | None -> Branch.unregisterWatchSourceSubscription this.Context.ConnectionId
+            }
+
+        /// Adds a source-unaware SignalR client to the current-branch group while preserving legacy delivery behavior.
+        member this.RegisterCurrentBranch(repositoryId: RepositoryId, branchId: BranchId) = this.RegisterCurrentBranchCore(repositoryId, branchId, None)
+
+        /// Adds a Watch connection to the current-branch group and binds a well-formed opaque process identity for live delivery optimization.
+        member this.RegisterCurrentBranchSource(repositoryId: RepositoryId, branchId: BranchId, sourceProcessId: string) =
+            let mutable processId = Guid.Empty
+
+            let parsedProcessId =
+                if
+                    Guid.TryParseExact(sourceProcessId, "N", &processId)
+                    && processId <> Guid.Empty
+                then
+                    Some processId
+                else
+                    None
+
+            this.RegisterCurrentBranchCore(repositoryId, branchId, parsedProcessId)
 
         /// Broadcasts repository-scoped notifications to clients registered for the repository group.
         member this.NotifyRepository((repositoryId: RepositoryId), (referenceId: ReferenceId)) =
@@ -217,6 +389,23 @@ module Notification =
             }
             :> Task
 
+    /// Broadcasts a same-branch Reference payload from trusted server-side event processing only.
+    let internal notifyCurrentBranchReferenceClients
+        (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
+        (payload: Reference.CurrentBranchReferenceNotification)
+        =
+        task {
+            if not <| isNull hubContext then
+                let groupKey = currentBranchGroupKey payload.RepositoryId payload.BranchId
+
+                let clients =
+                    match Branch.tryTakeWatchPublicationSourceConnection payload.RepositoryId payload.BranchId payload.ReferenceId with
+                    | Some connectionId -> hubContext.Clients.GroupExcept(groupKey, [| connectionId |])
+                    | None -> hubContext.Clients.Group(groupKey)
+
+                do! clients.NotifyCurrentBranchReference(payload)
+        }
+
     /// Implements route automation event for the server request pipeline.
     let routeAutomationEvent (serviceProvider: IServiceProvider) (envelope: AutomationEventEnvelope) =
         task {
@@ -267,6 +456,147 @@ module Notification =
 
     /// Contains Grace Server subscriber behavior and supporting helpers.
     module Subscriber =
+
+        /// Carries only delivery metadata needed for structured diagnostics and activity correlation.
+        type GraceEventMessageMetadata = { MessageId: string; CorrelationId: string; DeliveryCount: int }
+
+        /// Supplies the parse, handler, and broker settlement effects for one testable delivery.
+        type GraceEventSettlementDependencies =
+            {
+                Parse: BinaryData -> Result<GraceEvent, string>
+                Handle: GraceEvent -> CancellationToken -> Task
+                Complete: CancellationToken -> Task
+                Abandon: CancellationToken -> Task
+                DeadLetter: string -> string -> CancellationToken -> Task
+            }
+
+        /// Distinguishes an unknown explicit settlement outcome from failures that occurred before settlement began.
+        type internal GraceEventSettlementFailureException(operation: string, innerException: Exception) =
+            inherit Exception($"GraceEvent {operation} settlement outcome is unknown.", innerException)
+
+            /// Names the one bounded settlement operation whose result is unknown.
+            member _.Operation = operation
+
+        /// Provides fixed bounded dead-letter evidence without retaining message payload or parser details.
+        [<Literal>]
+        let internal MalformedGraceEventDescription = "The Service Bus message body is not a supported GraceEvent."
+
+        /// Records one processor SDK callback with structured broker context and no custom delay or retry.
+        let internal handleProcessorErrorWith (logger: ILogger) (error: Exception) errorSource entityPath fullyQualifiedNamespace identifier =
+            logger.LogError(
+                error,
+                "Grace pub-sub processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}; FullyQualifiedNamespace: {FullyQualifiedNamespace}; Identifier: {Identifier}.",
+                errorSource,
+                entityPath,
+                fullyQualifiedNamespace,
+                identifier
+            )
+
+            Task.CompletedTask
+
+        /// Completes the production processor callback after an unknown explicit settlement so the SDK cannot auto-abandon it.
+        let internal runProcessorMessageCallbackWith (logger: ILogger) (metadata: GraceEventMessageMetadata) (processDelivery: unit -> Task) =
+            task {
+                try
+                    do! processDelivery ()
+                with
+                | :? GraceEventSettlementFailureException as ex ->
+                    logger.LogError(
+                        ex,
+                        "GraceEvent {SettlementOperation} settlement failed for message {MessageId} (CorrelationId: {CorrelationId}); the processor callback completed without throwing so the SDK cannot attempt automatic abandonment.",
+                        ex.Operation,
+                        metadata.MessageId,
+                        metadata.CorrelationId
+                    )
+            }
+
+        /// Identifies deliveries whose valid Reference-created event enters manifest contribution accounting.
+        let internal isManifestContributionAccountingDelivery =
+            function
+            | GraceEvent.ReferenceEvent { Event = ReferenceEventType.Created _ } -> true
+            | _ -> false
+
+        /// Adds parsed Reference-created identity to the current manifest-accounting activity before handling begins.
+        let private enrichManifestContributionActivity graceEvent =
+            match graceEvent with
+            | GraceEvent.ReferenceEvent referenceEvent ->
+                match referenceEvent.Event with
+                | ReferenceEventType.Created (referenceId, _, _, repositoryId, _, directoryVersionId, _, _, referenceType, _, _) ->
+                    ManifestContributionTelemetry.enrichReferenceActivity $"{referenceId:D}" $"{repositoryId:D}" $"{directoryVersionId:D}" $"{referenceType}"
+                | _ -> ()
+            | _ -> ()
+
+        /// Processes one Service Bus delivery through exactly one truthful settlement intent.
+        let internal processGraceEventWith
+            (dependencies: GraceEventSettlementDependencies)
+            (metadata: GraceEventMessageMetadata)
+            (body: BinaryData)
+            (cancellationToken: CancellationToken)
+            =
+            task {
+                cancellationToken.ThrowIfCancellationRequested()
+                let stopwatch = Stopwatch.StartNew()
+
+                match dependencies.Parse body with
+                | Error _ ->
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    try
+                        do! dependencies.DeadLetter "MalformedGraceEvent" MalformedGraceEventDescription cancellationToken
+                    with
+                    | ex -> return raise (GraceEventSettlementFailureException("dead-letter", ex))
+                | Ok graceEvent ->
+                    let isManifestAccountingDelivery = isManifestContributionAccountingDelivery graceEvent
+
+                    use activity =
+                        if isManifestAccountingDelivery then
+                            ManifestContributionTelemetry.startMessageActivity metadata.MessageId metadata.CorrelationId metadata.DeliveryCount
+                        else
+                            null
+
+                    enrichManifestContributionActivity graceEvent
+
+                    let recordMessage stage outcome =
+                        if isManifestAccountingDelivery then
+                            stopwatch.Stop()
+                            ManifestContributionTelemetry.recordMessage stage outcome stopwatch.Elapsed.TotalMilliseconds
+
+                    let! handlerError =
+                        task {
+                            try
+                                do! dependencies.Handle graceEvent cancellationToken
+                                cancellationToken.ThrowIfCancellationRequested()
+                                return None
+                            with
+                            | :? OperationCanceledException as ex -> return raise ex
+                            | ex -> return Some ex
+                        }
+
+                    match handlerError with
+                    | None ->
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        try
+                            do! dependencies.Complete cancellationToken
+                        with
+                        | ex ->
+                            recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.SettlementFailed
+                            return raise (GraceEventSettlementFailureException("complete", ex))
+
+                        recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.Completed
+                    | Some _ ->
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        try
+                            do! dependencies.Abandon cancellationToken
+                        with
+                        | ex ->
+                            recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.SettlementFailed
+                            return raise (GraceEventSettlementFailureException("abandon", ex))
+
+                        recordMessage ManifestContributionProcessingStage.Handle ManifestContributionMessageOutcome.Abandoned
+            }
+
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =
             task {
@@ -409,6 +739,39 @@ module Notification =
                 RegexOptions.IgnoreCase
                 ||| RegexOptions.CultureInvariant
             )
+
+        /// Reports whether a Reference creation should wake clients watching that same branch.
+        let internal shouldNotifyCurrentBranchReference referenceType = Reference.CurrentBranchReferenceNotification.IsEligibleReferenceType referenceType
+
+        /// Builds the same-branch Reference notification payload after branch state has been recomputed.
+        let internal createCurrentBranchReferenceNotification
+            referenceId
+            ownerId
+            organizationId
+            repositoryId
+            branchId
+            branchName
+            directoryId
+            sha256Hash
+            blake3Hash
+            referenceType
+            referenceText
+            correlationId
+            =
+            { Reference.CurrentBranchReferenceNotification.Default with
+                ReferenceId = referenceId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                BranchId = branchId
+                BranchName = branchName
+                DirectoryId = directoryId
+                Sha256Hash = sha256Hash
+                Blake3Hash = blake3Hash
+                ReferenceType = referenceType
+                ReferenceText = referenceText
+                CorrelationId = correlationId
+            }
 
         /// Gets try get promotion set id from metadata data needed by the server flow.
         let private tryGetPromotionSetIdFromMetadata (metadata: EventMetadata) =
@@ -692,7 +1055,6 @@ module Notification =
                     )
                 | ReferenceEvent referenceEvent ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
-                    let repositoryId = Guid.Parse($"{referenceEvent.Metadata.Properties[nameof RepositoryId]}")
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ReferenceEvent notification.",
@@ -701,6 +1063,7 @@ module Notification =
                         correlationId
                     )
 
+                    do! ManifestContributionAccounting.handleReferenceEvent referenceEvent
                     do! DerivedComputation.handleReferenceEvent referenceEvent
 
                     match referenceEvent.Event with
@@ -715,6 +1078,31 @@ module Notification =
                                                   referenceType,
                                                   referenceText,
                                                   links) ->
+                        /// Emits the same-branch notification after Reference replay and branch recomputation complete.
+                        let emitCurrentBranchReference branchName =
+                            task {
+                                if shouldNotifyCurrentBranchReference referenceType then
+                                    let payload =
+                                        createCurrentBranchReferenceNotification
+                                            referenceId
+                                            ownerId
+                                            organizationId
+                                            repositoryId
+                                            branchId
+                                            branchName
+                                            directoryId
+                                            sha256Hash
+                                            blake3Hash
+                                            referenceType
+                                            referenceText
+                                            correlationId
+
+                                    if isNull hubContext then
+                                        log.LogWarning("No SignalR hub context available; cannot notify current branch clients of reference.")
+                                    else
+                                        do! notifyCurrentBranchReferenceClients hubContext payload
+                            }
+
                         match referenceType with
                         | ReferenceType.Promotion ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
@@ -749,16 +1137,6 @@ module Notification =
 
                         | ReferenceType.Commit ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
-
-                            if not <| isNull hubContext then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchDto.ParentBranchId}")
-                                        .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
-                            else
-                                log.LogWarning("No SignalR hub context available; cannot notify clients of commit.")
 
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
                             let! exists = directoryVersionActorProxy.Exists correlationId
@@ -780,28 +1158,36 @@ module Notification =
                                             branchDto.RepositoryId
                                             correlationId
 
+                            do! emitCurrentBranchReference branchDto.BranchName
+
+                            if branchDto.ParentBranchId
+                               <> Constants.DefaultParentBranchId then
                                 // Create the diff between the commit and the parent branch's most recent promotion.
-                                match! getLatestPromotion branchDto.RepositoryId branchDto.ParentBranchId with
-                                | Some latestPromotion ->
+                                if exists then
+                                    match! getLatestPromotion branchDto.RepositoryId branchDto.ParentBranchId with
+                                    | Some latestPromotion ->
+                                        do!
+                                            diffTwoDirectoryVersions
+                                                directoryId
+                                                latestPromotion.DirectoryId
+                                                branchDto.OwnerId
+                                                branchDto.OrganizationId
+                                                branchDto.RepositoryId
+                                                correlationId
+                                    | None -> ()
+
+                                let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
+
+                                if not <| isNull hubContext then
                                     do!
-                                        diffTwoDirectoryVersions
-                                            directoryId
-                                            latestPromotion.DirectoryId
-                                            branchDto.OwnerId
-                                            branchDto.OrganizationId
-                                            branchDto.RepositoryId
-                                            correlationId
-                                | None -> ()
+                                        hubContext
+                                            .Clients
+                                            .Group($"{branchDto.ParentBranchId}")
+                                            .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                else
+                                    log.LogWarning("No SignalR hub context available; cannot notify clients of commit.")
                         | ReferenceType.Checkpoint ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
-
-                            if not <| isNull hubContext then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchDto.ParentBranchId}")
-                                        .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
                             // Create the diff between the two most recent checkpoints.
                             let! checkpoints = getCheckpoints repositoryId branchId 2 correlationId
@@ -829,18 +1215,21 @@ module Notification =
                                         correlationId
                             | None -> ()
 
+                            do! emitCurrentBranchReference branchDto.BranchName
+
+                            if branchDto.ParentBranchId
+                               <> Constants.DefaultParentBranchId then
+                                let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
+
+                                if not <| isNull hubContext then
+                                    do!
+                                        hubContext
+                                            .Clients
+                                            .Group($"{branchDto.ParentBranchId}")
+                                            .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+
                         | ReferenceType.Save ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
-
-                            if not <| isNull hubContext then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchDto.ParentBranchId}")
-                                        .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
-                            else
-                                log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
 
                             // Create the diff between the new save and the previous save.
                             let! latestTwoSaves = getSaves branchDto.RepositoryId branchId 2 correlationId
@@ -886,6 +1275,21 @@ module Notification =
                                             branchDto.RepositoryId
                                             correlationId
                             | None -> ()
+
+                            do! emitCurrentBranchReference branchDto.BranchName
+
+                            if branchDto.ParentBranchId
+                               <> Constants.DefaultParentBranchId then
+                                let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
+
+                                if not <| isNull hubContext then
+                                    do!
+                                        hubContext
+                                            .Clients
+                                            .Group($"{branchDto.ParentBranchId}")
+                                            .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                else
+                                    log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
 
                         | ReferenceType.Tag
                         | ReferenceType.Rebase
@@ -1035,38 +1439,59 @@ module Notification =
 
             /// Coordinates handle processor error processing for Grace Server.
             let handleProcessorError (args: ProcessErrorEventArgs) =
-                task {
-                    //subscriptionLog.LogError(
-                    //    args.Exception,
-                    //    "Grace pub-sub processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}.",
-                    //    args.ErrorSource,
-                    //    args.EntityPath
-                    //)
-
-                    subscriptionLog.LogWarning("Azure Service Bus not ready; pausing for five seconds to retry.")
-                    do! Task.Delay(TimeSpan.FromSeconds(5.0))
-                }
-                :> Task
+                handleProcessorErrorWith subscriptionLog args.Exception args.ErrorSource args.EntityPath args.FullyQualifiedNamespace args.Identifier
 
             /// Coordinates process grace event processing for Grace Server.
             let processGraceEvent (args: ProcessMessageEventArgs) =
                 task {
-                    try
-                        use bodyStream = args.Message.Body.ToStream()
-                        let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
+                    /// Parses one body without exposing payload or serializer diagnostics to settlement evidence.
+                    let parse (body: BinaryData) =
+                        try
+                            use bodyStream = body.ToStream()
+                            let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
 
-                        do! handleEvent graceEvent
-                        do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
-                    with
-                    | ex ->
-                        subscriptionLog.LogError(
-                            ex,
-                            "Failed to process GraceEvent message {MessageId} (CorrelationId: {CorrelationId}).",
-                            args.Message.MessageId,
-                            args.Message.CorrelationId
-                        )
+                            if isNull (box graceEvent) then
+                                Error "GraceEvent JSON must not be null."
+                            else
+                                Ok graceEvent
+                        with
+                        | :? JsonException -> Error "The message body is not valid GraceEvent JSON."
+                        | :? NotSupportedException -> Error "The message body is not a supported GraceEvent."
 
-                        do! args.AbandonMessageAsync(args.Message, cancellationToken = args.CancellationToken)
+                    let dependencies =
+                        {
+                            Parse = parse
+                            Handle =
+                                fun graceEvent cancellationToken ->
+                                    task {
+                                        try
+                                            cancellationToken.ThrowIfCancellationRequested()
+                                            do! handleEvent graceEvent
+                                        with
+                                        | :? OperationCanceledException as ex -> return raise ex
+                                        | ex ->
+                                            subscriptionLog.LogError(
+                                                ex,
+                                                "GraceEvent handler failed for message {MessageId} (CorrelationId: {CorrelationId}); abandoning for broker retry.",
+                                                args.Message.MessageId,
+                                                args.Message.CorrelationId
+                                            )
+
+                                            return raise ex
+                                    }
+                                    :> Task
+                            Complete = fun cancellationToken -> args.CompleteMessageAsync(args.Message, cancellationToken)
+                            Abandon = fun cancellationToken -> args.AbandonMessageAsync(args.Message, cancellationToken = cancellationToken)
+                            DeadLetter =
+                                fun reason description cancellationToken -> args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken)
+                        }
+
+                    let metadata =
+                        { MessageId = args.Message.MessageId; CorrelationId = args.Message.CorrelationId; DeliveryCount = args.Message.DeliveryCount }
+
+                    do!
+                        runProcessorMessageCallbackWith subscriptionLog metadata (fun () ->
+                            processGraceEventWith dependencies metadata args.Message.Body args.CancellationToken)
                 }
 
             /// Implements start azure service bus processor for the server request pipeline.

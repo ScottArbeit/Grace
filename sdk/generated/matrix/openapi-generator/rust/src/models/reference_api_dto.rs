@@ -14,63 +14,63 @@ use serde::{Deserialize, Serialize};
 /// ReferenceApiDto : Public reference DTO returned through branch reference endpoints.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReferenceApiDto {
-    #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
-    pub class: Option<String>,
-    #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
-    pub reference_id: Option<uuid::Uuid>,
-    #[serde(rename = "OwnerId", skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<uuid::Uuid>,
-    #[serde(rename = "OrganizationId", skip_serializing_if = "Option::is_none")]
-    pub organization_id: Option<uuid::Uuid>,
-    #[serde(rename = "RepositoryId", skip_serializing_if = "Option::is_none")]
-    pub repository_id: Option<uuid::Uuid>,
-    #[serde(rename = "BranchId", skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<uuid::Uuid>,
+    #[serde(rename = "Class")]
+    pub class: String,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
+    #[serde(rename = "OwnerId")]
+    pub owner_id: uuid::Uuid,
+    #[serde(rename = "OrganizationId")]
+    pub organization_id: uuid::Uuid,
+    #[serde(rename = "RepositoryId")]
+    pub repository_id: uuid::Uuid,
+    #[serde(rename = "BranchId")]
+    pub branch_id: uuid::Uuid,
     /// DirectoryVersionId represented by the current server DTO field name.
-    #[serde(rename = "DirectoryId", skip_serializing_if = "Option::is_none")]
-    pub directory_id: Option<uuid::Uuid>,
-    /// Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
-    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
-    pub sha256_hash: Option<String>,
-    /// Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
-    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
-    pub blake3_hash: Option<String>,
-    #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]
-    pub reference_type: Option<models::ReferenceType>,
-    #[serde(rename = "ReferenceText", skip_serializing_if = "Option::is_none")]
-    pub reference_text: Option<String>,
-    #[serde(rename = "Links", skip_serializing_if = "Option::is_none")]
-    pub links: Option<Vec<String>>,
-    #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(rename = "DirectoryId")]
+    pub directory_id: uuid::Uuid,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash")]
+    pub sha256_hash: String,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
+    #[serde(rename = "ReferenceType")]
+    pub reference_type: models::ReferenceType,
+    #[serde(rename = "ReferenceText")]
+    pub reference_text: String,
+    #[serde(rename = "Links")]
+    pub links: Vec<String>,
+    #[serde(rename = "CreatedAt")]
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "UpdatedAt", skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     #[serde(rename = "DeletedAt", skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    #[serde(rename = "DeleteReason", skip_serializing_if = "Option::is_none")]
-    pub delete_reason: Option<String>,
+    #[serde(rename = "DeleteReason")]
+    pub delete_reason: String,
 }
 
 impl ReferenceApiDto {
     /// Public reference DTO returned through branch reference endpoints.
-    pub fn new() -> ReferenceApiDto {
+    pub fn new(class: String, reference_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, branch_id: uuid::Uuid, directory_id: uuid::Uuid, sha256_hash: String, blake3_hash: String, reference_type: models::ReferenceType, reference_text: String, links: Vec<String>, created_at: chrono::DateTime<chrono::FixedOffset>, delete_reason: String) -> ReferenceApiDto {
         ReferenceApiDto {
-            class: None,
-            reference_id: None,
-            owner_id: None,
-            organization_id: None,
-            repository_id: None,
-            branch_id: None,
-            directory_id: None,
-            sha256_hash: None,
-            blake3_hash: None,
-            reference_type: None,
-            reference_text: None,
-            links: None,
-            created_at: None,
+            class,
+            reference_id,
+            owner_id,
+            organization_id,
+            repository_id,
+            branch_id,
+            directory_id,
+            sha256_hash,
+            blake3_hash,
+            reference_type,
+            reference_text,
+            links,
+            created_at,
             updated_at: None,
             deleted_at: None,
-            delete_reason: None,
+            delete_reason,
         }
     }
 }

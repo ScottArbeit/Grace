@@ -20,6 +20,7 @@ module Artifact =
     type CreateArtifactParameters() =
         inherit ArtifactParameters()
         member val public ArtifactId = String.Empty with get, set
+        member val public WorkItemId = String.Empty with get, set
         member val public ArtifactType = String.Empty with get, set
         member val public MimeType = String.Empty with get, set
         member val public Size = 0L with get, set

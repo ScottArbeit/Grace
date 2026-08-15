@@ -32,61 +32,70 @@ export interface FileVersion {
      * @type {string}
      * @memberof FileVersion
      */
-    _class?: string;
+    _class: string;
     /**
      * 
      * @type {string}
      * @memberof FileVersion
      */
-    relativePath?: string;
+    relativePath: string;
     /**
      * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof FileVersion
      */
-    sha256Hash?: string;
+    sha256Hash: string;
     /**
-     * Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof FileVersion
      */
-    blake3Hash?: string;
+    blake3Hash: string;
     /**
      * 
      * @type {boolean}
      * @memberof FileVersion
      */
-    isBinary?: boolean;
+    isBinary: boolean;
     /**
      * 
      * @type {number}
      * @memberof FileVersion
      */
-    size?: number;
+    size: number;
     /**
      * 
      * @type {Date}
      * @memberof FileVersion
      */
-    createdAt?: Date;
+    createdAt: Date;
     /**
      * 
      * @type {string}
      * @memberof FileVersion
      */
-    blobUri?: string;
+    blobUri: string;
     /**
      * 
      * @type {FileContentReference}
      * @memberof FileVersion
      */
-    contentReference?: FileContentReference;
+    contentReference: FileContentReference;
 }
 
 /**
  * Check if a given object implements the FileVersion interface.
  */
 export function instanceOfFileVersion(value: object): value is FileVersion {
+    if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('relativePath' in value) || value['relativePath'] === undefined) return false;
+    if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
+    if (!('isBinary' in value) || value['isBinary'] === undefined) return false;
+    if (!('size' in value) || value['size'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
+    if (!('blobUri' in value) || value['blobUri'] === undefined) return false;
+    if (!('contentReference' in value) || value['contentReference'] === undefined) return false;
     return true;
 }
 
@@ -100,15 +109,15 @@ export function FileVersionFromJSONTyped(json: any, ignoreDiscriminator: boolean
     }
     return {
         
-        '_class': json['Class'] == null ? undefined : json['Class'],
-        'relativePath': json['RelativePath'] == null ? undefined : json['RelativePath'],
-        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
-        'isBinary': json['IsBinary'] == null ? undefined : json['IsBinary'],
-        'size': json['Size'] == null ? undefined : json['Size'],
-        'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
-        'blobUri': json['BlobUri'] == null ? undefined : json['BlobUri'],
-        'contentReference': json['ContentReference'] == null ? undefined : FileContentReferenceFromJSON(json['ContentReference']),
+        '_class': json['Class'],
+        'relativePath': json['RelativePath'],
+        'sha256Hash': json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'],
+        'isBinary': json['IsBinary'],
+        'size': json['Size'],
+        'createdAt': (new Date(json['CreatedAt'])),
+        'blobUri': json['BlobUri'],
+        'contentReference': FileContentReferenceFromJSON(json['ContentReference']),
     };
 }
 
@@ -129,7 +138,7 @@ export function FileVersionToJSONTyped(value?: FileVersion | null, ignoreDiscrim
         'Blake3Hash': value['blake3Hash'],
         'IsBinary': value['isBinary'],
         'Size': value['size'],
-        'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'CreatedAt': value['createdAt'].toISOString(),
         'BlobUri': value['blobUri'],
         'ContentReference': FileContentReferenceToJSON(value['contentReference']),
     };

@@ -1,132 +1,115 @@
-
 # Pull Request
 
-## Linked issue
+## Linked issue and outcome
 
-Closes #
+- Related issue:
+- User-visible outcome:
+- Why this matters for Grace:
 
-## Summary
+For PRs targeting `main`, use `Closes #123` when merge should close the issue. For PRs targeting an epic integration
+branch, use non-closing wording such as `Related to #123` or `Part of #597`.
 
-## Touched paths
+## Supported world and quality contract
 
-## Owned-path compliance
+- Baseline and overrides:
+- Supported actor or client:
+- Environment and topology:
+- Supported producer paths:
+- Explicit non-goals and deferred capabilities:
 
-- [ ] My changed paths match the linked issue's owned paths.
-- [ ] Any sensitive/shared path edits are explicitly allowed by the issue.
-- [ ] I did not create or edit alternate task ledgers outside the issue/PR workflow.
+## Primary invariant and algorithm readiness
 
-## Validation profile and public-boundary evidence
+- Primary invariant:
+- Authoritative source and commit point:
+- Algorithm witness and verdict, or justified N/A:
+- Required effect-order, residue, restart, retry, cleanup, or concurrency rules:
 
-- Validation profile:
-- Public behavior or docs-only validation target:
-- RED evidence or docs-only waiver:
-- Focused validation:
+## Scope and changed paths
 
-## Minimum detail gate evidence
+- Changed paths:
+- Owned-path compliance:
+- Owner-approved path or scope expansion, or none:
+- Accidental or unrelated changes checked:
 
-- Product decisions accepted/assumed, deferred, or waived:
-- Invariant tuple proved or docs-only waiver:
-- Contract propagation map updated or waived:
-- Stale-authority/revalidation proof or N/A:
-- Forbidden implementation shapes avoided:
-- Positive / negative / regression / boundary tests or waivers:
-- High-risk adversarial examples covered or waived:
-- Selected risk-surface traps addressed or waived:
+## Contract and persistence propagation
 
-## Test coverage changes
+List only surfaces this PR changes or must prove unchanged.
 
-Choose one:
+| Surface | Updated, unchanged, deferred, or N/A | Proof or reason |
+| --- | --- | --- |
+| Public DTO, route, CLI, SDK, event, or error contract | | |
+| Persisted state or filesystem layout | | |
+| OpenAPI or generated artifacts | | |
+| Docs and examples | | |
+| Tests and validation | | |
 
-- [ ] Tests added or updated; list the test files and covered behavior below.
-- [ ] No tests added; explain why new tests were not required for this change.
+## Proof
 
-Details:
+- Focused failing proof or prior regression evidence:
+- Positive, negative, and boundary proof:
+- Failure-injection, restart, replay, or concurrency proof when included:
+- Formatting, linting, generated-artifact, freshness, or syntax checks:
+- Manual or runtime evidence:
+- Optional local Fast or Full, with reason:
+- Validation not run and reason:
 
-## Reviewer pass
+## Current-head CI
 
-- [ ] Owned paths and forbidden paths reviewed against the issue.
-- [ ] Sensitive surfaces reviewed and marked below.
-- [ ] README, CONTRIBUTING, AGENTS, and docs drift checked.
-- [ ] Any genuinely required validation that was not run is explicitly listed with a reason.
-
-## Risk surfaces
-
-- [ ] Auth, authorization, tenant, or secrets
-- [ ] Storage, Cosmos DB, Service Bus, Redis, or Aspire
-- [ ] CLI public contract
-- [ ] Server or API contract
-- [ ] Orleans actor behavior
-- [ ] SDK or client contract
-- [ ] Deployment, Docker, or GitHub Actions
-- [ ] Docs or workflow
-- [ ] None of the above
-
-## Docs impact
-
-Choose one:
-
-- [ ] Required; updated relevant docs.
-- [ ] Docs impact: None - reason
-- [ ] Not applicable; no user-facing, contributor-facing, or agent-facing behavior changed.
-
-## Local focused evidence
-
-- [ ] Focused proof: command and result
-- [ ] Formatting/linting: command and result
-- [ ] Generated-file/freshness or syntax checks: command and result
-- [ ] Manual validation: command, steps, or N/A
-
-## Optional local broad preflight
-
-- [ ] Fast, Full, or neither: result and reason when run
-
-## Required CI evidence
-
-- Current head SHA:
+- Final head SHA:
 - GitHub `Validate` state:
 - GitHub Actions run link:
-- [ ] The result was triggered by and remains associated with the latest PR revision.
+- Result applies to final head: yes/no
 
-## Validation not run
+## R1 discovery review
 
-List only required proof that was omitted. Normal omission of local Fast or Full after focused proof is not skipped
-validation.
+- Reviewer configuration:
+- Candidate head SHA:
+- `dev-process/CODE_REVIEW.md` mode: Discovery review
+- Verdict: PASS | PASS WITH ACCEPTED RISK | REPAIR | OWNER DECISION | SUPERSEDE OR SPLIT
+- Review Discovery Ledger link or summary:
+- Rejected, deferred, accepted-risk, or owner-decision dispositions:
 
-## Residual risks
+If R1 passed without accepted repairs and final-head CI is green, R2 is not required.
 
-## Review Status
+## Repair pass
 
-- Current head SHA:
-- Codex Code Review Bot state for current head:
-- Manual trigger decision:
-- Manual trigger lock:
-- Detailed review/fix comments:
+Complete only when R1 produced accepted findings.
 
-## Review/fix prevention
+- Issue-owner worker:
+- Consolidated repair commits:
+- Ledger status map:
+- Focused regression proof:
+- Scope and non-goals preserved:
 
-For each Codex Code Review Bot or GitHub review finding fixed in this PR, include:
+## R2 closure review
 
-- Root-cause class:
-- Current issue, sibling issues, template, or agent docs update needed:
+Complete only when accepted repairs were made.
 
-Root-cause classes:
+- Reviewer configuration:
+- Final head SHA:
+- `dev-process/CODE_REVIEW.md` mode: Closure review
+- Verdict: VERIFIED | NOT VERIFIED | OWNER DECISION | SUPERSEDE OR SPLIT
+- Ledger items verified:
+- Direct repair regressions:
+- Final-head proof and CI verified:
 
-- product-decision gap
-- acceptance-criteria / negative-proof gap
-- contract-propagation gap
-- authority-source gap
-- stale-snapshot / interleaving gap
-- lifecycle / retry gap
-- CLI mode / side-effect interaction
-- auth / materialization / traversal ordering gap
-- algorithm adversarial-case gap
-- validation / stale-evidence gap
-- slice-boundary gap
-- ordinary implementation mistake
+There is no automatic R3. A new material invariant, authority boundary, state machine, product semantic, or scope
+expansion stops the run for owner disposition.
 
-If this PR reaches three substantive review cycles, or two cycles in the same invariant family, post a stabilization
-ledger and update the linked issue or sibling issues before requesting another ordinary review.
+## Residual risk, skipped proof, and recovery
 
-## Rollback or recovery notes
+- Residual risk:
+- Skipped proof:
+- Rollback, repair, or cleanup notes:
+- Follow-up issues that are real and explicitly out of scope:
 
-## Docs follow-up required
+## Merge readiness
+
+- [ ] The linked issue still describes the implemented outcome and supported world.
+- [ ] Explicit non-goals remain absent and no half-active capability was introduced.
+- [ ] Focused proof and final-head GitHub `Validate` pass.
+- [ ] R1 discovery review is complete.
+- [ ] Accepted R1 ledger items, if any, are closed by R2.
+- [ ] Public, persisted, generated, and documentation surfaces are current or explicitly waived.
+- [ ] Residual risk and skipped proof are visible.
+- [ ] No owner stop condition remains unresolved.

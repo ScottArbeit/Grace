@@ -449,6 +449,16 @@ module Reference =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Reads an explicit retry identity or allocates one stable ReferenceId for this CLI invocation.
+    let internal getOrCreateReferenceId (parseResult: ParseResult) =
+        let optionResult = parseResult.GetResult(Options.referenceId)
+
+        if isNull optionResult then
+            ReferenceId.NewGuid()
+        else
+            let referenceId = parseResult.GetValue(Options.referenceId)
+            if referenceId = ReferenceId.Empty then ReferenceId.NewGuid() else referenceId
+
     /// Builds command objects or parameters for execution.
     let buildAssignParameters (parseResult: ParseResult) : Parameters.Branch.AssignParameters =
         let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -479,6 +489,7 @@ module Reference =
             RepositoryName = graceIds.RepositoryName,
             BranchId = graceIds.BranchIdString,
             BranchName = graceIds.BranchName,
+            ReferenceId = getOrCreateReferenceId parseResult,
             DirectoryVersionId = directoryVersionId,
             Sha256Hash = sha256Hash,
             Blake3Hash = blake3Hash,
@@ -617,16 +628,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let referenceId =
-                    if
-                        not
-                        <| isNull (parseResult.GetResult(Options.referenceId))
-                    then
-                        parseResult
-                            .GetValue(Options.referenceId)
-                            .ToString()
-                    else
-                        String.Empty
+                let referenceId = getOrCreateReferenceId parseResult
 
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -821,6 +823,7 @@ module Reference =
                                                 OrganizationName = graceIds.OrganizationName,
                                                 RepositoryId = graceIds.RepositoryIdString,
                                                 RepositoryName = graceIds.RepositoryName,
+                                                ReferenceId = referenceId,
                                                 DirectoryVersionId = rootDirectoryId,
                                                 Sha256Hash = rootDirectorySha256Hash,
                                                 Blake3Hash = rootDirectoryBlake3Hash,
@@ -927,6 +930,7 @@ module Reference =
                                 OrganizationName = graceIds.OrganizationName,
                                 RepositoryId = graceIds.RepositoryIdString,
                                 RepositoryName = graceIds.RepositoryName,
+                                ReferenceId = referenceId,
                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                 Blake3Hash = rootDirectoryVersion.Blake3Hash,
@@ -948,6 +952,7 @@ module Reference =
                 if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = parseResult |> ReferenceValidations
+                let referenceId = getOrCreateReferenceId parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
                 match validateIncomingParameters with
@@ -1011,15 +1016,11 @@ module Reference =
                                                 //        ReferenceId = $"{branchDto.LatestCommit}", CorrelationId = parameters.CorrelationId)
                                                 //let! referenceResult = Branch.GetReference(getReferenceParameters)
 
-                                                let referenceIds = List<ReferenceId>()
+                                                let referenceIds =
+                                                    concreteReferenceIds [ branchDto.LatestCommit
+                                                                           branchDto.LatestPromotion ]
 
-                                                if branchDto.LatestCommit <> ReferenceDto.Default then
-                                                    referenceIds.Add(branchDto.LatestCommit.ReferenceId)
-
-                                                if branchDto.LatestPromotion <> ReferenceDto.Default then
-                                                    referenceIds.Add(branchDto.LatestPromotion.ReferenceId)
-
-                                                if referenceIds.Count > 0 then
+                                                if referenceIds.Length > 0 then
                                                     let getReferencesByReferenceIdParameters =
                                                         Parameters.Repository.GetReferencesByReferenceIdParameters(
                                                             OwnerId = graceIds.OwnerIdString,
@@ -1063,8 +1064,10 @@ module Reference =
                                                                     OrganizationName = graceIds.OrganizationName,
                                                                     RepositoryId = graceIds.RepositoryIdString,
                                                                     RepositoryName = graceIds.RepositoryName,
+                                                                    ReferenceId = referenceId,
                                                                     DirectoryVersionId = latestPromotableReference.DirectoryId,
                                                                     Sha256Hash = latestPromotableReference.Sha256Hash,
+                                                                    Blake3Hash = latestPromotableReference.Blake3Hash,
                                                                     Message = message,
                                                                     CorrelationId = graceIds.CorrelationId
                                                                 )
@@ -1085,6 +1088,7 @@ module Reference =
                                                                         OwnerName = graceIds.OwnerName,
                                                                         OrganizationId = graceIds.OrganizationIdString,
                                                                         OrganizationName = graceIds.OrganizationName,
+                                                                        ReferenceId = ReferenceId.NewGuid(),
                                                                         BasedOn = promotionReferenceId
                                                                     )
 
@@ -1440,6 +1444,7 @@ module Reference =
         let promoteCommand =
             new Command("promote", Description = "Promotes a commit into the parent branch.")
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         promoteCommand.Action <- new Promote()
@@ -1448,6 +1453,7 @@ module Reference =
         let commitCommand =
             new Command("commit", Description = "Create a commit.")
             |> addOption Options.messageRequired
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         commitCommand.Action <- new Commit()
@@ -1456,6 +1462,7 @@ module Reference =
         let checkpointCommand =
             new Command("checkpoint", Description = "Create a checkpoint.")
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         checkpointCommand.Action <- new Checkpoint()
@@ -1464,6 +1471,7 @@ module Reference =
         let saveCommand =
             new Command("save", Description = "Create a save.")
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         saveCommand.Action <- new Save()
@@ -1472,6 +1480,7 @@ module Reference =
         let tagCommand =
             new Command("tag", Description = "Create a tag.")
             |> addOption Options.messageRequired
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         tagCommand.Action <- new Tag()
@@ -1480,6 +1489,7 @@ module Reference =
         let createExternalCommand =
             new Command("create-external", Description = "Create an external reference.")
             |> addOption Options.messageRequired
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         createExternalCommand.Action <- new CreateExternal()
@@ -1500,6 +1510,7 @@ module Reference =
             |> addOption Options.sha256Hash
             |> addOption Options.blake3Hash
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         assignCommand.Action <- new Assign()

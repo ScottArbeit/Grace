@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CreateReferenceParameters : Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+/// CreateReferenceParameters : Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CreateReferenceParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
@@ -36,6 +36,8 @@ pub struct CreateReferenceParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
     #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
     pub directory_version_id: Option<uuid::Uuid>,
     /// Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
@@ -49,8 +51,8 @@ pub struct CreateReferenceParameters {
 }
 
 impl CreateReferenceParameters {
-    /// Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
-    pub fn new() -> CreateReferenceParameters {
+    /// Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
+    pub fn new(reference_id: uuid::Uuid) -> CreateReferenceParameters {
         CreateReferenceParameters {
             correlation_id: None,
             principal: None,
@@ -62,6 +64,7 @@ impl CreateReferenceParameters {
             repository_name: None,
             branch_id: None,
             branch_name: None,
+            reference_id,
             directory_version_id: None,
             sha256_hash: None,
             blake3_hash: None,

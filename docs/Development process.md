@@ -1,4 +1,3 @@
-
 # Grace Development Process
 
 Grace's development process is issue-owned, evidence-heavy, and branch/worktree based. GitHub issues and pull requests
@@ -25,9 +24,9 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 - Include the purpose behind each feature or implementation change. Plans, issue bodies, and pull request bodies should
   explain why the work benefits Grace and its users so implementation agents can make better decisions when details are
   incomplete.
-- Use the existing issue details to prevent likely Codex Code Review Bot findings before the pull request exists. This
-  means sharper invariants, forbidden implementation shapes, adversarial cases, and test evidence rather than more
-  issue-template ceremony.
+- Use a compact Outcome Charter and Issue Readiness gate before coding. State one outcome, the supported world, the
+  Product V1 capability budget, the primary invariant and authority, explicit non-goals, the algorithm-witness result
+  when required, focused proof, and owner stop conditions. Do not paste broad risk checklists into every issue.
 - Grace is not in production. There is no production data to import, migrate, preserve, or grandfather. Do not weaken
   contracts, validators, generated clients, runtime behavior, or tests to preserve imaginary old data.
 
@@ -51,10 +50,11 @@ Before editing files, create or confirm a GitHub issue using the Grace agent tas
 contract for the branch, worktree, validation, and pull request.
 
 For single-slice implementation work, that issue can be the whole task record. For multi-step implementation plans, use
-an epic parent issue plus one linked sub-issue for each implementation step. The parent issue owns the overall goal,
-dependency map, and integration status. Each sub-issue owns one implementation slice, branch/worktree, validation path,
-review loop, and pull request. When creating the epic and sub-issues, assign each sub-issue's parent issue relationship
-to the epic in GitHub Relationships.
+an epic parent issue, but initially create only the earliest tracer and prerequisites proven necessary by current
+evidence. The parent owns the outcome, current dependency map, capability dispositions, and integration status. Each
+created child owns one implementation slice, branch/worktree, validation path, bounded review, and pull request. Re-plan
+and create later children after the tracer runs. Assign every created child's parent relationship to the epic in GitHub
+Relationships.
 
 When planning a feature or epic, state why the change matters before decomposing the work. Connect the work to the
 benefit for Grace and its users: improved trust, safer operations, clearer contracts, faster workflows, lower operator
@@ -62,18 +62,16 @@ risk, better product fit, or another task-specific outcome. Carry that purpose i
 pull request bodies. This context lets implementation agents choose better local tradeoffs when the plan leaves a gap
 or an acceptance criterion is ambiguous.
 
-For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. The tracer-bullet
-slice should prove one narrow user-visible behavior through the closest stable public boundary, crossing the main
-contract, runtime, persistence, validation, and documentation surfaces that the rest of the epic is likely to reuse. Use
-what it reveals to refine child issues, owned paths, validation profiles, and parallelization boundaries before fanning
-out into parallel implementation work.
+For non-trivial epics, identify the earliest value-bearing tracer before broad implementation. It should prove one
+narrow user-visible outcome through the closest stable boundary and cross only the contract, runtime, persistence, and
+proof seams required for that outcome. Allow at most two production pull requests before the tracer, and prefer zero or
+one. A third prerequisite is a stop signal to simplify the module boundary, supported world, or tracer. Re-plan later
+issues from the running tracer rather than pre-creating a large horizontal issue forest.
 
-Create the parent epic issue and child issues with `gh issue create --body-file`, using issue bodies written as separate
-Markdown files in a temporary directory. For small issue sets, one small `Set-Content` or equivalent file-write command
-per issue body is enough. For large issue batches, go directly to a short-lived generator script, either checked into the
-worktree for the duration of the run or written under the temp directory. The script should read the plan or packet,
-emit one Markdown body per issue, write a metadata file that maps conceptual issue keys to body paths, and stop before
-any GitHub writes. Lint the generated Markdown files before creation.
+Create the parent epic and the small currently approved child set with `gh issue create --body-file`, using separate
+Markdown body files in a temporary directory. A generator script is appropriate only when the owner explicitly approves
+a larger ready set after tracer evidence. It should emit one Markdown body per approved issue, write a metadata map,
+and stop before GitHub writes. Lint generated Markdown before creation.
 
 Do not build one giant inline PowerShell command that embeds every Markdown body. Do not paste large generator scripts
 through an interactive shell, and do not pass them as a single `pwsh -Command` string. Those paths waste time, flood the
@@ -204,12 +202,15 @@ gh api graphql `
   -F number="$parentNumber"
 ```
 
-The parent issue for a multi-step implementation plan must include a DAG that shows:
+The parent issue must include a compact dependency map for the currently created issues that shows:
 
-- each implementation step as a node
-- dependencies between steps
-- steps that can run in parallel
-- the expected integration order when parallel branches converge
+- the tracer and every proven prerequisite as a node
+- dependencies between created issues
+- any owner-approved parallelism
+- the expected integration order
+
+Future capabilities may remain a high-level backlog or capability list. Do not create implementation-ready nodes merely
+to make the DAG look complete.
 
 Treat that product DAG as necessary but not sufficient for parallel execution. A step can be behaviorally independent
 while still creating predictable merge churn. Before assigning parallel branches, compare the expected write sets:
@@ -246,170 +247,146 @@ When using an epic integration branch:
 The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
 sub-issues are checked.
 
-Keep each sub-issue small and clear enough that an implementation agent can reasonably implement it from the issue body
-alone. If a step needs hidden project knowledge to succeed, split it smaller or add the missing context before assigning
-it. For behavior-changing work, objective, owned paths, and validation commands are not enough. The issue must also say
-what must remain true, what shortcuts are forbidden, what evidence would catch a false positive, and which contract or
-runtime surfaces must be updated or explicitly waived.
+Keep each sub-issue small and clear enough that one implementation worker can execute it from the issue body without
+inventing product semantics or the core state algorithm. One issue should deliver one user-visible outcome, own one
+primary invariant family, and introduce at most one durable partial-state lifecycle.
 
-Before assigning, claiming, or starting a coding issue, apply this minimum detail gate:
+### Outcome Charter And Capability Budget
 
-- Invariant tuple: the actor, route, command, DTO, stored object, or workflow state that must remain true; the identity
-  dimensions that define "same" versus "stale"; and the durable source of truth.
-- Forbidden implementation shapes: shortcuts that would satisfy the happy path while violating the design, security
-  boundary, durability model, or public contract.
-- Expected tests: focused positive, negative, regression, and boundary tests that must exist before the worker can call
-  the slice complete.
-- High-risk adversarial examples: stale IDs, cross-scope objects, reordered events, retries, duplicate requests, mutable
-  config, cancellation, redaction, or other edge cases likely to trick a shallow implementation.
-- Selected risk-surface traps from the checklist below.
-- Explicit "not applicable" waivers with reasons for skipped gate items or risk surfaces.
+Before issue decomposition, record a compact Outcome Charter:
 
-Write the minimum detail gate as review-prevention guidance. The issue should predict the implementation shortcuts,
-weak tests, contract drift, stale identity assumptions, authorization mistakes, async or cancellation gaps, stale docs,
-generated-artifact omissions, or validation gaps that Codex Code Review Bot is likely to flag if the worker misses them.
-Prefer a few task-specific warnings over copying broad checklists. This is a quality bar for the existing issue fields,
-not a new required section.
+- user-visible outcome;
+- supported actor, client, environment, topology, and producer paths;
+- required, deferred, rejected, and out-of-scope capabilities;
+- primary invariant family and authoritative source;
+- stable user-observable proof seam;
+- Product V1 capability budget and owner stop conditions.
 
-If review finds a missing class of acceptance criterion, adversarial case, contract propagation, or validation evidence,
-update active and future sibling issues before assigning more workers. Preserve issue history by appending an addendum
-unless replacing stale text is clearer and safe.
+For Product V1, default to one supported environment, one primary authority at each decision point, no more than one new
+durable partial-state lifecycle, and no background scheduler, automatic reconciliation, credential rotation, or
+generalized recovery unless the named outcome requires it. Remove optional capability before coding rather than
+retaining it and weakening correctness in review.
 
-### Decision Closure And Contract Propagation
+### Algorithm Readiness Gate
 
-Before implementation begins on a product or architecture slice, close the decisions that would otherwise make workers
-infer behavior from nearby code. Add the closure to the issue body, epic packet, or an issue addendum.
+A Plan-ready specification is not algorithm-ready when correctness still depends on unresolved effect order, commit
+points, filesystem residue, restart, replay, cleanup, concurrency ownership, or interaction between authorities.
 
-For each decision, record:
+Before production coding, require a disposable executable algorithm witness for:
 
-- decision name and status: `accepted`, `recommended default`, `deferred`, `waived`, or `open`
-- recommended answer when the owner has not explicitly decided yet
-- alternatives considered
-- implementation impact
-- proof impact
-- the issue or sibling issue that owns deferred behavior
+- destructive or externally irreversible mutation;
+- durable partial progress;
+- filesystem atomicity or multi-store ordering;
+- retries with ambiguous outcomes;
+- crash, restart, replay, or cleanup semantics;
+- concurrent coalescing, deduplication, or ownership transfer;
+- background timers or schedulers;
+- more than one authoritative store or service.
 
-Use this gate for decisions about audience, authorization, visibility, ownership, billing, retention, migration, lifecycle
-states, public event timing, failure behavior, default values, and whether an accepted input is implemented or rejected.
+The witness must expose states and effects, inject failure at meaningful boundaries, discard in-memory state and restart
+from captured durable or physical residue, and produce one verdict: proven, simplified, or blocked. Keep it outside the
+production branch. Propagate the selected state, effect order, commit point, residue, retry, and non-goal decisions into
+the specification and issue.
 
-For each issue touching a public, durable, generated, or cross-project surface, add a compact contract propagation map.
-Every row must be `updated`, `not changed`, `waived`, or `deferred to #issue`:
+Do not add issue prose to compensate for an algorithm that has not been demonstrated.
 
-| Surface | Status | Notes / proof |
-| ------- | ------ | ------------- |
-| Shared DTOs, parameters, commands, events, persisted state | | |
-| HTTP route, validation, authorization, error shape | | |
-| CLI parser, JSON/stdout/stderr, help/examples | | |
-| SDK or facade client | | |
-| Static OpenAPI, generated clients, generator matrix | | |
-| Events, webhooks, SignalR, watch, search, or projections | | |
-| Docs, ADRs, agent guidance, runbooks | | |
-| Focused tests and final validation | | |
+### Compact Issue Readiness
 
-Accepted inputs must be implemented, rejected, or explicitly classified as informational/non-triggering with proof. Do
-not accept a field or flag that silently does nothing.
-
-### Stale-Authority Preflight
-
-For Watch, storage, materialization, authorization, eventing, runtime, or background-worker work, include a preflight that
-names:
-
-- authoritative state before decision
-- identity tuple that distinguishes same, stale, duplicate, and conflicting work
-- mutation or materialization window
-- revalidation point immediately before write, publication, download, or cleanup
-- terminal states and idempotent replay behavior
-- cleanup/abort/quarantine behavior when a side effect succeeds but durable state rejects
-- negative proof that stale snapshots, hidden resources, or failed cleanup cannot appear successful
-
-This preflight should be task-specific. Prefer three precise stale-authority traps over a broad checklist copy.
-
-### Risk-Surface Trap Checklist
-
-Use this checklist to choose the task-local traps that belong in the minimum detail gate. Not every row applies to every
-issue, but every selected or skipped row should be clear enough that a worker and reviewer can see what must be proven.
-
-- Proof/test work: identify the false-positive test review is likely to catch. Prove the assertion would fail on
-  regression, not just execute the path.
-- DTO/contract work: check JSON shape, MessagePack or other serialization shape, OpenAPI component, aggregate OpenAPI,
-  generated-client impact, SDK/facade impact, docs impact, and no-production-data posture. Remember that Grace has no
-  production data to import or preserve; do not add compatibility paths for imaginary old data.
-- CLI work: check `--output Json`, `--select`, `--schema`, `--examples`, stdout cleanliness, stderr/progress behavior,
-  exit-code behavior, and whether global options accidentally skip or duplicate side effects.
-- Server/API work: specify ordering for parse, null/blank validation, domain validation, authorization,
-  resource/path authorization, materialization, mutation/query, and envelope/error serialization.
-- Storage/materialization work: cover missing/corrupt content, size limits, hash/length mismatch, cancellation,
-  retained bytes, compressed/uncompressed paths, and target-vs-ancestor failure semantics.
-- Async/runtime work: prove ordering, retry, dedupe, cancellation, idempotency, and observability through deterministic
-  signals, not arbitrary sleeps.
-- Algorithm work: include adversarial input/output examples for tie-breaking, small ranges, boundary conditions,
-  budgets, pathological runtime cases, and excluded or filtered data.
-- History/traversal work: cover target reference windowing, parent links, `BasedOn`, filtered-vs-traversed history,
-  missing/unauthorized/unreadable ancestors, loops, and traversal budgets.
-- Final audit/docs work: list exact commands/checks rerun, branch/head used, stale evidence rejected, docs/examples
-  verified against runtime behavior, and explicit deferred or residual risks.
-
-Include the behavior to change, relevant context and evidence, owned paths, forbidden or sensitive paths, validation
-commands, docs impact, and the definition of done.
-
-The issue should include this information:
+Before assigning or claiming an implementation issue, require:
 
 ```markdown
-Objective:
-- One concrete behavior, docs, workflow, or infrastructure slice.
+## Outcome
 
-Why this matters:
-- How this benefits Grace and its users, and what better decision-making context it gives the implementer.
+<One supported user-visible result.>
 
-Context and evidence:
-- Logs, files, symptoms, prior PRs, design notes, or commands already run.
+## Supported world
 
-Owned paths:
-- Files or directories this task may edit.
+- Quality contract and overrides:
+- Actor or client:
+- Environment and topology:
+- Producer paths:
 
-Forbidden or sensitive paths:
-- Files or directories that require explicit expansion before editing.
+## Scope and explicit non-goals
 
-Risk surfaces:
-- Auth or secrets
-- Storage, Cosmos DB, Service Bus, Redis, or Aspire
-- CLI public contract
-- Server or API contract
-- Orleans actor behavior
-- SDK or client contract
-- Docs or workflow
-- No special risk expected
+- Required now:
+- Deferred, rejected, or out of scope:
 
-Minimum detail gate:
-- Invariant tuple:
-- Forbidden implementation shapes:
-- Expected tests:
-  - positive:
-  - negative:
-  - regression:
-  - boundary:
-- High-risk adversarial examples:
-- Selected risk-surface traps:
-- Explicit N/A waivers with reasons:
+## Primary invariant and authority
 
-Validation:
-- Focused command:
-- Fast repo gate:
-- Full or Aspire gate, if needed:
-- Manual verification, if needed:
+- Invariant:
+- Authoritative source:
+- Identity and commit point, when relevant:
 
-Definition of done:
-- Behavior changed
-- Tests or docs updated
-- Coding and fix work completed through implementation subagents, with the main agent acting as orchestrator
-- Worker completed a bot-prevention self-review over the actual diff before handoff
-- Codex Code Review Bot reviewed the latest PR commit and either reported no issues with a 👍🏻 reaction on the PR body
-  or all bot comments were fixed, answered, resolved, and followed by a no-issues bot review
-- Ready-for-review pull request opened and linked
-- Validation recorded
-- Review evidence prepared
-- Follow-ups named
+## Algorithm readiness
+
+- Witness and verdict, or justified N/A:
+- Effect-order and residue decisions propagated:
+
+## Acceptance sequence
+
+1. <supported action>
+2. <system behavior>
+3. <observable result>
+4. <retry, restart, or failure behavior only when included>
+
+## Required failure behavior
+
+| Supported producer or failure | Expected result | Proof |
+| --- | --- | --- |
+| <trigger> | <result> | <test or fixture> |
+
+## Contract and persistence propagation
+
+- Updated surfaces:
+- Unchanged or N/A surfaces with reason:
+
+## Paths
+
+- Owned:
+- Sensitive or forbidden:
+
+## Proof and validation
+
+- Focused failing proof:
+- Positive, negative, and boundary proof:
+- Failure-injection or restart proof, when included:
+- Generated or freshness checks:
+- Required GitHub `Validate` expectation:
+
+## Stop conditions
+
+Stop before further coding if a second primary invariant, durable state machine, authority boundary, product semantic,
+material topology expansion, or third pre-tracer enabling PR becomes necessary.
+
+## Definition of done
+
+- The acceptance sequence works through the stable boundary.
+- Required focused proof and final-head CI pass.
+- Explicit non-goals remain absent.
+- R1 discovery review is complete.
+- Accepted ledger items, if any, are repaired and R2 closure-reviewed.
+- Residual risk and skipped proof are recorded.
 ```
+
+Apply only risk prompts relevant to the selected outcome and supported world. Do not require exhaustive N/A inventories,
+speculative adversarial examples, or a checklist for every possible Grace surface.
+
+An accepted input must be implemented, rejected, or explicitly informational. A deferred capability must not leave a
+half-active flag, timer, route, persisted state, or public contract.
+
+When public, durable, generated, or cross-project behavior changes, use a compact propagation map for surfaces the slice
+actually touches:
+
+| Surface | Updated, unchanged, deferred, or N/A | Proof or reason |
+| --- | --- | --- |
+| Shared DTOs, parameters, commands, events, or persisted state | | |
+| HTTP route, validation, authorization, and error shape | | |
+| CLI, SDK, OpenAPI, and generated clients | | |
+| Events, watch, search, projections, or other consumers | | |
+| Docs, examples, tests, and validation | | |
+
+If review discovers a missing product decision, algorithm, authority, or primary invariant, stop the run and update the
+canonical specification and future issue packet. Do not append more workers to the current run.
 
 ## Workspace
 
@@ -448,9 +425,12 @@ Post a claim comment and assign the issue to the authenticated GitHub user befor
 
 _<profile from docs/Development process.md>_
 
-### Conflict Score
+### Factory Run Charter
 
-**<0-3>** - <reason>
+- Outcome and supported world:
+- Algorithm witness or N/A:
+- Agent topology and review protocol:
+- Owner stop conditions:
 ```
 
 Recommended branch name:
@@ -530,361 +510,203 @@ YAML parsing, or `git diff --check`.
 
 ## Required Agent Orchestration And Review
 
-When acting as the main agent for a tracked implementation, stay in the orchestrator role. The main agent owns issue
-coordination, DAG sequencing, prompts, review ledgers, pull request updates, CI/merge status, docs/process updates,
-review/fix routing, and final integration evidence. The main orchestrator must delegate all coding and fixing tasks to
-worker subagents and must not implement, repair, inspect or validate code fixes as a substitute for the worker, or
-commit code changes locally. Grace relies on Codex Code Review Bot for the blocking pull request code-review gate, not
-locally spawned review-only subagents.
+Grace uses a bounded, non-recursive factory run for each implementation issue or pull request. Freeze the run before
+coding and do not change its process rules mid-run.
 
-If an earlier worker thread is lost, compacted away, leaves uncommitted work, or otherwise cannot be resumed, the main
-orchestrator must assign the continuation to a fresh worker subagent. The continuation prompt must include the existing
-worktree and branch, current git status, prior objective, owned and forbidden paths, validation requirements, and any
-review findings or review-ledger notes already recorded. The main orchestrator may inspect enough metadata to route the
-work safely, but it must not take over code implementation or code-fix validation itself.
+### Factory Run Charter
 
-Every worker prompt should include a status-reporting protocol so the orchestrator does not have to infer whether the
-worker is active, blocked, validating, or ready for review. For Grace work, ask the worker to create or update a temp
-status file outside the repository, such as `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with these fields:
+Record:
 
-- `phase`: current work phase, such as orienting, patching, focused validation, full validation, handoff, or blocked
-- `lastUpdate`: timestamp for the latest status write
-- `changedFiles`: intended or actual file groups touched
-- `validation`: commands run, running, passed, failed, or intentionally skipped
-- `blockers`: concrete blockers or an empty list
-- `nextStep`: the next action the worker intends to take
+- issue, outcome, supported world, and quality contract;
+- target branch and base SHA;
+- algorithm-witness location and verdict, or justified N/A;
+- validation profile;
+- controller, implementation owner, discovery reviewer, and closure reviewer roles;
+- review protocol and owner stop conditions.
 
-Require the worker to update that file before code edits, before and after long validation or generation commands,
-before commit/push/handoff steps, and before its final response. Also require a short chat heartbeat roughly every
-five minutes while still working. The heartbeat should be a status update, not a request for attention, unless the worker
-is blocked. The orchestrator may read the status file and thread output to monitor progress, and should avoid
-interrupting an active worker only to ask for status.
+A material process change stops the run, preserves current evidence, and starts a new charter. Do not reinterpret the
+quality contract, expand issue scope, or change review rules while the feature is being repaired.
 
-Agents must never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
-long-polling commands, watch loops, and tool waits. Use repeated shorter checks instead, and update the status file
-between checks when monitoring long-running validation, generation, CI, or review activity.
+### Agent Topology
 
-Before editing files, the implementation worker should post or include a lightweight preflight after reading the issue:
+Use this topology:
 
-```markdown
-## Implementation Preflight
+- one short-lived controller for one issue or PR;
+- one active issue-owner implementation worker;
+- no nested subagents;
+- one read-only R1 discovery reviewer;
+- one read-only R2 closure reviewer when R1 produced accepted repairs.
 
-- Acceptance criteria I will prove:
-- Contract surfaces I must update or explicitly waive:
-- Existing tests I expect to fail or extend:
-- Adversarial cases I will cover:
-- Global options or modes that could change behavior:
-- Validation I will run:
-- Paths I will touch:
-- Issue-owned path expansion needed before editing:
-```
+The controller is the sole agent allowed to spawn subagents. Workers and reviewers must not spawn agents. Do not keep one
+root controller alive across an entire epic.
 
-Keep this preflight short. Its job is to catch missing acceptance criteria, contract surfaces, adversarial examples,
-mode interactions, validation gaps, and path-lease expansion before code changes start.
+The controller owns tracker state, branch and worktree coordination, review ledger, CI state, merge, and cleanup. It may
+inspect code, diffs, logs, tests, and validation evidence and may run read-only or validation commands. It must not
+silently replace the issue owner's implementation work.
 
-Before handoff, the worker must perform a bot-prevention self-review over the actual diff. This is part of
-implementation done, not a separate review phase. The worker should look for likely Codex Code Review Bot findings in:
+The issue owner owns code, focused proof, self-review, commit, push, and all accepted in-scope repairs. Do not start a
+fresh worker for each finding. Use one replacement only when the original worker is genuinely unavailable or its context
+is unusable, and record the reason.
 
-- correctness and edge cases
-- missing, weak, or false-positive tests
-- authorization, scope, identity, or materialization ordering
-- DTO, API, CLI, SDK, serialization, or OpenAPI contract drift
-- async, retry, idempotency, cancellation, or observability gaps
-- stale docs, generated artifacts, examples, or help text
-- validation gaps or stale evidence
+Do not require temp status files or fixed-interval heartbeats. Require a concise update before a long-running command,
+when a material blocker or finding appears, and at handoff. Never sleep or poll for more than 120 seconds in one command.
 
-Anything found in this pass should be fixed before the worker pushes or hands off. If a category is not applicable, the
-handoff can say so briefly rather than expanding the issue or pull request with boilerplate.
+Default to one active high-risk epic or factory-calibration stream. Parallelize Tier 2 production work only when the
+owner explicitly approves independently proven outcomes, authority models, write sets, and integration paths.
 
-Prefer worker prompts that end at a handoff boundary. A worker subagent performs the assigned implementation or fix,
-keeps its worktree consistent, runs required validation, commits and pushes when the prompt asks for it, and returns a
-handoff with commit hash, changed files, validation evidence, blockers, and follow-ups. By default, workers should not
-update GitHub issues, pull request bodies, review comments, conversation resolution, labels, checklists, merge state, or
-cleanup records. The orchestrator owns those coordination updates. Once the handoff is sufficient, the orchestrator may
-start the next independent worker before completing wrap-up for the prior worker, as long as the dependency graph and
-write sets make that scheduling safe.
+### Execution Budget
 
-For high-risk slices, the orchestrator may assign a fresh pre-PR review worker before opening or updating the pull
-request when that is cheaper than a likely bot/fix/re-review loop. Reserve this exception for changes that touch
-authorization, storage/materialization, public contracts, generated clients or OpenAPI, async/idempotency behavior,
-large cross-surface diffs, or slices where the implementation worker reports residual risk. This optional pre-PR review
-does not replace Codex Code Review Bot as the blocking review gate.
+| Role | Default run limit | Notes |
+| --- | --- | --- |
+| Issue-owner implementation worker | 1 | Owns implementation and accepted repairs. |
+| Replacement implementation worker | 1 | Only when the original owner is unavailable or unusable; record why. |
+| R1 discovery reviewer | 1 | One broad supported-world review of the coherent candidate. |
+| R2 closure reviewer | 1 | Only when R1 produced accepted repairs; targeted to ledger and repair diff. |
+| Runtime or Aspire starts | As needed | Record purpose and result; avoid accidental overlap. |
 
-After the first coding subagent that works on the issue commits and pushes the new branch to origin, the orchestrator
-must open a normal ready-for-review pull request. The pull request can remain open while the step is still in progress.
-From that point on, review findings, review fixes, validation evidence, and bot-review state belong on the pull request,
-not only on the issue. Use the issue for claim, planning, parent/epic coordination, and pre-PR evidence; use the pull
-request as the durable code-review ledger once it exists. Whenever the orchestrator adds or updates code-review comments
-on a pull request, it must update the pull request body's `Review Status` section in the same turn. That section should
-stay high-level: current head SHA, bot state for the current head, manual trigger decision, manual trigger lock text,
-bot reviews observed, current open findings, fix commits already pushed, final no-issues bot status, and links to
-detailed review/fix comments.
+An algorithm witness is a separate bounded Discovery activity, not a way to add production workers. Children may never
+spawn children.
 
-The implementation subagent must stop after committing, validating, and pushing the slice branch, then return a
-[Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
-responsible for opening or updating the pull request and monitoring Codex Code Review Bot. Do not run `codex review`
-through the shell, do not ask GitHub `@codex review`, and do not spawn local review-only subagents for the normal Grace
-completion gate except for the selective high-risk pre-PR review described above or when the maintainer explicitly
-changes the review mode for that task.
+### Implementation Preflight And Handoff
 
-Codex Code Review Bot communicates through PR-body emoji reactions, review summaries, top-level PR comments, and
-inline pull-request-review comments:
+Before semantic edits, the issue owner confirms:
 
-- 👀 on the pull request body means the bot has seen the latest pushed commit and is reviewing it.
-- 👍🏻 on the pull request body means the bot found no issues for the latest reviewed commit.
-- A pull request comment or inline pull-request-review comment from Codex Code Review Bot means it found one or more
-  actionable issues.
+- supported outcome and non-goals;
+- primary invariant, authority, identity, and commit point;
+- algorithm-witness result;
+- owned and sensitive paths;
+- focused proof and validation profile;
+- owner stop conditions.
 
-The orchestrator must verify that the bot signal applies to the latest pushed commit before treating the review gate as
-complete. Do not merge, close, or call a task review-complete while the latest bot state is still 👀, while a bot comment
-is unresolved, or while the bot has not yet reacted to the current head commit.
+Stop before coding when the issue contradicts current evidence, the witness, or the target branch.
 
-### Review Freshness and Fix Serialization
+Before handoff, the issue owner self-reviews the actual diff for:
 
-Review-fix routing starts from a frozen action set. The orchestrator must wait for Codex Code Review Bot to finish on
-the latest head commit, then classify findings before assigning any fix worker.
+- acceptance sequence and non-goals;
+- quality contract and realistic supported producers;
+- authority and effect ordering;
+- public, persisted, generated, and documentation propagation;
+- proof that could pass without establishing the claim;
+- accidental or unowned changes.
 
-- A fresh finding belongs to the completed bot review for the current head commit, or is repeated after that review
-  completes.
-- A previous-pass finding is stale when a newer head exists and the completed latest-head review does not repeat it.
-  GitHub can keep mapping old review threads onto the current diff, so do not use `isOutdated = false`, the current
-  line number, or the thread's displayed commit alone as proof that the finding is fresh.
-- Do not assign a worker, edit code, or post fix evidence for stale findings. When the maintainer directs stale
-  findings to be closed, reply with a stale disposition, say that no code change addressed the thread, resolve it, and
-  keep the current action set limited to fresh latest-review findings.
-- If the bot has acknowledged the current head with 👀 but has not yet submitted its completed review or no-issues
-  result, continue waiting. Do not infer the action set from early inline threads.
-
-Review-fix workers on a single pull request are serialized by default. A review-fix worker may cover multiple fresh
-findings from the same completed latest-head review when they share a write set or behavior surface. Do not start
-another fix worker for that pull request until the active worker has handed off, pushed its commit, and the orchestrator
-has replied to and resolved the fresh findings it addressed. Parallel fix workers are allowed only when all of these are
-true:
-
-- the findings come from the same completed latest-head review
-- the write sets, tests, and review surfaces are provably disjoint
-- the worker prompts name the disjoint owned and forbidden paths
-- the orchestrator can merge the results without predictable branch churn or conflicting review replies
-
-After every review-fix push, wait for Codex Code Review Bot to finish on the new head before assigning more fix work.
-
-### Repeated Review Cycle Learning Loop
-
-A PR crosses the stabilization threshold when it has three substantive Codex review cycles, two cycles on the same
-invariant family, or one cycle with enough related findings to show that the issue text missed a model boundary.
-
-When that happens, stop treating findings as isolated fixes:
-
-1. Build a review timeline: review number, commit, finding titles, paths, fix commits, and recurring theme.
-2. Fetch the originating issue and compare its acceptance criteria to the findings.
-3. Classify root cause into one or more lanes:
-   - product-decision gap
-   - contract-propagation gap
-   - authority-source gap
-   - stale-snapshot / interleaving gap
-   - lifecycle / retry gap
-   - authorization / materialization ordering gap
-   - negative-proof gap
-   - validation freshness gap
-   - slice-boundary gap
-   - ordinary implementation mistake
-4. Post or update a stabilization ledger with the invariant family, required proof, explicit out-of-scope boundaries, and
-   status map.
-5. Update active sibling issues, future issue generators, specs, templates, or agent guidance if the lane can recur.
-6. Request another review only after the ledger is mapped to implementation and proof on the current head.
-
-The PR prevention line should name the lane and the durable artifact updated or intentionally not updated. Example:
-`Prevention: contract-propagation gap; issue #NNN now requires OpenAPI, generated clients, SDK, and CLI JSON proof or an
-explicit N/A waiver.`
-
-### Manual Codex Review Trigger Lock
-
-The manual Codex review trigger lock prevents duplicate review requests while Codex Code Review Bot is already working
-on the current pull request head. If 👀 appears at any point for the current head commit, the only valid action is to
-wait for either a 👍🏻 no-issues reaction or bot findings. Do not run `codex review`, ask GitHub `@codex review`, or use
-any other manual trigger path while that lock is active.
-
-The lock is active for the current head when any of these states exist:
-
-- 👀 is present on the pull request body for the current head.
-- 👍🏻 is present on the pull request body for the current head.
-- Codex Code Review Bot has submitted a review for the current head.
-- Codex Code Review Bot has written a top-level pull request comment or inline review comment for the current head.
-- The available GitHub data is ambiguous, stale, incomplete, or cannot prove the bot state for the current head.
-
-The missed-ack exception is the only allowed manual trigger path. It is available only after the minimum wait window has
-elapsed since the current head commit or pull request update and the orchestrator has verified all of these conditions
-for the current head:
-
-- no 👀 reaction exists
-- no 👍🏻 reaction exists
-- no Codex Code Review Bot review exists
-- no Codex Code Review Bot top-level comment exists
-- no Codex Code Review Bot inline review comment exists
-
-Use `pwsh ./scripts/guard-codex-review-trigger.ps1 -PullRequest <number>` before any missed-ack manual trigger decision.
-The script is a one-shot guard, not a watcher. It prints a pasteable `Review Status` block and exits successfully only
-when the missed-ack exception is allowed. A nonzero exit means the lock is active, the wait window has not elapsed, or
-the state is ambiguous; in all of those cases, do not manually trigger review.
-
-Do not rely on `gh pr view --json comments` alone when checking for bot findings. That field only covers top-level PR
-comments and can miss inline comments stored under the pull request review. Inspect the latest bot review and its inline
-comments before merging. A GraphQL check should include `reviews.nodes.comments.nodes`, for example:
-
-```powershell
-$query = @'
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      headRefOid
-      comments(first: 50) { nodes { author { login } body url } }
-      reviews(first: 20) {
-        nodes {
-          author { login }
-          state
-          body
-          url
-          commit { oid }
-          comments(first: 50) { nodes { path line body url } }
-        }
-      }
-      reactionGroups { content users(first: 20) { totalCount nodes { login } } }
-    }
-  }
-}
-'@
-
-gh api graphql `
-  -f query="$query" `
-  -F owner="<owner>" `
-  -F name="<repo>" `
-  -F number="<pr-number>"
-```
-
-The review loop is blocking:
-
-1. After the implementation subagent pushes a commit, monitor the pull request for Codex Code Review Bot activity.
-2. Wait for the bot to put 👀 on the pull request body for the current head commit, then wait for either a 👍🏻 reaction
-   or a bot review comment.
-   Use repeated checks no longer than 120 seconds each; do not run one long sleep, watch, `wait_agent`, or poll command
-   while waiting for the bot.
-   If 👀 appears at any point for the current head, the manual trigger lock is active and the only valid action is to
-   wait for 👍🏻 or findings.
-3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
-   record that no-issues state in `Review Status` and continue toward merge readiness.
-4. If the completed latest-head bot review contains fresh findings, update `Review Status`, then send the frozen fresh
-   action set to a fresh implementation subagent to address in the issue-owned branch/worktree. Do not include stale
-   previous-pass findings unless the latest completed review repeats them.
-5. If the review finds a missing acceptance-criterion class, adversarial case, contract-propagation requirement, stale
-   validation evidence, repeated trap, or issue-template gap that could affect active or future workers, amend the
-   active and future sibling issues before spawning more workers. Update the issue template or agent docs when the trap
-   is structural. Preserve issue history by appending an addendum unless replacing stale text is clearer and safe.
-6. The implementation subagent adds focused regression proof for the changed behavior or docs, then uses GitHub
-   `Validate` as the current-revision broad result. Local Fast or Full is required only for a documented escalation.
-7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
-8. The orchestrator replies to each Codex Code Review Bot top-level or inline review comment with the outcome, fix
-   commit, and validation evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment
-   must include a short prevention line and make the high-level outcome easy to scan before the detailed issue and fix
-   text. The orchestrator resolves the GitHub conversation after the feedback has been satisfied.
-9. The orchestrator updates the pull request body's `Review Status` section with the fix commit, validation evidence,
-   and link to the bot comment or fix reply.
-10. Wait for Codex Code Review Bot to review the new head commit. Repeat the loop until the bot reports no issues with
-   a 👍🏻 reaction on the pull request body and all bot conversations are resolved.
-
-Only after Codex Code Review Bot reports no issues for the latest commit can the task continue toward merge readiness,
-handoff, or any other completion step. Record the final bot no-issues state and validation evidence in the pull request.
-
-### Ready For Review Handoff
-
-When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`,
-asking `@codex review`, spawning nested review work, or updating GitHub issues, pull requests, review comments, labels,
-checklists, or merge/cleanup state unless the orchestrator explicitly delegated that GitHub update. Instead, it must
-return this handoff to the parent/orchestrator thread:
+Use this handoff:
 
 ```markdown
-## Ready For Review
+## Coherent Candidate Handoff
 
-**Worktree:** `<absolute path>`
-**Branch:** `<branch-name>`
-**Commit:** `<commit-sha> <commit subject>`
-**Diff:** `<base>..<head>`
-**Remote:** `<origin branch or PR URL, if already available>`
-
-### Validation
-
-- `<focused command>`: <result>
-- `<broader command, if any>`: <result or skipped reason>
-
-### First-Pass Review Readiness
-
-- Bot-prevention self-review: <completed; notable categories checked>
-- Issues found and fixed before handoff: <none, or summary>
-- Residual risks: <none, or summary>
-
-### Orchestrator Follow-Up
-
-- `<issue/PR/comment/checklist update needed, or none>`
-
-### Review Request
-
-Please monitor Codex Code Review Bot on the pull request. Do not run local review-only subagents, `codex review`, or
-`@codex review` for the normal Grace completion gate. Manual trigger not attempted. The orchestrator must use the pull
-request `Review Status` lock and `scripts/guard-codex-review-trigger.ps1` missed-ack guard before any manual trigger
-path. Wait for the bot to acknowledge the latest commit with 👀, then wait for either a 👍🏻 no-issues reaction or a PR
-comment with findings. If 👀 appears at any point, the only valid action is to wait for 👍🏻 or findings. If the bot
-comments with findings, route the fix to a fresh implementation subagent, reply to the bot comment with the fix commit
-and validation evidence, resolve the conversation, and wait for the next bot review on the new head commit.
+- Issue and PR:
+- Base SHA:
+- Candidate head SHA:
+- Commits and changed paths:
+- Outcome delivered and non-goals preserved:
+- Focused proof and formatting/freshness checks:
+- Manual or runtime evidence:
+- Residual risk and skipped proof:
+- Owner stop triggers: none | <trigger>
 ```
 
-If Codex Code Review Bot finds issues, the parent/orchestrator sends those findings to an implementation subagent. The
-implementation subagent addresses the findings, validates, commits and pushes the fixes, and returns a new Ready For
-Review handoff. The parent/orchestrator replies to the bot comment, resolves the conversation, updates `Review Status`,
-and waits for the next bot review.
+### R1 Discovery Review
 
-### Review/Fix Comment Template
+Open one coherent ready-for-review PR after the first validated candidate. Do not use the PR as a scratchpad for
+architecture discovery.
 
-Use this Markdown structure when replying to a Codex Code Review Bot comment after a review issue is fixed. Keep the top
-section short and scannable; put detailed evidence below it.
+Start one independent R1 discovery reviewer in a fresh, read-only context. Supply the complete issue, Outcome
+Charter, quality contract, supported world, algorithm-witness result, base and candidate head SHAs, exact diff,
+proof, and non-goals. Require `dev-process/CODE_REVIEW.md` in **Discovery review** mode. The durable requirement
+is independence from the implementation context, not a particular model name or client setting.
+
+R1 performs one complete supported-world review and returns:
+
+- PASS;
+- PASS WITH ACCEPTED RISK;
+- REPAIR with a finite Review Discovery Ledger;
+- OWNER DECISION; or
+- SUPERSEDE OR SPLIT.
+
+Every actionable finding must name a supported producer, shortest supported sequence, contract basis, observable impact,
+likelihood basis, required invariant, and closure proof. Reject unsupported-path hardening, stale or duplicate findings,
+and product decisions presented as implementation defects.
+
+If R1 passes and GitHub `Validate` passes on the same final head, R2 is not required.
+
+### Frozen Review Discovery Ledger And Repair
+
+When R1 returns findings, classify them once and freeze the accepted ledger for the run:
 
 ```markdown
-## Review/Fix: <short issue title>
+## Review Discovery Ledger
 
-**Status:** Fixed in `<commit-sha>`
-**Review source:** Codex Code Review Bot
-**Validation:** <command or check result>
-**Prevention:** <root-cause class>; <current issue, sibling issues, template, or agent docs update needed?>
+- Candidate head SHA:
+- Quality contract and supported world:
+- R1 verdict:
 
-### Summary
-
-_One or two sentences explaining the review issue and the fix at a high level._
-
-### Review Issue
-
-<Describe the actionable issue the reviewer found. Include file/line references when available.>
-
-### Fix
-
-<Describe the code or docs change that addressed the issue. Include the fix commit and important files changed.>
-
-### Validation
-
-- `<focused command>`: <result>
-- `<broader command, if any>`: <result or skipped reason>
+| ID | Severity | Supported producer and sequence | Contract and impact | Required invariant and proof | Disposition | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| R1 | P1/P2/P3 | <producer> | <basis and impact> | <direction and proof> | fix/owner/risk/defer/reject | open |
 ```
 
-Use one of these root-cause classes in the `Prevention` line:
+Route all accepted in-scope findings to the same issue-owner worker for one consolidated repair pass when practical.
+Repair commits do not reopen whole-surface discovery review.
 
-- acceptance-criteria / negative-proof gap
-- contract-propagation gap
-- CLI mode / side-effect interaction
-- auth / materialization / traversal ordering gap
-- algorithm adversarial-case gap
-- validation / stale-evidence gap
-- ordinary implementation mistake
+For an epic-branch PR, defer a finding only when it is outside the current leaf and a named future issue owns the exact
+behavior and proof. Do not defer a prerequisite that makes a fact, persisted field, status flag, event, or trust
+predicate produced by the current leaf unreliable.
 
-Not every review finding requires a docs change. Ordinary implementation mistakes can be fixed and recorded without
-changing templates or process docs. Repeated or structural traps should update active/future sibling issues before more
-workers are assigned, and should update the issue template or agent docs when the missing guard belongs in future tasks.
+### R2 Closure Review
+
+After accepted repairs are pushed, run one independent R2 reviewer on the repaired current head. Require
+`dev-process/CODE_REVIEW.md` in **Closure review** mode.
+
+R2 verifies only:
+
+- each accepted ledger item;
+- repair hunks and direct callers or consumers;
+- direct regressions introduced by repair;
+- current-head focused proof, generated or freshness checks, and required CI;
+- scope and non-goal preservation.
+
+R2 must not reopen untouched parts of the original diff for another unconstrained search. A straightforward incomplete
+ledger repair may be corrected and rechecked in the same closure context.
+
+There is no automatic R3. If R2 incidentally exposes a supported-world merge blocker outside the frozen ledger and
+direct repair-regression scope, record one `DISCOVERY ESCAPE` with its shortest reproduction, contract basis, impact, and
+location, then stop. Do not ignore it and do not keep searching. A new material invariant, authority boundary, state
+machine, product semantic, or scope expansion is also an owner stop. Either case requires simplification, split,
+supersession, or a new explicitly chartered run.
+
+Use this closure record:
+
+```markdown
+## Closure Review
+
+- Final head SHA:
+- R2 verdict: VERIFIED | NOT VERIFIED | DISCOVERY ESCAPE | OWNER DECISION | SUPERSEDE OR SPLIT
+
+| Ledger ID | Repair seam | Proof seam | Status | Residual risk |
+| --- | --- | --- | --- | --- |
+| R1 | <path/symbol> | <test/CI> | closed/open | <risk> |
+
+- Direct repair regressions:
+- Final GitHub `Validate`:
+- Scope and non-goals preserved:
+- Stop result:
+```
+
+### Process Stop Signals
+
+Stop regardless of count when:
+
+- the issue gains a second primary invariant, durable partial-state lifecycle, or authority boundary;
+- a new domain concept or user-visible semantic is required;
+- a third enabling PR is proposed before the tracer;
+- the selected algorithm is no longer finite or proven;
+- review is defining authority, lifecycle, ordering, recovery, or product behavior;
+- process rules must change mid-run;
+- the implementation contains more lifecycle or process machinery than user value.
+
+Create a salvage map before superseding. Preserve independently correct decisions, tests, contracts, and code; reframe
+useful behavior under a smaller supported world; defer optional automation; and identify code that must not be
+cherry-picked wholesale.
 
 ## Validation
 
@@ -898,10 +720,12 @@ diagnostic tools, not routine pre-commit or pre-push requirements.
 | GREEN/refactor | Same focused test or fixture |
 | Before commit | Format/check, focused proof, freshness checks, `git diff --check` |
 | Before push | Confirm local evidence is current; no routine broad local gate |
-| PR current revision | GitHub `Validate`, authoritative broad gate |
-| Review fix | Focused regression proof, then GitHub `Validate` |
-| CI failure | Inspect CI evidence and reproduce narrowly; escalate to Fast or Full as needed |
-| Merge | Current CI green, current review satisfied, residual risks recorded |
+| Coherent candidate before R1 | Focused proof, freshness checks, `git diff --check`, and pushed head |
+| Candidate needing no repair | R1 Discovery verdict plus GitHub `Validate` on the same final head |
+| Accepted R1 repair | Focused regression proof for the frozen ledger and repair diff |
+| Closure after repair | R2 Closure verdict plus GitHub `Validate` on the repaired final head |
+| CI failure | Inspect newest current-head failed workflow logs; classify every failure, reproduce only grounded in-scope failures narrowly, and escalate to Fast or Full as needed |
+| Merge | R1 ledger closed, R2 complete when repair occurred, final CI green, and residual risks recorded |
 
 Use the local scripts only when their escalation role is justified:
 
@@ -1005,27 +829,22 @@ targeting `main`, use one of GitHub's supported closing keywords when the merge 
 wording such as `Related to #123` or `Part of #249`; GitHub ignores closing keywords on non-default-branch PRs, so close
 the sub-issue manually after the pull request merges to the epic branch.
 
-When opening or updating a pull request, include the evidence available at that point and keep adding standalone
-comments as the review loop continues:
+When opening or updating a pull request, keep the evidence compact and current:
 
-- the linked GitHub issue
-- why the change benefits Grace and its users
-- summary of changed behavior
-- touched paths and any write-set expansion
-- focused local proof, formatting/linting, freshness/syntax, and manual evidence as applicable
-- optional Fast or Full evidence and the reason when one was run
-- current head SHA, GitHub `Validate` conclusion, run link, and confirmation that it is associated with the latest PR
-  revision; successful logs need not be summarized unless CI fails or warns
-- implementation and review path used, including the implementation subagent and Codex Code Review Bot state observed
-- final no-issues bot review result for the latest commit
-- replies to each Codex Code Review Bot comment that required a fix, including the issue, fix, fix commit, validation,
-  and resolved conversation state
-- a `Review Status` section that summarizes the current review/fix state, current head SHA, bot state for the current
-  head, manual trigger decision, manual trigger lock text, and links to detailed review/fix comments
-- docs impact
-- residual risk
-- rollback or recovery notes when the change touches runtime or data
-- useful AI prompts used for diagnosis or implementation, when contributing externally
+- linked GitHub issue and user-visible outcome;
+- supported world, quality contract, and explicit non-goals;
+- primary invariant and algorithm-witness result or N/A;
+- touched paths and any owner-approved expansion;
+- focused proof, formatting, freshness, generated-artifact, and manual evidence as applicable;
+- optional Fast or Full evidence and the reason when one was run;
+- final head SHA, GitHub `Validate` conclusion, and run link;
+- R1 discovery verdict and frozen ledger;
+- repair commits and ledger status when applicable;
+- R2 closure verdict when repairs were required;
+- docs impact, residual risk, skipped proof, and rollback or recovery notes.
+
+Do not add one PR comment per internal worker action. Preserve the durable decision, finding disposition, proof, and final
+closure state without turning the PR into an agent transcript.
 
 Before the Grace completion review gate, update the branch against its required base:
 
@@ -1040,9 +859,11 @@ Then verify:
 - no unexpected deletions were introduced during the update
 - focused proof was rerun when conflict resolution or relevant base changes could affect the slice
 
-Push the refreshed revision, require a new GitHub `Validate` result associated with that revision, and wait for Codex
-Code Review Bot. CI and code review can run in parallel. A bot reaction, comment, or CI result on an older revision is
-useful history, but it does not satisfy the completion review gate.
+Push the coherent candidate, then run R1 discovery review under `dev-process/CODE_REVIEW.md` and required GitHub
+checks. If R1 passes with no repairs and CI applies to that head, the completion gate is satisfied. If repairs are
+accepted, freeze the R1 ledger, route one consolidated repair pass to the issue owner, then run R2 closure review and
+required GitHub `Validate` on the final head. R1 remains the finite discovery record; R2 and final CI certify the repaired
+revision. A repair commit does not authorize another whole-diff discovery review.
 
 Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
 maintainer explicitly asks for a draft.
@@ -1052,30 +873,20 @@ still uses normal GitHub pull requests, but changes should be prepared so they a
 
 ## Review Feedback
 
-When the user asks an agent to address a code review comment, review comment, PR feedback, or similar wording, treat the
-request as a complete review-thread workflow.
+When asked to address a review comment or PR feedback:
 
-The agent should:
+1. Inspect the exact thread and classify it against the quality contract, supported producer, issue scope, and current
+   R1 ledger.
+2. Reject stale, duplicate, unsupported-path, or product-decision-as-defect feedback with evidence.
+3. Route an accepted in-scope repair to the issue-owner worker. Do not create a fresh worker for each comment.
+4. Add or strengthen focused regression proof, then run formatting, relevant freshness checks, and `git diff --check`.
+5. Commit and push the repair.
+6. Reply to the review thread with the outcome, commit, proof, and disposition, then resolve it when satisfied.
+7. If this is an R1 ledger repair, include it in the consolidated repair pass and R2 closure review. Do not start a new
+   broad discovery review merely because the head changed.
 
-1. Inspect the GitHub review thread or PR feedback directly and separate actionable feedback from informational comments.
-2. Evaluate whether the feedback is correct and identify the smallest appropriate fix, or state why no code change is
-   needed.
-3. Make the fix in the issue-owned branch/worktree and keep the change traceable to the review thread.
-4. Add or strengthen focused regression proof, then run formatting, relevant syntax/freshness checks, and
-   `git diff --check`. Use local Fast or Full only for an explicit escalation condition; GitHub `Validate` provides the
-   new broad current-revision result.
-5. Commit the fix and push the branch.
-6. Reply to the GitHub review comment with the outcome, changed commit, validation evidence, and a short prevention
-   line.
-7. Resolve the GitHub conversation after the feedback has been satisfied.
-
-If the comment is ambiguous, conflicts with another requirement, or would cause a behavioral regression, ask for
-clarification or reply with the trade-off instead of resolving the thread prematurely.
-
-The prevention line must include one root-cause class and whether the current issue, sibling issues, issue template, or
-agent docs need an update. Use the same classes from the [Review/Fix comment template](#reviewfix-comment-template).
-Not every finding requires a docs change, but repeated or structural traps should update active/future issues before
-more workers are assigned.
+If the feedback requires a new product semantic, authority, state machine, recovery promise, or quality interpretation,
+stop for an owner decision instead of patching locally.
 
 ## Cleanup
 

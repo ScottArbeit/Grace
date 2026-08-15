@@ -5,7 +5,6 @@ open Grace.CLI
 open Grace.CLI.CommandOutputContract
 open Grace.Shared
 open Grace.Types.Common
-open Json.Schema
 open NUnit.Framework
 open System
 open System.CommandLine
@@ -81,7 +80,6 @@ module CommandOutputContractRegistryTests =
         | "--scope" -> "repository"
         | "--role" -> "RepositoryReader"
         | "--search-visibility" -> "Visible"
-        | "--set" -> "Active"
         | "--status" -> "Active"
         | "--type" -> "summary"
         | "--url" -> "https://example.test/webhook"
@@ -250,7 +248,10 @@ module CommandOutputContractRegistryTests =
         countBy CommonRenderOutputEnvelope
         |> should equal 186
 
-        countBy ImmediateJsonErrorOnly |> should equal 1
+        countBy ImmediateJsonErrorOnly |> should equal 0
+
+        countBy ConditionalCheckStatusEnvelope
+        |> should equal 1
 
         countBy HumanProgressOnlySuccess
         |> should equal 10
@@ -276,6 +277,12 @@ module CommandOutputContractRegistryTests =
                 | Routed, JsonModeErrorOnly _ -> true
                 | _ -> false)
 
+        let conditionalStatus =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, ConditionalGraceResultEnvelope _ -> true
+                | _ -> false)
+
         let deferredV2 =
             countEntries (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
@@ -291,13 +298,15 @@ module CommandOutputContractRegistryTests =
         let deleted = 0
 
         jsonReady |> should equal 186
-        intentionallyHumanOnly |> should equal 1
+        intentionallyHumanOnly |> should equal 0
+        conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
         deleted |> should equal 0
 
         jsonReady
         + intentionallyHumanOnly
+        + conditionalStatus
         + deferredV2
         + sourceOnly
         + deleted
@@ -388,6 +397,9 @@ module CommandOutputContractRegistryTests =
         |> should equal true
 
         behaviors.Contains ImmediateJsonErrorOnly
+        |> should equal false
+
+        behaviors.Contains ConditionalCheckStatusEnvelope
         |> should equal true
 
         behaviors.Contains ManualJsonUnenveloped
@@ -418,10 +430,10 @@ module CommandOutputContractRegistryTests =
             |> should equal ExistingBehavior
 
             entry.Features.Schema
-            |> should equal FutureInertIntrospection
+            |> should equal ExistingBehavior
 
             entry.Features.Examples
-            |> should equal FutureInertIntrospection
+            |> should equal ExistingBehavior
 
             entry.Features.Select
             |> should equal ExistingBehavior
@@ -442,6 +454,101 @@ module CommandOutputContractRegistryTests =
             entry.ExecutionScope
             |> should equal CompositeLocalAndServer
         | None -> Assert.Fail("branch annotate should have a registry entry.")
+
+    /// Verifies that the work item status mutation has only its explicit mutating registry identity.
+    [<Test>]
+    let ``workitem set-status registry entry is the only status mutation identity`` () =
+        let identity = CommandOutputContract.commandIdentity [ "workitem" ] "set-status"
+        let oldIdentity = CommandOutputContract.commandIdentity [ "workitem" ] "status"
+
+        CommandOutputContract.tryFind oldIdentity
+        |> should equal None
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope |> should equal ServerViaSdk
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+
+            entry.Features.Schema
+            |> should equal ExistingBehavior
+
+            entry.Features.Examples
+            |> should equal ExistingBehavior
+
+            entry.Features.Select
+            |> should equal ExistingBehavior
+
+            entry.ReturnValueContract.Name
+            |> should equal "string"
+        | None -> Assert.Fail("workitem.set-status should have a registry entry.")
+
+    /// Verifies that attachment creation has one canonical registry identity and no removed attach rows.
+    [<Test>]
+    let ``workitem attachments add is the only attachment creation registry identity`` () =
+        let identity = CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "add"
+
+        for oldCommand in [ "summary"; "prompt"; "notes" ] do
+            CommandOutputContract.commandIdentity [ "workitem"; "attach" ] oldCommand
+            |> CommandOutputContract.tryFind
+            |> should equal None
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope
+            |> should equal CompositeLocalAndServer
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope RequiresCliDto)
+
+            entry.ReturnValueContract.Name
+            |> should equal "AttachmentResult"
+        | None -> Assert.Fail("workitem.attachments.add should have a registry entry.")
+
+    /// Verifies that recoverable attachment deletion replaces bulk type-unlink registry identities.
+    [<Test>]
+    let ``workitem attachment deletion registry is specific and recoverable`` () =
+        for oldCommand in [ "summary"; "prompt"; "notes" ] do
+            CommandOutputContract.commandIdentity [ "workitem"; "links"; "remove" ] oldCommand
+            |> CommandOutputContract.tryFind
+            |> should equal None
+
+        let deleteEntry =
+            CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "delete"
+            |> CommandOutputContract.tryFind
+
+        let undeleteEntry =
+            CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "undelete"
+            |> CommandOutputContract.tryFind
+
+        deleteEntry.IsSome |> should equal true
+        undeleteEntry.IsSome |> should equal true
+
+        deleteEntry.Value.ReturnValueContract.Name
+        |> should equal "ArtifactDeletionResult"
+
+        undeleteEntry.Value.ReturnValueContract.Name
+        |> should equal "string"
 
     /// Verifies that diff blake3 json mode is centrally rendered instead of human progress only.
     [<Test>]
@@ -472,8 +579,7 @@ module CommandOutputContractRegistryTests =
         for entry in commonEntries do
             match entry.EnvelopeContract with
             | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto
-            | NoServerDto) -> ()
+            | RequiresCliDto) -> ()
             | other -> Assert.Fail($"Expected existing Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             entry.Features.Select
@@ -517,8 +623,7 @@ module CommandOutputContractRegistryTests =
 
             match entry.EnvelopeContract with
             | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto
-            | NoServerDto) -> ()
+            | RequiresCliDto) -> ()
             | other -> Assert.Fail($"Expected central Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
@@ -707,40 +812,68 @@ module CommandOutputContractRegistryTests =
         file.GetProperty("Blake3Hash").GetString()
         |> should equal "file-blake3"
 
-    /// Verifies that watch json mode is registered as immediate error only.
+    /// Verifies that watch json mode is registered as conditional check status output.
     [<Test>]
-    let ``watch json mode is registered as immediate error only`` () =
+    let ``watch json mode is registered as conditional check status output`` () =
         let identity = CommandOutputContract.commandIdentity [] "watch"
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
             entry.CurrentJsonBehavior
-            |> should equal ImmediateJsonErrorOnly
+            |> should equal ConditionalCheckStatusEnvelope
 
             match entry.EnvelopeContract with
-            | JsonModeErrorOnly reason ->
-                reason
-                |> should contain "short-circuited before command execution"
-            | other -> Assert.Fail($"Expected watch to be registered as JsonModeErrorOnly, got {other}.")
+            | ConditionalGraceResultEnvelope (RequiresCliDto, condition) -> condition |> should contain "watch --check"
+            | other -> Assert.Fail($"Expected watch to be registered as ConditionalGraceResultEnvelope, got {other}.")
 
             entry.Features.JsonMode
             |> should equal ExistingBehavior
 
             entry.Features.Select
-            |> should equal RequiresMigration
+            |> should equal ExistingBehavior
 
             entry.ReturnValueContract.Status
-            |> should equal ContractUnsupported
+            |> should equal SchemaReady
 
             let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
 
             match schemaDocument.Schema with
             | Some schema ->
-                schema.Status |> should equal "unsupported"
+                schema.Status |> should equal "schema-ready"
 
                 schema.Envelope
-                |> should contain "GraceError only in JSON mode"
-            | None -> Assert.Fail("watch schema introspection should include the explicit unsupported schema document.")
+                |> should contain "status envelope for status checks"
+
+                schema.Envelope
+                |> should contain "unavailable modes with nonzero exit codes"
+
+                schema.Envelope
+                |> should not' (contain "GraceError on unsupported or failed modes")
+
+                schema.ReturnValueContract
+                |> should equal "WatchCheckStatusDto"
+
+                use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+                let watchStatusSchema =
+                    successSchema
+                        .RootElement
+                        .GetProperty("properties")
+                        .GetProperty("ReturnValue")
+
+                let requiredFields =
+                    watchStatusSchema
+                        .GetProperty("required")
+                        .EnumerateArray()
+                    |> Seq.map (fun field -> field.GetString())
+                    |> Set.ofSeq
+
+                requiredFields
+                |> should not' (contain "UpdatedAt")
+
+                requiredFields
+                |> should not' (contain "RootDirectoryId")
+            | None -> Assert.Fail("watch schema introspection should include the conditional status schema document.")
         | None -> Assert.Fail("watch should have a registry entry.")
 
     /// Verifies that schema ready registry entries describe success and error envelopes.
@@ -823,8 +956,10 @@ module CommandOutputContractRegistryTests =
         let cases =
             [
                 CommandOutputContract.commandIdentity [ "maintenance" ] "check-ignore-entries", "MaintenanceIgnoreEntriesDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "clear-journal", "MaintenanceClearJournalDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "list-contents", "MaintenanceListContentsDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "scan", "MaintenanceScanDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "show-journal", "MaintenanceShowJournalDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "stats", "MaintenanceStatsDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "update-index", "MaintenanceStatsDto"
             ]
@@ -908,78 +1043,22 @@ module CommandOutputContractRegistryTests =
             |> should equal "success-envelope-shape"
         | None -> Assert.Fail("doctor should have a registry entry.")
 
-    /// Verifies that metadata incomplete registry entries are explicit.
+    /// Verifies that every routed success-envelope command exposes type-derived nested metadata.
     [<Test>]
-    let ``metadata incomplete registry entries are explicit`` () =
-        let identity = CommandOutputContract.commandIdentity [ "repository" ] "init"
+    let ``every routed success envelope has schema ready ReturnValue metadata`` () =
+        let eligibleEntries =
+            CommandOutputContract.routedEntries
+            |> List.filter (fun entry ->
+                match entry.EnvelopeContract with
+                | ExistingGraceResultEnvelope _
+                | ConditionalGraceResultEnvelope _ -> true
+                | _ -> false)
 
-        match CommandOutputContract.tryFind identity with
-        | Some entry ->
+        eligibleEntries.Length |> should equal 187
+
+        for entry in eligibleEntries do
             entry.ReturnValueContract.Status
-            |> should equal MetadataIncomplete
-
-            let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
-
-            match schemaDocument.Schema with
-            | Some schema ->
-                schema.Status
-                |> should equal "metadata-incomplete"
-
-                schema.Notes
-                |> should
-                    contain
-                    "The registry has envelope metadata for this command, but command-specific ReturnValue schema/example metadata has not been declared yet."
-            | None -> Assert.Fail("Metadata-incomplete schema introspection should include a schema document.")
-
-            let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
-            examplesDocument.Examples.Length |> should equal 2
-
-            examplesDocument.Examples[0].Name
-            |> should equal "metadata-incomplete"
-        | None -> Assert.Fail("repository.init should have a registry entry.")
-
-    /// Verifies that dto and union contracts are not schema ready until their full emitted shapes are declared.
-    [<Test>]
-    let ``dto and union contracts are not schema ready until their full emitted shapes are declared`` () =
-        let cases =
-            [
-                CommandOutputContract.commandIdentity [ "repository" ] "get", "RepositoryDto metadata is incomplete"
-                CommandOutputContract.commandIdentity [ "workitem" ] "show", "WorkItemDto metadata is incomplete"
-                CommandOutputContract.commandIdentity [ "authorize" ] "check", "PermissionCheckResult metadata is incomplete"
-            ]
-
-        for identity, expectedNote in cases do
-            match CommandOutputContract.tryFind identity with
-            | Some entry ->
-                entry.ReturnValueContract.Status
-                |> should equal MetadataIncomplete
-
-                let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
-
-                match schemaDocument.Schema with
-                | Some schema ->
-                    schema.Status
-                    |> should equal "metadata-incomplete"
-
-                    schema.Notes
-                    |> List.exists (fun note -> note.Contains(expectedNote, StringComparison.Ordinal))
-                    |> should equal true
-                | None -> Assert.Fail($"Expected schema document for {identity.CommandId}.")
-
-                let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
-
-                examplesDocument.Examples[0].Name
-                |> should equal "metadata-incomplete"
-            | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
-
-    /// Evaluates the built Cache status ReturnValue schema with JsonSchema.Net.
-    let private evaluateCacheStatusSchema (value: string) =
-        let identity = CommandOutputContract.commandIdentity [ "cache" ] "status"
-
-        match CommandOutputContract.tryFind identity with
-        | Some entry ->
-            entry.Features.JsonMode
-            |> should equal ExistingBehavior
+            |> should equal SchemaReady
 
             entry.Features.Schema
             |> should equal ExistingBehavior
@@ -987,64 +1066,164 @@ module CommandOutputContractRegistryTests =
             entry.Features.Examples
             |> should equal ExistingBehavior
 
-            entry.Features.Select
-            |> should equal ExistingBehavior
+            let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
 
-            let document = CommandOutputContract.introspectionDocument Schema entry
+            match schemaDocument.Schema with
+            | Some schema -> schema.Status |> should equal "schema-ready"
+            | None -> Assert.Fail($"Expected schema metadata for {entry.Identity.CommandId}.")
 
-            match document.Schema with
-            | Some schema ->
-                use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+            let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
+            examplesDocument.Examples.Length |> should equal 2
 
-                let returnValueSchema =
-                    successSchema
-                        .RootElement
-                        .GetProperty("properties")
-                        .GetProperty("ReturnValue")
-                        .GetRawText()
-                    |> JsonSchema.FromText
+            examplesDocument.Examples[0].Name
+            |> should equal "success-envelope-shape"
 
-                use valueDocument = JsonDocument.Parse(value)
-
-                returnValueSchema
-                    .Evaluate(
-                        valueDocument.RootElement,
-                        EvaluationOptions()
-                    )
-                    .IsValid
-            | None ->
-                Assert.Fail("Cache status should publish a schema-ready output contract.")
-                false
-        | None ->
-            Assert.Fail("Cache status should have a registry entry.")
-            false
-
-    /// Verifies that real JsonSchema.Net evaluation accepts every production Cache status variant and rejects invalid projections.
+    /// Verifies that refs keeps its current tuple and nested DTO serialization shape.
     [<Test>]
-    let ``cache status schema accepts closed production variants and rejects invalid projections`` () =
-        [
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"enrolled\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\",\"Endpoint\":\"https://cache.example.test\",\"BoundaryKind\":\"Organization\",\"RepositoryCount\":1,\"Key\":\"available\"}",
-            true
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\"}", true
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"invalid\",\"Key\":\"inaccessible\"}", true
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"Extra\":true}", false
-            "{\"Class\":\"Other\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"unknown\",\"Key\":\"missing\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"unknown\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"enrolled\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\",\"Endpoint\":\"https://cache.example.test\",\"BoundaryKind\":\"Unknown\",\"RepositoryCount\":1,\"Key\":\"available\"}",
-            false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"invalid\",\"Key\":\"available\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"inaccessible\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"Endpoint\":\"https://cache.example.test\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"BoundaryKind\":\"Organization\"}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"notEnrolled\",\"Key\":\"missing\",\"RepositoryCount\":1}", false
-            "{\"Class\":\"Grace.Cache.Status\",\"Enrollment\":\"enrolled\",\"CacheId\":\"11111111-1111-1111-1111-111111111111\",\"Endpoint\":\"https://cache.example.test\",\"BoundaryKind\":\"Organization\",\"Key\":\"available\"}",
-            false
-        ]
-        |> List.iter (fun (value, expectedValid) ->
-            evaluateCacheStatusSchema value
-            |> should equal expectedValid)
+    let ``refs schema and example retain the BranchDto ReferenceDto tuple`` () =
+        let identity = CommandOutputContract.commandIdentity [ "branch" ] "get-references"
+
+        let entry =
+            CommandOutputContract.tryFind identity
+            |> Option.get
+
+        let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
+        let schema = schemaDocument.Schema |> Option.get
+        use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+        let returnValueSchema =
+            successSchema
+                .RootElement
+                .GetProperty("properties")
+                .GetProperty("ReturnValue")
+
+        returnValueSchema.GetProperty("type").GetString()
+        |> should equal "array"
+
+        let tupleItems = returnValueSchema.GetProperty("prefixItems")
+        tupleItems.GetArrayLength() |> should equal 2
+
+        let mutable branchIdSchema = Unchecked.defaultof<JsonElement>
+
+        tupleItems[0]
+            .GetProperty("properties")
+            .TryGetProperty("BranchId", &branchIdSchema)
+        |> should equal true
+
+        tupleItems[ 1 ].GetProperty("type").GetString()
+        |> should equal "array"
+
+        let mutable referenceIdSchema = Unchecked.defaultof<JsonElement>
+
+        tupleItems[1]
+            .GetProperty("items")
+            .GetProperty("properties")
+            .TryGetProperty("ReferenceId", &referenceIdSchema)
+        |> should equal true
+
+        let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
+        use successExample = JsonDocument.Parse(Grace.Shared.Utilities.serialize examplesDocument.Examples[0].Document)
+        let returnValue = successExample.RootElement.GetProperty("ReturnValue")
+
+        returnValue.ValueKind
+        |> should equal JsonValueKind.Array
+
+        returnValue.GetArrayLength() |> should equal 2
+
+        returnValue[0].GetProperty("BranchId").ValueKind
+        |> should equal JsonValueKind.String
+
+        returnValue[1].ValueKind
+        |> should equal JsonValueKind.Array
+
+    /// Verifies representative record, collection, scalar, union, and option result shapes.
+    [<Test>]
+    let ``derived contracts cover representative serializer shapes`` () =
+        let returnValueSchema groupPath commandName =
+            let identity = CommandOutputContract.commandIdentity groupPath commandName
+
+            let entry =
+                CommandOutputContract.tryFind identity
+                |> Option.get
+
+            let schema =
+                (CommandOutputContract.introspectionDocument Schema entry)
+                    .Schema
+                |> Option.get
+
+            let document = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+            document,
+            document
+                .RootElement
+                .GetProperty("properties")
+                .GetProperty("ReturnValue")
+
+        let recordDocument, recordSchema = returnValueSchema [ "repository" ] "get"
+        use _recordDocument = recordDocument
+        let mutable repositoryIdSchema = Unchecked.defaultof<JsonElement>
+
+        recordSchema
+            .GetProperty("properties")
+            .TryGetProperty("RepositoryId", &repositoryIdSchema)
+        |> should equal true
+
+        let collectionDocument, collectionSchema = returnValueSchema [ "webhook" ] "list"
+        use _collectionDocument = collectionDocument
+
+        collectionSchema.GetProperty("type").GetString()
+        |> should equal "array"
+
+        let listDocument, listSchema = returnValueSchema [ "authenticate"; "token" ] "list"
+        use _listDocument = listDocument
+
+        listSchema.GetProperty("type").GetString()
+        |> should equal "array"
+
+        let scalarDocument, scalarSchema = returnValueSchema [ "branch" ] "get-recursive-size"
+        use _scalarDocument = scalarDocument
+
+        let scalarTypes =
+            scalarSchema.GetProperty("type").EnumerateArray()
+            |> Seq.map (fun typeName -> typeName.GetString())
+            |> Set.ofSeq
+
+        scalarTypes |> should contain "integer"
+
+        let diffEntry =
+            CommandOutputContract.tryFind (CommandOutputContract.commandIdentity [ "diff" ] "blake3")
+            |> Option.get
+
+        let diffExample =
+            (CommandOutputContract.introspectionDocument Examples diffEntry)
+                .Examples[0]
+
+        use diffDocument = JsonDocument.Parse(Grace.Shared.Utilities.serialize diffExample.Document)
+
+        diffDocument
+            .RootElement
+            .GetProperty(
+                "ReturnValue"
+            )
+            .ValueKind
+        |> should equal JsonValueKind.Object
+
+        let unionDocument, unionSchema = returnValueSchema [ "authorize" ] "check"
+        use _unionDocument = unionDocument
+
+        unionSchema.GetProperty("anyOf").GetArrayLength()
+        |> should equal 2
+
+        let optionDocument, optionSchema = returnValueSchema [ "review" ] "open"
+        use _optionDocument = optionDocument
+
+        optionSchema.GetProperty("anyOf").EnumerateArray()
+        |> Seq.exists (fun branch ->
+            let mutable typeSchema = Unchecked.defaultof<JsonElement>
+
+            branch.TryGetProperty("type", &typeSchema)
+            && typeSchema.GetString() = "null")
+        |> should equal true
 
     /// Verifies that examples for schema ready commands parse as grace envelopes.
     [<Test>]
@@ -1067,7 +1246,7 @@ module CommandOutputContractRegistryTests =
             let successRoot = success.RootElement
 
             successRoot.GetProperty("ReturnValue").GetString()
-            |> should equal "Signed out."
+            |> should equal "example"
 
             let successProperties = successRoot.GetProperty("Properties")
 
@@ -1088,6 +1267,33 @@ module CommandOutputContractRegistryTests =
             errorRoot.GetProperty("CorrelationId").GetString()
             |> should equal "correlation-id"
         | None -> Assert.Fail("authenticate.logout should have a registry entry.")
+
+    /// Verifies that maintenance show journal schemas include every journal row property.
+    [<Test>]
+    let ``maintenance show journal schema includes quarantine reason`` () =
+        let identity = CommandOutputContract.commandIdentity [ "maintenance" ] "show-journal"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            let document = CommandOutputContract.introspectionDocument Schema entry
+            let schema = document.Schema |> Option.get
+            use success = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+            let rowSchema =
+                success
+                    .RootElement
+                    .GetProperty("properties")
+                    .GetProperty("ReturnValue")
+                    .GetProperty("properties")
+                    .GetProperty("Rows")
+                    .GetProperty("items")
+                    .GetProperty("properties")
+
+            let mutable quarantineReasonSchema = Unchecked.defaultof<JsonElement>
+
+            rowSchema.TryGetProperty("QuarantineReason", &quarantineReasonSchema)
+            |> should equal true
+        | None -> Assert.Fail("maintenance.show-journal should have a registry entry.")
 
     /// Verifies that all registry schema and example documents serialize as json.
     [<Test>]
@@ -1139,6 +1345,12 @@ module CommandOutputContractRegistryTests =
                 | Routed, JsonModeErrorOnly _ -> true
                 | _ -> false)
 
+        let conditionalStatus =
+            countDocsTracked (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, ConditionalGraceResultEnvelope _ -> true
+                | _ -> false)
+
         let deferredV2 =
             commandIdsForDocsTracked (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
@@ -1156,6 +1368,7 @@ module CommandOutputContractRegistryTests =
         [
             $"Total leaf commands: `{docsTrackedEntries.Length}`"
             $"JSON-ready routed commands: `{jsonReady}`"
+            $"Conditionally JSON-ready routed commands: `{conditionalStatus}`"
             $"Intentionally human-only commands: `{intentionallyHumanOnly}`"
             $"Deferred routed commands with explicit V2 scope: `{deferredV2.Length}`"
             $"Source-only/unrouted commands: `{sourceOnly.Length}`"

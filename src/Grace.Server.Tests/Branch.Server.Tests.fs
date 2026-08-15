@@ -14,6 +14,7 @@ open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.PersonalAccessToken
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
@@ -26,6 +27,23 @@ open System.Threading.Tasks
 
 /// Groups shared helpers for branch server test helpers.
 module BranchServerTestHelpers =
+    /// Runs one public Grace CLI command while capturing its machine-readable stdout contract.
+    let runGraceCommandWithCapturedStdout args =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+        let originalConsole = AnsiConsole.Console
+
+        try
+            Console.SetOut(writer)
+            let settings = AnsiConsoleSettings()
+            settings.Out <- AnsiConsoleOutput(writer)
+            AnsiConsole.Console <- AnsiConsole.Create(settings)
+            let exitCode = Grace.CLI.GraceCommand.main args
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            AnsiConsole.Console <- originalConsole
+
     /// Asserts ok for integration responses.
     let private assertOk (response: HttpResponseMessage) =
         task {
@@ -101,6 +119,7 @@ module BranchServerTestHelpers =
             parameters.BranchName <- branchName
             parameters.ParentBranchId <- $"{parentBranch.BranchId}"
             parameters.ParentBranchName <- $"{parentBranch.BranchName}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/branch/create", createJsonContent parameters)
@@ -134,6 +153,23 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Gets selected repository branches through the persisted-identity query route.
+    let getRepositoryBranchesByIdAsync (repositoryId: string) (branchIds: BranchId array) =
+        task {
+            let parameters = Parameters.Repository.GetBranchesByBranchIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchIds <- branchIds
+            parameters.MaxCount <- branchIds.Length
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/repository/getBranchesByBranchId", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
     /// Saves branch through the branch test routes.
     let saveBranchAsync (repositoryId: string) (branch: Branch.BranchDto) =
         task {
@@ -142,6 +178,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
             parameters.Sha256Hash <- $"{branch.BasedOn.Sha256Hash}"
             parameters.Message <- "Hosted branch lifecycle route proof save"
@@ -294,8 +331,8 @@ module BranchServerTestHelpers =
         gzipStream.Dispose()
         compressed.ToArray()
 
-    /// Uploads file to object storage through storage test infrastructure.
-    let uploadFileToObjectStorageAsync repositoryId (payload: byte array) (fileVersion: FileVersion) =
+    /// Gets the hosted object-storage client for one repository-scoped file version.
+    let getFileObjectBlockBlobClientAsync repositoryId (fileVersion: FileVersion) =
         task {
             let parameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
             parameters.OwnerId <- ownerId
@@ -308,9 +345,46 @@ module BranchServerTestHelpers =
             do! assertOk uploadResponse
             let! uploadMetadata = deserializeContent<GraceReturnValue<List<Parameters.Storage.UploadMetadata>>> uploadResponse
             let metadata = uploadMetadata.ReturnValue |> Seq.exactlyOne
+            return BlockBlobClient(metadata.BlobUriWithSasToken)
+        }
+
+    /// Gets an Azurite account-key client so hosted tests can observe object existence independently of upload-only SAS permissions.
+    let getFileObjectAzuriteBlockBlobClientAsync repositoryId (fileVersion: FileVersion) =
+        task {
+            let! uploadClient = getFileObjectBlockBlobClientAsync repositoryId fileVersion
+            let uploadUri = uploadClient.Uri
+
+            let pathSegments =
+                uploadUri
+                    .AbsolutePath
+                    .Trim('/')
+                    .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+
+            let isPathStyleAzurite =
+                uploadUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                || IPAddress.TryParse(uploadUri.Host) |> fst
+
+            if not isPathStyleAzurite || pathSegments.Length < 3 then
+                invalidOp "Hosted file-object observation requires an Azurite path-style upload URI."
+
+            let accountName = pathSegments[0]
+            let containerName = pathSegments[1]
+            let objectKey = String.Join('/', pathSegments[2..])
+            let blobEndpoint = $"{uploadUri.Scheme}://{uploadUri.Authority}/{accountName}"
+
+            let connectionString =
+                $"DefaultEndpointsProtocol={uploadUri.Scheme};AccountName={accountName};AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint={blobEndpoint};"
+
+            let containerClient = Azure.Storage.Blobs.BlobContainerClient(connectionString, containerName)
+            return containerClient.GetBlockBlobClient(objectKey)
+        }
+
+    /// Uploads file to object storage through storage test infrastructure.
+    let uploadFileToObjectStorageAsync repositoryId (payload: byte array) (fileVersion: FileVersion) =
+        task {
+            let! blockBlobClient = getFileObjectBlockBlobClientAsync repositoryId fileVersion
 
             use payloadStream = new MemoryStream(gzipBytes payload, writable = false)
-            let blockBlobClient = BlockBlobClient(metadata.BlobUriWithSasToken)
 
             let uploadOptions = BlobUploadOptions()
             uploadOptions.HttpHeaders <- BlobHttpHeaders(ContentEncoding = "gzip")
@@ -357,6 +431,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Sha256Hash <- sha256Hash
             parameters.Message <- "Root hash hydration route proof save"
@@ -373,6 +448,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Sha256Hash <- sha256Hash
             parameters.Message <- "Root hash hydration route proof assign"
@@ -389,6 +465,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "BLAKE3 root locator route proof save"
@@ -405,6 +482,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.Sha256Hash <- sha256Hash
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "Mixed hash locator route proof save"
@@ -421,11 +499,28 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "Ambiguous BLAKE3 root locator route proof"
             parameters.CorrelationId <- generateCorrelationId ()
 
             return! Client.PostAsync(endpoint, createJsonContent parameters)
+        }
+
+    /// Builds a Commit request with a caller-owned reference identity for ambiguous BLAKE3 root validation.
+    let commitReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) blake3Hash =
+        task {
+            let parameters = Parameters.Branch.CommitReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
+            parameters.Blake3Hash <- blake3Hash
+            parameters.Message <- "Ambiguous BLAKE3 root locator route proof"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/commit", createJsonContent parameters)
         }
 
     /// Defines assign reference by BLAKE3 response behavior for the surrounding tests used by the server integration branch scenario.
@@ -436,6 +531,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "BLAKE3 root locator route proof assign"
@@ -570,6 +666,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersion.DirectoryVersionId
             parameters.Sha256Hash <- $"{directoryVersion.Sha256Hash}"
             parameters.Message <- "Annotate route test save"
@@ -780,6 +877,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- branch.LatestSave.DirectoryId
             parameters.Sha256Hash <- $"{branch.LatestSave.Sha256Hash}"
             parameters.Message <- "Annotate route test promotion"
@@ -798,6 +896,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.BasedOn <- basedOnReferenceId
             parameters.CorrelationId <- generateCorrelationId ()
 
@@ -819,6 +918,42 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue.Token
         }
 
+    /// Runs an SDK assertion against a real temporary repository configuration and restores process-global configuration state.
+    let withExplicitSdkConfigurationForServerAsync (testBody: unit -> Task<'T>) =
+        task {
+            let root = Path.Combine(Path.GetTempPath(), $"grace-branch-sdk-{Guid.NewGuid():N}")
+            let configurationDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+            let configurationPath = Path.Combine(configurationDirectory, Constants.GraceConfigFileName)
+            let previousDirectory = Environment.CurrentDirectory
+            let previousGraceToken = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
+
+            try
+                Directory.CreateDirectory(configurationDirectory)
+                |> ignore
+
+                let configuration = GraceConfiguration()
+                configuration.ServerUri <- graceServerBaseAddress
+                saveConfigFile configurationPath configuration
+                Environment.CurrentDirectory <- root
+                resetConfiguration ()
+
+                let loadedConfiguration = Current()
+                Assert.That(loadedConfiguration.ServerUri, Is.EqualTo(graceServerBaseAddress))
+
+                return! testBody ()
+            finally
+                Grace.SDK.Auth.clearTokenProvider ()
+                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
+                Environment.CurrentDirectory <- previousDirectory
+                resetConfiguration ()
+
+                if Directory.Exists(root) then
+                    try
+                        Directory.Delete(root, true)
+                    with
+                    | _ -> ()
+        }
+
     /// Defines configure SDK for server behavior for the surrounding tests used by the server integration branch scenario.
     let configureSdkForServerAsync () =
         task {
@@ -829,6 +964,9 @@ module BranchServerTestHelpers =
 
             Grace.SDK.Auth.setTokenProvider (fun () -> task { return Some token })
         }
+
+    /// Creates a real PAT for hosted public CLI command tests that configure authentication from the process environment.
+    let createPublicCliTokenAsync () = createPersonalAccessTokenAsync ()
 
     /// Gets first annotatable file from the running test server.
     let getFirstAnnotatableFileAsync (repositoryId: string) (branch: Branch.BranchDto) =
@@ -922,6 +1060,71 @@ module BranchServerTestHelpers =
 [<Parallelizable(ParallelScope.All)>]
 type BranchServer() =
 
+    /// Verifies branch-by-id resolves initial main through the strict normalized public projection.
+    [<Test>]
+    member _.GetBranchesByBranchIdReturnsNormalizedInitialMain() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = Guid.Parse(repositoryDefaultBranchIds[0])
+            let! branches = BranchServerTestHelpers.getRepositoryBranchesByIdAsync repositoryId [| branchId |]
+
+            Assert.That(branches, Has.Length.EqualTo(1))
+            Assert.That(branches[0].BranchId, Is.EqualTo(branchId))
+
+            [|
+                branches[0].BasedOn
+                branches[0].LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(ReferenceId.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
+            Assert.That(Branch.BranchDto.IsValidPublicProjection(branches[0]), Is.True, serialize branches[0])
+        }
+
+    /// Verifies the root branch parent route returns Grace's controlled no-parent error without querying a default parent actor.
+    [<Test>]
+    member _.GetParentBranchReturnsControlledErrorForRootBranch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parameters = BranchServerTestHelpers.getBranchParameters repositoryId repositoryDefaultBranchIds[0]
+
+            let! response = Client.PostAsync("/branch/getParentBranch", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    /// Verifies branch Reference lookup rejects the default ReferenceId through the normal validation envelope.
+    [<Test>]
+    member _.GetReferenceRejectsEmptyReferenceId() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parameters = Parameters.Branch.GetReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- repositoryDefaultBranchIds[0]
+            parameters.ReferenceId <- $"{ReferenceId.Empty}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/getReference", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = BranchError.getErrorMessage BranchError.InvalidReferenceId
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
     /// Verifies the create get list reference and version routes round trip branch identity scenario.
     [<Test>]
     member _.CreateGetListReferenceAndVersionRoutesRoundTripBranchIdentity() =
@@ -929,12 +1132,39 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let parentBranchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+
+            [|
+                parentBranch.BasedOn
+                parentBranch.LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
             let branchName = $"Branch{Guid.NewGuid():N}"
 
             let! createdBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch branchName
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName createdBranch
             Assert.That(createdBranch.ParentBranchId, Is.EqualTo(parentBranch.BranchId))
             Assert.That(createdBranch.BasedOn.ReferenceId, Is.EqualTo(parentBranch.BasedOn.ReferenceId))
+
+            [|
+                createdBranch.BasedOn
+                createdBranch.LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
+            [|
+                createdBranch.LatestPromotion
+                createdBranch.LatestCommit
+                createdBranch.LatestCheckpoint
+                createdBranch.LatestSave
+            |]
+            |> Array.iter (fun reference -> Assert.That(reference, Is.EqualTo(Reference.ReferenceDto.Default)))
 
             let! fetchedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{createdBranch.BranchId}"
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName fetchedBranch
@@ -1346,8 +1576,7 @@ type BranchServer() =
 
             do! assertAmbiguousResponse saveResponse
 
-            let! commitResponse =
-                BranchServerTestHelpers.createReferenceByBlake3ResponseAsync "/branch/commit" repositoryId commitBranch (Blake3Hash sharedPrefix)
+            let! commitResponse = BranchServerTestHelpers.commitReferenceByBlake3ResponseAsync repositoryId commitBranch (Blake3Hash sharedPrefix)
 
             do! assertAmbiguousResponse commitResponse
 
@@ -1702,7 +1931,7 @@ type BranchServer() =
         }
 
     /// Verifies the annotate route and SDK return envelope for server known reference scenario.
-    [<Test>]
+    [<Test; NonParallelizable>]
     member _.AnnotateRouteAndSdkReturnEnvelopeForServerKnownReference() =
         task {
             let repositoryId = repositoryIds[0]
@@ -1723,19 +1952,1007 @@ type BranchServer() =
             Assert.That(returnValue.ReturnValue.Lines, Is.Not.Empty)
             Assert.That(returnValue.Properties[ "Path" ].ToString(), Is.EqualTo("/branch/annotate"))
 
-            do! BranchServerTestHelpers.configureSdkForServerAsync ()
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        parameters.CorrelationId <- generateCorrelationId ()
+                        let! sdkResult = Grace.SDK.Branch.Annotate parameters
 
-            try
-                parameters.CorrelationId <- generateCorrelationId ()
-                let! sdkResult = Grace.SDK.Branch.Annotate parameters
+                        match sdkResult with
+                        | Ok sdkReturnValue ->
+                            Assert.That(sdkReturnValue.ReturnValue.TargetReferenceId, Is.EqualTo(parameters.TargetReferenceId))
+                            Assert.That(sdkReturnValue.ReturnValue.Path, Is.EqualTo(fileVersion.RelativePath))
+                        | Error error -> Assert.Fail($"Expected SDK Branch.Annotate success, got {error.Error}.")
+                    })
+        }
 
-                match sdkResult with
-                | Ok sdkReturnValue ->
-                    Assert.That(sdkReturnValue.ReturnValue.TargetReferenceId, Is.EqualTo(parameters.TargetReferenceId))
-                    Assert.That(sdkReturnValue.ReturnValue.Path, Is.EqualTo(fileVersion.RelativePath))
-                | Error error -> Assert.Fail($"Expected SDK Branch.Annotate success, got {error.Error}.")
-            finally
-                Grace.SDK.Auth.clearTokenProvider ()
+    /// Verifies the authenticated missing-cursor route matches exact roots, baselines unknown roots, and projects generic failures.
+    [<Test; NonParallelizable>]
+    member _.ResolveReferenceEventBoundaryRoutePreservesLocalRootWithoutMaterialization() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ResolveBoundary{Guid.NewGuid():N}"
+            let eligibleRoot = BranchServerTestHelpers.createSlashRootDirectoryVersion repositoryId
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ eligibleRoot ]
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch eligibleRoot.DirectoryVersionId eligibleRoot.Sha256Hash
+            let! saveBody = saveResponse.Content.ReadAsStringAsync()
+            Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+
+                        let parameters = Parameters.Branch.ResolveReferenceEventBoundaryParameters()
+                        parameters.OwnerId <- ownerId
+                        parameters.OrganizationId <- organizationId
+                        parameters.RepositoryId <- repositoryId
+                        parameters.BranchId <- $"{branch.BranchId}"
+                        parameters.DirectoryVersionId <- eligibleRoot.DirectoryVersionId
+                        parameters.Sha256Hash <- eligibleRoot.Sha256Hash
+                        parameters.Blake3Hash <- eligibleRoot.Blake3Hash
+                        parameters.CorrelationId <- generateCorrelationId ()
+
+                        let! exactResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
+
+                        let exactBoundary =
+                            match exactResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected exact missing-cursor boundary success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceMaterializationBoundaryDto>
+
+                        Assert.That(exactBoundary.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(exactBoundary.BranchId, Is.EqualTo(branch.BranchId))
+                        Assert.That(exactBoundary.DirectoryId, Is.EqualTo(eligibleRoot.DirectoryVersionId))
+                        Assert.That(exactBoundary.Sha256Hash, Is.EqualTo(eligibleRoot.Sha256Hash))
+                        Assert.That(exactBoundary.Blake3Hash, Is.EqualTo(eligibleRoot.Blake3Hash))
+                        Assert.That(exactBoundary.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                        parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        parameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        parameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        parameters.CorrelationId <- generateCorrelationId ()
+
+                        let! parentBaseResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
+
+                        let parentBaseBoundary =
+                            match parentBaseResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected parent-base conservative boundary success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceMaterializationBoundaryDto>
+
+                        Assert.That(parentBaseBoundary.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                        let replayParameters = Parameters.Branch.ReplayReferenceEventsParameters()
+                        replayParameters.OwnerId <- ownerId
+                        replayParameters.OrganizationId <- organizationId
+                        replayParameters.RepositoryId <- repositoryId
+                        replayParameters.BranchId <- $"{branch.BranchId}"
+                        replayParameters.CursorRepositoryId <- repositoryId
+                        replayParameters.CursorBranchId <- $"{branch.BranchId}"
+                        replayParameters.EventCursor <- parentBaseBoundary.EventCursor
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! parentBaseReplayResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match parentBaseReplayResult with
+                        | Ok returnValue ->
+                            Assert.That(returnValue.ReturnValue.Events, Is.Empty)
+                            Assert.That(returnValue.ReturnValue.ScannedThroughCursor, Is.EqualTo("branch-event-v1:1"))
+                        | Error error -> Assert.Fail($"Expected parent-base replay closure success, got {error.Error}.")
+
+                        parameters.DirectoryVersionId <- Guid.NewGuid()
+                        parameters.Sha256Hash <- Sha256Hash "unmatched-local-sha"
+                        parameters.Blake3Hash <- Blake3Hash "unmatched-local-blake3"
+                        parameters.CorrelationId <- generateCorrelationId ()
+
+                        let! baselineResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
+
+                        let unmatchedBoundary =
+                            match baselineResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected conservative missing-cursor baseline success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceMaterializationBoundaryDto>
+
+                        Assert.That(unmatchedBoundary.DirectoryId, Is.EqualTo(parameters.DirectoryVersionId))
+                        Assert.That(unmatchedBoundary.Sha256Hash, Is.EqualTo(parameters.Sha256Hash))
+                        Assert.That(unmatchedBoundary.Blake3Hash, Is.EqualTo(parameters.Blake3Hash))
+                        Assert.That(unmatchedBoundary.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                        let futureRoot = BranchServerTestHelpers.createSlashRootDirectoryVersion repositoryId
+                        do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ futureRoot ]
+
+                        let! futureSave =
+                            BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch futureRoot.DirectoryVersionId futureRoot.Sha256Hash
+
+                        let! futureSaveBody = futureSave.Content.ReadAsStringAsync()
+                        Assert.That(futureSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), futureSaveBody)
+
+                        replayParameters.EventCursor <- unmatchedBoundary.EventCursor
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! unmatchedReplayResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match unmatchedReplayResult with
+                        | Ok returnValue ->
+                            Assert.That(returnValue.ReturnValue.Events, Has.Length.EqualTo(1))
+
+                            Assert.That(
+                                returnValue.ReturnValue.Events[0]
+                                    .Reference
+                                    .DirectoryId,
+                                Is.EqualTo(futureRoot.DirectoryVersionId)
+                            )
+
+                            Assert.That(returnValue.ReturnValue.Events[0].EventCursor, Is.EqualTo("branch-event-v1:2"))
+                            Assert.That(returnValue.ReturnValue.ScannedThroughCursor, Is.EqualTo("branch-event-v1:2"))
+                        | Error error -> Assert.Fail($"Expected unmatched-boundary future replay success, got {error.Error}.")
+
+                        parameters.DirectoryVersionId <- DirectoryVersionId.Empty
+                        parameters.CorrelationId <- generateCorrelationId ()
+                        let! invalidResponse = Client.PostAsync("/branch/resolveReferenceEventBoundary", createJsonContent parameters)
+                        let! invalidBody = invalidResponse.Content.ReadAsStringAsync()
+                        Assert.That(invalidResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), invalidBody)
+                        Assert.That(invalidBody, Does.Contain("cannot establish a Watch event boundary for this branch"))
+                        Assert.That(invalidBody, Does.Not.Contain("System."))
+                    })
+        }
+
+    /// Repository creation from nested existing code records exact status only after its matching Save and event boundary succeed.
+    [<Test; NonParallelizable>]
+    member _.ProductionRepositoryInitializationCommitsExactStateOnlyAfterPublication() =
+        task {
+            let runInitialization outputMode shouldFailBeforeSave =
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        let! publicCliToken = BranchServerTestHelpers.createPublicCliTokenAsync ()
+                        let previousGraceToken = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, publicCliToken)
+
+                        try
+                            let initialConfiguration = Current()
+                            initialConfiguration.OwnerId <- Guid.Parse(ownerId)
+                            initialConfiguration.OrganizationId <- Guid.Parse(organizationId)
+                            initialConfiguration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+
+                            let configPath = Path.Combine(initialConfiguration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+
+                            saveConfigFile configPath initialConfiguration
+                            let nestedParentPath = RelativePath $"create-{Guid.NewGuid():N}"
+                            let nestedDirectoryPath = RelativePath $"{nestedParentPath}/deeper"
+                            let nestedFilePath = Path.Combine(initialConfiguration.RootDirectory, string nestedDirectoryPath, "existing.txt")
+
+                            Directory.CreateDirectory(Path.GetDirectoryName(nestedFilePath))
+                            |> ignore
+
+                            File.WriteAllText(nestedFilePath, "nested repository initialization")
+                            let newRepositoryId = Guid.NewGuid()
+                            let newRepositoryName = $"ExistingCode{Guid.NewGuid():N}"
+
+                            let createExitCode =
+                                Grace.CLI.GraceCommand.main [| "repository"
+                                                               "create"
+                                                               "--repository-name"
+                                                               newRepositoryName
+                                                               "--repository-id"
+                                                               string newRepositoryId
+                                                               "--owner-id"
+                                                               ownerId
+                                                               "--organization-id"
+                                                               organizationId
+                                                               "--output"
+                                                               "Json" |]
+
+                            Assert.That(createExitCode, Is.EqualTo(0))
+                            resetConfiguration ()
+                            let repositoryConfiguration = Current()
+                            Assert.That(repositoryConfiguration.RepositoryId, Is.EqualTo(newRepositoryId))
+                            Assert.That(File.Exists(repositoryConfiguration.GraceStatusFile), Is.False)
+
+                            let! referencesBeforeInitialization =
+                                BranchServerTestHelpers.getBranchReferencesAsync (string newRepositoryId) (string repositoryConfiguration.BranchId)
+
+                            if shouldFailBeforeSave then
+                                Grace.CLI.Command.Repository.setBeforeRepositoryInitializationSaveForTests (fun () ->
+                                    invalidOp "forced repository initialization publication failure")
+
+                            let initExitCode, initOutput =
+                                BranchServerTestHelpers.runGraceCommandWithCapturedStdout [| "repository"
+                                                                                             "init"
+                                                                                             "--directory"
+                                                                                             repositoryConfiguration.RootDirectory
+                                                                                             "--output"
+                                                                                             outputMode |]
+
+                            Grace.CLI.Command.Repository.resetBeforeRepositoryInitializationSaveForTests ()
+
+                            if outputMode = "Json" then
+                                use initJson = System.Text.Json.JsonDocument.Parse(initOutput)
+
+                                Assert.That(
+                                    initJson
+                                        .RootElement
+                                        .GetProperty("CorrelationId")
+                                        .GetString(),
+                                    Is.Not.Empty,
+                                    initOutput
+                                )
+
+                                if shouldFailBeforeSave then
+                                    Assert.That(
+                                        initJson
+                                            .RootElement
+                                            .GetProperty("Error")
+                                            .GetString(),
+                                        Does.Contain("forced repository initialization publication failure")
+                                    )
+                                else
+                                    let initReturnValue = initJson.RootElement.GetProperty("ReturnValue")
+                                    Assert.That(initReturnValue.GetProperty("Message").GetString(), Is.EqualTo("Initialized repository."))
+
+                                    Assert.That(
+                                        initReturnValue
+                                            .GetProperty("DirectoryCount")
+                                            .GetInt32(),
+                                        Is.EqualTo(3)
+                                    )
+                            else
+                                Assert.That(initOutput, Is.Empty, $"{outputMode} output must not leak human progress or result text.")
+
+                            if shouldFailBeforeSave then
+                                Assert.That(initExitCode, Is.EqualTo(-1))
+
+                                let! statusAfterFailure = Grace.CLI.LocalStateDb.readStatusMeta repositoryConfiguration.GraceStatusFile
+                                Assert.That(statusAfterFailure.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+
+                                let! boundaryAfterFailure =
+                                    Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                        repositoryConfiguration.GraceStatusFile
+                                        repositoryConfiguration.RepositoryId
+                                        repositoryConfiguration.BranchId
+
+                                Assert.That(boundaryAfterFailure, Is.EqualTo(None))
+
+                                let! referencesAfterFailure =
+                                    BranchServerTestHelpers.getBranchReferencesAsync (string newRepositoryId) (string repositoryConfiguration.BranchId)
+
+                                Assert.That(referencesAfterFailure.Length, Is.EqualTo(referencesBeforeInitialization.Length))
+                            else
+                                Assert.That(initExitCode, Is.EqualTo(0))
+                                let! initializedStatus = Grace.CLI.Services.readGraceStatusFile ()
+                                Assert.That(initializedStatus.RootDirectoryId, Is.Not.EqualTo(DirectoryVersionId.Empty))
+                                Assert.That(initializedStatus.Index.Count, Is.EqualTo(3))
+
+                                let initializedPaths =
+                                    initializedStatus.Index.Values
+                                    |> Seq.map (fun directory -> directory.RelativePath)
+                                    |> Set.ofSeq
+
+                                Assert.That(initializedPaths, Does.Contain(Constants.RootDirectoryPath))
+                                Assert.That(initializedPaths, Does.Contain(nestedParentPath))
+                                Assert.That(initializedPaths, Does.Contain(nestedDirectoryPath))
+
+                                let! initializedBoundary =
+                                    Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                        repositoryConfiguration.GraceStatusFile
+                                        repositoryConfiguration.RepositoryId
+                                        repositoryConfiguration.BranchId
+
+                                Assert.That(initializedBoundary.IsSome, Is.True)
+                                Assert.That(initializedBoundary.Value.DirectoryId, Is.EqualTo(initializedStatus.RootDirectoryId))
+                                Assert.That(initializedBoundary.Value.Sha256Hash, Is.EqualTo(initializedStatus.RootDirectorySha256Hash))
+                                Assert.That(initializedBoundary.Value.Blake3Hash, Is.EqualTo(initializedStatus.RootDirectoryBlake3Hash))
+                                Assert.That(initializedBoundary.Value.EventCursor, Is.Not.Empty)
+                                let! branch = BranchServerTestHelpers.getBranchAsync (string newRepositoryId) (string repositoryConfiguration.BranchId)
+
+                                let! closureResponse =
+                                    BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync
+                                        (string newRepositoryId)
+                                        branch
+                                        initializedStatus.RootDirectorySha256Hash
+                                        initializedStatus.RootDirectoryBlake3Hash
+
+                                let! closureBody = closureResponse.Content.ReadAsStringAsync()
+                                Assert.That(closureResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), closureBody)
+
+                                let closure =
+                                    (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> closureBody)
+                                        .ReturnValue
+
+                                let localIds =
+                                    initializedStatus.Index.Keys
+                                    |> Seq.map string
+                                    |> Set.ofSeq
+
+                                let serverIds =
+                                    closure
+                                    |> Seq.map (fun directory -> string directory.DirectoryVersion.DirectoryVersionId)
+                                    |> Set.ofSeq
+
+                                Assert.That((serverIds = localIds), Is.True)
+                        finally
+                            Grace.CLI.Command.Repository.resetBeforeRepositoryInitializationSaveForTests ()
+                            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
+                    })
+
+            do! runInitialization "Json" false
+            do! runInitialization "Json" true
+            do! runInitialization "Minimal" false
+            do! runInitialization "Silent" false
+        }
+
+    /// Explicit Doctor repair restores exact nested identities, then ordinary Save and one-time remote replay remain healthy.
+    [<Test; NonParallelizable>]
+    member _.ProductionDoctorRepairRestoresExactStateThenSaveAndReplaySucceed() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"DoctorRepair{Guid.NewGuid():N}"
+            let nestedParentPath = RelativePath $"nested-{Guid.NewGuid():N}"
+            let nestedDirectoryPath = RelativePath $"{nestedParentPath}/deeper"
+            let nestedRelativePath = RelativePath $"{nestedDirectoryPath}/baseline.txt"
+            let nestedPayload = Encoding.UTF8.GetBytes("doctor exact nested baseline")
+
+            let nestedFileVersion =
+                FileVersion.CreateWithHashes
+                    nestedRelativePath
+                    (BranchServerTestHelpers.sha256Hex nestedPayload)
+                    (BranchServerTestHelpers.blake3Hex nestedPayload)
+                    String.Empty
+                    false
+                    (int64 nestedPayload.Length)
+
+            let nestedDirectory = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId nestedDirectoryPath nestedFileVersion
+            let nestedParent = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId nestedParentPath [ nestedDirectory ]
+            let exactRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ nestedParent ]
+
+            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId nestedPayload nestedFileVersion
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        nestedDirectory
+                        nestedParent
+                        exactRoot
+                    ]
+
+            let! firstExactSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch exactRoot.DirectoryVersionId exactRoot.Sha256Hash
+            let! firstExactSaveBody = firstExactSave.Content.ReadAsStringAsync()
+            Assert.That(firstExactSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstExactSaveBody)
+
+            let! secondExactSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch exactRoot.DirectoryVersionId exactRoot.Sha256Hash
+            let! secondExactSaveBody = secondExactSave.Content.ReadAsStringAsync()
+            Assert.That(secondExactSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondExactSaveBody)
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        let! publicCliToken = BranchServerTestHelpers.createPublicCliTokenAsync ()
+                        let previousGraceToken = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, publicCliToken)
+                        let configuration = Current()
+                        configuration.OwnerId <- Guid.Parse(ownerId)
+                        configuration.OwnerName <- String.Empty
+                        configuration.OrganizationId <- Guid.Parse(organizationId)
+                        configuration.OrganizationName <- String.Empty
+                        configuration.RepositoryId <- Guid.Parse(repositoryId)
+                        configuration.RepositoryName <- String.Empty
+                        configuration.BranchId <- branch.BranchId
+                        configuration.BranchName <- String.Empty
+                        configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+
+                        let configPath = Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+                        saveConfigFile configPath configuration
+                        let nestedPath = Path.Combine(configuration.RootDirectory, string nestedRelativePath)
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(nestedPath))
+                        |> ignore
+
+                        File.WriteAllBytes(nestedPath, nestedPayload)
+                        let originalBytes = File.ReadAllBytes(nestedPath)
+                        let! retainedStatus = Grace.CLI.Services.createNewGraceStatusFile GraceStatus.Default Grace.CLI.Services.parseResult
+
+                        Assert.That(
+                            string retainedStatus.RootDirectorySha256Hash,
+                            Is.EqualTo(string exactRoot.Sha256Hash),
+                            $"retained BLAKE3={retainedStatus.RootDirectoryBlake3Hash}; server BLAKE3={exactRoot.Blake3Hash}"
+                        )
+
+                        Assert.That(retainedStatus.RootDirectoryBlake3Hash, Is.EqualTo(exactRoot.Blake3Hash))
+
+                        let lookup =
+                            Parameters.DirectoryVersion.GetBySha256HashParameters(
+                                OwnerId = ownerId,
+                                OrganizationId = organizationId,
+                                RepositoryId = repositoryId,
+                                Sha256Hash = retainedStatus.RootDirectorySha256Hash,
+                                CorrelationId = generateCorrelationId ()
+                            )
+
+                        let! lookupResult = Grace.SDK.DirectoryVersion.GetBySha256Hash lookup
+
+                        match lookupResult with
+                        | Ok value ->
+                            Assert.That(value.ReturnValue.DirectoryVersionId, Is.EqualTo(exactRoot.DirectoryVersionId))
+                            Assert.That(value.ReturnValue.RelativePath, Is.EqualTo(Constants.RootDirectoryPath))
+                            Assert.That(value.ReturnValue.Blake3Hash, Is.EqualTo(exactRoot.Blake3Hash))
+                        | Error error -> Assert.Fail($"Expected exact hosted root lookup, got {error.Error}.")
+
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        let! referencesBeforeRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                        let! nestedBlob = BranchServerTestHelpers.getFileObjectAzuriteBlockBlobClientAsync repositoryId nestedFileVersion
+                        let! nestedBlobBeforeRepair = nestedBlob.ExistsAsync()
+                        Assert.That(nestedBlobBeforeRepair.Value, Is.True)
+
+                        let nestedBlobNamespace =
+                            let separator = nestedBlob.Name.LastIndexOf('/')
+                            if separator < 0 then nestedBlob.Name else nestedBlob.Name[..separator]
+
+                        let blobNamesBeforeRepair =
+                            nestedBlob
+                                .GetParentBlobContainerClient()
+                                .GetBlobs()
+                            |> Seq.filter (fun blob -> blob.Name.StartsWith(nestedBlobNamespace, StringComparison.Ordinal))
+                            |> Seq.map (fun blob -> blob.Name)
+                            |> Set.ofSeq
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () -> File.AppendAllText(nestedPath, "stale"))
+
+                        let changedBytesExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedBytesExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllBytes(nestedPath, originalBytes)
+
+                        let originalConfig = File.ReadAllText(configPath)
+                        let changedBranchId = Guid.NewGuid().ToString()
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () ->
+                            File.WriteAllText(configPath, originalConfig.Replace(branch.BranchId.ToString(), changedBranchId)))
+
+                        let changedConfigExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedConfigExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllText(configPath, originalConfig)
+                        resetConfiguration ()
+
+                        let changedServerUri = "http://127.0.0.1:59999"
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () ->
+                            File.WriteAllText(configPath, originalConfig.Replace(configuration.ServerUri, changedServerUri)))
+
+                        let changedServerExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedServerExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllText(configPath, originalConfig)
+                        resetConfiguration ()
+
+                        let originalWorkingDirectory = Environment.CurrentDirectory
+                        let alternateRoot = Path.Combine(Path.GetTempPath(), $"grace-doctor-config-race-{Guid.NewGuid():N}")
+                        let alternateGraceDirectory = Path.Combine(alternateRoot, Constants.GraceConfigDirectory)
+
+                        Directory.CreateDirectory(alternateGraceDirectory)
+                        |> ignore
+
+                        File.WriteAllText(Path.Combine(alternateGraceDirectory, Constants.GraceConfigFileName), originalConfig)
+
+                        try
+                            Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () -> Environment.CurrentDirectory <- alternateRoot)
+
+                            let changedRootAndStatusPathExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                            Assert.That(changedRootAndStatusPathExitCode, Is.EqualTo(-1))
+                            Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                            Assert.That(File.Exists(Path.Combine(alternateGraceDirectory, Constants.GraceLocalStateDbFileName)), Is.False)
+                        finally
+                            Environment.CurrentDirectory <- originalWorkingDirectory
+                            Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                            resetConfiguration ()
+                            Directory.Delete(alternateRoot, true)
+
+                        do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                        do
+                            use connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={configuration.GraceStatusFile}")
+                            connection.Open()
+                            use command = connection.CreateCommand()
+
+                            command.CommandText <-
+                                "CREATE TRIGGER reject_doctor_boundary BEFORE INSERT ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced doctor boundary failure'); END;"
+
+                            command.ExecuteNonQuery() |> ignore
+
+                        let sqliteFailureExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Assert.That(sqliteFailureExitCode, Is.EqualTo(-1))
+                        let! statusAfterSqliteFailure = Grace.CLI.LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                        Assert.That(statusAfterSqliteFailure.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+
+                        let! boundaryAfterSqliteFailure =
+                            Grace.CLI.LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                        Assert.That(boundaryAfterSqliteFailure, Is.EqualTo(None))
+
+                        do
+                            use activeWriter = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={configuration.GraceStatusFile};Pooling=False")
+                            activeWriter.Open()
+                            use beginWriter = activeWriter.CreateCommand()
+                            beginWriter.CommandText <- "BEGIN IMMEDIATE;"
+                            beginWriter.ExecuteNonQuery() |> ignore
+
+                            let activeWriterExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Assert.That(activeWriterExitCode, Is.EqualTo(-1))
+                            use rollbackWriter = activeWriter.CreateCommand()
+                            rollbackWriter.CommandText <- "ROLLBACK;"
+                            rollbackWriter.ExecuteNonQuery() |> ignore
+
+                        let! statusAfterActiveWriter = Grace.CLI.LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                        Assert.That(statusAfterActiveWriter.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+
+                        let! boundaryAfterActiveWriter =
+                            Grace.CLI.LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                        Assert.That(boundaryAfterActiveWriter, Is.EqualTo(None))
+                        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+
+                        [|
+                            configuration.GraceStatusFile
+                            configuration.GraceStatusFile + "-wal"
+                            configuration.GraceStatusFile + "-shm"
+                            configuration.GraceStatusFile + "-journal"
+                        |]
+                        |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
+
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, "not-a-valid-pat")
+
+                        let serverFailureExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, publicCliToken)
+                        Assert.That(serverFailureExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+
+                        let repairExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Assert.That(repairExitCode, Is.EqualTo(0))
+                        resetConfiguration ()
+                        let configuration = Current()
+                        Assert.That(configuration.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.True)
+                        Assert.That(Convert.ToHexString(File.ReadAllBytes(nestedPath)), Is.EqualTo(Convert.ToHexString(originalBytes)))
+
+                        let! repairedStatus = Grace.CLI.Services.readGraceStatusFile ()
+                        Assert.That(repairedStatus.RootDirectoryId, Is.EqualTo(exactRoot.DirectoryVersionId))
+                        Assert.That(repairedStatus.Index.Keys, Does.Contain(exactRoot.DirectoryVersionId))
+                        Assert.That(repairedStatus.Index.Keys, Does.Contain(nestedParent.DirectoryVersionId))
+                        Assert.That(repairedStatus.Index.Keys, Does.Contain(nestedDirectory.DirectoryVersionId))
+
+                        for directoryVersion in repairedStatus.Index.Values do
+                            Assert.That(
+                                directoryVersion.RepositoryId,
+                                Is.EqualTo(Guid.Parse(repositoryId)),
+                                $"Repaired directory {directoryVersion.RelativePath} must retain repository scope."
+                            )
+
+                        let repairedNestedDirectory = repairedStatus.Index[nestedDirectory.DirectoryVersionId]
+                        Assert.That(repairedNestedDirectory.Files, Has.Count.EqualTo(1))
+                        Assert.That(repairedNestedDirectory.Files[0].Sha256Hash, Is.EqualTo(nestedFileVersion.Sha256Hash))
+                        Assert.That(repairedNestedDirectory.Files[0].Blake3Hash, Is.EqualTo(nestedFileVersion.Blake3Hash))
+
+                        let! repairedBoundary =
+                            Grace.CLI.LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                        Assert.That(repairedBoundary.IsSome, Is.True)
+                        Assert.That(repairedBoundary.Value.DirectoryId, Is.EqualTo(exactRoot.DirectoryVersionId))
+                        Assert.That(repairedBoundary.Value.EventCursor, Is.EqualTo("branch-event-v1:2"))
+
+                        let! referencesAfterRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+
+                        let referenceIds (references: Reference.ReferenceDto array) =
+                            references
+                            |> Array.map (fun reference -> string reference.ReferenceId)
+                            |> Array.sort
+                            |> String.concat ","
+
+                        Assert.That(referenceIds referencesAfterRepair, Is.EqualTo(referenceIds referencesBeforeRepair))
+
+                        let! nestedBlobAfterRepair = nestedBlob.ExistsAsync()
+                        Assert.That(nestedBlobAfterRepair.Value, Is.True)
+
+                        let blobNamesAfterRepair =
+                            nestedBlob
+                                .GetParentBlobContainerClient()
+                                .GetBlobs()
+                            |> Seq.filter (fun blob -> blob.Name.StartsWith(nestedBlobNamespace, StringComparison.Ordinal))
+                            |> Seq.map (fun blob -> blob.Name)
+                            |> Set.ofSeq
+
+                        Assert.That((blobNamesAfterRepair = blobNamesBeforeRepair), Is.True)
+
+                        let! closureAfterRepairResponse =
+                            BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId branch exactRoot.Sha256Hash exactRoot.Blake3Hash
+
+                        let! closureAfterRepairBody = closureAfterRepairResponse.Content.ReadAsStringAsync()
+                        Assert.That(closureAfterRepairResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), closureAfterRepairBody)
+
+                        let closureAfterRepair =
+                            (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> closureAfterRepairBody)
+                                .ReturnValue
+
+                        let closureIdsAfterRepair =
+                            closureAfterRepair
+                            |> Seq.map (fun directory -> directory.DirectoryVersion.DirectoryVersionId)
+                            |> Set.ofSeq
+
+                        let expectedClosureIds =
+                            [
+                                exactRoot.DirectoryVersionId
+                                nestedParent.DirectoryVersionId
+                                nestedDirectory.DirectoryVersionId
+                            ]
+                            |> Set.ofList
+
+                        Assert.That((closureIdsAfterRepair = expectedClosureIds), Is.True)
+
+                        Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                        Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
+                        Grace.CLI.Command.Watch.setGraceWatchRuntimeModeForWatchTests Grace.CLI.Services.GraceWatchRuntimeMode.StartingUp
+
+                        try
+                            match Grace.CLI.Command.Watch.tryActivateWatchIgnoreSnapshotForWatchTests () with
+                            | Ok () -> ()
+                            | Error error -> Assert.Fail($"Expected production Watch ignore snapshot activation, got {error}.")
+
+                            let localEditPath = Path.Combine(configuration.RootDirectory, string nestedDirectoryPath, "local-edit.txt")
+                            File.WriteAllText(localEditPath, "ordinary local edit after Doctor repair")
+                            let! localDifferences = Grace.CLI.Command.Watch.tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests repairedStatus
+
+                            let localDifferences =
+                                match localDifferences with
+                                | Ok differences -> differences
+                                | Error error ->
+                                    Assert.Fail($"Expected post-repair production scan success, got {error}.")
+                                    List<FileSystemDifference>()
+
+                            Assert.That(localDifferences, Is.Not.Empty)
+
+                            let! _, projectedDirectoryVersions = Grace.CLI.Services.getNewGraceStatusAndDirectoryVersions repairedStatus localDifferences
+
+                            for directoryVersion in projectedDirectoryVersions do
+                                Assert.That(
+                                    directoryVersion.RepositoryId,
+                                    Is.EqualTo(Guid.Parse(repositoryId)),
+                                    $"Projected directory {directoryVersion.RelativePath} must retain repository scope."
+                                )
+
+                            for difference in localDifferences do
+                                Grace.CLI.Command.Watch.queueStartupDifferenceForWatch difference
+
+                            do! Grace.CLI.Command.Watch.processChangedFiles ()
+
+                            let! referencesAfterLocalSave = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                            Assert.That(referencesAfterLocalSave, Has.Length.EqualTo(referencesAfterRepair.Length + 1))
+                            let! statusAfterLocalSave = Grace.CLI.Services.readGraceStatusFile ()
+                            Assert.That(statusAfterLocalSave.RootDirectoryId, Is.Not.EqualTo(exactRoot.DirectoryVersionId))
+                            Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                            Grace.CLI.Command.Watch.setGraceStatusForWatchTests statusAfterLocalSave
+                            Grace.CLI.Command.Watch.updateGraceStatusDirectoryIds statusAfterLocalSave
+
+                            do!
+                                Grace.CLI.Services.updateGraceWatchInterprocessFile
+                                    statusAfterLocalSave
+                                    (Some(HashSet<DirectoryVersionId>(statusAfterLocalSave.Index.Keys)))
+
+                            let remoteRelativePath = RelativePath $"remote-{Guid.NewGuid():N}.txt"
+                            let remotePayload = Encoding.UTF8.GetBytes("one later remote reference")
+
+                            let remoteFileVersion =
+                                FileVersion.CreateWithHashes
+                                    remoteRelativePath
+                                    (BranchServerTestHelpers.sha256Hex remotePayload)
+                                    (BranchServerTestHelpers.blake3Hex remotePayload)
+                                    String.Empty
+                                    false
+                                    (int64 remotePayload.Length)
+
+                            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId remotePayload remoteFileVersion
+                            let remoteObjectCachePath = Grace.CLI.Services.getLocalObjectCachePathForFileVersion remoteFileVersion
+
+                            Directory.CreateDirectory(Path.GetDirectoryName(remoteObjectCachePath))
+                            |> ignore
+
+                            File.WriteAllBytes(remoteObjectCachePath, remotePayload)
+                            let remoteRoot = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId Constants.RootDirectoryPath remoteFileVersion
+                            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ remoteRoot ]
+
+                            let! remoteSave =
+                                BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch remoteRoot.DirectoryVersionId remoteRoot.Sha256Hash
+
+                            let! remoteSaveBody = remoteSave.Content.ReadAsStringAsync()
+                            Assert.That(remoteSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), remoteSaveBody)
+
+                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None
+                            let remotePath = Path.Combine(configuration.RootDirectory, string remoteRelativePath)
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(remotePath)), Is.EqualTo(Convert.ToHexString(remotePayload)))
+
+                            let! replayedBoundary =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(replayedBoundary.IsSome, Is.True)
+                            Assert.That(replayedBoundary.Value.DirectoryId, Is.EqualTo(remoteRoot.DirectoryVersionId))
+
+                            let replayedCursor = replayedBoundary.Value.EventCursor
+                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None
+
+                            let! replayedAgainBoundary =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(replayedAgainBoundary.Value.EventCursor, Is.EqualTo(replayedCursor))
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(remotePath)), Is.EqualTo(Convert.ToHexString(remotePayload)))
+
+                            let ipcFilePath = Grace.CLI.Services.IpcFileName()
+
+                            if File.Exists(ipcFilePath) then File.Delete(ipcFilePath)
+
+                            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+
+                            [|
+                                configuration.GraceStatusFile
+                                configuration.GraceStatusFile + "-wal"
+                                configuration.GraceStatusFile + "-shm"
+                                configuration.GraceStatusFile + "-journal"
+                            |]
+                            |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
+
+                            let stateDirectory = Path.GetDirectoryName(configuration.GraceStatusFile)
+
+                            let corruptBackupsBefore =
+                                Directory
+                                    .GetFiles(
+                                        stateDirectory,
+                                        "grace-local.corrupt.*.db"
+                                    )
+                                    .Length
+
+                            File.WriteAllBytes(configuration.GraceStatusFile, Encoding.UTF8.GetBytes("corrupt local state"))
+                            let! referencesBeforeCorruptRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+
+                            let corruptRepairExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Assert.That(corruptRepairExitCode, Is.EqualTo(0))
+
+                            let corruptBackupsAfter =
+                                Directory
+                                    .GetFiles(
+                                        stateDirectory,
+                                        "grace-local.corrupt.*.db"
+                                    )
+                                    .Length
+
+                            Assert.That(corruptBackupsAfter, Is.EqualTo(corruptBackupsBefore + 1))
+                            let! repairedAfterCorruption = Grace.CLI.Services.readGraceStatusFile ()
+                            Assert.That(repairedAfterCorruption.RootDirectoryId, Is.EqualTo(remoteRoot.DirectoryVersionId))
+
+                            let! boundaryAfterCorruption =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(boundaryAfterCorruption.Value.DirectoryId, Is.EqualTo(remoteRoot.DirectoryVersionId))
+                            let! referencesAfterCorruptRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                            Assert.That(referenceIds referencesAfterCorruptRepair, Is.EqualTo(referenceIds referencesBeforeCorruptRepair))
+                        finally
+                            Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                            Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
+                            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
+                    })
+        }
+
+    /// Verifies authenticated SDK replay preserves branch scope, event order, cursor closure, and generic cursor failures through the hosted route.
+    [<Test; NonParallelizable>]
+    member _.ReplayReferenceEventsRouteAndSdkPreserveOrderedBranchScopedCursorContract() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ReplayRoute{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+
+                        let replayParameters = Parameters.Branch.ReplayReferenceEventsParameters()
+                        replayParameters.OwnerId <- ownerId
+                        replayParameters.OrganizationId <- organizationId
+                        replayParameters.RepositoryId <- repositoryId
+                        replayParameters.BranchId <- $"{branch.BranchId}"
+                        replayParameters.CursorRepositoryId <- repositoryId
+                        replayParameters.CursorBranchId <- $"{branch.BranchId}"
+                        replayParameters.EventCursor <- "branch-event-v1:0"
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! baselineResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        let baseline =
+                            match baselineResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected authenticated SDK replay baseline success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceReplayDto>
+
+                        Assert.That(baseline.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(baseline.BranchId, Is.EqualTo(branch.BranchId))
+                        Assert.That(baseline.Events, Is.Empty)
+                        Assert.That(baseline.ScannedThroughCursor, Does.StartWith("branch-event-v1:"))
+
+                        let saveReferenceId = Guid.NewGuid()
+                        let saveParameters = Parameters.Branch.CreateReferenceParameters()
+                        saveParameters.OwnerId <- ownerId
+                        saveParameters.OrganizationId <- organizationId
+                        saveParameters.RepositoryId <- repositoryId
+                        saveParameters.BranchId <- $"{branch.BranchId}"
+                        saveParameters.ReferenceId <- saveReferenceId
+                        saveParameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        saveParameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        saveParameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        saveParameters.Message <- "Hosted replay route ordered save"
+                        saveParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! saveResponse = Client.PostAsync("/branch/save", createJsonContent saveParameters)
+                        let! saveBody = saveResponse.Content.ReadAsStringAsync()
+                        Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+
+                        let! saveRetryResponse = Client.PostAsync("/branch/save", createJsonContent saveParameters)
+                        let! saveRetryBody = saveRetryResponse.Content.ReadAsStringAsync()
+                        Assert.That(saveRetryResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveRetryBody)
+
+                        let commitReferenceId = Guid.NewGuid()
+                        let commitParameters = Parameters.Branch.CreateReferenceParameters()
+                        commitParameters.OwnerId <- ownerId
+                        commitParameters.OrganizationId <- organizationId
+                        commitParameters.RepositoryId <- repositoryId
+                        commitParameters.BranchId <- $"{branch.BranchId}"
+                        commitParameters.ReferenceId <- commitReferenceId
+                        commitParameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        commitParameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        commitParameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        commitParameters.Message <- "Hosted replay route ordered commit"
+                        commitParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! commitResponse = Client.PostAsync("/branch/commit", createJsonContent commitParameters)
+                        let! commitBody = commitResponse.Content.ReadAsStringAsync()
+                        Assert.That(commitResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), commitBody)
+
+                        let checkpointReferenceId = Guid.NewGuid()
+                        let checkpointParameters = Parameters.Branch.CreateReferenceParameters()
+                        checkpointParameters.OwnerId <- ownerId
+                        checkpointParameters.OrganizationId <- organizationId
+                        checkpointParameters.RepositoryId <- repositoryId
+                        checkpointParameters.BranchId <- $"{branch.BranchId}"
+                        checkpointParameters.ReferenceId <- checkpointReferenceId
+                        checkpointParameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        checkpointParameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        checkpointParameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        checkpointParameters.Message <- "Hosted replay route ordered checkpoint"
+                        checkpointParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! checkpointResponse = Client.PostAsync("/branch/checkpoint", createJsonContent checkpointParameters)
+                        let! checkpointBody = checkpointResponse.Content.ReadAsStringAsync()
+                        Assert.That(checkpointResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), checkpointBody)
+
+                        replayParameters.EventCursor <- baseline.ScannedThroughCursor
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! replayResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        let replay =
+                            match replayResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected authenticated SDK replay success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceReplayDto>
+
+                        Assert.That(replay.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(replay.BranchId, Is.EqualTo(branch.BranchId))
+                        Assert.That(replay.Events, Has.Length.EqualTo(3))
+                        Assert.That(replay.Events[0].Reference.ReferenceId, Is.EqualTo(saveReferenceId))
+                        Assert.That(replay.Events[0].Reference.ReferenceType, Is.EqualTo(ReferenceType.Save))
+                        Assert.That(replay.Events[1].Reference.ReferenceId, Is.EqualTo(commitReferenceId))
+                        Assert.That(replay.Events[1].Reference.ReferenceType, Is.EqualTo(ReferenceType.Commit))
+                        Assert.That(replay.Events[2].Reference.ReferenceId, Is.EqualTo(checkpointReferenceId))
+                        Assert.That(replay.Events[2].Reference.ReferenceType, Is.EqualTo(ReferenceType.Checkpoint))
+                        Assert.That(replay.Events[0].EventCursor, Is.Not.EqualTo(replay.Events[1].EventCursor))
+                        Assert.That(replay.Events[1].EventCursor, Is.Not.EqualTo(replay.Events[2].EventCursor))
+                        Assert.That(replay.ScannedThroughCursor, Is.EqualTo(replay.Events[2].EventCursor))
+
+                        replayParameters.EventCursor <- "not-a-cursor"
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! malformedResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match malformedResult with
+                        | Ok _ -> Assert.Fail("Expected malformed replay cursor rejection through the SDK.")
+                        | Error error ->
+                            let projectedError = deserialize<GraceError> error.Error
+
+                            Assert.That(
+                                projectedError.Error,
+                                Is.EqualTo("The supplied Watch replay cursor does not identify a valid interval for this branch.")
+                            )
+
+                        replayParameters.EventCursor <- baseline.ScannedThroughCursor
+                        replayParameters.CursorRepositoryId <- $"{Guid.NewGuid()}"
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! crossScopeResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match crossScopeResult with
+                        | Ok _ -> Assert.Fail("Expected cross-repository replay cursor rejection through the SDK.")
+                        | Error error ->
+                            let projectedError = deserialize<GraceError> error.Error
+
+                            Assert.That(
+                                projectedError.Error,
+                                Is.EqualTo("The supplied Watch replay cursor does not identify a valid interval for this branch.")
+                            )
+                    })
         }
 
     /// Verifies the annotate route returns grace error for bad parameters scenario.
@@ -1745,7 +2962,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/bad-parameters.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/bad-parameters.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
             parameters.MaxReferences <- MaximumMaxReferences + 1
 
@@ -1765,7 +2982,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/null-path.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/null-path.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
             parameters.Path <- null
 
@@ -1800,7 +3017,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/null-reference-types.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/null-reference-types.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
 
             let json =

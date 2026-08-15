@@ -4,20 +4,20 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**class** | Option<**String**> |  | [optional]
-**directory_version_id** | Option<**uuid::Uuid**> |  | [optional]
-**owner_id** | Option<**uuid::Uuid**> |  | [optional]
-**organization_id** | Option<**uuid::Uuid**> |  | [optional]
-**repository_id** | Option<**uuid::Uuid**> |  | [optional]
-**relative_path** | Option<**String**> |  | [optional]
-**sha256_hash** | Option<**String**> | Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash. | [optional]
-**blake3_hash** | Option<**String**> | Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs. | [optional]
-**directories** | Option<**Vec<uuid::Uuid>**> |  | [optional]
-**files** | Option<[**Vec<models::FileVersion>**](FileVersion.md)> |  | [optional]
-**size** | Option<**i64**> |  | [optional]
+**class** | **String** |  | 
+**directory_version_id** | **uuid::Uuid** |  | 
+**owner_id** | **uuid::Uuid** |  | 
+**organization_id** | **uuid::Uuid** |  | 
+**repository_id** | **uuid::Uuid** |  | 
+**relative_path** | **String** |  | 
+**sha256_hash** | **String** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | 
+**blake3_hash** | **String** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | 
+**directories** | **Vec<uuid::Uuid>** |  | 
+**files** | [**Vec<models::FileVersion>**](FileVersion.md) |  | 
+**size** | **i64** |  | 
 **recursive_size** | Option<**i64**> |  | [optional]
-**created_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
-**hashes_validated** | Option<**bool**> |  | [optional]
+**created_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
+**hashes_validated** | **bool** |  | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

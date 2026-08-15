@@ -52,9 +52,11 @@ Class | Method | HTTP request | Description
 *ApprovalsApi* | [**show_approval_request**](docs/ApprovalsApi.md#show_approval_request) | **POST** /approval/request/show | Show a workflow-generated approval request.
 *ApprovalsApi* | [**update_approval_policy**](docs/ApprovalsApi.md#update_approval_policy) | **POST** /approval/policy/update | Update an approval policy.
 *BranchesApi* | [**annotate_branch**](docs/BranchesApi.md#annotate_branch) | **POST** /branch/annotate | Annotate a branch reference.
+*BranchesApi* | [**assign_branch**](docs/BranchesApi.md#assign_branch) | **POST** /branch/assign | Assign a promotion to a branch.
 *BranchesApi* | [**checkpoint_branch**](docs/BranchesApi.md#checkpoint_branch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 *BranchesApi* | [**commit_branch**](docs/BranchesApi.md#commit_branch) | **POST** /branch/commit | Commit the current branch content.
 *BranchesApi* | [**create_branch**](docs/BranchesApi.md#create_branch) | **POST** /branch/create | Create a branch.
+*BranchesApi* | [**create_external_branch_reference**](docs/BranchesApi.md#create_external_branch_reference) | **POST** /branch/createExternal | Create an external Reference.
 *BranchesApi* | [**delete_branch**](docs/BranchesApi.md#delete_branch) | **POST** /branch/delete | Delete a branch.
 *BranchesApi* | [**enable_branch_checkpoint**](docs/BranchesApi.md#enable_branch_checkpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references.
 *BranchesApi* | [**enable_branch_commit**](docs/BranchesApi.md#enable_branch_commit) | **POST** /branch/enableCommit | Enable or disable commit references.
@@ -64,6 +66,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**get_branch**](docs/BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 *BranchesApi* | [**get_branch_reference**](docs/BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 *BranchesApi* | [**get_parent_branch**](docs/BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+*BranchesApi* | [**get_reference_materialization_boundary**](docs/BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 *BranchesApi* | [**list_branch_checkpoints**](docs/BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 *BranchesApi* | [**list_branch_commits**](docs/BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 *BranchesApi* | [**list_branch_promotions**](docs/BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -72,13 +75,10 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**list_branch_tags**](docs/BranchesApi.md#list_branch_tags) | **POST** /branch/getTags | List branch tags.
 *BranchesApi* | [**promote_branch**](docs/BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
+*BranchesApi* | [**replay_reference_events**](docs/BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+*BranchesApi* | [**resolve_reference_event_boundary**](docs/BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
-*CacheApi* | [**assign_cache_repositories**](docs/CacheApi.md#assign_cache_repositories) | **POST** /cache/assign-repositories | Replace a Cache's exact repository assignments as a current administrator.
-*CacheApi* | [**enroll_cache**](docs/CacheApi.md#enroll_cache) | **POST** /cache/enroll | Enroll a Grace Cache with an administrator-authorized repository boundary.
-*CacheApi* | [**get_artifact_grant_validation_keys**](docs/CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
-*CacheApi* | [**refresh_cache**](docs/CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
-*CacheApi* | [**revoke_cache**](docs/CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirm_content_block_upload**](docs/DefaultApi.md#confirm_content_block_upload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discover_content_blocks**](docs/DefaultApi.md#discover_content_blocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -103,7 +103,6 @@ Class | Method | HTTP request | Description
 *DirectoriesApi* | [**list_directory_versions_by_id**](docs/DirectoriesApi.md#list_directory_versions_by_id) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**list_directory_versions_recursive**](docs/DirectoriesApi.md#list_directory_versions_recursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
 *DirectoriesApi* | [**save_directory_versions**](docs/DirectoriesApi.md#save_directory_versions) | **POST** /directory/saveDirectoryVersions | Save directory versions.
-*MaterializationApi* | [**create_materialization_plan**](docs/MaterializationApi.md#create_materialization_plan) | **POST** /materialization/plan | Create a Materialization Plan.
 *OrganizationsApi* | [**create_organization**](docs/OrganizationsApi.md#create_organization) | **POST** /organization/create | Create an organization.
 *OrganizationsApi* | [**delete_organization**](docs/OrganizationsApi.md#delete_organization) | **POST** /organization/delete | Delete an organization.
 *OrganizationsApi* | [**get_organization**](docs/OrganizationsApi.md#get_organization) | **POST** /organization/get | Get an organization.
@@ -149,6 +148,10 @@ Class | Method | HTTP request | Description
 *WebhooksApi* | [**show_webhook_rule**](docs/WebhooksApi.md#show_webhook_rule) | **POST** /webhook/rule/show | Show a webhook rule.
 *WebhooksApi* | [**test_webhook_rule**](docs/WebhooksApi.md#test_webhook_rule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**update_webhook_rule**](docs/WebhooksApi.md#update_webhook_rule) | **POST** /webhook/rule/update | Update a webhook rule.
+*WorkItemsApi* | [**clear_work_item_description**](docs/WorkItemsApi.md#clear_work_item_description) | **POST** /work/description/clear | Clear a work-item description.
+*WorkItemsApi* | [**delete_work_item_attachment**](docs/WorkItemsApi.md#delete_work_item_attachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**set_work_item_description**](docs/WorkItemsApi.md#set_work_item_description) | **POST** /work/description/set | Replace a work-item description.
+*WorkItemsApi* | [**undelete_work_item_attachment**](docs/WorkItemsApi.md#undelete_work_item_attachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
 ## Documentation For Models
@@ -171,13 +174,8 @@ Class | Method | HTTP request | Description
  - [ApprovalScope](docs/ApprovalScope.md)
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
- - [ArtifactGrantHeader](docs/ArtifactGrantHeader.md)
- - [ArtifactGrantHolderPublicKey](docs/ArtifactGrantHolderPublicKey.md)
- - [ArtifactGrantPayload](docs/ArtifactGrantPayload.md)
- - [ArtifactGrantRequesterPrincipalType](docs/ArtifactGrantRequesterPrincipalType.md)
- - [ArtifactGrantValidationKey](docs/ArtifactGrantValidationKey.md)
- - [ArtifactGrantValidationKeySet](docs/ArtifactGrantValidationKeySet.md)
- - [ArtifactRequestProofPayload](docs/ArtifactRequestProofPayload.md)
+ - [ArtifactDeletionResult](docs/ArtifactDeletionResult.md)
+ - [AssignParameters](docs/AssignParameters.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
  - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
  - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)
@@ -189,22 +187,10 @@ Class | Method | HTTP request | Description
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)
- - [CacheBoundaryKind](docs/CacheBoundaryKind.md)
- - [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
- - [CacheHealthStatus](docs/CacheHealthStatus.md)
- - [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
- - [CacheRegistration](docs/CacheRegistration.md)
- - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
- - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
- - [CacheRegistrationResult](docs/CacheRegistrationResult.md)
- - [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
- - [CacheRepositoryAssignmentRequest](docs/CacheRepositoryAssignmentRequest.md)
- - [CacheRepositoryScope](docs/CacheRepositoryScope.md)
- - [CacheRequestProofPayload](docs/CacheRequestProofPayload.md)
- - [CacheRevocationRequest](docs/CacheRevocationRequest.md)
  - [ChangeType](docs/ChangeType.md)
  - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
  - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
+ - [ClearWorkItemDescriptionParameters](docs/ClearWorkItemDescriptionParameters.md)
  - [CommonParameters](docs/CommonParameters.md)
  - [ConfirmContentBlockUploadParameters](docs/ConfirmContentBlockUploadParameters.md)
  - [ConfirmedBlockUpload](docs/ConfirmedBlockUpload.md)
@@ -222,11 +208,13 @@ Class | Method | HTTP request | Description
  - [CreateReferenceParameters](docs/CreateReferenceParameters.md)
  - [CreateRepositoryParameters](docs/CreateRepositoryParameters.md)
  - [CreateWebhookRuleParameters](docs/CreateWebhookRuleParameters.md)
+ - [CurrentBranchReferenceNotification](docs/CurrentBranchReferenceNotification.md)
  - [DedupeDiscoverySnapshot](docs/DedupeDiscoverySnapshot.md)
  - [DeleteBranchParameters](docs/DeleteBranchParameters.md)
  - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
  - [DeleteOwnerParameters](docs/DeleteOwnerParameters.md)
  - [DeleteRepositoryParameters](docs/DeleteRepositoryParameters.md)
+ - [DeleteWorkItemAttachmentParameters](docs/DeleteWorkItemAttachmentParameters.md)
  - [DiffApiDto](docs/DiffApiDto.md)
  - [DiffDto](docs/DiffDto.md)
  - [DiffParameters](docs/DiffParameters.md)
@@ -277,6 +265,7 @@ Class | Method | HTTP request | Description
  - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
  - [GetOwnerParameters](docs/GetOwnerParameters.md)
  - [GetParameters](docs/GetParameters.md)
+ - [GetReferenceMaterializationBoundaryParameters](docs/GetReferenceMaterializationBoundaryParameters.md)
  - [GetReferenceParameters](docs/GetReferenceParameters.md)
  - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
  - [GetReferencesParameters](docs/GetReferencesParameters.md)
@@ -295,6 +284,8 @@ Class | Method | HTTP request | Description
  - [InlineObject5](docs/InlineObject5.md)
  - [InlineObject6](docs/InlineObject6.md)
  - [InlineObject7](docs/InlineObject7.md)
+ - [InlineObject8](docs/InlineObject8.md)
+ - [InlineObject9](docs/InlineObject9.md)
  - [IsEmptyParameters](docs/IsEmptyParameters.md)
  - [IssueDedupeDiscoveryParameters](docs/IssueDedupeDiscoveryParameters.md)
  - [ListApprovalPoliciesParameters](docs/ListApprovalPoliciesParameters.md)
@@ -303,18 +294,6 @@ Class | Method | HTTP request | Description
  - [ListRepositoriesParameters](docs/ListRepositoriesParameters.md)
  - [ListWebhookDeliveriesParameters](docs/ListWebhookDeliveriesParameters.md)
  - [ListWebhookRulesParameters](docs/ListWebhookRulesParameters.md)
- - [MaterializationArtifactDescriptor](docs/MaterializationArtifactDescriptor.md)
- - [MaterializationArtifactKind](docs/MaterializationArtifactKind.md)
- - [MaterializationArtifactSource](docs/MaterializationArtifactSource.md)
- - [MaterializationArtifactSourceKind](docs/MaterializationArtifactSourceKind.md)
- - [MaterializationCacheSelection](docs/MaterializationCacheSelection.md)
- - [MaterializationCacheSelectionKind](docs/MaterializationCacheSelectionKind.md)
- - [MaterializationExecutionMode](docs/MaterializationExecutionMode.md)
- - [MaterializationPlan](docs/MaterializationPlan.md)
- - [MaterializationPlanRequest](docs/MaterializationPlanRequest.md)
- - [MaterializationPlanReturnValue](docs/MaterializationPlanReturnValue.md)
- - [MaterializationTargetSelector](docs/MaterializationTargetSelector.md)
- - [MaterializationTargetSelectorKind](docs/MaterializationTargetSelectorKind.md)
  - [ObjectStorageProvider](docs/ObjectStorageProvider.md)
  - [OrganizationCommandReturnValue](docs/OrganizationCommandReturnValue.md)
  - [OrganizationDto](docs/OrganizationDto.md)
@@ -327,7 +306,6 @@ Class | Method | HTTP request | Description
  - [OwnerParameters](docs/OwnerParameters.md)
  - [OwnerReturnValue](docs/OwnerReturnValue.md)
  - [OwnerType](docs/OwnerType.md)
- - [PlanParameters](docs/PlanParameters.md)
  - [PopulateParameters](docs/PopulateParameters.md)
  - [ProblemDetails](docs/ProblemDetails.md)
  - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)
@@ -335,12 +313,19 @@ Class | Method | HTTP request | Description
  - [RebaseParameters](docs/RebaseParameters.md)
  - [RecordSavesParameters](docs/RecordSavesParameters.md)
  - [ReferenceApiDto](docs/ReferenceApiDto.md)
+ - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
  - [ReferenceDto](docs/ReferenceDto.md)
  - [ReferenceListReturnValue](docs/ReferenceListReturnValue.md)
+ - [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
+ - [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
  - [ReferenceParameters](docs/ReferenceParameters.md)
+ - [ReferenceReplayApiDto](docs/ReferenceReplayApiDto.md)
+ - [ReferenceReplayEventApiDto](docs/ReferenceReplayEventApiDto.md)
+ - [ReferenceReplayReturnValue](docs/ReferenceReplayReturnValue.md)
  - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
  - [ReferenceType](docs/ReferenceType.md)
  - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
+ - [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
  - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
  - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
  - [RepositoryCommandReturnValue](docs/RepositoryCommandReturnValue.md)
@@ -350,6 +335,7 @@ Class | Method | HTTP request | Description
  - [RepositoryReturnValue](docs/RepositoryReturnValue.md)
  - [RepositoryStatus](docs/RepositoryStatus.md)
  - [RepositoryVisibility](docs/RepositoryVisibility.md)
+ - [ResolveReferenceEventBoundaryParameters](docs/ResolveReferenceEventBoundaryParameters.md)
  - [SaveDirectoryVersionsParameters](docs/SaveDirectoryVersionsParameters.md)
  - [ScopedOutboundUrl](docs/ScopedOutboundUrl.md)
  - [SearchVisibility](docs/SearchVisibility.md)
@@ -369,17 +355,17 @@ Class | Method | HTTP request | Description
  - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
  - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
  - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
- - [SignedArtifactGrant](docs/SignedArtifactGrant.md)
- - [SignedArtifactRequestProof](docs/SignedArtifactRequestProof.md)
- - [SignedCacheRequestProof](docs/SignedCacheRequestProof.md)
+ - [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
  - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
  - [StartUploadSession](docs/StartUploadSession.md)
  - [StorageParameters](docs/StorageParameters.md)
  - [SwitchParameters](docs/SwitchParameters.md)
  - [TestWebhookRuleParameters](docs/TestWebhookRuleParameters.md)
+ - [TypedReferenceApiDto](docs/TypedReferenceApiDto.md)
  - [UndeleteOrganizationParameters](docs/UndeleteOrganizationParameters.md)
  - [UndeleteOwnerParameters](docs/UndeleteOwnerParameters.md)
  - [UndeleteRepositoryParameters](docs/UndeleteRepositoryParameters.md)
+ - [UndeleteWorkItemAttachmentParameters](docs/UndeleteWorkItemAttachmentParameters.md)
  - [UploadMetadata](docs/UploadMetadata.md)
  - [UploadMetadataArrayReturnValue](docs/UploadMetadataArrayReturnValue.md)
  - [UploadSessionBlockUploadConfirmedEvent](docs/UploadSessionBlockUploadConfirmedEvent.md)
@@ -411,6 +397,7 @@ Class | Method | HTTP request | Description
  - [WebhookRuleParameters](docs/WebhookRuleParameters.md)
  - [WebhookRuleStatus](docs/WebhookRuleStatus.md)
  - [WebhookScope](docs/WebhookScope.md)
+ - [WorkItemParameters](docs/WorkItemParameters.md)
 
 
 To get access to the crate's generated documentation, use:

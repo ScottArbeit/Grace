@@ -16,6 +16,7 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
+**reference_id** | **UUID** |  | 
 **based_on** | **UUID** |  | [optional] 
 
 ## Example

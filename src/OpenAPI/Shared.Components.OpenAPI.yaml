@@ -88,16 +88,6 @@ components:
       description: Lowercase 64-character SHA-256 version hash persisted on version DTOs.
       pattern: '^[a-f0-9]{64}$'
       example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
-    Sha256HashReferenceCompatibility:
-      type: string
-      description: Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
-      pattern: '^$|^[a-f0-9]{64}$'
-      example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
-    Sha256HashLookupSentinelCompatibility:
-      type: string
-      description: Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash.
-      pattern: '^$|^[a-f0-9]{64}$'
-      example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
     Sha256HashPrefix:
       type: string
       description: Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
@@ -112,17 +102,6 @@ components:
       type: string
       description: Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
       pattern: '^[a-f0-9]{64}$'
-      example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-    Blake3HashCompatibility:
-      type: string
-      nullable: true
-      description: Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
-      pattern: '^$|^[a-f0-9]{64}$'
-      example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-    Blake3HashReferenceCompatibility:
-      type: string
-      description: Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
-      pattern: '^$|^[a-f0-9]{64}$'
       example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
     Blake3HashPrefix:
       type: string
@@ -190,7 +169,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         IsBinary:
           type: boolean
         Size:
@@ -203,6 +182,7 @@ components:
           type: string
         ContentReference:
           $ref: 'Storage.Components.OpenAPI.yaml#/FileContentReference'
+      required: [Class, RelativePath, Sha256Hash, Blake3Hash, IsBinary, Size, CreatedAt, BlobUri, ContentReference]
       example:
         Class: FileVersion
         RelativePath: src/App.fs
@@ -235,7 +215,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         Directories:
           type: array
           items:
@@ -255,6 +235,20 @@ components:
           format: date-time
         HashesValidated:
           type: boolean
+      required:
+        - Class
+        - DirectoryVersionId
+        - OwnerId
+        - OrganizationId
+        - RepositoryId
+        - RelativePath
+        - Sha256Hash
+        - Blake3Hash
+        - Directories
+        - Files
+        - Size
+        - CreatedAt
+        - HashesValidated
       example:
         Class: DirectoryVersion
         DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842

@@ -1,5 +1,7 @@
 namespace Grace.Actors
 
+open Azure.Identity
+open Azure.Messaging.ServiceBus
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
@@ -13,6 +15,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
+open Grace.Types.ManifestContributionAccounting
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reference
 open Grace.Types.Reminder
@@ -25,10 +28,113 @@ open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Globalization
+open System.Security.Cryptography
+open System.Text
+open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups Orleans actor helpers for reference keys, proxies, state, or workflow transitions.
 module Reference =
+
+    /// Sequences durable Reference Created persistence before broker publication.
+    let persistReferenceCreatedThenPublish (persist: unit -> Task) (publish: unit -> Task) =
+        task {
+            do! persist ()
+            do! publish ()
+        }
+
+    /// Names producer capability metadata that permits a failed broker send to cross the public operation boundary.
+    [<Literal>]
+    let internal ReferenceCreatedRequiresBrokerAcceptanceProperty = "ReferenceCreatedRequiresBrokerAcceptance"
+
+    /// Defers Reference publication logging until a broker-bound operation actually needs runtime configuration.
+    let private referencePublicationLog = lazy (loggerFactory.CreateLogger("ReferencePublication.Actor"))
+
+    /// Defers managed-identity construction until Azure Service Bus publication is selected.
+    let private referencePublicationCredential = lazy (DefaultAzureCredential())
+
+    /// Creates the shared Reference publication client only after broker-bound runtime configuration is available.
+    let private referencePublicationClient =
+        lazy
+            let settings = pubSubSettings.AzureServiceBus.Value
+
+            if settings.UseManagedIdentity then
+                let fullyQualifiedNamespace =
+                    if not (String.IsNullOrWhiteSpace settings.FullyQualifiedNamespace) then
+                        settings.FullyQualifiedNamespace
+                    else
+                        Grace.Shared.AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
+                        |> Option.defaultWith (fun () -> invalidOp "Azure Service Bus namespace is required for managed identity.")
+
+                ServiceBusClient(fullyQualifiedNamespace, referencePublicationCredential.Value)
+            else
+                ServiceBusClient(settings.ConnectionString)
+
+    /// Reuses one sender for deterministic Reference Created publication on the existing GraceEvent topic.
+    let private referencePublicationSender = lazy (referencePublicationClient.Value.CreateSender(pubSubSettings.AzureServiceBus.Value.TopicName))
+
+    /// Reports whether the producer can retry the persisted Reference with its caller-owned identity.
+    let internal referenceCreatedRequiresBrokerAcceptance (metadata: EventMetadata) =
+        match metadata.Properties.TryGetValue ReferenceCreatedRequiresBrokerAcceptanceProperty with
+        | true, value ->
+            match Boolean.TryParse value with
+            | true, parsed -> parsed
+            | _ -> false
+        | _ -> false
+
+    /// Creates the deterministic Service Bus envelope for one persisted Reference Created event.
+    let internal createReferenceCreatedServiceBusMessage (referenceEvent: ReferenceEvent) =
+        let referenceId =
+            match referenceEvent.Event with
+            | ReferenceEventType.Created (referenceId, _, _, _, _, _, _, _, _, _, _) -> referenceId
+            | eventType -> invalidArg (nameof referenceEvent) $"Reference Created publication does not accept {getDiscriminatedUnionCaseName eventType} events."
+
+        let graceEvent = GraceEvent.ReferenceEvent referenceEvent
+        let payload = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
+        let message = ServiceBusMessage(payload)
+        message.ContentType <- "application/json"
+        message.Subject <- "GraceEvent"
+        message.CorrelationId <- referenceEvent.Metadata.CorrelationId
+        message.MessageId <- $"Reference/{referenceId}/Created"
+        message.ApplicationProperties[ "graceEventType" ] <- getDiscriminatedUnionFullName graceEvent
+
+        for kvp in referenceEvent.Metadata.Properties do
+            message.ApplicationProperties[ kvp.Key ] <- kvp.Value
+
+        message
+
+    /// Publishes one persisted Reference Created event with a deterministic identity.
+    let internal publishReferenceCreatedGraceEvent (referenceEvent: ReferenceEvent) =
+        task {
+            let requiresAcceptance = referenceCreatedRequiresBrokerAcceptance referenceEvent.Metadata
+
+            try
+                match pubSubSettings.System, pubSubSettings.AzureServiceBus with
+                | GracePubSubSystem.AzureServiceBus, Some _ ->
+                    let message = createReferenceCreatedServiceBusMessage referenceEvent
+                    do! referencePublicationSender.Value.SendMessageAsync(message)
+
+                    referencePublicationLog.Value.LogInformation(
+                        "{CurrentInstant}: Published Reference Created event via Azure Service Bus. CorrelationId: {CorrelationId}; MessageId: {MessageId}.",
+                        getCurrentInstantExtended (),
+                        referenceEvent.Metadata.CorrelationId,
+                        message.MessageId
+                    )
+                | GracePubSubSystem.AzureServiceBus, None ->
+                    invalidOp "Azure Service Bus is selected for Reference Created publication, but its settings are missing."
+                | otherSystem, _ ->
+                    invalidOp $"Reference Created publication requires Azure Service Bus, but Grace pub-sub is {getDiscriminatedUnionCaseName otherSystem}."
+            with
+            | ex when not requiresAcceptance ->
+                referencePublicationLog.Value.LogError(
+                    ex,
+                    "{CurrentInstant}: Best-effort Reference Created publication failed before stable identity propagation. CorrelationId: {CorrelationId}.",
+                    getCurrentInstantExtended (),
+                    referenceEvent.Metadata.CorrelationId
+                )
+        }
+        :> Task
 
     /// Wraps manifest save contribution plan records exchanged by actor queries or projections.
     type ManifestSaveContributionPlan =
@@ -77,14 +183,14 @@ module Reference =
             let block = manifest.Blocks[index]
 
             if seenContentBlocks.Add block.Address then
-                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address })
 
             index <- index + 1
 
         ranges.ToArray()
 
     /// Coordinates workflow start command for plan logic for the Reference actor.
-    let private workflowStartCommandForPlan plan =
+    let private workflowStartCommandForPlan plan counterRevision =
         let direction = counterCommandDirection plan.CounterCommand
 
         ManifestContributionWorkflowCommand.Start(
@@ -93,7 +199,8 @@ module Reference =
             plan.Manifest.StoragePoolId,
             plan.Manifest.ManifestAddress,
             direction,
-            plan.WorkflowRanges
+            plan.WorkflowRanges,
+            counterRevision
         )
 
     let private planManifestReferences
@@ -179,73 +286,12 @@ module Reference =
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
-    /// Plans plan manifest save expiry boundary for directory versions work for the Reference actor workflow.
-    let planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId directoryVersions correlationId =
-        match planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId directoryVersions correlationId with
-        | Error graceError -> Error graceError
-        | Ok plans ->
-            plans
-            |> List.map (fun plan ->
-                let operationId =
-                    RepositoryContentCounterOperationId $"reference-expiry:{referenceId:N}:{plan.Manifest.StoragePoolId}:{plan.Manifest.ManifestAddress}"
-
-                { plan with
-                    CounterCommand =
-                        RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
-                })
-            |> Ok
-
-    /// Plans plan manifest save expiry boundary work for the Reference actor workflow.
-    let planManifestSaveExpiryBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
-        planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
-
-    /// Coordinates should apply manifest expiry boundary logic for the Reference actor.
-    let shouldApplyManifestExpiryBoundary (referenceDto: ReferenceDto) =
-        referenceDto.ReferenceId <> ReferenceId.Empty
-        && referenceDto.ReferenceType = ReferenceType.Save
-
-    let planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
-        repositoryId
-        referenceId
-        rootDirectoryVersionId
-        (referenceDto: ReferenceDto)
-        (getRecursiveDirectoryVersions: unit -> Task<Grace.Types.DirectoryVersion.DirectoryVersionDto array>)
-        correlationId
-        =
+    /// Completes ordered Reference physical-deletion effects without changing DirectoryVersion-owned manifest retention.
+    let internal completeReferencePhysicalDeletion (removeReferenceRoot: unit -> Task) (afterRootRemoval: unit -> Task) (clearReferenceState: unit -> Task) =
         task {
-            if shouldApplyManifestExpiryBoundary referenceDto then
-                let! directoryVersionDtos = getRecursiveDirectoryVersions ()
-
-                match
-                    planManifestSaveBoundaryForRecursiveDirectoryVersions
-                        repositoryId
-                        referenceId
-                        rootDirectoryVersionId
-                        (directoryVersionDtos
-                         |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
-                        correlationId
-                    with
-                | Error graceError -> return Error graceError
-                | Ok plans ->
-                    return
-                        plans
-                        |> List.map (fun plan ->
-                            let operationId =
-                                RepositoryContentCounterOperationId
-                                    $"reference-expiry:{referenceId:N}:{plan.Manifest.StoragePoolId}:{plan.Manifest.ManifestAddress}"
-
-                            { plan with
-                                CounterCommand =
-                                    RepositoryContentCounterCommand.RemoveReference(
-                                        operationId,
-                                        repositoryId,
-                                        plan.Manifest.StoragePoolId,
-                                        plan.Manifest.ManifestAddress
-                                    )
-                            })
-                        |> Ok
-            else
-                return Ok []
+            do! removeReferenceRoot ()
+            do! afterRootRemoval ()
+            do! clearReferenceState ()
         }
 
     /// Validates reference root directory version hashes before the operation continues.
@@ -258,11 +304,6 @@ module Reference =
 
         let directoryVersionBlake3IsEmpty = String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash)
         let commandBlake3IsEmpty = String.IsNullOrWhiteSpace(string blake3Hash)
-
-        let isLegacyEmptyBlake3Root =
-            isRootDirectoryRelativePath
-            && directoryVersionBlake3IsEmpty
-            && commandBlake3IsEmpty
 
         if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
             Error(
@@ -277,15 +318,13 @@ module Reference =
                     .enhance(nameof DirectoryVersionId, directoryId)
                     .enhance (nameof RelativePath, directoryVersion.RelativePath)
             )
-        elif directoryVersionBlake3IsEmpty
-             && not commandBlake3IsEmpty then
+        elif directoryVersionBlake3IsEmpty then
             Error(
                 (GraceError.Create "Reference root DirectoryVersion must include Blake3Hash before reference creation." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
                     .enhance (nameof DirectoryVersionId, directoryId)
             )
-        elif commandBlake3IsEmpty
-             && not isLegacyEmptyBlake3Root then
+        elif commandBlake3IsEmpty then
             Error(
                 (GraceError.Create "Reference command must include the root DirectoryVersion Blake3Hash." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
@@ -298,8 +337,7 @@ module Reference =
                     .enhance(nameof DirectoryVersionId, directoryId)
                     .enhance (nameof Sha256Hash, sha256Hash)
             )
-        elif directoryVersion.Blake3Hash <> blake3Hash
-             && not isLegacyEmptyBlake3Root then
+        elif directoryVersion.Blake3Hash <> blake3Hash then
             Error(
                 (GraceError.Create "Reference command Blake3Hash does not match the root DirectoryVersion Blake3Hash." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
@@ -308,41 +346,6 @@ module Reference =
             )
         else
             Ok()
-
-    let internal repairLegacyCreatedEventBlake3
-        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion>)
-        (referenceEvent: ReferenceEvent)
-        =
-        task {
-            match referenceEvent.Event with
-            | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) when
-                String.IsNullOrWhiteSpace(string blake3Hash)
-                ->
-                let! directoryVersion = getDirectoryVersion repositoryId directoryId referenceEvent.Metadata.CorrelationId
-
-                match ReferenceDto.TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash directoryVersion with
-                | Some (repairedSha256Hash, repairedBlake3Hash) ->
-                    return
-                        { referenceEvent with
-                            Event =
-                                Created(
-                                    referenceId,
-                                    ownerId,
-                                    organizationId,
-                                    repositoryId,
-                                    branchId,
-                                    directoryId,
-                                    repairedSha256Hash,
-                                    repairedBlake3Hash,
-                                    referenceType,
-                                    referenceText,
-                                    links
-                                )
-                        },
-                        true
-                | None -> return referenceEvent, false
-            | _ -> return referenceEvent, false
-        }
 
     /// Builds command matches reference data needed by the Reference actor.
     let internal createCommandMatchesReference (referenceDto: ReferenceDto) command =
@@ -362,69 +365,56 @@ module Reference =
             && (referenceDto.Links |> Seq.toArray) = (links |> Seq.toArray)
         | _ -> false
 
+    /// Derives the versioned stable reminder identity for one Reference's automatic physical deletion.
+    let internal automaticPhysicalDeletionReminderId (repositoryId: RepositoryId) (referenceId: ReferenceId) =
+        let seed = $"grace.reference-automatic-physical-deletion.v1|{repositoryId:N}|{referenceId:N}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed))
+        let guidBytes = hash[0..15]
+        guidBytes[7] <- (guidBytes[7] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        ReminderId(guidBytes)
+
+    /// Compares only stable Reference target facts while allowing the first durable reminder metadata to remain unchanged.
+    let internal automaticPhysicalDeletionReminderMatches (requested: ReminderDto) (existing: ReminderDto) =
+        requested.ReminderId = existing.ReminderId
+        && requested.ActorName = existing.ActorName
+        && requested.ActorId = existing.ActorId
+        && requested.OwnerId = existing.OwnerId
+        && requested.OrganizationId = existing.OrganizationId
+        && requested.RepositoryId = existing.RepositoryId
+        && requested.ReminderType = existing.ReminderType
+        && match requested.State, existing.State with
+           | ReminderState.ReferencePhysicalDeletion requestedState, ReminderState.ReferencePhysicalDeletion existingState ->
+               requestedState.RepositoryId = existingState.RepositoryId
+               && requestedState.BranchId = existingState.BranchId
+               && requestedState.DirectoryVersionId = existingState.DirectoryVersionId
+               && requestedState.Sha256Hash = existingState.Sha256Hash
+               && requestedState.Blake3Hash = existingState.Blake3Hash
+           | _ -> false
+
     /// Attempts to create manifest contribution start and returns no value when the required invariant is not met.
     let tryCreateManifestContributionStart plan intent =
         match intent with
-        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, counterRevision) when
             repositoryId = plan.RepositoryId
             && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Increment
             ->
-            Some(workflowStartCommandForPlan plan)
-        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
+            Some(workflowStartCommandForPlan plan counterRevision)
+        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, counterRevision) when
             repositoryId = plan.RepositoryId
             && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Decrement
             ->
-            Some(workflowStartCommandForPlan plan)
+            Some(workflowStartCommandForPlan plan counterRevision)
         | _ -> None
 
-    /// Coordinates counter command operation id logic for the Reference actor.
-    let private counterCommandOperationId command =
-        match command with
-        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _)
-        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> Some operationId
-
-    /// Coordinates command crossed zero logic for the Reference actor.
-    let private commandCrossedZero operationId command events =
-        let mutable referenceCount = 0L
-        let mutable crossedZero = false
-
-        for counterEvent in events do
-            match counterEvent.Event with
-            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _, _) ->
-                if eventOperationId = operationId
-                   && referenceCount = 0L
-                   && counterCommandDirection command = ManifestContributionDirection.Increment then
-                    crossedZero <- true
-
-                referenceCount <- referenceCount + 1L
-            | RepositoryContentCounterEventType.ReferenceRemoved eventOperationId ->
-                if eventOperationId = operationId
-                   && referenceCount = 1L
-                   && counterCommandDirection command = ManifestContributionDirection.Decrement then
-                    crossedZero <- true
-
-                referenceCount <- max 0L (referenceCount - 1L)
-
-        crossedZero
-
-    /// Attempts to create manifest contribution start for counter decision and returns no value when the required invariant is not met.
-    let tryCreateManifestContributionStartForCounterDecision plan (decision: RepositoryContentCounterDecision) events =
-        let startFromIntent =
-            decision.Intents
-            |> List.tryPick (tryCreateManifestContributionStart plan)
-
-        match startFromIntent with
-        | Some startCommand -> Some startCommand
-        | None when decision.WasIdempotentReplay ->
-            match counterCommandOperationId plan.CounterCommand with
-            | Some operationId when commandCrossedZero operationId plan.CounterCommand events -> Some(workflowStartCommandForPlan plan)
-            | None
-            | Some _ -> None
-        | None -> None
+    /// Creates workflow work only from the counter decision's revision-bearing zero-crossing intent.
+    let tryCreateManifestContributionStartForCounterDecision plan (decision: RepositoryContentCounterDecision) _events =
+        decision.Intents
+        |> List.tryPick (tryCreateManifestContributionStart plan)
 
     /// Builds repository content counter actor data needed by the Reference actor.
     let private createRepositoryContentCounterActor repositoryId storagePoolId manifestAddress correlationId =
@@ -485,8 +475,14 @@ module Reference =
                                 metadata.CorrelationId
 
                         match startCommand with
-                        | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
-                            match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata with
+                        | ManifestContributionWorkflowCommand.Start (operationId,
+                                                                     repositoryId,
+                                                                     storagePoolId,
+                                                                     manifestAddress,
+                                                                     direction,
+                                                                     ranges,
+                                                                     counterRevision) ->
+                            match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision metadata with
                             | Ok _ -> ()
                             | Error graceError -> error <- Some graceError
                         | _ -> error <- Some(GraceError.Create "Manifest contribution save boundary expected a workflow start command." metadata.CorrelationId)
@@ -499,7 +495,11 @@ module Reference =
         }
 
     /// Implements the Orleans grain for reference actor.
-    type ReferenceActor([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>) =
+    type ReferenceActor
+        (
+            [<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>,
+            exactRelationships: IExactRelationshipStore
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.Reference
@@ -519,31 +519,8 @@ module Reference =
 
                 logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-                /// Returns directory version data from the Reference actor state or related storage.
-                let getDirectoryVersion repositoryId directoryId correlationId =
-                    task {
-                        let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
-                        let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
-                        return directoryVersionDto.DirectoryVersion
-                    }
-
-                let! repairResults =
-                    state.State
-                    |> Seq.map (fun referenceEvent -> task { return! repairLegacyCreatedEventBlake3 getDirectoryVersion referenceEvent })
-                    |> Task.WhenAll
-
-                let repairedLegacyCreatedEvent =
-                    repairResults
-                    |> Array.exists (fun (_, wasRepaired) -> wasRepaired)
-
-                if repairedLegacyCreatedEvent then
-                    state.State.Clear()
-                    state.State.AddRange(repairResults |> Array.map fst)
-                    do! state.WriteStateAsync()
-
                 referenceDto <-
-                    repairResults
-                    |> Array.map fst
+                    state.State
                     |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
             }
             :> Task
@@ -584,56 +561,50 @@ module Reference =
                             else
                                 referenceDto.ReferenceId
 
-                        let! boundaryResult =
-                            task {
-                                if shouldApplyManifestExpiryBoundary referenceDto then
-                                    let directoryVersionActorProxy =
-                                        DirectoryVersion.CreateActorProxy
-                                            physicalDeletionReminderState.DirectoryVersionId
+                        do!
+                            completeReferencePhysicalDeletion
+                                (fun () ->
+                                    task {
+                                        let relationship =
+                                            ExactRelationship.ReferenceRoot
+                                                {
+                                                    RepositoryId = physicalDeletionReminderState.RepositoryId
+                                                    RootDirectoryVersionId = physicalDeletionReminderState.DirectoryVersionId
+                                                    ReferenceId = referenceId
+                                                }
+
+                                        let! _ = exactRelationships.EnsureAbsentAsync(relationship, CancellationToken.None)
+
+                                        match! exactRelationships.VerifyAsync(relationship, CancellationToken.None) with
+                                        | ExactRelationshipPresence.Absent -> ()
+                                        | ExactRelationshipPresence.Present ->
+                                            invalidOp $"Reference-root relationship remained present for Reference {referenceId}."
+                                    })
+                                (fun () ->
+                                    // Mark the branch as needing to update its latest references.
+                                    let branchActorProxy =
+                                        Branch.CreateActorProxy
+                                            physicalDeletionReminderState.BranchId
                                             physicalDeletionReminderState.RepositoryId
                                             this.correlationId
 
-                                    match!
-                                        planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
-                                            physicalDeletionReminderState.RepositoryId
-                                            referenceId
-                                            physicalDeletionReminderState.DirectoryVersionId
-                                            referenceDto
-                                            (fun () -> directoryVersionActorProxy.GetRecursiveDirectoryVersions true this.correlationId)
-                                            this.correlationId
-                                        with
-                                    | Error graceError -> return Error graceError
-                                    | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
-                                else
-                                    return Ok()
-                            }
+                                    branchActorProxy.MarkForRecompute physicalDeletionReminderState.CorrelationId)
+                                (fun () -> state.ClearStateAsync())
 
-                        match boundaryResult with
-                        | Error graceError -> return Error graceError
-                        | Ok () ->
-                            // Mark the branch as needing to update its latest references.
-                            let branchActorProxy =
-                                Branch.CreateActorProxy physicalDeletionReminderState.BranchId physicalDeletionReminderState.RepositoryId this.correlationId
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            physicalDeletionReminderState.CorrelationId,
+                            physicalDeletionReminderState.RepositoryId,
+                            physicalDeletionReminderState.BranchId,
+                            referenceId,
+                            physicalDeletionReminderState.DirectoryVersionId,
+                            physicalDeletionReminderState.DeleteReason
+                        )
 
-                            do! branchActorProxy.MarkForRecompute physicalDeletionReminderState.CorrelationId
-
-                            // Delete saved state for this actor.
-                            do! state.ClearStateAsync()
-
-                            log.LogInformation(
-                                "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                getCurrentInstantExtended (),
-                                getMachineName,
-                                physicalDeletionReminderState.CorrelationId,
-                                physicalDeletionReminderState.RepositoryId,
-                                physicalDeletionReminderState.BranchId,
-                                referenceId,
-                                physicalDeletionReminderState.DirectoryVersionId,
-                                physicalDeletionReminderState.DeleteReason
-                            )
-
-                            this.DeactivateOnIdle()
-                            return Ok()
+                        this.DeactivateOnIdle()
+                        return Ok()
                     | reminderType, state ->
                         return
                             Error(
@@ -650,85 +621,24 @@ module Reference =
                 let correlationId = referenceEvent.Metadata.CorrelationId
 
                 try
-                    // Add the event to the referenceEvents list, and save it to actor state.
-                    state.State.Add(referenceEvent)
-                    do! state.WriteStateAsync()
+                    /// Persists the event and refreshes this activation before any publication attempt.
+                    let persistEvent () =
+                        task {
+                            state.State.Add(referenceEvent)
+                            do! state.WriteStateAsync()
 
-                    // Update the referenceDto with the event.
-                    referenceDto <-
-                        referenceDto
-                        |> ReferenceDto.UpdateDto referenceEvent
+                            referenceDto <-
+                                referenceDto
+                                |> ReferenceDto.UpdateDto referenceEvent
+                        }
+                        :> Task
 
-                    // Publish the event to the rest of the world.
-                    let graceEvent = GraceEvent.ReferenceEvent referenceEvent
-                    do! publishGraceEvent graceEvent referenceEvent.Metadata
-
-                    // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with
-                    | Created (referenceId,
-                               ownerId,
-                               organizationId,
-                               repositoryId,
-                               branchId,
-                               directoryId,
-                               sha256Hash,
-                               blake3Hash,
-                               referenceType,
-                               referenceText,
-                               links) ->
-                        do!
-                            match referenceDto.ReferenceType with
-                            | ReferenceType.Save ->
-                                task {
-                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId correlationId
-                                    let! repositoryDto = repositoryActorProxy.Get correlationId
-
-                                    let reminderState: PhysicalDeletionReminderState =
-                                        {
-                                            RepositoryId = referenceDto.RepositoryId
-                                            BranchId = referenceDto.BranchId
-                                            DirectoryVersionId = referenceDto.DirectoryId
-                                            Sha256Hash = referenceDto.Sha256Hash
-                                            Blake3Hash = referenceDto.Blake3Hash
-                                            DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days"
-                                            CorrelationId = correlationId
-                                        }
-
-                                    do!
-                                        (this :> IGraceReminderWithGuidKey)
-                                            .ScheduleReminderAsync
-                                            ReminderTypes.PhysicalDeletion
-                                            (Duration.FromDays(float repositoryDto.SaveDays))
-                                            (ReminderState.ReferencePhysicalDeletion reminderState)
-                                            correlationId
-                                }
-                            | ReferenceType.Checkpoint ->
-                                task {
-                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId correlationId
-                                    let! repositoryDto = repositoryActorProxy.Get correlationId
-
-                                    let reminderState: PhysicalDeletionReminderState =
-                                        {
-                                            RepositoryId = referenceDto.RepositoryId
-                                            BranchId = referenceDto.BranchId
-                                            DirectoryVersionId = referenceDto.DirectoryId
-                                            Sha256Hash = referenceDto.Sha256Hash
-                                            Blake3Hash = referenceDto.Blake3Hash
-                                            DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
-                                            CorrelationId = correlationId
-                                        }
-
-                                    do!
-                                        (this :> IGraceReminderWithGuidKey)
-                                            .ScheduleReminderAsync
-                                            ReminderTypes.PhysicalDeletion
-                                            (Duration.FromDays(float repositoryDto.CheckpointDays))
-                                            (ReminderState.ReferencePhysicalDeletion reminderState)
-                                            correlationId
-                                }
-                            | _ -> () |> returnTask
-                            :> Task
-                    | _ -> ()
+                    | ReferenceEventType.Created _ ->
+                        do! persistReferenceCreatedThenPublish persistEvent (fun () -> publishReferenceCreatedGraceEvent referenceEvent)
+                    | _ ->
+                        do! persistEvent ()
+                        do! publishGraceEvent (GraceEvent.ReferenceEvent referenceEvent) referenceEvent.Metadata
 
                     let graceReturnValue =
                         (GraceReturnValue.Create referenceDto correlationId)
@@ -764,7 +674,10 @@ module Reference =
                             .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
                             .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName referenceEvent.Event)
 
-                    return Error graceError
+                    return
+                        match referenceEvent.Event with
+                        | ReferenceEventType.Created _ -> Error(graceError.enhance ("IsRetryable", "true"))
+                        | _ -> Error graceError
             }
 
         interface IHasRepositoryId with
@@ -789,6 +702,104 @@ module Reference =
             member this.GetReferenceType correlationId =
                 this.correlationId <- correlationId
                 referenceDto.ReferenceType |> returnTask
+
+            /// Converges the existing Save or Checkpoint automatic-expiry reminder through its stable Reminder actor.
+            member this.EnsureAutomaticPhysicalDeletionReminderAsync correlationId =
+                task {
+                    this.correlationId <- correlationId
+
+                    match referenceDto.ReferenceType with
+                    | ReferenceType.Save
+                    | ReferenceType.Checkpoint ->
+                        let repositoryActor = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId correlationId
+
+                        let! repositoryDto = repositoryActor.Get correlationId
+
+                        let days, label =
+                            match referenceDto.ReferenceType with
+                            | ReferenceType.Save -> repositoryDto.SaveDays, "Save"
+                            | _ -> repositoryDto.CheckpointDays, "Checkpoint"
+
+                        let reminderState: PhysicalDeletionReminderState =
+                            {
+                                RepositoryId = referenceDto.RepositoryId
+                                BranchId = referenceDto.BranchId
+                                DirectoryVersionId = referenceDto.DirectoryId
+                                Sha256Hash = referenceDto.Sha256Hash
+                                Blake3Hash = referenceDto.Blake3Hash
+                                DeleteReason = $"{label}: automatic deletion after {days} days"
+                                CorrelationId = correlationId
+                            }
+
+                        let reminderId = automaticPhysicalDeletionReminderId referenceDto.RepositoryId referenceDto.ReferenceId
+
+                        let requestedReminder =
+                            ReminderDto.CreateWithId
+                                reminderId
+                                actorName
+                                $"{this.IdentityString}"
+                                referenceDto.OwnerId
+                                referenceDto.OrganizationId
+                                referenceDto.RepositoryId
+                                ReminderTypes.PhysicalDeletion
+                                (getFutureInstant (Duration.FromDays(float days)))
+                                (ReminderState.ReferencePhysicalDeletion reminderState)
+                                correlationId
+
+                        let reminderActor = Reminder.CreateActorProxy reminderId correlationId
+                        let! existingReminder = reminderActor.GetOrAdd requestedReminder correlationId
+
+                        if not (automaticPhysicalDeletionReminderMatches requestedReminder existingReminder) then
+                            invalidOp
+                                $"Automatic physical-deletion reminder {reminderId} targets different stable Reference data for Reference {referenceDto.ReferenceId}."
+                    | _ -> ()
+                }
+                :> Task
+
+            /// Republishes the original persisted Created event without rewriting Reference state.
+            member this.RepublishCreated correlationId =
+                task {
+                    this.correlationId <- correlationId
+
+                    match state.State
+                          |> Seq.tryFind (fun referenceEvent ->
+                              match referenceEvent.Event with
+                              | ReferenceEventType.Created _ -> true
+                              | _ -> false)
+                        with
+                    | None ->
+                        return
+                            Error(
+                                (GraceError.Create (getErrorMessage ReferenceError.FailedWhileApplyingEvent) correlationId)
+                                    .enhance ("IsRetryable", "true")
+                            )
+                    | Some createdEvent ->
+                        try
+                            do! publishReferenceCreatedGraceEvent createdEvent
+
+                            return
+                                Ok(
+                                    (GraceReturnValue.Create referenceDto correlationId)
+                                        .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                                        .enhance(nameof BranchId, referenceDto.BranchId)
+                                        .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                                        .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                                        .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                                        .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName createdEvent.Event)
+                                )
+                        with
+                        | ex ->
+                            return
+                                Error(
+                                    (GraceError.CreateWithException ex (getErrorMessage ReferenceError.FailedWhileApplyingEvent) correlationId)
+                                        .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                                        .enhance(nameof BranchId, referenceDto.BranchId)
+                                        .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                                        .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                                        .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                                        .enhance ("IsRetryable", "true")
+                                )
+                }
 
             /// Reports whether this Reference actor state is marked logically deleted.
             member this.IsDeleted correlationId =
@@ -830,79 +841,66 @@ module Reference =
 
                 /// Runs Reference command decisions, applies emitted events, and persists the result.
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
-                    /// Coordinates applies manifest boundary logic for the Reference actor.
-                    let appliesManifestBoundary referenceType = referenceType = ReferenceType.Save
-
-                    /// Applies reference manifest boundary changes to the Reference actor state.
-                    let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType =
-                        task {
-                            if not (appliesManifestBoundary referenceType) then
-                                return Ok()
-                            else
-                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
-
-                                match
-                                    planManifestSaveBoundaryForRecursiveDirectoryVersions
-                                        repositoryId
-                                        referenceId
-                                        directoryId
-                                        (directoryVersionDtos
-                                         |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
-                                        metadata.CorrelationId
-                                    with
-                                | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
-                        }
-
-                    /// Applies reference manifest expiry boundary changes to the Reference actor state.
-                    let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType =
-                        task {
-                            if not (appliesManifestBoundary referenceType) then
-                                return Ok()
-                            else
-                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
-
-                                match!
-                                    planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
-                                        repositoryId
-                                        referenceId
-                                        directoryId
-                                        referenceDto
-                                        (fun () -> Task.FromResult directoryVersionDtos)
-                                        metadata.CorrelationId
-                                    with
-                                | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
-                        }
-
-                    /// Coordinates existing reference return value logic for the Reference actor.
-                    let existingReferenceReturnValue () =
+                    /// Builds the stable Reference response metadata for one persisted or completed event.
+                    let referenceReturnValue referenceEventType =
                         (GraceReturnValue.Create referenceDto metadata.CorrelationId)
                             .enhance(nameof RepositoryId, referenceDto.RepositoryId)
                             .enhance(nameof BranchId, referenceDto.BranchId)
                             .enhance(nameof ReferenceId, referenceDto.ReferenceId)
                             .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
                             .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
-                            .enhance (
-                                nameof ReferenceEventType,
-                                getDiscriminatedUnionFullName (
-                                    Created(
-                                        referenceDto.ReferenceId,
-                                        referenceDto.OwnerId,
-                                        referenceDto.OrganizationId,
-                                        referenceDto.RepositoryId,
-                                        referenceDto.BranchId,
-                                        referenceDto.DirectoryId,
-                                        referenceDto.Sha256Hash,
-                                        referenceDto.Blake3Hash,
-                                        referenceDto.ReferenceType,
-                                        referenceDto.ReferenceText,
-                                        referenceDto.Links
-                                    )
-                                )
+                            .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName referenceEventType)
+
+                    /// Coordinates existing reference return value logic for the Reference actor.
+                    let existingReferenceReturnValue () =
+                        referenceReturnValue (
+                            Created(
+                                referenceDto.ReferenceId,
+                                referenceDto.OwnerId,
+                                referenceDto.OrganizationId,
+                                referenceDto.RepositoryId,
+                                referenceDto.BranchId,
+                                referenceDto.DirectoryId,
+                                referenceDto.Sha256Hash,
+                                referenceDto.Blake3Hash,
+                                referenceDto.ReferenceType,
+                                referenceDto.ReferenceText,
+                                referenceDto.Links
                             )
+                        )
+
+                    /// Reconstructs and republishes the persisted Created event for an exact matching identity retry.
+                    let republishSavedCreatedEvent () =
+                        task {
+                            match state.State
+                                  |> Seq.tryFind (fun referenceEvent ->
+                                      match referenceEvent.Event with
+                                      | ReferenceEventType.Created _ -> true
+                                      | _ -> false)
+                                with
+                            | None ->
+                                return
+                                    Error(
+                                        (GraceError.Create (getErrorMessage ReferenceError.FailedWhileApplyingEvent) metadata.CorrelationId)
+                                            .enhance ("IsRetryable", "true")
+                                    )
+                            | Some createdEvent ->
+                                try
+                                    do! publishReferenceCreatedGraceEvent createdEvent
+                                    return Ok(existingReferenceReturnValue ())
+                                with
+                                | ex ->
+                                    return
+                                        Error(
+                                            (GraceError.CreateWithException ex (getErrorMessage ReferenceError.FailedWhileApplyingEvent) metadata.CorrelationId)
+                                                .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                                                .enhance(nameof BranchId, referenceDto.BranchId)
+                                                .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                                                .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                                                .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                                                .enhance ("IsRetryable", "true")
+                                        )
+                        }
 
                     /// Validates root directory version hashes before the operation continues.
                     let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =
@@ -922,12 +920,7 @@ module Reference =
 
                     task {
                         match command with
-                        | Create (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) when
-                            createCommandMatchesReference referenceDto command
-                            ->
-                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
-                            | Ok () -> return Ok(existingReferenceReturnValue ())
-                            | Error graceError -> return Error graceError
+                        | Create _ when createCommandMatchesReference referenceDto command -> return! republishSavedCreatedEvent ()
                         | _ ->
                             let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
                                 task {
@@ -945,25 +938,22 @@ module Reference =
                                               links) ->
                                         match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                         | Ok () ->
-                                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
-                                            | Ok () ->
-                                                return
-                                                    Ok(
-                                                        Created(
-                                                            referenceId,
-                                                            ownerId,
-                                                            organizationId,
-                                                            repositoryId,
-                                                            branchId,
-                                                            directoryId,
-                                                            sha256Hash,
-                                                            blake3Hash,
-                                                            referenceType,
-                                                            referenceText,
-                                                            links
-                                                        )
+                                            return
+                                                Ok(
+                                                    Created(
+                                                        referenceId,
+                                                        ownerId,
+                                                        organizationId,
+                                                        repositoryId,
+                                                        branchId,
+                                                        directoryId,
+                                                        sha256Hash,
+                                                        blake3Hash,
+                                                        referenceType,
+                                                        referenceText,
+                                                        links
                                                     )
-                                            | Error graceError -> return Error graceError
+                                                )
                                         | Error graceError -> return Error graceError
                                     | AddLink link -> return Ok(LinkAdded link)
                                     | RemoveLink link -> return Ok(LinkRemoved link)
@@ -1013,23 +1003,36 @@ module Reference =
 
                                         return Ok(LogicalDeleted(force, deleteReason))
                                     | DeletePhysical ->
-                                        match!
-                                            applyReferenceManifestExpiryBoundary
-                                                referenceDto.ReferenceId
-                                                referenceDto.RepositoryId
-                                                referenceDto.DirectoryId
-                                                referenceDto.ReferenceType
-                                            with
-                                        | Ok () ->
-                                            // Delete the actor state and mark the actor as deactivated.
-                                            do! state.ClearStateAsync()
-                                            this.DeactivateOnIdle()
-                                            return Ok PhysicalDeleted
-                                        | Error graceError -> return Error graceError
+                                        let relationship =
+                                            ExactRelationship.ReferenceRoot
+                                                {
+                                                    RepositoryId = referenceDto.RepositoryId
+                                                    RootDirectoryVersionId = referenceDto.DirectoryId
+                                                    ReferenceId = referenceDto.ReferenceId
+                                                }
+
+                                        do!
+                                            completeReferencePhysicalDeletion
+                                                (fun () ->
+                                                    task {
+                                                        let! _ = exactRelationships.EnsureAbsentAsync(relationship, CancellationToken.None)
+
+                                                        match! exactRelationships.VerifyAsync(relationship, CancellationToken.None) with
+                                                        | ExactRelationshipPresence.Absent -> ()
+                                                        | ExactRelationshipPresence.Present ->
+                                                            invalidOp $"Reference-root relationship remained present for Reference {referenceDto.ReferenceId}."
+                                                    })
+                                                (fun () ->
+                                                    publishGraceEvent (GraceEvent.ReferenceEvent { Event = PhysicalDeleted; Metadata = metadata }) metadata)
+                                                (fun () -> state.ClearStateAsync())
+
+                                        this.DeactivateOnIdle()
+                                        return Ok PhysicalDeleted
                                     | Undelete -> return Ok Undeleted
                                 }
 
                             match referenceEventTypeResult with
+                            | Ok ReferenceEventType.PhysicalDeleted -> return Ok(referenceReturnValue PhysicalDeleted)
                             | Ok referenceEventType ->
                                 let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
                                 return! this.ApplyEvent referenceEvent

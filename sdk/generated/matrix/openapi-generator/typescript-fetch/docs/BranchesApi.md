@@ -5,9 +5,11 @@ All URIs are relative to *http://localhost:5000*
 | Method | HTTP request | Description |
 |------------- | ------------- | -------------|
 | [**annotateBranch**](BranchesApi.md#annotatebranch) | **POST** /branch/annotate | Annotate a branch reference. |
+| [**assignBranch**](BranchesApi.md#assignbranch) | **POST** /branch/assign | Assign a promotion to a branch. |
 | [**checkpointBranch**](BranchesApi.md#checkpointbranch) | **POST** /branch/checkpoint | Checkpoint the current branch content. |
 | [**commitBranch**](BranchesApi.md#commitbranch) | **POST** /branch/commit | Commit the current branch content. |
 | [**createBranch**](BranchesApi.md#createbranch) | **POST** /branch/create | Create a branch. |
+| [**createExternalBranchReference**](BranchesApi.md#createexternalbranchreference) | **POST** /branch/createExternal | Create an external Reference. |
 | [**deleteBranch**](BranchesApi.md#deletebranch) | **POST** /branch/delete | Delete a branch. |
 | [**enableBranchCheckpoint**](BranchesApi.md#enablebranchcheckpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references. |
 | [**enableBranchCommit**](BranchesApi.md#enablebranchcommit) | **POST** /branch/enableCommit | Enable or disable commit references. |
@@ -17,6 +19,7 @@ All URIs are relative to *http://localhost:5000*
 | [**getBranch**](BranchesApi.md#getbranch) | **POST** /branch/get | Get a branch. |
 | [**getBranchReference**](BranchesApi.md#getbranchreference) | **POST** /branch/getReference | Get a branch reference. |
 | [**getParentBranch**](BranchesApi.md#getparentbranch) | **POST** /branch/getParentBranch | Get the parent branch. |
+| [**getReferenceMaterializationBoundary**](BranchesApi.md#getreferencematerializationboundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary. |
 | [**listBranchCheckpoints**](BranchesApi.md#listbranchcheckpoints) | **POST** /branch/getCheckpoints | List branch checkpoints. |
 | [**listBranchCommits**](BranchesApi.md#listbranchcommits) | **POST** /branch/getCommits | List branch commits. |
 | [**listBranchPromotions**](BranchesApi.md#listbranchpromotions) | **POST** /branch/getPromotions | List branch promotions. |
@@ -25,6 +28,8 @@ All URIs are relative to *http://localhost:5000*
 | [**listBranchTags**](BranchesApi.md#listbranchtags) | **POST** /branch/getTags | List branch tags. |
 | [**promoteBranch**](BranchesApi.md#promotebranch) | **POST** /branch/promote | Promote the current branch content. |
 | [**rebaseBranch**](BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch. |
+| [**replayReferenceEvents**](BranchesApi.md#replayreferenceevents) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events. |
+| [**resolveReferenceEventBoundary**](BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline. |
 | [**saveBranch**](BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content. |
 | [**tagBranch**](BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content. |
 
@@ -57,7 +62,7 @@ async function example() {
 
   const body = {
     // AnnotateParameters
-    annotateParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["commit","save"],"MaxReferences":1000,"IncludeLineText":true},
+    annotateParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["Commit","Save"],"MaxReferences":1000,"IncludeLineText":true},
   } satisfies AnnotateBranchRequest;
 
   try {
@@ -82,6 +87,79 @@ example().catch(console.error);
 ### Return type
 
 [**BranchAnnotationReturnValue**](BranchAnnotationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## assignBranch
+
+> BranchCommandReturnValue assignBranch(assignParameters)
+
+Assign a promotion to a branch.
+
+Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  BranchesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { AssignBranchRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new BranchesApi(config);
+
+  const body = {
+    // AssignParameters
+    assignParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Assign release candidate."},
+  } satisfies AssignBranchRequest;
+
+  try {
+    const data = await api.assignBranch(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **assignParameters** | [AssignParameters](AssignParameters.md) |  | |
+
+### Return type
+
+[**BranchCommandReturnValue**](BranchCommandReturnValue.md)
 
 ### Authorization
 
@@ -130,7 +208,7 @@ async function example() {
 
   const body = {
     // CreateReferenceParameters
-    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Checkpoint release candidate."},
+    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Checkpoint release candidate."},
   } satisfies CheckpointBranchRequest;
 
   try {
@@ -203,7 +281,7 @@ async function example() {
 
   const body = {
     // CreateReferenceParameters
-    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Commit release candidate."},
+    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Commit release candidate."},
   } satisfies CommitBranchRequest;
 
   try {
@@ -276,7 +354,7 @@ async function example() {
 
   const body = {
     // CreateBranchParameters
-    createBranchParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","InitialPermissions":["commit","checkpoint","save","tag"]},
+    createBranchParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","InitialPermissions":["Commit","Checkpoint","Save","Tag"]},
   } satisfies CreateBranchRequest;
 
   try {
@@ -297,6 +375,79 @@ example().catch(console.error);
 | Name | Type | Description  | Notes |
 |------------- | ------------- | ------------- | -------------|
 | **createBranchParameters** | [CreateBranchParameters](CreateBranchParameters.md) |  | |
+
+### Return type
+
+[**BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## createExternalBranchReference
+
+> BranchCommandReturnValue createExternalBranchReference(createReferenceParameters)
+
+Create an external Reference.
+
+Creates an external Reference pointing to the supplied root directory version.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  BranchesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { CreateExternalBranchReferenceRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new BranchesApi(config);
+
+  const body = {
+    // CreateReferenceParameters
+    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Capture external system state."},
+  } satisfies CreateExternalBranchReferenceRequest;
+
+  try {
+    const data = await api.createExternalBranchReference(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **createReferenceParameters** | [CreateReferenceParameters](CreateReferenceParameters.md) |  | |
 
 ### Return type
 
@@ -979,6 +1130,79 @@ example().catch(console.error);
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
+## getReferenceMaterializationBoundary
+
+> ReferenceMaterializationBoundaryReturnValue getReferenceMaterializationBoundary(getReferenceMaterializationBoundaryParameters)
+
+Resolve a Connect materialization boundary.
+
+Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  BranchesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { GetReferenceMaterializationBoundaryRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new BranchesApi(config);
+
+  const body = {
+    // GetReferenceMaterializationBoundaryParameters
+    getReferenceMaterializationBoundaryParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false},
+  } satisfies GetReferenceMaterializationBoundaryRequest;
+
+  try {
+    const data = await api.getReferenceMaterializationBoundary(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **getReferenceMaterializationBoundaryParameters** | [GetReferenceMaterializationBoundaryParameters](GetReferenceMaterializationBoundaryParameters.md) |  | |
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
 ## listBranchCheckpoints
 
 > ReferenceListReturnValue listBranchCheckpoints(getReferencesParameters)
@@ -1444,7 +1668,7 @@ async function example() {
 
   const body = {
     // CreateReferenceParameters
-    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Capture release candidate."},
+    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Capture release candidate."},
   } satisfies PromoteBranchRequest;
 
   try {
@@ -1517,7 +1741,7 @@ async function example() {
 
   const body = {
     // RebaseParameters
-    rebaseParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","InitialPermissions":["commit","checkpoint","save","tag"],"BasedOn":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a"},
+    rebaseParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchName":"release-2026-06","ParentBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"d94dd932-16b8-4f0b-8c2f-7e7f4fe23370","InitialPermissions":["Commit","Checkpoint","Save","Tag"],"BasedOn":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a"},
   } satisfies RebaseBranchRequest;
 
   try {
@@ -1542,6 +1766,152 @@ example().catch(console.error);
 ### Return type
 
 [**BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## replayReferenceEvents
+
+> ReferenceReplayReturnValue replayReferenceEvents(replayReferenceEventsParameters)
+
+Replay cursor-new Reference events.
+
+Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  BranchesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { ReplayReferenceEventsRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new BranchesApi(config);
+
+  const body = {
+    // ReplayReferenceEventsParameters
+    replayReferenceEventsParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"CursorRepositoryId":"46a7e2f4-58ad-43e8-883e-33c564b4a98b","CursorBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","EventCursor":"branch-event-v1:42"},
+  } satisfies ReplayReferenceEventsRequest;
+
+  try {
+    const data = await api.replayReferenceEvents(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **replayReferenceEventsParameters** | [ReplayReferenceEventsParameters](ReplayReferenceEventsParameters.md) |  | |
+
+### Return type
+
+[**ReferenceReplayReturnValue**](ReferenceReplayReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## resolveReferenceEventBoundary
+
+> ReferenceMaterializationBoundaryReturnValue resolveReferenceEventBoundary(resolveReferenceEventBoundaryParameters)
+
+Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+
+Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  BranchesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { ResolveReferenceEventBoundaryRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new BranchesApi(config);
+
+  const body = {
+    // ResolveReferenceEventBoundaryParameters
+    resolveReferenceEventBoundaryParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"DirectoryVersionId":"1686fe2c-954c-4f7d-b630-8db88ffc5982","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d"},
+  } satisfies ResolveReferenceEventBoundaryRequest;
+
+  try {
+    const data = await api.resolveReferenceEventBoundary(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **resolveReferenceEventBoundaryParameters** | [ResolveReferenceEventBoundaryParameters](ResolveReferenceEventBoundaryParameters.md) |  | |
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
 
 ### Authorization
 
@@ -1590,7 +1960,7 @@ async function example() {
 
   const body = {
     // CreateReferenceParameters
-    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Save release candidate."},
+    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Save release candidate."},
   } satisfies SaveBranchRequest;
 
   try {
@@ -1663,7 +2033,7 @@ async function example() {
 
   const body = {
     // CreateReferenceParameters
-    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Tag release candidate."},
+    createReferenceParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","ReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d","Message":"Tag release candidate."},
   } satisfies TagBranchRequest;
 
   try {

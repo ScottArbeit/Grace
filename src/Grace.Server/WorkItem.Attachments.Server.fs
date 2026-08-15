@@ -68,24 +68,37 @@ module WorkItemAttachments =
         let promptArtifactIds = ResizeArray<ArtifactId>()
         let reviewNotesArtifactIds = ResizeArray<ArtifactId>()
         let otherArtifactIds = ResizeArray<ArtifactId>()
+        let visibleArtifactIds = ResizeArray<ArtifactId>()
 
         workItemDto.ArtifactIds
         |> Seq.iter (fun artifactId ->
             match artifactMetadataById[artifactId] with
+            | Some artifactMetadata when
+                artifactMetadata.IsDeleted
+                || (tryClassifyArtifactType artifactMetadata.ArtifactType
+                    |> Option.isSome
+                    && artifactMetadata.WorkItemId
+                       <> Some workItemDto.WorkItemId)
+                ->
+                ()
             | Some artifactMetadata ->
+                visibleArtifactIds.Add(artifactId)
+
                 match artifactMetadata.ArtifactType with
                 | ArtifactType.AgentSummary -> agentSummaryArtifactIds.Add(artifactId)
                 | ArtifactType.Prompt -> promptArtifactIds.Add(artifactId)
                 | ArtifactType.ReviewNotes -> reviewNotesArtifactIds.Add(artifactId)
                 | _ -> otherArtifactIds.Add(artifactId)
-            | None -> otherArtifactIds.Add(artifactId))
+            | None ->
+                visibleArtifactIds.Add(artifactId)
+                otherArtifactIds.Add(artifactId))
 
         {
             WorkItemId = workItemDto.WorkItemId
             WorkItemNumber = workItemDto.WorkItemNumber
             ReferenceIds = workItemDto.ReferenceIds
             PromotionSetIds = workItemDto.PromotionSetIds
-            ArtifactIds = workItemDto.ArtifactIds
+            ArtifactIds = visibleArtifactIds |> Seq.toList
             AgentSummaryArtifactIds = agentSummaryArtifactIds |> Seq.toList
             PromptArtifactIds = promptArtifactIds |> Seq.toList
             ReviewNotesArtifactIds = reviewNotesArtifactIds |> Seq.toList

@@ -4,6 +4,8 @@ open Aspire.Hosting
 open Aspire.Hosting.ApplicationModel
 open Aspire.Hosting.Testing
 open Aspire.Hosting.Azure
+open global.Azure.Storage
+open global.Azure.Storage.Blobs
 open Azure.Messaging.ServiceBus
 open Grace.Shared
 open Microsoft.Azure.Cosmos
@@ -14,6 +16,8 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Net
+open System.Net.Sockets
 open System.Net.Http
 open System.Net.Security
 open System.Security.Cryptography.X509Certificates
@@ -22,6 +26,7 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Grace.Types
+open Grace.Types.ManifestContributionAccounting
 open Grace.Shared.Utilities
 
 /// Captures test host state values used by the test suite.
@@ -30,12 +35,38 @@ type TestHostState =
         App: DistributedApplication
         Client: HttpClient
         GraceServerBaseAddress: string
+        CosmosConnectionString: string
+        CosmosDatabaseName: string
+        CosmosContainerName: string
         ServiceBusConnectionString: string
         ServiceBusTopic: string
         ServiceBusServerSubscription: string
         ServiceBusTestSubscription: string
         OperationalFactsTopic: string
         OperationsSqlConnectionString: string
+    }
+
+/// Captures the command result and fresh Aspire resource snapshot for one pinned Redis restart.
+type RedisRestartCommandObservation =
+    {
+        PostCommandResourceEventObserved: bool
+        PreCommandStartTimestamp: string
+        PostCommandStartTimestamp: string
+        PostCommandState: string
+        PostCommandHealth: string
+    }
+
+/// Captures the ordered resource and HTTP observations produced by one deliberate Grace.Server restart.
+type GraceServerRestartEvidence =
+    {
+        CommandStartedAt: DateTimeOffset
+        CommandCompletedAt: DateTimeOffset
+        NonReadyEventObservedAt: DateTimeOffset
+        NonReadyResourceState: string
+        NonReadyHealthStatus: string
+        ResourceEventObservedAt: DateTimeOffset
+        ResourceState: string
+        HttpReadyObservedAt: DateTimeOffset
     }
 
 /// Groups shared helpers for aspire test host.
@@ -45,9 +76,35 @@ module AspireTestHost =
     let private graceServerResourceName = "grace-server"
     let private operationsWorkerResourceName = "grace-operations-worker"
     let private azuriteResourceName = "azurite"
+    let private redisResourceName = "redis"
+    let private descriptionClearPreAppendTestGatePortEnvironmentVariable = "GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
+    let mutable private sharedDescriptionClearPreAppendTestGate: (int * TcpListener) option = None
+    let mutable private sharedDescriptionClearPreAppendTestGatePort: int option = None
     let mutable private sharedBootstrapUserId: string option = None
+
+    /// Stops the active test-only description-clear listener before a subsequent test creates a fresh listener for the same run port.
+    let private stopDescriptionClearPreAppendTestGate () =
+        match sharedDescriptionClearPreAppendTestGate with
+        | Some (_, listener) ->
+            sharedDescriptionClearPreAppendTestGate <- None
+            listener.Stop()
+        | None -> ()
+
+    /// Clears all test-only description-clear listener state when its host run can no longer use the injected port.
+    let private resetDescriptionClearPreAppendTestGate () =
+        stopDescriptionClearPreAppendTestGate ()
+        sharedDescriptionClearPreAppendTestGatePort <- None
+
+    /// Starts the loopback listener used only by a hosted description-clear overlap test.
+    let private startDescriptionClearPreAppendTestGate (port: int) =
+        let listener = new TcpListener(IPAddress.Loopback, port)
+        listener.Start(2)
+        let boundPort = (listener.LocalEndpoint :?> IPEndPoint).Port
+        sharedDescriptionClearPreAppendTestGatePort <- Some boundPort
+        sharedDescriptionClearPreAppendTestGate <- Some(boundPort, listener)
+        boundPort, listener
 
     /// Gets service bus sql resource name from the running test server.
     let private getServiceBusSqlResourceName () =
@@ -80,6 +137,31 @@ module AspireTestHost =
         TestContext.Progress.Flush()
         Console.Error.WriteLine(progressMessage)
         Console.Error.Flush()
+
+    /// Normalizes a deliberate Grace.Server restart context for diagnostic progress messages.
+    let private normalizeRestartContext (restartContext: string) =
+        if String.IsNullOrWhiteSpace restartContext then
+            "unspecified test operation"
+        else
+            restartContext.Trim()
+
+    /// Resolves the deliberate restart context when the wait is for the Grace.Server Aspire resource.
+    let private tryGetGraceServerRestartContext (resourceName: string) (restartContext: string option) =
+        match restartContext with
+        | Some context when resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) -> Some(normalizeRestartContext context)
+        | _ -> None
+
+    /// Formats the progress message emitted before waiting for an Aspire resource to become healthy.
+    let private formatResourceHealthWaitStartProgress (resourceName: string) (restartContext: string option) =
+        match tryGetGraceServerRestartContext resourceName restartContext with
+        | Some context -> $"intentional Grace.Server restart '{context}': waiting for resource '{resourceName}' to become healthy."
+        | None -> $"waiting for resource '{resourceName}' to become healthy."
+
+    /// Formats the progress message emitted after an Aspire resource reports healthy.
+    let private formatResourceHealthWaitHealthyProgress (resourceName: string) (restartContext: string option) =
+        match tryGetGraceServerRestartContext resourceName restartContext with
+        | Some context -> $"resource '{resourceName}' recovered after intentional Grace.Server restart '{context}'."
+        | None -> $"resource '{resourceName}' is healthy."
 
     /// Defines ensure bootstrap compatible behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private ensureBootstrapCompatible (bootstrapUserId: string) =
@@ -224,7 +306,56 @@ module AspireTestHost =
         }
 
     /// Captures process result values used by the test suite.
-    type private ProcessResult = { ExitCode: int option; StdOut: string; StdErr: string; TimedOut: bool; Error: string option }
+    type internal ProcessResult = { ExitCode: int option; StdOut: string; StdErr: string; TimedOut: bool; Error: string option }
+
+    /// Formats a failed process result with its bounded diagnostics.
+    let private formatProcessFailure (label: string) (result: ProcessResult) =
+        if result.TimedOut then
+            $"{label} timed out."
+        else
+            let exitCode =
+                result.ExitCode
+                |> Option.map string
+                |> Option.defaultValue "<unknown>"
+
+            let details =
+                [
+                    if not (String.IsNullOrWhiteSpace result.StdOut) then
+                        $"stdout:{Environment.NewLine}{result.StdOut.TrimEnd()}"
+                    if not (String.IsNullOrWhiteSpace result.StdErr) then
+                        $"stderr:{Environment.NewLine}{result.StdErr.TrimEnd()}"
+                ]
+                |> String.concat Environment.NewLine
+
+            match result.Error with
+            | Some errorMessage -> $"{label} failed: {errorMessage}"
+            | None when not (String.IsNullOrWhiteSpace details) -> $"{label} exited with {exitCode}.{Environment.NewLine}{details}"
+            | None -> $"{label} exited with {exitCode}."
+
+    /// Preserves fixture lifecycle and command failures for focused no-Aspire regression proof.
+    module internal FixtureLifecycle =
+
+        /// Rejects any process result that does not prove a successful command exit.
+        let requireProcessSuccess label result = if result.ExitCode <> Some 0 then invalidOp (formatProcessFailure label result)
+
+        /// Attempts application disposal and Docker cleanup before reporting all lifecycle failures.
+        let cleanupAsync (disposeAsync: unit -> Task<unit>) (cleanupDockerAsync: unit -> Task<unit>) =
+            task {
+                let failures = ResizeArray<Exception>()
+
+                try
+                    do! disposeAsync ()
+                with
+                | ex -> failures.Add ex
+
+                try
+                    do! cleanupDockerAsync ()
+                with
+                | ex -> failures.Add ex
+
+                if failures.Count > 0 then
+                    raise (AggregateException("The isolated Aspire measurement host did not clean up completely.", failures))
+            }
 
     /// Runs process with the configured test context.
     let private runProcessAsync (fileName: string) (arguments: string) (timeout: TimeSpan) =
@@ -308,34 +439,35 @@ module AspireTestHost =
                     ]
 
                 let! listResult = runProcessAsync "docker" "ps -a --format \"{{.Names}}\"" (TimeSpan.FromSeconds(20.0))
+                FixtureLifecycle.requireProcessSuccess "Docker cleanup list" listResult
 
-                if listResult.ExitCode = Some 0 then
-                    let names =
-                        listResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
-                        |> Array.toList
+                let names =
+                    listResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+                    |> Array.toList
 
-                    /// Defines matches prefix behavior for the surrounding tests used by the server integration aspire Test Host scenario.
-                    let matchesPrefix (name: string) =
-                        containerPrefixes
-                        |> List.exists (fun prefix ->
-                            name.Equals(prefix, StringComparison.OrdinalIgnoreCase)
-                            || name.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase))
+                /// Matches only Aspire container names owned by the Grace integration fixture.
+                let matchesPrefix (name: string) =
+                    containerPrefixes
+                    |> List.exists (fun prefix ->
+                        name.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase))
 
-                    for name in names do
-                        if matchesPrefix name then
-                            let! result = runProcessAsync "docker" $"rm -f {name}" (TimeSpan.FromSeconds(20.0))
+                let failures = ResizeArray<Exception>()
 
-                            if result.ExitCode = Some 0 then
-                                if not (String.IsNullOrWhiteSpace result.StdOut) then
-                                    Console.WriteLine($"Docker cleanup: removed {name}.")
-                            else if result.Error.IsSome then
-                                Console.WriteLine($"Docker cleanup ({name}): {result.Error.Value}")
-                            else if not (String.IsNullOrWhiteSpace result.StdErr) then
-                                Console.WriteLine($"Docker cleanup ({name}) stderr: {result.StdErr.Trim()}")
-                else if listResult.Error.IsSome then
-                    Console.WriteLine($"Docker cleanup list failed: {listResult.Error.Value}")
-                else if not (String.IsNullOrWhiteSpace listResult.StdErr) then
-                    Console.WriteLine($"Docker cleanup list stderr: {listResult.StdErr.Trim()}")
+                for name in names do
+                    if matchesPrefix name then
+                        let! result = runProcessAsync "docker" $"rm -f {name}" (TimeSpan.FromSeconds(20.0))
+
+                        try
+                            FixtureLifecycle.requireProcessSuccess $"Docker cleanup ({name})" result
+
+                            if not (String.IsNullOrWhiteSpace result.StdOut) then
+                                Console.WriteLine($"Docker cleanup: removed {name}.")
+                        with
+                        | ex -> failures.Add ex
+
+                if failures.Count > 0 then
+                    raise (AggregateException("One or more Grace integration containers could not be removed.", failures))
         }
 
     /// Formats log tail for diagnostics.
@@ -374,30 +506,6 @@ module AspireTestHost =
             let! snapshots = Task.WhenAll(tasks)
             return snapshots |> String.concat Environment.NewLine
         }
-
-    /// Formats process failure for diagnostics.
-    let private formatProcessFailure (label: string) (result: ProcessResult) =
-        if result.TimedOut then
-            $"{label} timed out."
-        else
-            let exitCode =
-                result.ExitCode
-                |> Option.map string
-                |> Option.defaultValue "<unknown>"
-
-            let details =
-                [
-                    if not (String.IsNullOrWhiteSpace result.StdOut) then
-                        $"stdout:{Environment.NewLine}{result.StdOut.TrimEnd()}"
-                    if not (String.IsNullOrWhiteSpace result.StdErr) then
-                        $"stderr:{Environment.NewLine}{result.StdErr.TrimEnd()}"
-                ]
-                |> String.concat Environment.NewLine
-
-            match result.Error with
-            | Some errorMessage -> $"{label} failed: {errorMessage}"
-            | None when not (String.IsNullOrWhiteSpace details) -> $"{label} exited with {exitCode}.{Environment.NewLine}{details}"
-            | None -> $"{label} exited with {exitCode}."
 
     /// Tries to resolve get docker diagnostics without failing the caller.
     let private tryGetDockerDiagnosticsAsync () =
@@ -451,17 +559,18 @@ module AspireTestHost =
                     return $"Docker containers:{Environment.NewLine}{containersSummary}{Environment.NewLine}{String.Join(Environment.NewLine, logBlocks)}"
         }
 
-    let private waitForResourceHealthyAsync
+    let private waitForResourceHealthyWithProgressContextAsync
         (notificationService: ResourceNotificationService)
         (app: DistributedApplication)
         (resourceName: string)
         (ct: CancellationToken)
+        (restartContext: string option)
         =
         task {
             try
-                logProgress $"waiting for resource '{resourceName}' to become healthy."
+                logProgress (formatResourceHealthWaitStartProgress resourceName restartContext)
                 let! _ = notificationService.WaitForResourceHealthyAsync(resourceName, ct)
-                logProgress $"resource '{resourceName}' is healthy."
+                logProgress (formatResourceHealthWaitHealthyProgress resourceName restartContext)
                 ()
             with
             | ex ->
@@ -484,8 +593,22 @@ module AspireTestHost =
                 raise (Exception($"{resourceName} failed to start. {details}{Environment.NewLine}{logDetails}", ex))
         }
 
+    let private waitForResourceHealthyAsync
+        (notificationService: ResourceNotificationService)
+        (app: DistributedApplication)
+        (resourceName: string)
+        (ct: CancellationToken)
+        =
+        waitForResourceHealthyWithProgressContextAsync notificationService app resourceName ct None
+
     /// Groups shared helpers for fixture diagnostics.
     module FixtureDiagnostics =
+        /// Formats the progress message emitted before waiting for an Aspire resource to become healthy.
+        let formatResourceHealthWaitStartMessage resourceName restartContext = formatResourceHealthWaitStartProgress resourceName restartContext
+
+        /// Formats the progress message emitted after an Aspire resource reports healthy.
+        let formatResourceHealthWaitHealthyMessage resourceName restartContext = formatResourceHealthWaitHealthyProgress resourceName restartContext
+
         /// Defines redact connection string segments behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let private redactConnectionStringSegments (sensitivePrefixes: string list) (connectionString: string) =
             if String.IsNullOrWhiteSpace connectionString then
@@ -696,6 +819,56 @@ module AspireTestHost =
             | None -> connectionString
         | None -> connectionString
 
+    /// Rewrites the server's internal Azurite blob endpoint to the live Aspire endpoint reachable by the test process.
+    let private resolveLiveAzureStorageConnectionString (app: DistributedApplication) (connectionString: string) =
+        match tryGetRuntimeEndpoint app azuriteResourceName 10000 with
+        | Some runtimeEndpoint ->
+            let configuredEndpoint = tryGetConnValue "BlobEndpoint=" connectionString
+            let mutable configuredUri = Unchecked.defaultof<Uri>
+
+            if Uri.TryCreate(configuredEndpoint, UriKind.Absolute, &configuredUri) then
+                let endpoint =
+                    runtimeEndpoint.ToString().TrimEnd('/')
+                    + configuredUri.AbsolutePath
+
+                if not (endpoint.Equals(configuredEndpoint, StringComparison.OrdinalIgnoreCase)) then
+                    Console.WriteLine($"Azurite blob endpoint adjusted from {configuredEndpoint} to {endpoint}.")
+
+                replaceConnValue "BlobEndpoint=" endpoint connectionString
+            else
+                connectionString
+        | None -> connectionString
+
+    /// Builds a repository container client against the same translated Azurite endpoint and credential shape used by Grace.Server.
+    let private createLiveAzureStorageContainerClient (connectionString: string) (repositoryId: string) =
+        let accountName = tryGetConnValue "AccountName=" connectionString
+        let accountKey = tryGetConnValue "AccountKey=" connectionString
+        let configuredEndpoint = tryGetConnValue "BlobEndpoint=" connectionString
+        let mutable blobEndpoint = Unchecked.defaultof<Uri>
+
+        if
+            accountName = "<missing>"
+            || accountKey = "<missing>"
+            || not (Uri.TryCreate(configuredEndpoint, UriKind.Absolute, &blobEndpoint))
+        then
+            failwith "The running Grace.Server resource did not expose a complete Azure Storage Blob endpoint configuration."
+
+        let containerUri = Uri($"{blobEndpoint.AbsoluteUri.TrimEnd('/')}/{repositoryId}")
+        let accountPathPrefix = $"/{accountName}/"
+
+        let normalizedContainerUri =
+            if
+                containerUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                && containerUri.AbsolutePath.StartsWith(accountPathPrefix, StringComparison.OrdinalIgnoreCase)
+            then
+                let builder = UriBuilder(containerUri)
+                builder.Host <- "127.0.0.1"
+                builder.Uri
+            else
+                containerUri
+
+        BlobContainerClient(normalizedContainerUri, StorageSharedKeyCredential(accountName, accountKey))
+
     /// Formats exception chain for diagnostics.
     let private formatExceptionChain (ex: exn) =
         let parts = ResizeArray<string>()
@@ -717,6 +890,7 @@ module AspireTestHost =
     let private createLocalCosmosClientOptions () =
         let options = CosmosClientOptions(ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true)
         options.RequestTimeout <- TimeSpan.FromSeconds(10.0)
+        options.UseSystemTextJsonSerializerWithOptions <- Constants.JsonSerializerOptions
         options.HttpClientFactory <- (fun () -> createPermissiveCosmosHttpClient ())
         options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
         options
@@ -1002,7 +1176,10 @@ module AspireTestHost =
 
     /// Defines start new host behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private startNewHostAsync (bootstrapUserId: string) =
+        let mutable appToCleanup: DistributedApplication option = None
+
         task {
+            resetDescriptionClearPreAppendTestGate ()
             logProgress "Aspire setup starting."
 
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
@@ -1029,7 +1206,24 @@ module AspireTestHost =
             logProgress "Docker cleanup complete."
             logProgress "building Aspire AppHost."
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
+            let descriptionClearPreAppendTestGatePort, _ = startDescriptionClearPreAppendTestGate 0
+
+            let graceServerResource: ProjectResource =
+                builder.Resources
+                |> Seq.tryPick (fun resource ->
+                    match resource with
+                    | :? ProjectResource as project when project.Name = graceServerResourceName -> Some project
+                    | _ -> None)
+                |> Option.defaultWith (fun () -> failwith $"Resource '{graceServerResourceName}' was not added by the test AppHost.")
+
+            builder
+                .CreateResourceBuilder(graceServerResource)
+                .WithEnvironment("GRACE_TESTING", "1")
+                .WithEnvironment(descriptionClearPreAppendTestGatePortEnvironmentVariable, string descriptionClearPreAppendTestGatePort)
+            |> ignore
+
             let! app = builder.BuildAsync()
+            appToCleanup <- Some app
             logProgress "starting Aspire AppHost resources."
             do! app.StartAsync()
             logProgress "Aspire AppHost started; waiting for resources."
@@ -1055,6 +1249,12 @@ module AspireTestHost =
                 Console.WriteLine($"Azurite resource detected: {azuriteResourceName}")
                 do! waitForResourceHealthyAsync notificationService app azuriteResourceName cts.Token
             | None -> Console.WriteLine("Azurite resource not found in model.")
+
+            match tryFindResourceByName app redisResourceName with
+            | Some _ ->
+                Console.WriteLine($"Redis resource detected: {redisResourceName}")
+                do! waitForResourceHealthyAsync notificationService app redisResourceName cts.Token
+            | None -> Console.WriteLine("Redis resource not found in model.")
 
             let serviceBusSqlResourceName = getServiceBusSqlResourceName ()
             let serviceBusEmulatorResourceName = getServiceBusEmulatorResourceName ()
@@ -1086,6 +1286,11 @@ module AspireTestHost =
             logProgress "container resources reported healthy; validating service readiness."
 
             let! env = getEnvironmentVariablesAsync app graceServerResourceName
+
+            let injectedDescriptionClearPreAppendTestGatePort = requireEnv graceServerResourceName descriptionClearPreAppendTestGatePortEnvironmentVariable env
+
+            if not (String.Equals(injectedDescriptionClearPreAppendTestGatePort, string descriptionClearPreAppendTestGatePort, StringComparison.Ordinal)) then
+                invalidOp "The Grace.Server test resource did not retain its generated description-clear test gate port."
 
             match env
                   |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
@@ -1309,6 +1514,9 @@ module AspireTestHost =
                     App = app
                     Client = client
                     GraceServerBaseAddress = baseAddress
+                    CosmosConnectionString = cosmosConnectionString
+                    CosmosDatabaseName = cosmosDatabaseName
+                    CosmosContainerName = cosmosContainerName
                     ServiceBusConnectionString = serviceBusConnectionString
                     ServiceBusTopic = serviceBusTopic
                     ServiceBusServerSubscription = serviceBusSubscription
@@ -1329,6 +1537,30 @@ module AspireTestHost =
 
             return state
         }
+        |> fun startupTask ->
+            task {
+                try
+                    return! startupTask
+                with
+                | startupFailure ->
+                    resetDescriptionClearPreAppendTestGate ()
+
+                    match appToCleanup with
+                    | None -> return raise startupFailure
+                    | Some app ->
+                        try
+                            do! FixtureLifecycle.cleanupAsync (fun () -> task { do! app.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+                        with
+                        | cleanupFailure ->
+                            raise (
+                                AggregateException(
+                                    "Aspire test-host startup failed and its isolated resources did not clean up completely.",
+                                    [| startupFailure; cleanupFailure |]
+                                )
+                            )
+
+                        return raise startupFailure
+            }
 
     /// Defines start behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let startAsync (bootstrapUserId: string) =
@@ -1349,9 +1581,48 @@ module AspireTestHost =
                 sharedStateLock.Release() |> ignore
         }
 
+    /// Gets the ephemeral loopback listener injected into the currently running Grace.Server test resource.
+    let getDescriptionClearPreAppendTestGate () =
+        sharedDescriptionClearPreAppendTestGate
+        |> Option.defaultWith (fun () ->
+            match sharedDescriptionClearPreAppendTestGatePort with
+            | Some port -> startDescriptionClearPreAppendTestGate port
+            | None -> failwith "The Grace.Server test gate is unavailable before the Aspire host starts.")
+
+    /// Stops a completed description-clear test gate without allowing a stale test to clear a newer listener.
+    let releaseDescriptionClearPreAppendTestGate (listener: TcpListener) =
+        match sharedDescriptionClearPreAppendTestGate with
+        | Some (_, activeListener) when Object.ReferenceEquals(activeListener, listener) -> stopDescriptionClearPreAppendTestGate ()
+        | _ -> listener.Stop()
+
+    /// Starts a fresh host owned only by an explicitly selected measurement fixture.
+    let startIsolatedAsync (bootstrapUserId: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                if sharedState.IsSome then
+                    invalidOp "An isolated Aspire measurement host cannot start after the shared integration host."
+            finally
+                sharedStateLock.Release() |> ignore
+
+            return! startNewHostAsync bootstrapUserId
+        }
+
+    /// Disposes a fixture-owned host and removes its local containers while preserving every cleanup failure.
+    let stopIsolatedAsync (state: TestHostState) =
+        task {
+            try
+                return! FixtureLifecycle.cleanupAsync (fun () -> task { do! state.App.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+            finally
+                resetDescriptionClearPreAppendTestGate ()
+        }
+
     /// Defines stop behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let stopAsync (app: DistributedApplication option) =
         task {
+            resetDescriptionClearPreAppendTestGate ()
+
             match app with
             | None -> ()
             | Some appHost ->
@@ -1359,30 +1630,270 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync (state: TestHostState) =
+    /// Restarts Grace.Server and returns fresh post-command resource-event and HTTP-readiness evidence.
+    let restartGraceServerWithEvidenceAsync (state: TestHostState) (restartContext: string) =
         task {
             do! sharedStateLock.WaitAsync()
 
             try
-                Console.WriteLine("Restarting Grace.Server Aspire project resource...")
+                let normalizedRestartContext = normalizeRestartContext restartContext
+                Console.WriteLine($"Restarting Grace.Server Aspire project resource for {normalizedRestartContext}...")
                 let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
                 use cts = new CancellationTokenSource(defaultWaitTimeout)
 
-                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+                let events =
+                    notificationService
+                        .WatchAsync(cts.Token)
+                        .GetAsyncEnumerator(cts.Token)
+
+                try
+                    let commandStartedAt = DateTimeOffset.UtcNow
+                    let mutable nextResourceEvent = events.MoveNextAsync().AsTask()
+                    let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+
+                    if not result.Success then
+                        let errorMessage =
+                            if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                            elif result.Canceled then "Restart command was canceled."
+                            else "Restart command failed without details."
+
+                        raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
+
+                    let commandCompletedAt = DateTimeOffset.UtcNow
+                    let mutable healthyEvent: ResourceEvent option = None
+                    let mutable nonReadyEvent: (DateTimeOffset * ResourceEvent) option = None
+
+                    while healthyEvent.IsNone do
+                        let! hasEvent = nextResourceEvent
+
+                        if not hasEvent then
+                            invalidOp "Grace.Server resource event observation ended before fresh Healthy evidence."
+
+                        let resourceEvent = events.Current
+
+                        if resourceEvent.Resource.Name.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                            let resourceState = resourceEvent.Snapshot.State.Text
+
+                            let isHealthy =
+                                resourceEvent.Snapshot.HealthStatus.HasValue
+                                && resourceEvent.Snapshot.HealthStatus.Value = Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy
+
+                            let hasNamedNonRunningState =
+                                not (String.IsNullOrWhiteSpace resourceState)
+                                && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
+                                && not (String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal))
+
+                            let hasKnownNonHealthyStatus =
+                                resourceEvent.Snapshot.HealthStatus.HasValue
+                                && not isHealthy
+
+                            if hasNamedNonRunningState
+                               || hasKnownNonHealthyStatus then
+                                if nonReadyEvent.IsNone then
+                                    nonReadyEvent <- Some(DateTimeOffset.UtcNow, resourceEvent)
+                            elif
+                                nonReadyEvent.IsSome && isHealthy
+                                && String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal)
+                            then
+                                healthyEvent <- Some resourceEvent
+
+                        if healthyEvent.IsNone then nextResourceEvent <- events.MoveNextAsync().AsTask()
+
+                    let resourceEventObservedAt = DateTimeOffset.UtcNow
+                    let resourceState = healthyEvent.Value.Snapshot.HealthStatus.Value.ToString()
+                    let nonReadyEventObservedAt, observedNonReadyEvent = nonReadyEvent.Value
+                    let nonReadyResourceState = observedNonReadyEvent.Snapshot.State.Text
+
+                    let nonReadyHealthStatus =
+                        if observedNonReadyEvent.Snapshot.HealthStatus.HasValue then
+                            observedNonReadyEvent.Snapshot.HealthStatus.Value.ToString()
+                        else
+                            "Unknown"
+
+                    logProgress (formatResourceHealthWaitHealthyProgress graceServerResourceName (Some normalizedRestartContext))
+                    do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                    let httpReadyObservedAt = DateTimeOffset.UtcNow
+                    logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
+                    Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
+
+                    return
+                        {
+                            CommandStartedAt = commandStartedAt
+                            CommandCompletedAt = commandCompletedAt
+                            NonReadyEventObservedAt = nonReadyEventObservedAt
+                            NonReadyResourceState = nonReadyResourceState
+                            NonReadyHealthStatus = nonReadyHealthStatus
+                            ResourceEventObservedAt = resourceEventObservedAt
+                            ResourceState = resourceState
+                            HttpReadyObservedAt = httpReadyObservedAt
+                        }
+                finally
+                    events
+                        .DisposeAsync()
+                        .AsTask()
+                        .GetAwaiter()
+                        .GetResult()
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
+    let restartGraceServerAsync (state: TestHostState) (restartContext: string) =
+        task {
+            let! _ = restartGraceServerWithEvidenceAsync state restartContext
+            return ()
+        }
+
+    /// Stops Grace.Server and does not return until Aspire observes a terminal non-running resource state.
+    let stopGraceServerAsync (state: TestHostState) (stopContext: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                let normalizedContext = normalizeRestartContext stopContext
+                Console.WriteLine($"Stopping Grace.Server Aspire project resource for {normalizedContext}...")
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.StopCommand, cts.Token)
 
                 if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Stop command was canceled."
+                        else "Stop command failed without details."
+
+                    raise (InvalidOperationException($"Grace.Server stop failed during {normalizedContext}: {errorMessage}"))
+
+                let terminalStates =
+                    [|
+                        KnownResourceStates.Exited
+                        KnownResourceStates.Finished
+                        KnownResourceStates.NotStarted
+                    |]
+
+                let! _ = notificationService.WaitForResourceAsync(graceServerResourceName, terminalStates, cts.Token)
+                logProgress $"Grace.Server reached a terminal stopped state for '{normalizedContext}'."
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Starts a stopped Grace.Server and returns timestamps bounding fresh Aspire health plus successful HTTP readiness.
+    let startGraceServerAsync (state: TestHostState) (startContext: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                let normalizedContext = normalizeRestartContext startContext
+                Console.WriteLine($"Starting Grace.Server Aspire project resource for {normalizedContext}...")
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                let commandStartedAt = DateTimeOffset.UtcNow
+                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.StartCommand, cts.Token)
+
+                if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Start command was canceled."
+                        else "Start command failed without details."
+
+                    raise (InvalidOperationException($"Grace.Server start failed during {normalizedContext}: {errorMessage}"))
+
+                do! waitForResourceHealthyWithProgressContextAsync notificationService state.App graceServerResourceName cts.Token None
+
+                let healthObservedAt = DateTimeOffset.UtcNow
+                do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                logProgress $"Grace.Server HTTP readiness recovered after explicit start '{normalizedContext}'."
+                Console.WriteLine($"Grace.Server Aspire project resource start completed for {normalizedContext}.")
+                return commandStartedAt, healthObservedAt
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Restarts the pinned Redis resource and requires a post-command event plus a Healthy snapshot before returning.
+    let restartRedisAsync (state: TestHostState) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                let mutable preCommandEvent = Unchecked.defaultof<ResourceEvent>
+
+                if not (notificationService.TryGetCurrentState(redisResourceName, &preCommandEvent)) then
+                    invalidOp "The pinned Redis resource did not expose a pre-command Aspire snapshot."
+
+                let preCommandStartTimestamp = box preCommandEvent.Snapshot.StartTimeStamp
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                let mutable commandIssued = false
+
+                let postCommandEventTask =
+                    task {
+                        use enumerator =
+                            notificationService
+                                .WatchAsync(cts.Token)
+                                .GetAsyncEnumerator(cts.Token)
+
+                        let mutable observed: ResourceEvent option = None
+
+                        while observed.IsNone do
+                            let! hasNext = enumerator.MoveNextAsync().AsTask()
+
+                            if not hasNext then
+                                invalidOp "The Aspire resource event stream ended before Redis restart evidence was observed."
+
+                            let resourceEvent = enumerator.Current
+
+                            if
+                                commandIssued
+                                && resourceEvent.Resource.Name.Equals(redisResourceName, StringComparison.Ordinal)
+                                && not (Object.Equals(box resourceEvent.Snapshot.StartTimeStamp, preCommandStartTimestamp))
+                            then
+                                observed <- Some resourceEvent
+
+                        return observed.Value
+                    }
+
+                commandIssued <- true
+
+                let! result =
+                    task {
+                        try
+                            return! commandService.ExecuteCommandAsync(redisResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+                        with
+                        | ex ->
+                            cts.Cancel()
+                            return raise ex
+                    }
+
+                if not result.Success then
+                    cts.Cancel()
+
                     let errorMessage =
                         if not (String.IsNullOrWhiteSpace result.Message) then result.Message
                         elif result.Canceled then "Restart command was canceled."
                         else "Restart command failed without details."
 
-                    raise (InvalidOperationException($"Grace.Server restart failed: {errorMessage}"))
+                    invalidOp $"Redis restart command failed: {errorMessage}"
 
-                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
-                do! waitForResourceHealthyAsync notificationService state.App graceServerResourceName cts.Token
-                do! waitForGraceServerHttpReadyAsync state.Client cts.Token
-                Console.WriteLine("Grace.Server Aspire project resource restart completed.")
+                let! _ = postCommandEventTask
+
+                do! waitForResourceHealthyWithProgressContextAsync notificationService state.App redisResourceName cts.Token None
+                let mutable postCommandEvent = Unchecked.defaultof<ResourceEvent>
+
+                if not (notificationService.TryGetCurrentState(redisResourceName, &postCommandEvent)) then
+                    invalidOp "The pinned Redis resource did not expose a post-command Aspire snapshot."
+
+                return
+                    {
+                        PostCommandResourceEventObserved = true
+                        PreCommandStartTimestamp = string preCommandEvent.Snapshot.StartTimeStamp
+                        PostCommandStartTimestamp = string postCommandEvent.Snapshot.StartTimeStamp
+                        PostCommandState = string postCommandEvent.Snapshot.State
+                        PostCommandHealth = string postCommandEvent.Snapshot.HealthStatus
+                    }
             finally
                 sharedStateLock.Release() |> ignore
         }
@@ -1594,4 +2105,146 @@ module AspireTestHost =
                             $"Timed out waiting for {description} on Service Bus test subscription. Topic={state.ServiceBusTopic}; TestSubscription={state.ServiceBusTestSubscription}; Connection={redactServiceBusConnectionString state.ServiceBusConnectionString}"
                         )
                     )
+        }
+
+    /// Waits for a matching GraceEvent and returns the real Service Bus envelope that carried it.
+    let waitForGraceEventMessageAsync (state: TestHostState) (timeout: TimeSpan) (description: string) (predicate: Events.GraceEvent -> bool) =
+        task {
+            let client, receiver = createServiceBusReceiver state
+            use _client = client
+            use _receiver = receiver
+
+            let sw = Stopwatch.StartNew()
+            let mutable found: (Events.GraceEvent * ServiceBusReceivedMessage) option = None
+
+            while found.IsNone && sw.Elapsed < timeout do
+                let remaining = timeout - sw.Elapsed
+                let waitTime = min remaining (TimeSpan.FromSeconds(1.0))
+                let! message = receiver.ReceiveMessageAsync(waitTime)
+
+                if not (isNull message) then
+                    try
+                        let graceEvent = JsonSerializer.Deserialize<Events.GraceEvent>(message.Body.ToArray(), Constants.JsonSerializerOptions)
+
+                        if predicate graceEvent then found <- Some(graceEvent, message)
+                    with
+                    | _ -> ()
+
+            return
+                found
+                |> Option.defaultWith (fun () ->
+                    raise (
+                        TimeoutException(
+                            $"Timed out waiting for {description} and its Service Bus envelope. Topic={state.ServiceBusTopic}; TestSubscription={state.ServiceBusTestSubscription}."
+                        )
+                    ))
+        }
+
+    /// Creates a permissive local Cosmos client for integration assertions against the Aspire emulator.
+    let createCosmosClient (state: TestHostState) = new CosmosClient(state.CosmosConnectionString, createLocalCosmosClientOptions ())
+
+    /// Resolves the live Azure Storage connection configured for a running Aspire test host.
+    let getAzureStorageConnectionStringAsync (state: TestHostState) =
+        task {
+            let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
+
+            return
+                requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureStorageConnectionString env
+                |> resolveLiveAzureStorageConnectionString state.App
+        }
+
+    /// Resolves a repository-scoped Blob container client that targets the same live object storage used by Grace.Server.
+    let getAzureStorageContainerClientAsync (state: TestHostState) (repositoryId: string) =
+        task {
+            let! connectionString = getAzureStorageConnectionStringAsync state
+            return createLiveAzureStorageContainerClient connectionString repositoryId
+        }
+
+    /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.
+    let getGraceServerLogsAsync (state: TestHostState) = getResourceLogsAsync state.App graceServerResourceName
+
+    /// Returns the Redis endpoint published by the running Aspire application model.
+    let getRedisEndpoint (state: TestHostState) =
+        let endpointName =
+            tryGetEndpointNameForTargetPort state.App redisResourceName 6379
+            |> Option.defaultWith (fun () -> getEndpointName state.App redisResourceName)
+
+        state.App.GetEndpoint(redisResourceName, endpointName)
+
+    /// Returns the latest Grace.Server file-log tail for focused Aspire failure diagnostics.
+    let getGraceServerFileLogAsync (state: TestHostState) =
+        task {
+            let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
+
+            let configuredDirectory =
+                env
+                |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
+
+            let defaultLocalDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grace", "aspire", "logs")
+
+            return
+                [
+                    configuredDirectory
+                    Some defaultLocalDirectory
+                ]
+                |> List.choose id
+                |> List.distinct
+                |> List.tryPick tryGetLatestLogTail
+                |> Option.defaultValue "No Grace.Server log file captured."
+        }
+
+    /// Peeks active and dead-letter messages on the Grace.Server subscription for subscriber diagnostics.
+    let describeGraceServerSubscriptionAsync (state: TestHostState) =
+        task {
+            let client = ServiceBusClient(state.ServiceBusConnectionString)
+            use _client = client
+            let activeReceiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusServerSubscription)
+
+            let deadLetterReceiver =
+                client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusServerSubscription, ServiceBusReceiverOptions(SubQueue = SubQueue.DeadLetter))
+
+            use _activeReceiver = activeReceiver
+            use _deadLetterReceiver = deadLetterReceiver
+            let! active = activeReceiver.PeekMessagesAsync(50)
+            let! deadLetter = deadLetterReceiver.PeekMessagesAsync(50)
+
+            let describe (messages: IReadOnlyList<ServiceBusReceivedMessage>) =
+                messages
+                |> Seq.map (fun message ->
+                    $"{message.MessageId} delivery={message.DeliveryCount} subject={message.Subject} "
+                    + $"deadLetterReason={message.DeadLetterReason} deadLetterErrorDescription={message.DeadLetterErrorDescription}")
+                |> String.concat Environment.NewLine
+
+            return $"Active:{Environment.NewLine}{describe active}{Environment.NewLine}DeadLetter:{Environment.NewLine}{describe deadLetter}"
+        }
+
+    /// Waits until manifest contribution accounting records one canonical exact relationship.
+    let waitForExactRelationshipAsync (state: TestHostState) relationship =
+        task {
+            let key =
+                match ExactRelationshipKey.create relationship with
+                | Ok key -> key
+                | Error error -> failwith error
+
+            use client = createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
+            let mutable found = false
+
+            while not found && DateTime.UtcNow < timeoutAt do
+                try
+                    let! _ = container.ReadItemAsync<JsonElement>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = CancellationToken.None)
+
+                    found <- true
+                with
+                | :? CosmosException as ex when ex.StatusCode = System.Net.HttpStatusCode.NotFound -> do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
+
+            if not found then
+                let! logs = getGraceServerLogsAsync state
+                let! fileLog = getGraceServerFileLogAsync state
+                let! subscription = describeGraceServerSubscriptionAsync state
+
+                Assert.Fail(
+                    $"Timed out waiting for exact relationship {key.PartitionKey}/{key.ItemId}.{Environment.NewLine}Grace.Server logs:{Environment.NewLine}{logs}{Environment.NewLine}Grace.Server file log:{Environment.NewLine}{fileLog}{Environment.NewLine}{subscription}"
+                )
         }

@@ -5,9 +5,11 @@ All URIs are relative to *http://localhost:5000*
 Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**annotate_branch**](BranchesApi.md#annotate_branch) | **POST** /branch/annotate | Annotate a branch reference.
+[**assign_branch**](BranchesApi.md#assign_branch) | **POST** /branch/assign | Assign a promotion to a branch.
 [**checkpoint_branch**](BranchesApi.md#checkpoint_branch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 [**commit_branch**](BranchesApi.md#commit_branch) | **POST** /branch/commit | Commit the current branch content.
 [**create_branch**](BranchesApi.md#create_branch) | **POST** /branch/create | Create a branch.
+[**create_external_branch_reference**](BranchesApi.md#create_external_branch_reference) | **POST** /branch/createExternal | Create an external Reference.
 [**delete_branch**](BranchesApi.md#delete_branch) | **POST** /branch/delete | Delete a branch.
 [**enable_branch_checkpoint**](BranchesApi.md#enable_branch_checkpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references.
 [**enable_branch_commit**](BranchesApi.md#enable_branch_commit) | **POST** /branch/enableCommit | Enable or disable commit references.
@@ -17,6 +19,7 @@ Method | HTTP request | Description
 [**get_branch**](BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 [**get_branch_reference**](BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 [**get_parent_branch**](BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+[**get_reference_materialization_boundary**](BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 [**list_branch_checkpoints**](BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 [**list_branch_commits**](BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 [**list_branch_promotions**](BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -25,6 +28,8 @@ Method | HTTP request | Description
 [**list_branch_tags**](BranchesApi.md#list_branch_tags) | **POST** /branch/getTags | List branch tags.
 [**promote_branch**](BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 [**rebase_branch**](BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
+[**replay_reference_events**](BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+[**resolve_reference_event_boundary**](BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 [**save_branch**](BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 [**tag_branch**](BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 
@@ -47,6 +52,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::BranchAnnotationReturnValue**](BranchAnnotationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## assign_branch
+
+> models::BranchCommandReturnValue assign_branch(assign_parameters)
+Assign a promotion to a branch.
+
+Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**assign_parameters** | [**AssignParameters**](AssignParameters.md) |  | [required] |
+
+### Return type
+
+[**models::BranchCommandReturnValue**](BranchCommandReturnValue.md)
 
 ### Authorization
 
@@ -133,6 +168,36 @@ Creates a branch with the specified name, based on the specified parent branch.
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
 **create_branch_parameters** | [**CreateBranchParameters**](CreateBranchParameters.md) |  | [required] |
+
+### Return type
+
+[**models::BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## create_external_branch_reference
+
+> models::BranchCommandReturnValue create_external_branch_reference(create_reference_parameters)
+Create an external Reference.
+
+Creates an external Reference pointing to the supplied root directory version.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**create_reference_parameters** | [**CreateReferenceParameters**](CreateReferenceParameters.md) |  | [required] |
 
 ### Return type
 
@@ -420,6 +485,36 @@ Name | Type | Description  | Required | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
+## get_reference_materialization_boundary
+
+> models::ReferenceMaterializationBoundaryReturnValue get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+Resolve a Connect materialization boundary.
+
+Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**get_reference_materialization_boundary_parameters** | [**GetReferenceMaterializationBoundaryParameters**](GetReferenceMaterializationBoundaryParameters.md) |  | [required] |
+
+### Return type
+
+[**models::ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
 ## list_branch_checkpoints
 
 > models::ReferenceListReturnValue list_branch_checkpoints(get_references_parameters)
@@ -647,6 +742,66 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## replay_reference_events
+
+> models::ReferenceReplayReturnValue replay_reference_events(replay_reference_events_parameters)
+Replay cursor-new Reference events.
+
+Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**replay_reference_events_parameters** | [**ReplayReferenceEventsParameters**](ReplayReferenceEventsParameters.md) |  | [required] |
+
+### Return type
+
+[**models::ReferenceReplayReturnValue**](ReferenceReplayReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## resolve_reference_event_boundary
+
+> models::ReferenceMaterializationBoundaryReturnValue resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
+Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+
+Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**resolve_reference_event_boundary_parameters** | [**ResolveReferenceEventBoundaryParameters**](ResolveReferenceEventBoundaryParameters.md) |  | [required] |
+
+### Return type
+
+[**models::ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
 
 ### Authorization
 

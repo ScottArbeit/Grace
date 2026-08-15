@@ -19,6 +19,14 @@ type WorkItem() =
     static member public Update(parameters: UpdateWorkItemParameters) =
         postServer<UpdateWorkItemParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/update")
 
+    /// Replaces the current work-item Markdown description through immutable text storage.
+    static member public SetDescription(parameters: SetWorkItemDescriptionParameters) =
+        postServer<SetWorkItemDescriptionParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/description/set")
+
+    /// Clears the current work-item description by appending an immutable empty description reference.
+    static member public ClearDescription(parameters: ClearWorkItemDescriptionParameters) =
+        postServer<ClearWorkItemDescriptionParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/description/clear")
+
     /// Links a reference to a work item.
     static member public LinkReference(parameters: LinkReferenceParameters) =
         postServer<LinkReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/link/reference")
@@ -50,6 +58,17 @@ type WorkItem() =
     /// Gets attachment download metadata for a linked reviewer attachment.
     static member public DownloadAttachment(parameters: DownloadWorkItemAttachmentParameters) =
         postServer<DownloadWorkItemAttachmentParameters, DownloadWorkItemAttachmentResult> (parameters |> ensureCorrelationIdIsSet, "work/attachments/download")
+
+    /// Logically deletes one owned attachment and returns its immutable recovery deadline.
+    static member public DeleteAttachment(parameters: DeleteWorkItemAttachmentParameters) =
+        postServer<DeleteWorkItemAttachmentParameters, Grace.Types.Artifact.ArtifactDeletionResult> (
+            parameters |> ensureCorrelationIdIsSet,
+            "work/attachments/delete"
+        )
+
+    /// Recovers one logically deleted attachment before physical cleanup.
+    static member public UndeleteAttachment(parameters: UndeleteWorkItemAttachmentParameters) =
+        postServer<UndeleteWorkItemAttachmentParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/attachments/undelete")
 
     /// Removes a reference link from a work item.
     static member public RemoveReferenceLink(parameters: RemoveReferenceLinkParameters) =

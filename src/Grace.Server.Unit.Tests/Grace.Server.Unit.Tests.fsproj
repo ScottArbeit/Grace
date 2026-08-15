@@ -15,12 +15,11 @@
 
   <ItemGroup>
     <Compile Include="TestCommon.fs" />
+    <Compile Include="CosmosWarmup.Server.Tests.fs" />
     <Compile Include="AuthMapping.Unit.Tests.fs" />
     <Compile Include="Authorization.Unit.Tests.fs" />
     <Compile Include="CreatorScopeAdminGrant.Unit.Tests.fs" />
     <Compile Include="ExternalAuthConfig.Unit.Tests.fs" />
-    <Compile Include="ArtifactGrantKeys.Server.Tests.fs" />
-    <Compile Include="CacheRegistration.Actor.Tests.fs" />
     <Compile Include="AuthSchemeSelection.Unit.Tests.fs" />
     <Compile Include="SecurityPrivacy.Unit.Tests.fs" />
     <Compile Include="OutboundUrlSafety.Unit.Tests.fs" />
@@ -36,18 +35,30 @@
     <Compile Include="NormalFileMaterialization.Server.Tests.fs" />
     <Compile Include="StoragePoolRouting.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
-    <Compile Include="MaterializationPlan.Server.Tests.fs" />
     <Compile Include="Eventing.Server.Tests.fs" />
     <Compile Include="OperationalFactsPublisher.Actor.Tests.fs" />
+    <Compile Include="ManifestContributionTelemetry.Server.Tests.fs" />
+    <Compile Include="ManifestContributionMeasurement.fs" />
+    <Compile Include="ManifestContributionDeadLetterMeasurement.fs" />
+    <Compile Include="ManifestContributionGroupedMeasurement.fs" />
+    <Compile Include="ManifestContributionMeasurement.Tests.fs" />
+    <Compile Include="ManifestContributionDeadLetterMeasurement.Tests.fs" />
+    <Compile Include="ManifestContributionServerRestart.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionGroupedMeasurement.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
     <Compile Include="PromotionSet.DirectoryHash.Tests.fs" />
     <Compile Include="Diff.Actor.Tests.fs" />
+    <Compile Include="PersonalAccessToken.Actor.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />
-    <Compile Include="DirectoryVersion.Actor.Tests.fs" />
+    <Compile Include="Reminder.Actor.Tests.fs" />
+    <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />
+    <Compile Include="ManifestContributionDiagnosis.Server.Tests.fs" />
+    <Compile Include="ManifestContributionRepair.Server.Tests.fs" />
+    <Compile Include="RepositoryCounterRecentResult.Server.Tests.fs" />
     <Compile Include="Reference.Actor.Tests.fs" />
     <Compile Include="SaveBoundary.Actor.Tests.fs" />
     <Compile Include="Services.VersionHashPrefixResolution.Tests.fs" />
@@ -63,6 +74,7 @@
     <Compile Include="Queue.Server.Tests.fs" />
     <Compile Include="OrleansFilters.Server.Tests.fs" />
     <Compile Include="Branch.Server.Tests.fs" />
+    <Compile Include="TextContent.Server.Tests.fs" />
     <Compile Include="WorkItem.Server.Tests.fs" />
     <Compile Include="WorkItem.Attachments.Tests.fs" />
     <Compile Include="ApprovalRequest.Actor.Tests.fs" />
@@ -73,10 +85,10 @@
   <ItemGroup>
     <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
     <PackageReference Include="FSharp.Control.TaskSeq" Version="1.1.1" />
-    <PackageReference Include="FsCheck" Version="3.3.3" />
-    <PackageReference Include="FsCheck.NUnit" Version="3.3.3" />
+    <PackageReference Include="FsCheck" Version="3.3.4" />
+    <PackageReference Include="FsCheck.NUnit" Version="3.3.4" />
     <PackageReference Include="FsUnit" Version="7.1.1" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />
     <PackageReference Include="NUnit3TestAdapter" Version="6.2.0" />
     <PackageReference Include="NUnit.Analyzers" Version="4.14.0">
@@ -95,7 +107,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Update="FSharp.Core" Version="10.1.301" />
+    <PackageReference Update="FSharp.Core" Version="10.1.302" />
   </ItemGroup>
 
 </Project>

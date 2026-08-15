@@ -17,6 +17,7 @@ Name | Type
 `repositoryName` | string
 `branchId` | string
 `branchName` | string
+`referenceId` | string
 `basedOn` | string
 
 ## Example
@@ -36,6 +37,7 @@ const example = {
   "repositoryName": null,
   "branchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "branchName": MyBranch,
+  "referenceId": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
   "basedOn": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
 } satisfies RebaseParameters
 

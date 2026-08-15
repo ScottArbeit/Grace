@@ -85,6 +85,76 @@ type Repository() =
     /// Exposes test context for test diagnostics.
     member val public TestContext = TestContext.CurrentContext with get, set
 
+    /// Verifies repository Reference lookup rejects any default ReferenceId before the repository query pipeline.
+    [<Test>]
+    member _.GetReferencesByReferenceIdRejectsEmptyReferenceId() =
+        task {
+            let! repositoryId = createRepositoryAsync ()
+            let parameters = Parameters.Repository.GetReferencesByReferenceIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.ReferenceIds <- [| ReferenceId.Empty |]
+            parameters.MaxCount <- 1
+            let correlationId = generateCorrelationId ()
+            parameters.CorrelationId <- correlationId
+
+            use request = new HttpRequestMessage(HttpMethod.Post, "/repository/getReferencesByReferenceId")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+
+            let! response = Client.SendAsync(request)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = ReferenceError.getErrorMessage ReferenceError.InvalidReferenceId
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.EqualTo(correlationId))
+
+            Assert.That(
+                response.Headers.GetValues(Constants.CorrelationIdHeaderKey)
+                |> Seq.head,
+                Is.EqualTo(correlationId)
+            )
+        }
+
+    /// Verifies repository Reference lookup rejects a mixed list before a real Reference can reach Services.
+    [<Test>]
+    member _.GetReferencesByReferenceIdRejectsMixedEmptyReferenceId() =
+        task {
+            let! repositoryId = createRepositoryAsync ()
+            let parameters = Parameters.Repository.GetReferencesByReferenceIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.ReferenceIds <- [| Guid.NewGuid(); ReferenceId.Empty |]
+            parameters.MaxCount <- 2
+            let correlationId = generateCorrelationId ()
+            parameters.CorrelationId <- correlationId
+
+            use request = new HttpRequestMessage(HttpMethod.Post, "/repository/getReferencesByReferenceId")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+
+            let! response = Client.SendAsync(request)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = ReferenceError.getErrorMessage ReferenceError.InvalidReferenceId
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.EqualTo(correlationId))
+
+            Assert.That(
+                response.Headers.GetValues(Constants.CorrelationIdHeaderKey)
+                |> Seq.head,
+                Is.EqualTo(correlationId)
+            )
+        }
+
     /// Verifies the set description with valid values scenario.
     [<Test>]
     [<Repeat(1)>]

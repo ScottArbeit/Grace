@@ -95,8 +95,18 @@ paths:
     $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1delivery~1list'
   /webhook/delivery/show:
     $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1delivery~1show'
+  /work/attachments/delete:
+    $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1attachments~1delete'
+  /work/attachments/undelete:
+    $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1attachments~1undelete'
+  /work/description/set:
+    $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1description~1set'
+  /work/description/clear:
+    $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1description~1clear'
   /branch/create:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1create'
+  /branch/assign:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1assign'
   /branch/rebase:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1rebase'
   /branch/promote:
@@ -109,6 +119,8 @@ paths:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1save'
   /branch/tag:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1tag'
+  /branch/createExternal:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1createExternal'
   /branch/enablePromotion:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enablePromotion'
   /branch/enableCommit:
@@ -129,6 +141,12 @@ paths:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getParentBranch'
   /branch/getReference:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReference'
+  /branch/getReferenceMaterializationBoundary:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReferenceMaterializationBoundary'
+  /branch/resolveReferenceEventBoundary:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1resolveReferenceEventBoundary'
+  /branch/replayReferenceEvents:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1replayReferenceEvents'
   /branch/getReferences:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReferences'
   /branch/getPromotions:
@@ -346,6 +364,14 @@ components:
       $ref: 'Webhook.Components.OpenAPI.yaml#/WebhookRule'
     WebhookDelivery:
       $ref: 'Webhook.Components.OpenAPI.yaml#/WebhookDelivery'
+    DeleteWorkItemAttachmentParameters:
+      $ref: 'WorkItem.Components.OpenAPI.yaml#/DeleteWorkItemAttachmentParameters'
+    UndeleteWorkItemAttachmentParameters:
+      $ref: 'WorkItem.Components.OpenAPI.yaml#/UndeleteWorkItemAttachmentParameters'
+    SetWorkItemDescriptionParameters:
+      $ref: 'WorkItem.Components.OpenAPI.yaml#/SetWorkItemDescriptionParameters'
+    ArtifactDeletionResult:
+      $ref: 'WorkItem.Components.OpenAPI.yaml#/ArtifactDeletionResult'
 
     BranchParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/BranchParameters'
@@ -355,6 +381,8 @@ components:
       $ref: 'Branch.Components.OpenAPI.yaml#/BranchHashQueryParameters'
     CreateBranchParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/CreateBranchParameters'
+    AssignParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/AssignParameters'
     RebaseParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/RebaseParameters'
     CreateReferenceParameters:

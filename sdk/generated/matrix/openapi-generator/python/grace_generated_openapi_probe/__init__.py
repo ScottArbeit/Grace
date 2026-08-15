@@ -21,14 +21,13 @@ __version__ = "0.0.0"
 __all__ = [
     "ApprovalsApi",
     "BranchesApi",
-    "CacheApi",
     "DiffsApi",
     "DirectoriesApi",
-    "MaterializationApi",
     "OrganizationsApi",
     "OwnersApi",
     "RepositoriesApi",
     "WebhooksApi",
+    "WorkItemsApi",
     "DefaultApi",
     "ApiResponse",
     "ApiClient",
@@ -57,13 +56,8 @@ __all__ = [
     "ApprovalScope",
     "ApprovalTimeoutAction",
     "ApproveApprovalRequestParameters",
-    "ArtifactGrantHeader",
-    "ArtifactGrantHolderPublicKey",
-    "ArtifactGrantPayload",
-    "ArtifactGrantRequesterPrincipalType",
-    "ArtifactGrantValidationKey",
-    "ArtifactGrantValidationKeySet",
-    "ArtifactRequestProofPayload",
+    "ArtifactDeletionResult",
+    "AssignParameters",
     "BlockUploadIntent",
     "BranchAnnotationApiDto",
     "BranchAnnotationReturnValue",
@@ -75,22 +69,10 @@ __all__ = [
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
-    "CacheBoundaryKind",
-    "CacheEnrollmentRequest",
-    "CacheHealthStatus",
-    "CacheIdentityPublicKey",
-    "CacheRegistration",
-    "CacheRegistrationRefreshRequest",
-    "CacheRegistrationRefreshStatus",
-    "CacheRegistrationResult",
-    "CacheRegistrationReturnValue",
-    "CacheRepositoryAssignmentRequest",
-    "CacheRepositoryScope",
-    "CacheRequestProofPayload",
-    "CacheRevocationRequest",
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
+    "ClearWorkItemDescriptionParameters",
     "CommonParameters",
     "ConfirmContentBlockUploadParameters",
     "ConfirmedBlockUpload",
@@ -108,11 +90,13 @@ __all__ = [
     "CreateReferenceParameters",
     "CreateRepositoryParameters",
     "CreateWebhookRuleParameters",
+    "CurrentBranchReferenceNotification",
     "DedupeDiscoverySnapshot",
     "DeleteBranchParameters",
     "DeleteOrganizationParameters",
     "DeleteOwnerParameters",
     "DeleteRepositoryParameters",
+    "DeleteWorkItemAttachmentParameters",
     "DiffApiDto",
     "DiffDto",
     "DiffParameters",
@@ -163,6 +147,7 @@ __all__ = [
     "GetOrganizationParameters",
     "GetOwnerParameters",
     "GetParameters",
+    "GetReferenceMaterializationBoundaryParameters",
     "GetReferenceParameters",
     "GetReferencesByReferenceIdParameters",
     "GetReferencesParameters",
@@ -181,6 +166,8 @@ __all__ = [
     "InlineObject5",
     "InlineObject6",
     "InlineObject7",
+    "InlineObject8",
+    "InlineObject9",
     "IsEmptyParameters",
     "IssueDedupeDiscoveryParameters",
     "ListApprovalPoliciesParameters",
@@ -189,18 +176,6 @@ __all__ = [
     "ListRepositoriesParameters",
     "ListWebhookDeliveriesParameters",
     "ListWebhookRulesParameters",
-    "MaterializationArtifactDescriptor",
-    "MaterializationArtifactKind",
-    "MaterializationArtifactSource",
-    "MaterializationArtifactSourceKind",
-    "MaterializationCacheSelection",
-    "MaterializationCacheSelectionKind",
-    "MaterializationExecutionMode",
-    "MaterializationPlan",
-    "MaterializationPlanRequest",
-    "MaterializationPlanReturnValue",
-    "MaterializationTargetSelector",
-    "MaterializationTargetSelectorKind",
     "ObjectStorageProvider",
     "OrganizationCommandReturnValue",
     "OrganizationDto",
@@ -213,7 +188,6 @@ __all__ = [
     "OwnerParameters",
     "OwnerReturnValue",
     "OwnerType",
-    "PlanParameters",
     "PopulateParameters",
     "ProblemDetails",
     "PromotionSetApprovalState",
@@ -221,12 +195,19 @@ __all__ = [
     "RebaseParameters",
     "RecordSavesParameters",
     "ReferenceApiDto",
+    "ReferenceDefaultSentinel",
     "ReferenceDto",
     "ReferenceListReturnValue",
+    "ReferenceMaterializationBoundaryApiDto",
+    "ReferenceMaterializationBoundaryReturnValue",
     "ReferenceParameters",
+    "ReferenceReplayApiDto",
+    "ReferenceReplayEventApiDto",
+    "ReferenceReplayReturnValue",
     "ReferenceReturnValue",
     "ReferenceType",
     "RegisterContentBlockUploadParameters",
+    "ReplayReferenceEventsParameters",
     "RepositoryBooleanReturnValue",
     "RepositoryBranchesReturnValue",
     "RepositoryCommandReturnValue",
@@ -236,6 +217,7 @@ __all__ = [
     "RepositoryReturnValue",
     "RepositoryStatus",
     "RepositoryVisibility",
+    "ResolveReferenceEventBoundaryParameters",
     "SaveDirectoryVersionsParameters",
     "ScopedOutboundUrl",
     "SearchVisibility",
@@ -255,17 +237,17 @@ __all__ = [
     "SetRepositoryStatusParameters",
     "SetRepositoryVisibilityParameters",
     "SetSaveDaysParameters",
-    "SignedArtifactGrant",
-    "SignedArtifactRequestProof",
-    "SignedCacheRequestProof",
+    "SetWorkItemDescriptionParameters",
     "StartManifestUploadSessionParameters",
     "StartUploadSession",
     "StorageParameters",
     "SwitchParameters",
     "TestWebhookRuleParameters",
+    "TypedReferenceApiDto",
     "UndeleteOrganizationParameters",
     "UndeleteOwnerParameters",
     "UndeleteRepositoryParameters",
+    "UndeleteWorkItemAttachmentParameters",
     "UploadMetadata",
     "UploadMetadataArrayReturnValue",
     "UploadSessionBlockUploadConfirmedEvent",
@@ -297,19 +279,19 @@ __all__ = [
     "WebhookRuleParameters",
     "WebhookRuleStatus",
     "WebhookScope",
+    "WorkItemParameters",
 ]
 
 # import apis into sdk package
 from grace_generated_openapi_probe.api.approvals_api import ApprovalsApi as ApprovalsApi
 from grace_generated_openapi_probe.api.branches_api import BranchesApi as BranchesApi
-from grace_generated_openapi_probe.api.cache_api import CacheApi as CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi as DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi as DirectoriesApi
-from grace_generated_openapi_probe.api.materialization_api import MaterializationApi as MaterializationApi
 from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi as OrganizationsApi
 from grace_generated_openapi_probe.api.owners_api import OwnersApi as OwnersApi
 from grace_generated_openapi_probe.api.repositories_api import RepositoriesApi as RepositoriesApi
 from grace_generated_openapi_probe.api.webhooks_api import WebhooksApi as WebhooksApi
+from grace_generated_openapi_probe.api.work_items_api import WorkItemsApi as WorkItemsApi
 from grace_generated_openapi_probe.api.default_api import DefaultApi as DefaultApi
 
 # import ApiClient
@@ -342,13 +324,8 @@ from grace_generated_openapi_probe.models.approval_request_status import Approva
 from grace_generated_openapi_probe.models.approval_scope import ApprovalScope as ApprovalScope
 from grace_generated_openapi_probe.models.approval_timeout_action import ApprovalTimeoutAction as ApprovalTimeoutAction
 from grace_generated_openapi_probe.models.approve_approval_request_parameters import ApproveApprovalRequestParameters as ApproveApprovalRequestParameters
-from grace_generated_openapi_probe.models.artifact_grant_header import ArtifactGrantHeader as ArtifactGrantHeader
-from grace_generated_openapi_probe.models.artifact_grant_holder_public_key import ArtifactGrantHolderPublicKey as ArtifactGrantHolderPublicKey
-from grace_generated_openapi_probe.models.artifact_grant_payload import ArtifactGrantPayload as ArtifactGrantPayload
-from grace_generated_openapi_probe.models.artifact_grant_requester_principal_type import ArtifactGrantRequesterPrincipalType as ArtifactGrantRequesterPrincipalType
-from grace_generated_openapi_probe.models.artifact_grant_validation_key import ArtifactGrantValidationKey as ArtifactGrantValidationKey
-from grace_generated_openapi_probe.models.artifact_grant_validation_key_set import ArtifactGrantValidationKeySet as ArtifactGrantValidationKeySet
-from grace_generated_openapi_probe.models.artifact_request_proof_payload import ArtifactRequestProofPayload as ArtifactRequestProofPayload
+from grace_generated_openapi_probe.models.artifact_deletion_result import ArtifactDeletionResult as ArtifactDeletionResult
+from grace_generated_openapi_probe.models.assign_parameters import AssignParameters as AssignParameters
 from grace_generated_openapi_probe.models.block_upload_intent import BlockUploadIntent as BlockUploadIntent
 from grace_generated_openapi_probe.models.branch_annotation_api_dto import BranchAnnotationApiDto as BranchAnnotationApiDto
 from grace_generated_openapi_probe.models.branch_annotation_return_value import BranchAnnotationReturnValue as BranchAnnotationReturnValue
@@ -360,22 +337,10 @@ from grace_generated_openapi_probe.models.branch_hash_query_parameters import Br
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
-from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBoundaryKind as CacheBoundaryKind
-from grace_generated_openapi_probe.models.cache_enrollment_request import CacheEnrollmentRequest as CacheEnrollmentRequest
-from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus as CacheHealthStatus
-from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey as CacheIdentityPublicKey
-from grace_generated_openapi_probe.models.cache_registration import CacheRegistration as CacheRegistration
-from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest as CacheRegistrationRefreshRequest
-from grace_generated_openapi_probe.models.cache_registration_refresh_status import CacheRegistrationRefreshStatus as CacheRegistrationRefreshStatus
-from grace_generated_openapi_probe.models.cache_registration_result import CacheRegistrationResult as CacheRegistrationResult
-from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue as CacheRegistrationReturnValue
-from grace_generated_openapi_probe.models.cache_repository_assignment_request import CacheRepositoryAssignmentRequest as CacheRepositoryAssignmentRequest
-from grace_generated_openapi_probe.models.cache_repository_scope import CacheRepositoryScope as CacheRepositoryScope
-from grace_generated_openapi_probe.models.cache_request_proof_payload import CacheRequestProofPayload as CacheRequestProofPayload
-from grace_generated_openapi_probe.models.cache_revocation_request import CacheRevocationRequest as CacheRevocationRequest
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange
+from grace_generated_openapi_probe.models.clear_work_item_description_parameters import ClearWorkItemDescriptionParameters as ClearWorkItemDescriptionParameters
 from grace_generated_openapi_probe.models.common_parameters import CommonParameters as CommonParameters
 from grace_generated_openapi_probe.models.confirm_content_block_upload_parameters import ConfirmContentBlockUploadParameters as ConfirmContentBlockUploadParameters
 from grace_generated_openapi_probe.models.confirmed_block_upload import ConfirmedBlockUpload as ConfirmedBlockUpload
@@ -393,11 +358,13 @@ from grace_generated_openapi_probe.models.create_parameters import CreateParamet
 from grace_generated_openapi_probe.models.create_reference_parameters import CreateReferenceParameters as CreateReferenceParameters
 from grace_generated_openapi_probe.models.create_repository_parameters import CreateRepositoryParameters as CreateRepositoryParameters
 from grace_generated_openapi_probe.models.create_webhook_rule_parameters import CreateWebhookRuleParameters as CreateWebhookRuleParameters
+from grace_generated_openapi_probe.models.current_branch_reference_notification import CurrentBranchReferenceNotification as CurrentBranchReferenceNotification
 from grace_generated_openapi_probe.models.dedupe_discovery_snapshot import DedupeDiscoverySnapshot as DedupeDiscoverySnapshot
 from grace_generated_openapi_probe.models.delete_branch_parameters import DeleteBranchParameters as DeleteBranchParameters
 from grace_generated_openapi_probe.models.delete_organization_parameters import DeleteOrganizationParameters as DeleteOrganizationParameters
 from grace_generated_openapi_probe.models.delete_owner_parameters import DeleteOwnerParameters as DeleteOwnerParameters
 from grace_generated_openapi_probe.models.delete_repository_parameters import DeleteRepositoryParameters as DeleteRepositoryParameters
+from grace_generated_openapi_probe.models.delete_work_item_attachment_parameters import DeleteWorkItemAttachmentParameters as DeleteWorkItemAttachmentParameters
 from grace_generated_openapi_probe.models.diff_api_dto import DiffApiDto as DiffApiDto
 from grace_generated_openapi_probe.models.diff_dto import DiffDto as DiffDto
 from grace_generated_openapi_probe.models.diff_parameters import DiffParameters as DiffParameters
@@ -448,6 +415,7 @@ from grace_generated_openapi_probe.models.get_download_uri_parameters import Get
 from grace_generated_openapi_probe.models.get_organization_parameters import GetOrganizationParameters as GetOrganizationParameters
 from grace_generated_openapi_probe.models.get_owner_parameters import GetOwnerParameters as GetOwnerParameters
 from grace_generated_openapi_probe.models.get_parameters import GetParameters as GetParameters
+from grace_generated_openapi_probe.models.get_reference_materialization_boundary_parameters import GetReferenceMaterializationBoundaryParameters as GetReferenceMaterializationBoundaryParameters
 from grace_generated_openapi_probe.models.get_reference_parameters import GetReferenceParameters as GetReferenceParameters
 from grace_generated_openapi_probe.models.get_references_by_reference_id_parameters import GetReferencesByReferenceIdParameters as GetReferencesByReferenceIdParameters
 from grace_generated_openapi_probe.models.get_references_parameters import GetReferencesParameters as GetReferencesParameters
@@ -466,6 +434,8 @@ from grace_generated_openapi_probe.models.inline_object4 import InlineObject4 as
 from grace_generated_openapi_probe.models.inline_object5 import InlineObject5 as InlineObject5
 from grace_generated_openapi_probe.models.inline_object6 import InlineObject6 as InlineObject6
 from grace_generated_openapi_probe.models.inline_object7 import InlineObject7 as InlineObject7
+from grace_generated_openapi_probe.models.inline_object8 import InlineObject8 as InlineObject8
+from grace_generated_openapi_probe.models.inline_object9 import InlineObject9 as InlineObject9
 from grace_generated_openapi_probe.models.is_empty_parameters import IsEmptyParameters as IsEmptyParameters
 from grace_generated_openapi_probe.models.issue_dedupe_discovery_parameters import IssueDedupeDiscoveryParameters as IssueDedupeDiscoveryParameters
 from grace_generated_openapi_probe.models.list_approval_policies_parameters import ListApprovalPoliciesParameters as ListApprovalPoliciesParameters
@@ -474,18 +444,6 @@ from grace_generated_openapi_probe.models.list_organizations_parameters import L
 from grace_generated_openapi_probe.models.list_repositories_parameters import ListRepositoriesParameters as ListRepositoriesParameters
 from grace_generated_openapi_probe.models.list_webhook_deliveries_parameters import ListWebhookDeliveriesParameters as ListWebhookDeliveriesParameters
 from grace_generated_openapi_probe.models.list_webhook_rules_parameters import ListWebhookRulesParameters as ListWebhookRulesParameters
-from grace_generated_openapi_probe.models.materialization_artifact_descriptor import MaterializationArtifactDescriptor as MaterializationArtifactDescriptor
-from grace_generated_openapi_probe.models.materialization_artifact_kind import MaterializationArtifactKind as MaterializationArtifactKind
-from grace_generated_openapi_probe.models.materialization_artifact_source import MaterializationArtifactSource as MaterializationArtifactSource
-from grace_generated_openapi_probe.models.materialization_artifact_source_kind import MaterializationArtifactSourceKind as MaterializationArtifactSourceKind
-from grace_generated_openapi_probe.models.materialization_cache_selection import MaterializationCacheSelection as MaterializationCacheSelection
-from grace_generated_openapi_probe.models.materialization_cache_selection_kind import MaterializationCacheSelectionKind as MaterializationCacheSelectionKind
-from grace_generated_openapi_probe.models.materialization_execution_mode import MaterializationExecutionMode as MaterializationExecutionMode
-from grace_generated_openapi_probe.models.materialization_plan import MaterializationPlan as MaterializationPlan
-from grace_generated_openapi_probe.models.materialization_plan_request import MaterializationPlanRequest as MaterializationPlanRequest
-from grace_generated_openapi_probe.models.materialization_plan_return_value import MaterializationPlanReturnValue as MaterializationPlanReturnValue
-from grace_generated_openapi_probe.models.materialization_target_selector import MaterializationTargetSelector as MaterializationTargetSelector
-from grace_generated_openapi_probe.models.materialization_target_selector_kind import MaterializationTargetSelectorKind as MaterializationTargetSelectorKind
 from grace_generated_openapi_probe.models.object_storage_provider import ObjectStorageProvider as ObjectStorageProvider
 from grace_generated_openapi_probe.models.organization_command_return_value import OrganizationCommandReturnValue as OrganizationCommandReturnValue
 from grace_generated_openapi_probe.models.organization_dto import OrganizationDto as OrganizationDto
@@ -498,7 +456,6 @@ from grace_generated_openapi_probe.models.owner_dto import OwnerDto as OwnerDto
 from grace_generated_openapi_probe.models.owner_parameters import OwnerParameters as OwnerParameters
 from grace_generated_openapi_probe.models.owner_return_value import OwnerReturnValue as OwnerReturnValue
 from grace_generated_openapi_probe.models.owner_type import OwnerType as OwnerType
-from grace_generated_openapi_probe.models.plan_parameters import PlanParameters as PlanParameters
 from grace_generated_openapi_probe.models.populate_parameters import PopulateParameters as PopulateParameters
 from grace_generated_openapi_probe.models.problem_details import ProblemDetails as ProblemDetails
 from grace_generated_openapi_probe.models.promotion_set_approval_state import PromotionSetApprovalState as PromotionSetApprovalState
@@ -506,12 +463,19 @@ from grace_generated_openapi_probe.models.promotion_set_approval_summary import 
 from grace_generated_openapi_probe.models.rebase_parameters import RebaseParameters as RebaseParameters
 from grace_generated_openapi_probe.models.record_saves_parameters import RecordSavesParameters as RecordSavesParameters
 from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiDto as ReferenceApiDto
+from grace_generated_openapi_probe.models.reference_default_sentinel import ReferenceDefaultSentinel as ReferenceDefaultSentinel
 from grace_generated_openapi_probe.models.reference_dto import ReferenceDto as ReferenceDto
 from grace_generated_openapi_probe.models.reference_list_return_value import ReferenceListReturnValue as ReferenceListReturnValue
+from grace_generated_openapi_probe.models.reference_materialization_boundary_api_dto import ReferenceMaterializationBoundaryApiDto as ReferenceMaterializationBoundaryApiDto
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue as ReferenceMaterializationBoundaryReturnValue
 from grace_generated_openapi_probe.models.reference_parameters import ReferenceParameters as ReferenceParameters
+from grace_generated_openapi_probe.models.reference_replay_api_dto import ReferenceReplayApiDto as ReferenceReplayApiDto
+from grace_generated_openapi_probe.models.reference_replay_event_api_dto import ReferenceReplayEventApiDto as ReferenceReplayEventApiDto
+from grace_generated_openapi_probe.models.reference_replay_return_value import ReferenceReplayReturnValue as ReferenceReplayReturnValue
 from grace_generated_openapi_probe.models.reference_return_value import ReferenceReturnValue as ReferenceReturnValue
 from grace_generated_openapi_probe.models.reference_type import ReferenceType as ReferenceType
 from grace_generated_openapi_probe.models.register_content_block_upload_parameters import RegisterContentBlockUploadParameters as RegisterContentBlockUploadParameters
+from grace_generated_openapi_probe.models.replay_reference_events_parameters import ReplayReferenceEventsParameters as ReplayReferenceEventsParameters
 from grace_generated_openapi_probe.models.repository_boolean_return_value import RepositoryBooleanReturnValue as RepositoryBooleanReturnValue
 from grace_generated_openapi_probe.models.repository_branches_return_value import RepositoryBranchesReturnValue as RepositoryBranchesReturnValue
 from grace_generated_openapi_probe.models.repository_command_return_value import RepositoryCommandReturnValue as RepositoryCommandReturnValue
@@ -521,6 +485,7 @@ from grace_generated_openapi_probe.models.repository_references_return_value imp
 from grace_generated_openapi_probe.models.repository_return_value import RepositoryReturnValue as RepositoryReturnValue
 from grace_generated_openapi_probe.models.repository_status import RepositoryStatus as RepositoryStatus
 from grace_generated_openapi_probe.models.repository_visibility import RepositoryVisibility as RepositoryVisibility
+from grace_generated_openapi_probe.models.resolve_reference_event_boundary_parameters import ResolveReferenceEventBoundaryParameters as ResolveReferenceEventBoundaryParameters
 from grace_generated_openapi_probe.models.save_directory_versions_parameters import SaveDirectoryVersionsParameters as SaveDirectoryVersionsParameters
 from grace_generated_openapi_probe.models.scoped_outbound_url import ScopedOutboundUrl as ScopedOutboundUrl
 from grace_generated_openapi_probe.models.search_visibility import SearchVisibility as SearchVisibility
@@ -540,17 +505,17 @@ from grace_generated_openapi_probe.models.set_repository_name_parameters import 
 from grace_generated_openapi_probe.models.set_repository_status_parameters import SetRepositoryStatusParameters as SetRepositoryStatusParameters
 from grace_generated_openapi_probe.models.set_repository_visibility_parameters import SetRepositoryVisibilityParameters as SetRepositoryVisibilityParameters
 from grace_generated_openapi_probe.models.set_save_days_parameters import SetSaveDaysParameters as SetSaveDaysParameters
-from grace_generated_openapi_probe.models.signed_artifact_grant import SignedArtifactGrant as SignedArtifactGrant
-from grace_generated_openapi_probe.models.signed_artifact_request_proof import SignedArtifactRequestProof as SignedArtifactRequestProof
-from grace_generated_openapi_probe.models.signed_cache_request_proof import SignedCacheRequestProof as SignedCacheRequestProof
+from grace_generated_openapi_probe.models.set_work_item_description_parameters import SetWorkItemDescriptionParameters as SetWorkItemDescriptionParameters
 from grace_generated_openapi_probe.models.start_manifest_upload_session_parameters import StartManifestUploadSessionParameters as StartManifestUploadSessionParameters
 from grace_generated_openapi_probe.models.start_upload_session import StartUploadSession as StartUploadSession
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters
 from grace_generated_openapi_probe.models.switch_parameters import SwitchParameters as SwitchParameters
 from grace_generated_openapi_probe.models.test_webhook_rule_parameters import TestWebhookRuleParameters as TestWebhookRuleParameters
+from grace_generated_openapi_probe.models.typed_reference_api_dto import TypedReferenceApiDto as TypedReferenceApiDto
 from grace_generated_openapi_probe.models.undelete_organization_parameters import UndeleteOrganizationParameters as UndeleteOrganizationParameters
 from grace_generated_openapi_probe.models.undelete_owner_parameters import UndeleteOwnerParameters as UndeleteOwnerParameters
 from grace_generated_openapi_probe.models.undelete_repository_parameters import UndeleteRepositoryParameters as UndeleteRepositoryParameters
+from grace_generated_openapi_probe.models.undelete_work_item_attachment_parameters import UndeleteWorkItemAttachmentParameters as UndeleteWorkItemAttachmentParameters
 from grace_generated_openapi_probe.models.upload_metadata import UploadMetadata as UploadMetadata
 from grace_generated_openapi_probe.models.upload_metadata_array_return_value import UploadMetadataArrayReturnValue as UploadMetadataArrayReturnValue
 from grace_generated_openapi_probe.models.upload_session_block_upload_confirmed_event import UploadSessionBlockUploadConfirmedEvent as UploadSessionBlockUploadConfirmedEvent
@@ -582,4 +547,5 @@ from grace_generated_openapi_probe.models.webhook_rule import WebhookRule as Web
 from grace_generated_openapi_probe.models.webhook_rule_parameters import WebhookRuleParameters as WebhookRuleParameters
 from grace_generated_openapi_probe.models.webhook_rule_status import WebhookRuleStatus as WebhookRuleStatus
 from grace_generated_openapi_probe.models.webhook_scope import WebhookScope as WebhookScope
+from grace_generated_openapi_probe.models.work_item_parameters import WorkItemParameters as WorkItemParameters
 

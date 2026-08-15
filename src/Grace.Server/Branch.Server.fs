@@ -30,6 +30,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
+open System.Globalization
 open System.Linq
 open System.Text.Json
 open System.Threading.Tasks
@@ -38,6 +39,142 @@ open System.Threading.Tasks
 module Branch =
 
     let private branchHashLookupErrorItemKey = "BranchHashLookupError"
+
+    /// Identifies one live Watch subscription without treating process identity as repository identity.
+    [<Struct>]
+    type internal WatchSourceSubscriptionKey = { ProcessId: Guid; RepositoryId: RepositoryId; BranchId: BranchId }
+
+    /// Identifies one transient live publication independently from the durable replay stream.
+    [<Struct>]
+    type internal WatchPublicationKey = { RepositoryId: RepositoryId; BranchId: BranchId; ReferenceId: ReferenceId }
+
+    /// Retains the exact connection selected before Reference publication begins.
+    type private PendingWatchPublication = { Subscription: WatchSourceSubscriptionKey; ConnectionId: string; ExpiresAtUtc: DateTimeOffset }
+
+    let private watchSourceSuppressionLock = obj ()
+    let private watchSubscriptionByConnection = Dictionary<string, WatchSourceSubscriptionKey>(StringComparer.Ordinal)
+    let private watchConnectionBySubscription = Dictionary<WatchSourceSubscriptionKey, string>()
+    let private pendingWatchPublications = Dictionary<WatchPublicationKey, PendingWatchPublication>()
+    let private watchPublicationBindingLifetime = TimeSpan.FromMinutes(2.0)
+
+    /// Removes one exact connection binding without disturbing a replacement registered for the same process identity.
+    let private unregisterWatchSourceSubscriptionLocked connectionId =
+        match watchSubscriptionByConnection.TryGetValue connectionId with
+        | true, subscription ->
+            watchSubscriptionByConnection.Remove connectionId
+            |> ignore
+
+            match watchConnectionBySubscription.TryGetValue subscription with
+            | true, currentConnectionId when String.Equals(currentConnectionId, connectionId, StringComparison.Ordinal) ->
+                watchConnectionBySubscription.Remove subscription
+                |> ignore
+            | _ -> ()
+        | _ -> ()
+
+    /// Binds a fresh Watch process identity to the exact authorized SignalR connection and branch subscription.
+    let internal registerWatchSourceSubscription connectionId processId repositoryId branchId =
+        lock watchSourceSuppressionLock (fun () ->
+            unregisterWatchSourceSubscriptionLocked connectionId
+
+            if
+                processId <> Guid.Empty
+                && not (String.IsNullOrWhiteSpace connectionId)
+            then
+                let subscription = { ProcessId = processId; RepositoryId = repositoryId; BranchId = branchId }
+
+                match watchConnectionBySubscription.TryGetValue subscription with
+                | true, replacedConnectionId ->
+                    watchSubscriptionByConnection.Remove replacedConnectionId
+                    |> ignore
+                | _ -> ()
+
+                watchConnectionBySubscription[subscription] <- connectionId
+                watchSubscriptionByConnection[connectionId] <- subscription)
+
+    /// Removes the disconnected connection from transient Watch source delivery state.
+    let internal unregisterWatchSourceSubscription connectionId =
+        lock watchSourceSuppressionLock (fun () -> unregisterWatchSourceSubscriptionLocked connectionId)
+
+    /// Drops expired publication bindings while holding the shared transient lifecycle lock.
+    let private pruneExpiredWatchPublicationsLocked now =
+        pendingWatchPublications
+        |> Seq.choose (fun entry -> if entry.Value.ExpiresAtUtc <= now then Some entry.Key else None)
+        |> Seq.toArray
+        |> Array.iter (fun key -> pendingWatchPublications.Remove key |> ignore)
+
+    /// Captures the exact active connection before the authorized Reference mutation can publish its broker event.
+    let internal prepareWatchPublicationSourceAt now processId repositoryId branchId referenceId =
+        lock watchSourceSuppressionLock (fun () ->
+            pruneExpiredWatchPublicationsLocked now
+            let publication = { RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+
+            pendingWatchPublications.Remove publication
+            |> ignore
+
+            if processId = Guid.Empty then
+                None
+            else
+                let subscription = { ProcessId = processId; RepositoryId = repositoryId; BranchId = branchId }
+
+                match watchConnectionBySubscription.TryGetValue subscription with
+                | true, connectionId ->
+                    pendingWatchPublications[publication] <- {
+                                                                 Subscription = subscription
+                                                                 ConnectionId = connectionId
+                                                                 ExpiresAtUtc = now + watchPublicationBindingLifetime
+                                                             }
+
+                    Some publication
+                | _ -> None)
+
+    /// Captures a source connection using the current server clock.
+    let internal prepareWatchPublicationSource processId repositoryId branchId referenceId =
+        prepareWatchPublicationSourceAt DateTimeOffset.UtcNow processId repositoryId branchId referenceId
+
+    /// Removes a pending binding when the corresponding Reference mutation fails or is cancelled.
+    let internal removeWatchPublicationSource publication =
+        lock watchSourceSuppressionLock (fun () ->
+            pendingWatchPublications.Remove publication
+            |> ignore)
+
+    /// Consumes one live source binding only while its original connection and branch subscription remain exact.
+    let internal tryTakeWatchPublicationSourceConnectionAt now repositoryId branchId referenceId =
+        lock watchSourceSuppressionLock (fun () ->
+            pruneExpiredWatchPublicationsLocked now
+            let publication = { RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+
+            match pendingWatchPublications.TryGetValue publication with
+            | true, pending ->
+                pendingWatchPublications.Remove publication
+                |> ignore
+
+                match watchConnectionBySubscription.TryGetValue pending.Subscription, watchSubscriptionByConnection.TryGetValue pending.ConnectionId with
+                | (true, currentConnectionId), (true, currentSubscription) when
+                    String.Equals(currentConnectionId, pending.ConnectionId, StringComparison.Ordinal)
+                    && currentSubscription = pending.Subscription
+                    ->
+                    Some pending.ConnectionId
+                | _ -> None
+            | _ -> None)
+
+    /// Consumes one live source binding using the current server clock.
+    let internal tryTakeWatchPublicationSourceConnection repositoryId branchId referenceId =
+        tryTakeWatchPublicationSourceConnectionAt DateTimeOffset.UtcNow repositoryId branchId referenceId
+
+    /// Reads one well-formed Watch process identity from delivery metadata without rejecting the HTTP request.
+    let internal tryGetWatchProcessId (context: HttpContext) =
+        match context.Request.Headers.TryGetValue Constants.WatchProcessIdHeaderKey with
+        | true, values when values.Count = 1 ->
+            let mutable processId = Guid.Empty
+
+            if
+                Guid.TryParseExact(values[0], "N", &processId)
+                && processId <> Guid.Empty
+            then
+                Some processId
+            else
+                None
+        | _ -> None
 
     /// Implements branch hash lookup description for the server request pipeline.
     let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
@@ -90,6 +227,207 @@ module Branch =
                 (branchLogger ())
                     .Log(logLevel, eventId, state, ex, formatter)
         }
+
+    /// Identifies one Reference-bearing position in the durable branch event stream.
+    type internal ReferenceMaterializationBoundaryCandidate =
+        {
+            EventPosition: int64
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            Reference: Reference.ReferenceDto
+            EstablishesBranchBase: bool
+            EligibleForWatchReplay: bool
+        }
+
+    /// Encodes a branch event position without exposing cursor interpretation to clients.
+    let internal referenceEventCursor eventPosition = $"branch-event-v1:{eventPosition}"
+
+    /// Interprets a v1 branch-event cursor only inside the server replay boundary.
+    let private tryParseReferenceEventCursor eventCursor =
+        let prefix = "branch-event-v1:"
+
+        if String.IsNullOrWhiteSpace eventCursor then
+            Error Reference.ReferenceReplayCursorFailure.Malformed
+        elif eventCursor.StartsWith(prefix, StringComparison.Ordinal) then
+            let positionText = eventCursor.Substring(prefix.Length)
+            let mutable position = 0L
+
+            if Int64.TryParse(positionText, NumberStyles.None, CultureInfo.InvariantCulture, &position) then
+                Ok position
+            else
+                Error Reference.ReferenceReplayCursorFailure.Malformed
+        elif eventCursor.StartsWith("branch-event-", StringComparison.Ordinal) then
+            Error Reference.ReferenceReplayCursorFailure.UnsupportedVersion
+        else
+            Error Reference.ReferenceReplayCursorFailure.Malformed
+
+    /// Projects one eligible durable Branch Reference event into the Watch replay contract.
+    let private tryCreateReferenceReplayEvent repositoryId branchId position (branchEvent: BranchEvent) =
+        /// Projects a type-matching branch Reference while preserving its exact durable event position.
+        let create expectedReferenceType (referenceDto: Reference.ReferenceDto) directoryId sha256Hash blake3Hash referenceText =
+            if referenceDto.RepositoryId <> repositoryId
+               || referenceDto.BranchId <> branchId
+               || referenceDto.ReferenceType
+                  <> expectedReferenceType then
+                None
+            else
+                Some
+                    { Reference.ReferenceReplayEventDto.Default with
+                        EventCursor = referenceEventCursor position
+                        Reference =
+                            { Reference.CurrentBranchReferenceNotification.Default with
+                                ReferenceId = referenceDto.ReferenceId
+                                OwnerId = referenceDto.OwnerId
+                                OrganizationId = referenceDto.OrganizationId
+                                RepositoryId = repositoryId
+                                BranchId = branchId
+                                DirectoryId = directoryId
+                                Sha256Hash = sha256Hash
+                                Blake3Hash = blake3Hash
+                                ReferenceType = expectedReferenceType
+                                ReferenceText = referenceText
+                                CorrelationId = branchEvent.Metadata.CorrelationId
+                            }
+                    }
+
+        match branchEvent.Event with
+        | BranchEventType.Committed (referenceDto, directoryId, sha256Hash, blake3Hash, referenceText) ->
+            create ReferenceType.Commit referenceDto directoryId sha256Hash blake3Hash referenceText
+        | BranchEventType.Checkpointed (referenceDto, directoryId, sha256Hash, blake3Hash, referenceText) ->
+            create ReferenceType.Checkpoint referenceDto directoryId sha256Hash blake3Hash referenceText
+        | BranchEventType.Saved (referenceDto, directoryId, sha256Hash, blake3Hash, referenceText) ->
+            create ReferenceType.Save referenceDto directoryId sha256Hash blake3Hash referenceText
+        | _ -> None
+
+    /// Returns the eligible events and exact scanned closure after a branch-scoped cursor from one immutable snapshot.
+    let internal replayReferenceEventsAfterCursor
+        repositoryId
+        branchId
+        cursorRepositoryId
+        cursorBranchId
+        eventCursor
+        (branchEvents: IReadOnlyList<BranchEvent>)
+        =
+        if cursorRepositoryId <> repositoryId then
+            Error Reference.ReferenceReplayCursorFailure.RepositoryMismatch
+        elif cursorBranchId <> branchId then
+            Error Reference.ReferenceReplayCursorFailure.BranchMismatch
+        else
+            match tryParseReferenceEventCursor eventCursor with
+            | Error failure -> Error failure
+            | Ok cursorPosition when
+                cursorPosition < 0L
+                || cursorPosition >= int64 branchEvents.Count
+                ->
+                Error Reference.ReferenceReplayCursorFailure.Future
+            | Ok cursorPosition ->
+                let events =
+                    branchEvents
+                    |> Seq.mapi (fun position branchEvent -> int64 position, branchEvent)
+                    |> Seq.filter (fun (position, _) -> position > cursorPosition)
+                    |> Seq.choose (fun (position, branchEvent) -> tryCreateReferenceReplayEvent repositoryId branchId position branchEvent)
+                    |> Seq.toArray
+
+                let scannedThroughCursor =
+                    if cursorPosition = int64 branchEvents.Count - 1L then
+                        eventCursor
+                    else
+                        referenceEventCursor (int64 branchEvents.Count - 1L)
+
+                Ok
+                    { Reference.ReferenceReplayDto.Default with
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        Events = events
+                        ScannedThroughCursor = scannedThroughCursor
+                    }
+
+    /// Selects a root and ordered boundary from one immutable branch-event snapshot.
+    let internal trySelectReferenceMaterializationBoundary
+        (parameters: GetReferenceMaterializationBoundaryParameters)
+        (candidates: ReferenceMaterializationBoundaryCandidate array)
+        =
+        let selected =
+            if parameters.DirectoryVersionId
+               <> DirectoryVersionId.Empty then
+                candidates
+                |> Array.tryFindBack (fun candidate -> candidate.Reference.DirectoryId = parameters.DirectoryVersionId)
+            elif not (String.IsNullOrWhiteSpace parameters.ReferenceId) then
+                match Guid.TryParse parameters.ReferenceId with
+                | true, referenceId ->
+                    candidates
+                    |> Array.tryFindBack (fun candidate -> candidate.Reference.ReferenceId = referenceId)
+                | _ -> None
+            elif not (String.IsNullOrWhiteSpace parameters.ReferenceType) then
+                match discriminatedUnionFromString<ReferenceType> parameters.ReferenceType with
+                | Some referenceType ->
+                    candidates
+                    |> Array.tryFindBack (fun candidate -> candidate.Reference.ReferenceType = referenceType)
+                | None -> None
+            else
+                candidates
+                |> Array.tryFindBack (fun candidate -> candidate.Reference.ReferenceType = ReferenceType.Promotion)
+                |> Option.orElseWith (fun () ->
+                    candidates
+                    |> Array.tryFindBack (fun candidate -> candidate.EstablishesBranchBase))
+
+        selected
+        |> Option.map (fun candidate ->
+            { Reference.ReferenceMaterializationBoundaryDto.Default with
+                RepositoryId = candidate.RepositoryId
+                BranchId = candidate.BranchId
+                DirectoryId = candidate.Reference.DirectoryId
+                Sha256Hash = candidate.Reference.Sha256Hash
+                Blake3Hash = candidate.Reference.Blake3Hash
+                EventCursor = referenceEventCursor candidate.EventPosition
+            })
+
+    /// Resolves an absent Watch cursor from an exact local root or the conservative tail of one branch-event snapshot.
+    let internal tryResolveReferenceEventBoundary
+        repositoryId
+        branchId
+        (parameters: ResolveReferenceEventBoundaryParameters)
+        branchEventCount
+        (candidates: ReferenceMaterializationBoundaryCandidate array)
+        =
+        let hasCompleteLocalRoot =
+            parameters.DirectoryVersionId
+            <> DirectoryVersionId.Empty
+            && not (String.IsNullOrWhiteSpace(string parameters.Sha256Hash))
+            && not (String.IsNullOrWhiteSpace(string parameters.Blake3Hash))
+
+        if repositoryId = RepositoryId.Empty
+           || branchId = BranchId.Empty
+           || not hasCompleteLocalRoot
+           || branchEventCount <= 0 then
+            None
+        else
+            let exactMatch =
+                candidates
+                |> Array.tryFindBack (fun candidate ->
+                    candidate.RepositoryId = repositoryId
+                    && candidate.BranchId = branchId
+                    && candidate.Reference.RepositoryId = repositoryId
+                    && candidate.Reference.BranchId = branchId
+                    && candidate.EligibleForWatchReplay
+                    && candidate.Reference.DirectoryId = parameters.DirectoryVersionId
+                    && candidate.Reference.Sha256Hash = parameters.Sha256Hash
+                    && candidate.Reference.Blake3Hash = parameters.Blake3Hash)
+
+            let eventCursor =
+                exactMatch
+                |> Option.map (fun candidate -> referenceEventCursor candidate.EventPosition)
+                |> Option.defaultWith (fun () -> referenceEventCursor (int64 branchEventCount - 1L))
+
+            Some
+                { Reference.ReferenceMaterializationBoundaryDto.Default with
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    DirectoryId = parameters.DirectoryVersionId
+                    Sha256Hash = parameters.Sha256Hash
+                    Blake3Hash = parameters.Blake3Hash
+                    EventCursor = eventCursor
+                }
 
     /// Implements annotation error for the server request pipeline.
     let private annotationError correlationId message = GraceError.Create message correlationId
@@ -517,6 +855,7 @@ module Branch =
         (validations: Validations<'T>)
         (command: 'T -> ValueTask<BranchCommand>)
         (postSuccess: unit -> Task<Result<unit, GraceError>>)
+        (onFailure: unit -> unit)
         =
         task {
             let startTime = getCurrentInstant ()
@@ -571,6 +910,8 @@ module Branch =
 
                                 return! context |> result500ServerError graceError
                         | Error graceError ->
+                            onFailure ()
+
                             graceError
                                 .enhance(parameterDictionary)
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
@@ -598,7 +939,9 @@ module Branch =
                     let! cmd = command parameters
 
                     match tryGetBranchHashLookupError context with
-                    | Some graceError -> return! context |> result400BadRequest graceError
+                    | Some graceError ->
+                        onFailure ()
+                        return! context |> result400BadRequest graceError
                     | None ->
                         let! result = handleCommand cmd
                         let duration = getDurationRightAligned_ms startTime
@@ -636,6 +979,8 @@ module Branch =
                     return! context |> result400BadRequest graceError
             with
             | ex ->
+                onFailure ()
+
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Branch.Server.processCommand. CorrelationId: {correlationId}.",
@@ -657,7 +1002,16 @@ module Branch =
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
-        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok())) ignore
+
+    /// Coordinates a branch command whose transient pre-publication state must be cleared after failure or cancellation.
+    let processCommandWithFailure<'T when 'T :> BranchParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<BranchCommand>)
+        onFailure
+        =
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok())) onFailure
 
     /// Resolves resolve root directory version for reference command data from request or repository state.
     let private resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId =
@@ -717,8 +1071,9 @@ module Branch =
     /// Implements reference command from root for the server request pipeline.
     let private referenceCommandFromRoot
         (context: HttpContext)
-        (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
+        (createCommand: ReferenceId * DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
         repositoryId
+        referenceId
         directoryVersionId
         sha256Hash
         blake3Hash
@@ -728,11 +1083,11 @@ module Branch =
         task {
             match! resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
             | Services.UniqueMatch directoryVersion ->
-                return createCommand (directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
-            | Services.NoMatches -> return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                return createCommand (referenceId, directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
+            | Services.NoMatches -> return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
             | Services.AmbiguousMatches _ ->
                 setAmbiguousBranchHashLookupError context sha256Hash blake3Hash correlationId
-                return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
         }
 
     /// Validates validate reference root locator inputs before server processing continues.
@@ -744,6 +1099,12 @@ module Branch =
                 parameters.Blake3Hash
             |]
             BranchError.EitherDirectoryVersionIdOrSha256HashRequired
+
+    /// Validates the caller-supplied stable identity required by every Reference producer.
+    let validateReferenceId referenceId = Guid.isNotEmpty referenceId BranchError.InvalidReferenceId
+
+    /// Preserves the focused Commit validation seam while using the Reference-wide identity rule.
+    let validateCommitReferenceId (parameters: CommitReferenceParameters) = validateReferenceId parameters.ReferenceId
 
     /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> BranchParameters>
@@ -823,6 +1184,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateBranchParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         Guid.isValidAndNotEmptyGuid parameters.ParentBranchId BranchError.InvalidBranchId
                         String.isValidGraceName parameters.ParentBranchName BranchError.InvalidBranchName
                         Branch.branchExists
@@ -873,6 +1235,7 @@ module Branch =
                                     (BranchName parameters.BranchName),
                                     parentBranchId,
                                     parentBranch.BasedOn.ReferenceId,
+                                    parameters.ReferenceId,
                                     graceIds.OwnerId,
                                     graceIds.OrganizationId,
                                     graceIds.RepositoryId,
@@ -885,6 +1248,7 @@ module Branch =
                                     (BranchName parameters.BranchName),
                                     Constants.DefaultParentBranchId,
                                     ReferenceId.Empty, // This is fucked.
+                                    parameters.ReferenceId,
                                     graceIds.OwnerId,
                                     graceIds.OrganizationId,
                                     graceIds.RepositoryId,
@@ -908,7 +1272,7 @@ module Branch =
                     }
 
                 context.Items.Add("Command", nameof Create)
-                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin
+                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin ignore
             }
 
     /// Rebases a branch on its parent branch.
@@ -920,6 +1284,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: RebaseParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId BranchError.ReferenceIdDoesNotExist
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
@@ -934,7 +1299,7 @@ module Branch =
 
                 /// Implements command for the server request pipeline.
                 let command (parameters: RebaseParameters) =
-                    BranchCommand.Rebase parameters.BasedOn
+                    BranchCommand.Rebase(parameters.ReferenceId, parameters.BasedOn)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof Rebase)
@@ -951,6 +1316,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: AssignParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Input.oneOfTheseValuesMustBeProvided
@@ -985,6 +1351,7 @@ module Branch =
                             return
                                 Some(
                                     Assign(
+                                        parameters.ReferenceId,
                                         directoryVersion.DirectoryVersionId,
                                         directoryVersion.Sha256Hash,
                                         directoryVersion.Blake3Hash,
@@ -1038,6 +1405,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -1060,6 +1428,7 @@ module Branch =
                         context
                         Promote
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1078,8 +1447,9 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 /// Implements validations for the server request pipeline.
-                let validations (parameters: CreateReferenceParameters) =
+                let validations (parameters: CommitReferenceParameters) =
                     [|
+                        validateCommitReferenceId parameters
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -1097,11 +1467,12 @@ module Branch =
                     |]
 
                 /// Implements command for the server request pipeline.
-                let command (parameters: CreateReferenceParameters) =
+                let command (parameters: CommitReferenceParameters) =
                     referenceCommandFromRoot
                         context
                         BranchCommand.Commit
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1122,6 +1493,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1143,6 +1515,7 @@ module Branch =
                         context
                         BranchCommand.Checkpoint
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1161,10 +1534,19 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
+                let mutable pendingWatchPublication: WatchPublicationKey option = None
+
+                /// Clears delivery-only source state when the durable Reference mutation does not succeed.
+                let clearPendingWatchPublication () =
+                    pendingWatchPublication
+                    |> Option.iter removeWatchPublicationSource
+
+                    pendingWatchPublication <- None
 
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1182,19 +1564,33 @@ module Branch =
 
                 /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
-                    referenceCommandFromRoot
-                        context
-                        BranchCommand.Save
-                        graceIds.RepositoryId
-                        parameters.DirectoryVersionId
-                        parameters.Sha256Hash
-                        parameters.Blake3Hash
-                        (ReferenceText parameters.Message)
-                        parameters.CorrelationId
+                    task {
+                        let! branchCommand =
+                            referenceCommandFromRoot
+                                context
+                                BranchCommand.Save
+                                graceIds.RepositoryId
+                                parameters.ReferenceId
+                                parameters.DirectoryVersionId
+                                parameters.Sha256Hash
+                                parameters.Blake3Hash
+                                (ReferenceText parameters.Message)
+                                parameters.CorrelationId
+
+                        pendingWatchPublication <-
+                            prepareWatchPublicationSource
+                                (tryGetWatchProcessId context
+                                 |> Option.defaultValue Guid.Empty)
+                                graceIds.RepositoryId
+                                graceIds.BranchId
+                                parameters.ReferenceId
+
+                        return branchCommand
+                    }
                     |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Save)
-                return! processCommand context validations command
+                return! processCommandWithFailure context validations command clearPendingWatchPublication
             }
 
     /// Creates a tag reference pointing to the specified root directory version in the branch.
@@ -1206,6 +1602,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1227,6 +1624,7 @@ module Branch =
                         context
                         BranchCommand.Tag
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1247,6 +1645,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1268,6 +1667,7 @@ module Branch =
                         context
                         BranchCommand.CreateExternal
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1586,6 +1986,210 @@ module Branch =
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
+    /// Resolves Reference-bearing candidates from one durable branch-event snapshot.
+    let private getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId (branchEvents: IReadOnlyList<BranchEvent>) =
+        /// Admits a branch-scoped Reference candidate with its base-establishment and Watch-replay roles kept explicit.
+        let candidate position establishesBranchBase eligibleForWatchReplay (referenceDto: Reference.ReferenceDto) =
+            if referenceDto.RepositoryId = repositoryId
+               && (establishesBranchBase
+                   || referenceDto.BranchId = branchId) then
+                Some
+                    {
+                        EventPosition = int64 position
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        Reference = referenceDto
+                        EstablishesBranchBase = establishesBranchBase
+                        EligibleForWatchReplay = eligibleForWatchReplay
+                    }
+            else
+                None
+
+        /// Loads an inherited Reference so branch creation and rebase events can establish a conservative replay boundary.
+        let resolveReference position establishesBranchBase referenceId =
+            task {
+                if referenceId = ReferenceId.Empty then
+                    return None
+                else
+                    let referenceActor = Grace.Actors.Extensions.ActorProxy.Reference.CreateActorProxy referenceId repositoryId correlationId
+                    let! referenceDto = referenceActor.Get correlationId
+                    return candidate position establishesBranchBase false referenceDto
+            }
+
+        task {
+            let tasks =
+                branchEvents
+                |> Seq.mapi (fun position branchEvent ->
+                    task {
+                        match branchEvent.Event with
+                        | BranchEventType.Created (_, _, _, basedOn, _, _, eventRepositoryId, _) when eventRepositoryId = repositoryId ->
+                            return! resolveReference position true basedOn
+                        | BranchEventType.Rebased basedOn -> return! resolveReference position true basedOn
+                        | BranchEventType.Assigned (referenceDto, _, _, _, _)
+                        | BranchEventType.Promoted (referenceDto, _, _, _, _)
+                        | BranchEventType.Committed (referenceDto, _, _, _, _)
+                        | BranchEventType.Checkpointed (referenceDto, _, _, _, _)
+                        | BranchEventType.Saved (referenceDto, _, _, _, _)
+                        | BranchEventType.Tagged (referenceDto, _, _, _, _)
+                        | BranchEventType.ExternalCreated (referenceDto, _, _, _, _) ->
+                            let eligibleForWatchReplay =
+                                tryCreateReferenceReplayEvent repositoryId branchId (int64 position) branchEvent
+                                |> Option.isSome
+
+                            return candidate position false eligibleForWatchReplay referenceDto
+                        | _ -> return None
+                    })
+                |> Seq.toArray
+
+            let! results = Task.WhenAll tasks
+            return results |> Array.choose id
+        }
+
+    /// Returns the selected root together with its opaque position in the durable branch event stream.
+    let GetReferenceMaterializationBoundary: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters =
+                        context
+                        |> parse<GetReferenceMaterializationBoundaryParameters>
+
+                    let repositoryId = graceIds.RepositoryId
+                    let branchId = graceIds.BranchId
+                    let actorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                    let! branchEvents = actorProxy.GetEvents correlationId
+
+                    let! candidates = getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId branchEvents
+
+                    match trySelectReferenceMaterializationBoundary parameters candidates with
+                    | Some boundary ->
+                        let returnValue =
+                            (GraceReturnValue.Create boundary correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, repositoryId)
+                                .enhance(nameof BranchId, branchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok returnValue
+                    | None ->
+                        let error =
+                            (GraceError.Create "The selected root has no ordered Reference event boundary in this branch." correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, repositoryId)
+                                .enhance(nameof BranchId, branchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result400BadRequest error
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
+            }
+
+    /// Resolves a missing Watch cursor without materializing any Reference from the branch history snapshot.
+    let ResolveReferenceEventBoundary: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters =
+                        context
+                        |> parse<ResolveReferenceEventBoundaryParameters>
+
+                    let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! branchEvents = actorProxy.GetEvents correlationId
+
+                    let! candidates = getReferenceMaterializationBoundaryCandidates graceIds.RepositoryId graceIds.BranchId correlationId branchEvents
+
+                    match tryResolveReferenceEventBoundary graceIds.RepositoryId graceIds.BranchId parameters branchEvents.Count candidates with
+                    | Some boundary ->
+                        let returnValue =
+                            (GraceReturnValue.Create boundary correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok returnValue
+                    | None ->
+                        let error =
+                            (GraceError.Create "The supplied local root cannot establish a Watch event boundary for this branch." correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result400BadRequest error
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
+            }
+
+    /// Replays eligible Reference events strictly after a branch-scoped opaque cursor from one actor snapshot.
+    let ReplayReferenceEvents: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context |> parse<ReplayReferenceEventsParameters>
+
+                    let cursorRepositoryId =
+                        match Guid.TryParse parameters.CursorRepositoryId with
+                        | true, value -> value
+                        | _ -> RepositoryId.Empty
+
+                    let cursorBranchId =
+                        match Guid.TryParse parameters.CursorBranchId with
+                        | true, value -> value
+                        | _ -> BranchId.Empty
+
+                    let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! branchEvents = actorProxy.GetEvents correlationId
+
+                    match
+                        replayReferenceEventsAfterCursor
+                            graceIds.RepositoryId
+                            graceIds.BranchId
+                            cursorRepositoryId
+                            cursorBranchId
+                            parameters.EventCursor
+                            branchEvents
+                        with
+                    | Ok replay ->
+                        let returnValue =
+                            (GraceReturnValue.Create replay correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok returnValue
+                    | Error _ ->
+                        let error =
+                            (GraceError.Create "The supplied Watch replay cursor does not identify a valid interval for this branch." correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result400BadRequest error
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
+            }
+
     /// Gets the events handled by this branch.
     let GetEvents: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -1649,18 +2253,36 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    /// Implements validations for the server request pipeline.
-                    let validations (parameters: BranchParameters) = [||]
-
-                    /// Implements query for the server request pipeline.
-                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
-                        task {
-                            let! parentBranchDto = actorProxy.GetParentBranch(getCorrelationId context)
-                            return parentBranchDto
-                        }
-
                     let! parameters = context |> parse<BranchParameters>
-                    let! result = processQuery context parameters validations 1 query
+                    let correlationId = getCorrelationId context
+                    let parameterDictionary = getParametersAsDictionary parameters
+                    let branchActorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! parentBranch = branchActorProxy.GetParentBranch correlationId
+
+                    let! result =
+                        match parentBranch with
+                        | Some parentBranchDto ->
+                            context
+                            |> result200Ok (
+                                (GraceReturnValue.Create parentBranchDto correlationId)
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof BranchId, graceIds.BranchId)
+                                    .enhance ("Path", context.Request.Path.Value)
+                            )
+                        | None ->
+                            context
+                            |> result400BadRequest (
+                                (GraceError.Create (BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist) correlationId)
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof BranchId, graceIds.BranchId)
+                                    .enhance ("Path", context.Request.Path.Value)
+                            )
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -1705,7 +2327,10 @@ module Branch =
 
                 try
                     /// Implements validations for the server request pipeline.
-                    let validations (parameters: GetReferenceParameters) = [||]
+                    let validations (parameters: GetReferenceParameters) =
+                        [|
+                            Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
+                        |]
 
                     /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =

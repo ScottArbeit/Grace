@@ -905,7 +905,7 @@ class DirectoriesApi:
     ) -> DirectoryVersionSha256HashLookupReturnValue:
         """Get a directory version by SHA-256 hash.
 
-        Gets a directory version DTO by SHA-256 hash.
+        Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
 
         :param get_by_sha256_hash_parameters: (required)
         :type get_by_sha256_hash_parameters: GetBySha256HashParameters
@@ -974,7 +974,7 @@ class DirectoriesApi:
     ) -> ApiResponse[DirectoryVersionSha256HashLookupReturnValue]:
         """Get a directory version by SHA-256 hash.
 
-        Gets a directory version DTO by SHA-256 hash.
+        Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
 
         :param get_by_sha256_hash_parameters: (required)
         :type get_by_sha256_hash_parameters: GetBySha256HashParameters
@@ -1043,7 +1043,7 @@ class DirectoriesApi:
     ) -> RESTResponseType:
         """Get a directory version by SHA-256 hash.
 
-        Gets a directory version DTO by SHA-256 hash.
+        Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
 
         :param get_by_sha256_hash_parameters: (required)
         :type get_by_sha256_hash_parameters: GetBySha256HashParameters

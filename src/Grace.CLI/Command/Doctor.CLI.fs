@@ -5,8 +5,11 @@ open Grace.CLI.Common
 open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client
+open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Branch
 open Grace.SDK
 open Grace.Types.Common
+open Grace.Types.Reference
 open Spectre.Console
 open System
 open System.Collections.Generic
@@ -87,6 +90,9 @@ module Doctor =
     let private StateDbForeignKeyCheckId = "state.db.foreign-key-check"
 
     [<Literal>]
+    let private StateDbWatchJournalCheckId = "state.db.watch-journal"
+
+    [<Literal>]
     let private ObjectCacheIndexReadableCheckId = "object-cache.index-readable"
 
     [<Literal>]
@@ -102,7 +108,7 @@ module Doctor =
     let private ServerAuthPrincipalAvailableCheckId = "server.auth-principal.available"
 
     [<Literal>]
-    let private ExpectedLocalStateSchemaVersion = "4"
+    let private ExpectedLocalStateSchemaVersion = LocalStateDb.SchemaVersion
 
     [<Literal>]
     let private DoctorServerProbeTimeoutMilliseconds = 1500
@@ -149,6 +155,15 @@ module Doctor =
                 OptionName.Strict,
                 Required = false,
                 Description = "Return a failing exit code when the doctor report status is Warning.",
+                Arity = ArgumentArity.Zero,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
+        let repairLocalState =
+            new Option<bool>(
+                "--repair-local-state",
+                Required = false,
+                Description = "Rebuild exact local status and its matching remote-event boundary without changing working-tree or server content.",
                 Arity = ArgumentArity.Zero,
                 DefaultValueFactory = (fun _ -> false)
             )
@@ -312,6 +327,14 @@ module Doctor =
                 Category = "Local state"
                 Title = "SQLite foreign-key check"
                 Description = "Runs SQLite foreign_key_check read-only and reports violations without mutation."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = StateDbWatchJournalCheckId
+                Category = "Local state"
+                Title = "Watch journal persisted shape"
+                Description = "Verifies Watch journal table shape and applied-through metadata without mutating local state."
                 DefaultEnabled = true
                 SupportsOffline = true
             }
@@ -1073,6 +1096,21 @@ module Doctor =
             else
                 failed
                     $"SQLite foreign_key_check reported violations: {formatListOrNone inspection.ForeignKeyViolations}. Doctor did not repair object-cache rows."
+        | StateDbWatchJournalCheckId ->
+            let inspection = context.LocalStateInspection.Value
+
+            if not inspection.OpenedReadOnly then
+                skipped check (localStateUnavailableSummary StateDbWatchJournalCheckId inspection)
+            else
+                match inspection.WatchJournalShapeValid, inspection.WatchJournalAppliedThroughMetadataValid with
+                | Some true, Some true -> ok "Watch journal table shape and applied-through metadata match the local-state schema contract."
+                | Some false, _ ->
+                    failed
+                        "Watch journal table shape is invalid; expected sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, and normalized observation payload columns. Doctor did not repair or recreate local state."
+                | Some true, Some false ->
+                    failed
+                        "Watch journal applied-through metadata is missing while journal rows exist, malformed, or negative. Doctor did not write default metadata."
+                | _, _ -> skipped check "Watch journal persisted-shape inspection was not attempted."
         | ObjectCacheIndexReadableCheckId ->
             let inspection = context.LocalStateInspection.Value
 
@@ -1321,38 +1359,320 @@ module Doctor =
 
         AnsiConsole.Write(table)
 
+    /// Builds the single-result report returned by the explicit local-state repair gesture.
+    let private repairReport status summary exitCode =
+        let check: LocalOutputDto.DoctorCheckDto =
+            {
+                Id = "state.repair-local-state"
+                Category = "Local state"
+                Title = "Exact local-state repair"
+                Description = "Rebuilds local status only from an unchanged working tree with an exact server root and event boundary."
+                DefaultEnabled = false
+                SupportsOffline = false
+            }
+
+        let result: LocalOutputDto.DoctorCheckResultDto =
+            {
+                Id = check.Id
+                Category = check.Category
+                Title = check.Title
+                Status = status
+                Severity = (if exitCode = 0 then "Info" else "Error")
+                Summary = summary
+            }
+
+        let doctorSummary: LocalOutputDto.DoctorSummaryDto =
+            { Total = 1; Ok = (if exitCode = 0 then 1 else 0); Warning = 0; Failed = (if exitCode = 0 then 0 else 1); Skipped = 0 }
+
+        let report: LocalOutputDto.DoctorReportDto =
+            {
+                ReportVersion = ReportVersion
+                Status = status
+                ExitCode = exitCode
+                Full = false
+                Offline = false
+                Strict = false
+                ListOnly = false
+                RequestedChecks = [| check.Id |]
+                Catalog = [| check |]
+                Checks = [| result |]
+                Summary = doctorSummary
+            }
+
+        report
+
+    /// Converts the immutable server directory closure into the exact local status identities used by later saves.
+    let private statusFromServerClosure rootDirectoryId (directoryVersions: Grace.Types.DirectoryVersion.DirectoryVersionDto array) =
+        let index = GraceIndex()
+
+        for directoryVersionDto in directoryVersions do
+            let directoryVersion = directoryVersionDto.DirectoryVersion.ToLocalDirectoryVersion(DateTime.UtcNow)
+
+            index.TryAdd(directoryVersion.DirectoryVersionId, directoryVersion)
+            |> ignore
+
+        let mutable root = LocalDirectoryVersion.Default
+
+        if
+            not (index.TryGetValue(rootDirectoryId, &root))
+            || root.RelativePath <> Constants.RootDirectoryPath
+        then
+            invalidOp "Grace Server did not return the exact recursive root directory closure."
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = root.DirectoryVersionId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        }
+
+    let mutable private beforeRepairFinalValidation = fun () -> ()
+
+    let mutable private afterRepairCachedConfiguration = fun () -> ()
+
+    let mutable private beforeRepairFirstServerRead = fun () -> ()
+
+    /// Installs the deterministic seam used to rewrite persisted configuration after repair acquires cached configuration.
+    let internal setAfterRepairCachedConfigurationForTests probe = afterRepairCachedConfiguration <- probe
+
+    /// Restores production repair configuration capture after deterministic cache-race tests.
+    let internal resetAfterRepairCachedConfigurationForTests () = afterRepairCachedConfiguration <- fun () -> ()
+
+    /// Installs an observer at repair's first server read so configuration races can prove an early abort.
+    let internal setBeforeRepairFirstServerReadForTests probe = beforeRepairFirstServerRead <- probe
+
+    /// Restores the production first-server-read boundary after deterministic repair tests.
+    let internal resetBeforeRepairFirstServerReadForTests () = beforeRepairFirstServerRead <- fun () -> ()
+
+    /// Installs the deterministic seam used to prove stale local bytes and configuration cannot cross repair validation.
+    let internal setBeforeRepairFinalValidationForTests probe = beforeRepairFinalValidation <- probe
+
+    /// Restores production repair validation after deterministic stale-state tests.
+    let internal resetBeforeRepairFinalValidationForTests () = beforeRepairFinalValidation <- fun () -> ()
+
+    /// Performs exact-only local-state reconstruction while revalidating configuration and bytes before the atomic commit.
+    let private repairLocalState (parseResult: ParseResult) (cancellationToken: CancellationToken) =
+        task {
+            cancellationToken.ThrowIfCancellationRequested()
+            let current = Current()
+            afterRepairCachedConfiguration ()
+            let operationalConfiguration = Grace.CLI.Services.captureOperationalConfigurationSnapshot "Doctor" current
+            let! watchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
+
+            if watchInspection.IsFresh
+               && watchInspection.HasCurrentRepositoryIdentity then
+                invalidOp "Grace Doctor refused local-state repair because Grace Watch is active for this repository and branch."
+
+            let requireCurrentConfiguration () = Grace.CLI.Services.requireOperationalConfigurationSnapshotCurrent "Doctor" current operationalConfiguration
+
+            requireCurrentConfiguration ()
+            LocalStateDb.ensureNoActiveWriterForLocalStateRepair operationalConfiguration.GraceStatusFile
+            let! repairBaseline = LocalStateDb.captureLocalStateRepairBaseline operationalConfiguration.GraceStatusFile
+            let! retained = Grace.CLI.Services.createNewGraceStatusFile GraceStatus.Default parseResult
+
+            if
+                retained.RootDirectoryId = DirectoryVersionId.Empty
+                || String.IsNullOrWhiteSpace(string retained.RootDirectorySha256Hash)
+            then
+                invalidOp "Grace Doctor could not compute a complete retained working-tree root."
+
+            let lookup =
+                Grace.Shared.Parameters.DirectoryVersion.GetBySha256HashParameters(
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
+                    Sha256Hash = retained.RootDirectorySha256Hash,
+                    CorrelationId = getCorrelationId parseResult
+                )
+
+            beforeRepairFirstServerRead ()
+            let! resolvedRootResult = DirectoryVersion.GetBySha256Hash lookup
+
+            let resolvedRoot =
+                match resolvedRootResult with
+                | Ok value when
+                    value.ReturnValue.RelativePath = Constants.RootDirectoryPath
+                    && value.ReturnValue.Blake3Hash = retained.RootDirectoryBlake3Hash
+                    ->
+                    value.ReturnValue
+                | Ok _ -> invalidOp "The retained working tree does not exactly match a server root for this repository."
+                | Error _ -> invalidOp "No exact server root matches the retained working tree."
+
+            let referencesParameters =
+                GetReferencesParameters(
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
+                    BranchId = $"{operationalConfiguration.BranchId}",
+                    BranchName = operationalConfiguration.BranchName,
+                    MaxCount = Int32.MaxValue,
+                    CorrelationId = getCorrelationId parseResult
+                )
+
+            match! Grace.SDK.Branch.GetReferences referencesParameters with
+            | Ok value when
+                value.ReturnValue
+                |> Array.exists (fun (reference: ReferenceDto) ->
+                    reference.RepositoryId = operationalConfiguration.RepositoryId
+                    && reference.BranchId = operationalConfiguration.BranchId
+                    && reference.DirectoryId = resolvedRoot.DirectoryVersionId
+                    && reference.Sha256Hash = resolvedRoot.Sha256Hash
+                    && reference.Blake3Hash = resolvedRoot.Blake3Hash)
+                ->
+                ()
+            | _ -> invalidOp "The exact retained root is not present in the configured branch history."
+
+            let boundaryParameters =
+                ResolveReferenceEventBoundaryParameters(
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
+                    BranchId = $"{operationalConfiguration.BranchId}",
+                    BranchName = operationalConfiguration.BranchName,
+                    DirectoryVersionId = resolvedRoot.DirectoryVersionId,
+                    Sha256Hash = resolvedRoot.Sha256Hash,
+                    Blake3Hash = resolvedRoot.Blake3Hash,
+                    CorrelationId = getCorrelationId parseResult
+                )
+
+            let! boundaryResult = Branch.ResolveReferenceEventBoundary boundaryParameters
+
+            let boundary =
+                match boundaryResult with
+                | Ok value when
+                    value.ReturnValue.DirectoryId = resolvedRoot.DirectoryVersionId
+                    && value.ReturnValue.Sha256Hash = resolvedRoot.Sha256Hash
+                    && value.ReturnValue.Blake3Hash = resolvedRoot.Blake3Hash
+                    && not (String.IsNullOrWhiteSpace value.ReturnValue.EventCursor)
+                    ->
+                    value.ReturnValue
+                | _ -> invalidOp "The exact retained root is not present in the configured branch ordered history."
+
+            let closureParameters =
+                Grace.Shared.Parameters.DirectoryVersion.GetParameters(
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
+                    DirectoryVersionId = $"{resolvedRoot.DirectoryVersionId}",
+                    CorrelationId = getCorrelationId parseResult
+                )
+
+            let! closureResult = DirectoryVersion.GetDirectoryVersionsRecursive closureParameters
+
+            let exactStatus =
+                match closureResult with
+                | Ok value ->
+                    value.ReturnValue
+                    |> Seq.toArray
+                    |> statusFromServerClosure resolvedRoot.DirectoryVersionId
+                | Error error -> invalidOp $"Grace Doctor could not read the exact immutable server closure: {error.Error}"
+
+            let! firstDifferences = Grace.CLI.Services.scanForDifferences exactStatus
+
+            if
+                not (Grace.CLI.Services.wasLastScanForDifferencesSuccessful ())
+                || firstDifferences.Count <> 0
+            then
+                invalidOp "Working-tree bytes or paths do not match the exact server closure."
+
+            cancellationToken.ThrowIfCancellationRequested()
+            beforeRepairFinalValidation ()
+            requireCurrentConfiguration ()
+            let! finalDifferences = Grace.CLI.Services.scanForDifferences exactStatus
+
+            if
+                not (Grace.CLI.Services.wasLastScanForDifferencesSuccessful ())
+                || finalDifferences.Count <> 0
+            then
+                invalidOp "Working-tree bytes changed before local-state repair could commit."
+
+            let! finalWatchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
+
+            if finalWatchInspection.IsFresh
+               && finalWatchInspection.HasCurrentRepositoryIdentity then
+                invalidOp "Grace Watch started before local-state repair could commit."
+
+            match repairBaseline with
+            | LocalStateDb.UnreadableLocalStateDatabase _ ->
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair operationalConfiguration.GraceStatusFile
+            | _ -> ()
+
+            requireCurrentConfiguration ()
+
+            let! _ =
+                LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepair
+                    operationalConfiguration.GraceStatusFile
+                    repairBaseline
+                    exactStatus
+                    boundary
+                    cancellationToken
+
+            return
+                repairReport
+                    "Ok"
+                    $"Repaired exact local status for root {resolvedRoot.DirectoryVersionId} at event cursor {boundary.EventCursor}; working-tree and server content were unchanged."
+                    0
+        }
+
     /// Executes the invoke command by binding ParseResult values to the SDK request and CLI output contract.
     type Invoke() =
-        inherit SynchronousCommandLineAction()
+        inherit AsynchronousCommandLineAction()
 
         /// Runs the asynchronous invoke action when System.CommandLine dispatches the parsed command.
-        override _.Invoke(parseResult: ParseResult) : int =
-            if
-                (parseResult |> verbose)
-                && not (parseResult |> hasSelect)
-            then
-                printParseResult parseResult
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                if
+                    (parseResult |> verbose)
+                    && not (parseResult |> hasSelect)
+                then
+                    printParseResult parseResult
 
-            let full = parseResult.GetValue(Options.full)
-            let offline = parseResult.GetValue(Options.offline)
-            let strict = parseResult.GetValue(Options.strict)
-            let listChecks = parseResult.GetValue(Options.listChecks)
+                if parseResult.GetValue(Options.repairLocalState) then
+                    try
+                        let! report = repairLocalState parseResult cancellationToken
+                        let renderResult = renderOutput parseResult (Ok(GraceReturnValue.Create report (getCorrelationId parseResult)))
 
-            let requestedTokens =
-                parseResult.GetValue(Options.check)
-                |> tokenizeChecks
+                        if renderResult = 0
+                           && shouldRenderHumanReport parseResult then
+                            renderHumanReport report
 
-            match validateChecks parseResult full offline listChecks requestedTokens with
-            | Error error -> renderOutput parseResult (Error error)
-            | Ok checks ->
-                let report = createReport full offline strict listChecks requestedTokens checks
-                let renderResult = renderOutput parseResult (Ok(GraceReturnValue.Create report (getCorrelationId parseResult)))
+                        return if renderResult <> 0 then renderResult else report.ExitCode
+                    with
+                    | ex -> return renderOutput parseResult (Error(GraceError.Create ex.Message (getCorrelationId parseResult)))
+                else
+                    let full = parseResult.GetValue(Options.full)
+                    let offline = parseResult.GetValue(Options.offline)
+                    let strict = parseResult.GetValue(Options.strict)
+                    let listChecks = parseResult.GetValue(Options.listChecks)
 
-                if renderResult = 0
-                   && shouldRenderHumanReport parseResult then
-                    renderHumanReport report
+                    let requestedTokens =
+                        parseResult.GetValue(Options.check)
+                        |> tokenizeChecks
 
-                if renderResult <> 0 then renderResult else diagnosticExitCode strict report
+                    match validateChecks parseResult full offline listChecks requestedTokens with
+                    | Error error -> return renderOutput parseResult (Error error)
+                    | Ok checks ->
+                        let report = createReport full offline strict listChecks requestedTokens checks
+                        let renderResult = renderOutput parseResult (Ok(GraceReturnValue.Create report (getCorrelationId parseResult)))
+
+                        if renderResult = 0
+                           && shouldRenderHumanReport parseResult then
+                            renderHumanReport report
+
+                        return if renderResult <> 0 then renderResult else diagnosticExitCode strict report
+            }
 
     let Build =
         let doctorCommand =
@@ -1362,6 +1682,7 @@ module Doctor =
             |> addOption Options.listChecks
             |> addOption Options.check
             |> addOption Options.strict
+            |> addOption Options.repairLocalState
 
         doctorCommand.Action <- Invoke()
         doctorCommand

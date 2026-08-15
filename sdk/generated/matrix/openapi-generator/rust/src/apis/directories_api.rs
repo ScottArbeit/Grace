@@ -202,7 +202,7 @@ pub async fn get_directory_version_by_blake3_hash(configuration: &configuration:
     }
 }
 
-/// Gets a directory version DTO by SHA-256 hash.
+/// Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
 pub async fn get_directory_version_by_sha256_hash(configuration: &configuration::Configuration, get_by_sha256_hash_parameters: models::GetBySha256HashParameters) -> Result<models::DirectoryVersionSha256HashLookupReturnValue, Error<GetDirectoryVersionBySha256HashError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_get_by_sha256_hash_parameters = get_by_sha256_hash_parameters;

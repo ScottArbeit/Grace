@@ -1,4 +1,3 @@
-
 # Grace Repository Agents Guide
 
 Agents operating under `/src` should follow this playbook alongside the existing `AGENTS.md` in the repo root.
@@ -36,12 +35,9 @@ update the issue before editing the new paths.
   `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
   sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR
   as the production release candidate. Do not use direct-to-`main` epic slices.
-- Before assigning or starting a coding issue or sub-issue, require the minimum detail gate from
-  `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
-  tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. The issue should be
-  contextual enough for an implementation agent to succeed from the issue body alone without hidden project context.
-  Write the gate as review-prevention guidance that predicts likely Codex Code Review Bot findings without adding new
-  issue-template ceremony.
+- Before assigning behavior-changing work, require the compact Issue Readiness gate from
+  `docs/Development process.md`: one user-visible outcome, supported world, capability budget, primary invariant and
+  authority, explicit non-goals, algorithm-witness result when required, focused proof, and owner stop conditions.
 
 - For code tasks that implement a product spec or generated plan, verify decision closure before editing: accepted or
   assumed product decisions, supported/rejected inputs, audience/authorization semantics, failure behavior, lifecycle
@@ -67,42 +63,39 @@ update the issue before editing the new paths.
   sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared project
   files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
   preparatory compile-item or file-scaffold slice before later branches edit separate files.
-- Before the Grace completion review gate, update against the required base, inspect ahead/behind, scoped diff,
-  unexpected deletions, and relevant conflict resolutions, then rerun focused proof if needed. Push and require
-  current GitHub `Validate` and Codex Code Review Bot state for the refreshed revision.
-- Never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
-  long-polling commands, watch loops, and tool waits; use repeated shorter checks instead, with status updates between
-  checks during long workflows.
-- Resolve all compilation errors before considering a task complete.
-- Run impacted tests for each task and fix failures introduced by your changes.
-- Create a new git commit after each completed task to keep review scope clear.
-- When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
-  subagent. The main orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the
-  worker, or commit code changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work,
-  or cannot be resumed, assign the continuation to a fresh worker subagent with the existing worktree/branch context
-  and required validation. The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status,
-  docs/process updates, Codex Code Review Bot monitoring, and final integration evidence. Follow the required bot-review
-  loop in `docs/Development process.md`.
-- Before handoff, require the worker to run a bot-prevention self-review over the actual diff, fix likely Codex Code
-  Review Bot findings it discovers, and report first-pass review readiness with residual risks in the handoff.
-- After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
-  ready-for-review pull request. Keep it open while the step is still in progress so Codex Code Review Bot findings,
-  fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the
-  issue.
-- For Grace PR code review, do not spawn local review-only subagents by default. Monitor Codex Code Review Bot: 👀 on
-  the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment or
-  inline pull-request-review comment contains findings that must be assigned to a fresh fix subagent. Do not rely on
-  top-level PR comments alone; inspect review comments attached to the bot review before merging. For high-risk slices,
-  the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that is cheaper than a
-  likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
-- After each fix subagent completes a bot-requested fix, reply to the Codex Code Review Bot comment with the outcome,
-  fix commit, validation evidence, and the prevention line required by `docs/Development process.md`, resolve the
-  GitHub conversation, update the PR body's `Review Status` section, and wait for the next bot review on the new head
-  commit.
-- When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
-  review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
-  needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
-  evidence, and resolve the GitHub conversation when the feedback has been satisfied.
+- Follow the Factory V2 orchestration and bounded review protocol in `../docs/Development process.md`. Do not copy a
+  separate review loop into project-local guidance.
+- Before Tier 2 production coding, confirm the Algorithm Readiness Gate is complete for stateful, destructive,
+  filesystem, retry, recovery, concurrent, background, or multi-authority behavior. Production implementation should
+  translate a proven finite algorithm rather than discover effect ordering through code review.
+- Use one short-lived controller per issue or pull request. The controller is the sole agent spawner. Workers and
+  reviewers must not spawn subagents.
+- Use one issue-owner implementation worker. The same worker owns all accepted in-scope repairs. Do not create a fresh
+  worker for each finding. A replacement requires evidence that the original worker is unavailable or unusable.
+- The controller may inspect source, diffs, logs, tests, and validation evidence and may run read-only or validation
+  commands. It coordinates issue and PR state, review ledger, CI, merge, and cleanup.
+- Do not require temp status files or fixed five-minute heartbeats. Require concise progress updates before long-running
+  commands, at material blockers, and at handoff. Never sleep or poll for more than 120 seconds in one command.
+- Before handoff, the issue owner must self-review the actual diff against the outcome, non-goals, Product V1 supported
+  world, authority and effect model, contract propagation, proof truth, and owned paths.
+- Open one coherent ready-for-review PR after the first validated candidate. Run one independent R1 discovery review of
+  the full candidate with `dev-process/CODE_REVIEW.md`. Freeze the accepted finite ledger.
+- Route the accepted R1 ledger back to the same issue owner for one consolidated repair pass. Do not start another broad
+  review after each repair commit.
+- When repairs were required, run one independent R2 closure review on the repaired current head. R2 checks accepted
+  ledger items, repair hunks, direct repair regressions, current-head proof and CI, and scope preservation. It must not
+  reopen untouched parts of the original diff.
+- There is no automatic R3. If R2 incidentally exposes a supported-world merge blocker outside the frozen ledger and
+  direct repair-regression scope, record one `DISCOVERY ESCAPE` and stop. Do not ignore it or keep searching. A new
+  material invariant, authority boundary, state machine, product semantic, or scope expansion also requires a new
+  owner-approved charter, split, or supersession.
+- GitHub `Validate` must pass on the final head. A current R1 pass with no findings plus final-head CI is sufficient;
+  after repairs, R2 plus final-head CI certifies closure.
+- When a required check fails, inspect the newest failed workflow for the final head and distinguish owned-diff failures
+  from unrelated repository or environment failures before assigning repair work.
+- Stop when the issue gains another primary invariant, durable state machine, authority boundary, or product semantic;
+  when a third enabling PR is proposed before the tracer; when review is writing the product model; or when process rules
+  must change mid-run. Preserve a salvage map before superseding.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
   is mandatory: verify the destination contains the change, delete the remote issue branch, delete the local issue
   branch, remove the task worktree, run `git fetch --prune`, and `git pull --ff-only` in the local repo so `main` is up

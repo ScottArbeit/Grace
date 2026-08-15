@@ -18,6 +18,7 @@ Name | Type | Description | Notes
 **branch_name** | **str** |  | [optional] 
 **parent_branch_id** | **UUID** |  | [optional] 
 **parent_branch_name** | **str** |  | [optional] 
+**reference_id** | **UUID** |  | 
 **initial_permissions** | [**List[ReferenceType]**](ReferenceType.md) |  | [optional] 
 
 ## Example

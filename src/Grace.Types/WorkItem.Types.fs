@@ -3,6 +3,7 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.TextContent
 open NodaTime
 open Orleans
 open System
@@ -33,9 +34,10 @@ module WorkItem =
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
             title: string *
-            description: string
+            description: Description option
         | SetTitle of title: string
-        | SetDescription of description: string
+        | SetDescription of description: Description
+        | ClearDescription of description: Description
         | SetStatus of status: WorkItemStatus
         | AddParticipant of userId: UserId
         | RemoveParticipant of userId: UserId
@@ -75,9 +77,10 @@ module WorkItem =
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
             title: string *
-            description: string
+            description: Description option
         | TitleSet of title: string
-        | DescriptionSet of description: string
+        | DescriptionSet of description: Description
+        | DescriptionCleared of description: Description
         | StatusSet of status: WorkItemStatus
         | ParticipantAdded of userId: UserId
         | ParticipantRemoved of userId: UserId
@@ -184,7 +187,7 @@ module WorkItem =
         static member UpdateDto workItemEvent currentWorkItemDto =
             let newWorkItemDto =
                 match workItemEvent.Event with
-                | Created (workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description) ->
+                | Created (workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, _description) ->
                     { WorkItemDto.Default with
                         WorkItemId = workItemId
                         WorkItemNumber = workItemNumber
@@ -192,13 +195,14 @@ module WorkItem =
                         OrganizationId = organizationId
                         RepositoryId = repositoryId
                         Title = title
-                        Description = description
+                        Description = String.Empty
                         Status = WorkItemStatus.Backlog
                         CreatedBy = UserId workItemEvent.Metadata.Principal
                         CreatedAt = workItemEvent.Metadata.Timestamp
                     }
                 | TitleSet title -> { currentWorkItemDto with Title = title }
-                | DescriptionSet description -> { currentWorkItemDto with Description = description }
+                | DescriptionSet _description
+                | DescriptionCleared _description -> { currentWorkItemDto with Description = String.Empty }
                 | StatusSet status -> { currentWorkItemDto with Status = status }
                 | ParticipantAdded userId ->
                     { currentWorkItemDto with
@@ -341,6 +345,27 @@ module WorkItem =
                 |> List.distinct
 
             { newWorkItemDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some workItemEvent.Metadata.Timestamp }
+
+    /// Holds the actor-only description reference beside the public work-item projection that is hydrated by the server.
+    type WorkItemState =
+        {
+            WorkItem: WorkItemDto
+            Description: Description option
+        }
+
+        /// Provides the deterministic empty actor projection before the create event exists.
+        static member Default = { WorkItem = WorkItemDto.Default; Description = None }
+
+        /// Applies a durable event while keeping free text out of the actor projection.
+        static member UpdateState workItemEvent currentState =
+            let description =
+                match workItemEvent.Event with
+                | Created (_, _, _, _, _, _, description) -> description
+                | DescriptionSet nextDescription -> Some nextDescription
+                | DescriptionCleared nextDescription -> Some nextDescription
+                | _ -> currentState.Description
+
+            { WorkItem = WorkItemDto.UpdateDto workItemEvent currentState.WorkItem; Description = description }
 
     /// Represents work item links dto.
     type WorkItemLinksDto =

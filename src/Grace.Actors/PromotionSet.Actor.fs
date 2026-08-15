@@ -153,6 +153,20 @@ module PromotionSet =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
+    /// Derives one stable promotion Reference identity from every varying immutable input owned by a PromotionSet step.
+    let internal buildPromotionReferenceId (promotionSetId: PromotionSetId) (step: PromotionSetStep) (isTerminal: bool) =
+        [|
+            "grace.promotion-set.reference.v2"
+            canonicalGuid promotionSetId
+            canonicalGuid step.StepId
+            canonicalGuid step.AppliedDirectoryVersionId
+            step.Order.ToString(CultureInfo.InvariantCulture)
+            isTerminal.ToString().ToLowerInvariant()
+        |]
+        |> Array.map canonicalSegment
+        |> String.concat "|"
+        |> createDeterministicGuid
+
     /// Builds build generated approval request id data returned by the PromotionSet actor workflow.
     let internal buildGeneratedApprovalRequestId (request: ApprovalRequest) =
         let scope = if isNull (box request.Scope) then ApprovalScope.Default else request.Scope
@@ -1807,36 +1821,6 @@ module PromotionSet =
                                 | Error graceError -> return Error graceError
             }
 
-        /// Coordinates rollback created promotions logic for the PromotionSet actor.
-        member private this.RollbackCreatedPromotions(createdReferenceIds: List<ReferenceId>, rollbackReason: string, metadata: EventMetadata) =
-            task {
-                let mutable index = 0
-
-                while index < createdReferenceIds.Count do
-                    let referenceId = createdReferenceIds[index]
-                    let referenceActorProxy = Reference.CreateActorProxy referenceId promotionSetDto.RepositoryId this.correlationId
-                    let rollbackMetadata = this.WithActorMetadata metadata
-                    rollbackMetadata.Properties[ "ActorId" ] <- $"{referenceId}"
-
-                    match! referenceActorProxy.Handle (ReferenceCommand.DeleteLogical(true, rollbackReason)) rollbackMetadata with
-                    | Ok _ -> ()
-                    | Error graceError ->
-                        log.LogWarning(
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed to rollback reference {ReferenceId} for PromotionSetId {PromotionSetId}. Error: {GraceError}",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            metadata.CorrelationId,
-                            referenceId,
-                            promotionSetDto.PromotionSetId,
-                            graceError
-                        )
-
-                    index <- index + 1
-
-                let branchActorProxy = Branch.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
-                do! branchActorProxy.MarkForRecompute metadata.CorrelationId
-            }
-
         /// Builds promotion reference data needed by the PromotionSet actor.
         member private this.CreatePromotionReference(step: PromotionSetStep, isTerminal: bool, metadata: EventMetadata) =
             task {
@@ -1853,7 +1837,7 @@ module PromotionSet =
                                 .enhance (nameof DirectoryVersionId, step.AppliedDirectoryVersionId)
                         )
                 else
-                    let referenceId: ReferenceId = Guid.NewGuid()
+                    let referenceId = buildPromotionReferenceId promotionSetDto.PromotionSetId step isTerminal
                     let links = ResizeArray<ReferenceLinkType>()
                     links.Add(ReferenceLinkType.IncludedInPromotionSet promotionSetDto.PromotionSetId)
 
@@ -1863,6 +1847,11 @@ module PromotionSet =
                     let referenceMetadata = this.WithActorMetadata metadata
                     referenceMetadata.Properties[ "ActorId" ] <- $"{referenceId}"
                     referenceMetadata.Properties[ nameof BranchId ] <- $"{promotionSetDto.TargetBranchId}"
+
+                    referenceMetadata.Properties[
+                        Grace.Actors.Reference.ReferenceCreatedRequiresBrokerAcceptanceProperty
+                    ] <- Boolean.TrueString
+
                     let referenceActorProxy = Reference.CreateActorProxy referenceId promotionSetDto.RepositoryId this.correlationId
                     let referenceText = ReferenceText $"PromotionSet {promotionSetDto.PromotionSetId} Step {step.Order}"
 
@@ -2224,6 +2213,8 @@ module PromotionSet =
                                 match! this.ApplyEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = metadata } with
                                 | Error graceError -> return Error graceError
                                 | Ok graceReturnValue ->
+                                    do! branchActorProxy.MarkForRecompute metadata.CorrelationId
+
                                     let queueActorProxy =
                                         PromotionQueue.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
 
@@ -2246,13 +2237,6 @@ module PromotionSet =
 
                                     return Ok graceReturnValue
                             | Option.Some graceError ->
-                                do!
-                                    this.RollbackCreatedPromotions(
-                                        createdReferenceIds,
-                                        "PromotionSet apply failed. Rolling back previously created references.",
-                                        metadata
-                                    )
-
                                 match! this.ApplyEvent { Event = PromotionSetEventType.ApplyFailed graceError.Error; Metadata = metadata } with
                                 | Ok _ -> return Error graceError
                                 | Error applyFailureError -> return Error applyFailureError

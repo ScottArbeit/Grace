@@ -42,8 +42,9 @@ class CreateBranchParameters(BaseModel):
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
     parent_branch_id: Optional[UUID] = Field(default=None, alias="ParentBranchId")
     parent_branch_name: Optional[StrictStr] = Field(default=None, alias="ParentBranchName")
+    reference_id: UUID = Field(alias="ReferenceId")
     initial_permissions: Optional[List[ReferenceType]] = Field(default=None, alias="InitialPermissions")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ParentBranchId", "ParentBranchName", "InitialPermissions"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ParentBranchId", "ParentBranchName", "ReferenceId", "InitialPermissions"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -108,6 +109,7 @@ class CreateBranchParameters(BaseModel):
             "BranchName": obj.get("BranchName"),
             "ParentBranchId": obj.get("ParentBranchId"),
             "ParentBranchName": obj.get("ParentBranchName"),
+            "ReferenceId": obj.get("ReferenceId"),
             "InitialPermissions": obj.get("InitialPermissions")
         })
         return _obj

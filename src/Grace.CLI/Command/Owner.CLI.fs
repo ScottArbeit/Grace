@@ -91,6 +91,10 @@ module Owner =
         CommonValidations
         >=> ``Either OwnerId or OwnerName must be provided``
 
+    /// Builds the owner create request from the single identity resolved for verbose output and server submission.
+    let internal buildCreateParameters (graceIds: GraceIds) =
+        Parameters.Owner.CreateOwnerParameters(OwnerId = graceIds.OwnerIdString, OwnerName = graceIds.OwnerName, CorrelationId = graceIds.CorrelationId)
+
     // Create subcommand.
     /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
@@ -100,15 +104,10 @@ module Owner =
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
-                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = resolveCreateGraceIds OptionName.OwnerId parseResult
 
-                    // In a Create() command, if --owner-id is implicit, that's actually the old OwnerId taken from graceconfig.json,
-                    //   and we need to set OwnerId to a new Guid.
-                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
-
-                    if parseResult.GetResult(Options.ownerId).Implicit then
-                        let ownerId = Guid.NewGuid()
-                        graceIds <- { graceIds with OwnerId = ownerId; OwnerIdString = $"{ownerId}" }
+                    if parseResult |> verbose then
+                        printParseResultWithResolvedValues parseResult (Some graceIds)
 
                     let validateIncomingParameters =
                         parseResult
@@ -117,14 +116,7 @@ module Owner =
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let ownerId =
-                            if parseResult.GetResult(Options.ownerId).Implicit then
-                                Guid.NewGuid().ToString()
-                            else
-                                graceIds.OwnerIdString
-
-                        let parameters =
-                            Parameters.Owner.CreateOwnerParameters(OwnerId = ownerId, OwnerName = graceIds.OwnerName, CorrelationId = graceIds.CorrelationId)
+                        let parameters = buildCreateParameters graceIds
 
                         if parseResult |> hasOutput then
                             let! result =

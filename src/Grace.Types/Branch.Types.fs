@@ -33,19 +33,55 @@ module Branch =
             branchName: BranchName *
             parentBranchId: BranchId *
             basedOn: ReferenceId *
+            referenceId: ReferenceId *
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
             initialPermissions: ReferenceType seq
-        | Rebase of basedOn: ReferenceId
+        | Rebase of referenceId: ReferenceId * basedOn: ReferenceId
         | SetName of newName: BranchName
-        | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Promote of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Commit of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Checkpoint of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Save of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Tag of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | CreateExternal of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Assign of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Promote of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Commit of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Checkpoint of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Save of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Tag of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | CreateExternal of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
         | EnableAssign of enabled: bool
         | EnablePromotion of enabled: bool
         | EnableCommit of enabled: bool
@@ -213,6 +249,45 @@ module Branch =
                 DeleteReason = String.Empty
             }
 
+        /// Reports whether a Reference is the canonical typed-slot absence sentinel independent of sequence object identity.
+        static member IsCanonicalReferenceDefault(referenceDto: ReferenceDto) =
+            referenceDto.Class = nameof ReferenceDto
+            && referenceDto.ReferenceId = ReferenceId.Empty
+            && referenceDto.OwnerId = OwnerId.Empty
+            && referenceDto.OrganizationId = OrganizationId.Empty
+            && referenceDto.RepositoryId = RepositoryId.Empty
+            && referenceDto.BranchId = BranchId.Empty
+            && referenceDto.DirectoryId = DirectoryVersionId.Empty
+            && String.IsNullOrEmpty(string referenceDto.Sha256Hash)
+            && String.IsNullOrEmpty(string referenceDto.Blake3Hash)
+            && referenceDto.ReferenceType = ReferenceType.Save
+            && String.IsNullOrEmpty(string referenceDto.ReferenceText)
+            && Seq.isEmpty referenceDto.Links
+            && referenceDto.CreatedBy.IsNone
+            && referenceDto.CreatedAt = Constants.DefaultTimestamp
+            && referenceDto.UpdatedAt.IsNone
+            && referenceDto.DeletedAt.IsNone
+            && String.IsNullOrEmpty referenceDto.DeleteReason
+
+        /// Reports whether a BranchDto can cross the public boundary with strict real References and canonical typed sentinels.
+        static member IsValidPublicProjection(branchDto: BranchDto) =
+            let isRealReference (referenceDto: ReferenceDto) =
+                referenceDto.ReferenceId <> ReferenceId.Empty
+                && not (String.IsNullOrWhiteSpace(string referenceDto.Sha256Hash))
+                && not (String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash))
+
+            let isTypedReferenceOrDefault expectedType (referenceDto: ReferenceDto) =
+                BranchDto.IsCanonicalReferenceDefault referenceDto
+                || (isRealReference referenceDto
+                    && referenceDto.ReferenceType = expectedType)
+
+            isRealReference branchDto.BasedOn
+            && isRealReference branchDto.LatestReference
+            && isTypedReferenceOrDefault ReferenceType.Promotion branchDto.LatestPromotion
+            && isTypedReferenceOrDefault ReferenceType.Commit branchDto.LatestCommit
+            && isTypedReferenceOrDefault ReferenceType.Checkpoint branchDto.LatestCheckpoint
+            && isTypedReferenceOrDefault ReferenceType.Save branchDto.LatestSave
+
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto branchEvent currentBranchDto =
             let branchEventType = branchEvent.Event
@@ -234,6 +309,7 @@ module Branch =
                             BranchName = branchName
                             ParentBranchId = parentBranchId
                             BasedOn = basedOnReferenceDto
+                            LatestReference = basedOnReferenceDto
                             OwnerId = ownerId
                             OrganizationId = organizationId
                             RepositoryId = repositoryId
@@ -264,19 +340,29 @@ module Branch =
                     { currentBranchDto with BasedOn = basedOnReferenceDto }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
                 | Assigned (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with
+                        BasedOn = referenceDto
+                        LatestReference = referenceDto
+                        LatestPromotion = referenceDto
+                        ShouldRecomputeLatestReferences = true
+                    }
 
                 | Promoted (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with
+                        BasedOn = referenceDto
+                        LatestReference = referenceDto
+                        LatestPromotion = referenceDto
+                        ShouldRecomputeLatestReferences = true
+                    }
 
                 | Committed (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with LatestReference = referenceDto; LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
 
                 | Checkpointed (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with LatestReference = referenceDto; LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
 
                 | Saved (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with LatestReference = referenceDto; LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
 
                 | Tagged (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with ShouldRecomputeLatestReferences = true }

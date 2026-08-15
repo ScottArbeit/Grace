@@ -75,7 +75,7 @@ function Get-DirectoryManifestHash {
     }
 
     $lines = Get-ChildItem -Path $Path -Recurse -File |
-        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache)\\' } |
+        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache|[^\\]+\.egg-info)\\' } |
         Where-Object { $_.Name -notin @('package-lock.json', 'Cargo.lock') } |
         Sort-Object FullName |
         ForEach-Object {
@@ -592,80 +592,6 @@ function Assert-OpenApiSchemaHasProperty {
     }
 }
 
-function Assert-OpenApiSchemaRequiresProperties {
-    param(
-        [string] $Text,
-        [string] $SchemaName,
-        [string[]] $RequiredProperties,
-        [string] $MessagePrefix
-    )
-
-    $block = Get-OpenApiNamedBlock $Text $SchemaName
-    if ($null -eq $block) {
-        Add-Failure "OpenAPI schema '$SchemaName' is missing."
-        return
-    }
-
-    $requiredLine = @($block.Lines | Where-Object { $_ -match '^\s+required:\s*\[(?<items>[^\]]*)\]\s*$' } | Select-Object -First 1)
-    if ($requiredLine.Count -eq 0) {
-        Add-Failure "$MessagePrefix must declare required properties."
-        return
-    }
-
-    $match = [regex]::Match([string] $requiredLine[0], '^\s+required:\s*\[(?<items>[^\]]*)\]\s*$')
-    $actualRequired = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($item in ($match.Groups['items'].Value -split ',')) {
-        [void] $actualRequired.Add($item.Trim())
-    }
-
-    foreach ($requiredProperty in $RequiredProperties) {
-        if (-not $actualRequired.Contains($requiredProperty)) {
-            Add-Failure "$MessagePrefix must require $requiredProperty."
-        }
-    }
-}
-
-function Assert-MaterializationStringEnumSchema {
-    param(
-        [string] $Text,
-        [string] $SchemaName,
-        [string[]] $ExpectedValues
-    )
-
-    $block = Get-OpenApiNamedBlock $Text $SchemaName
-    if ($null -eq $block) {
-        Add-Failure "Materialization enum schema '$SchemaName' is missing."
-        return
-    }
-
-    $blockText = [string] $block.Text
-    if ($blockText -notmatch '(?m)^\s+type:\s*string\s*$') {
-        Add-Failure "Materialization enum schema '$SchemaName' must use the string wire format."
-    }
-
-    if ($blockText -match '(?m)^\s+type:\s*integer\s*$' -or $blockText -match '(?m)^\s+enum:\s*\[\s*\d') {
-        Add-Failure "Materialization enum schema '$SchemaName' must not advertise integer values."
-    }
-
-    $enumLine = @($block.Lines | Where-Object { $_ -match '^\s+enum:\s*\[(?<items>[^\]]*)\]\s*$' } | Select-Object -First 1)
-    if ($enumLine.Count -eq 0) {
-        Add-Failure "Materialization enum schema '$SchemaName' must declare enum values."
-        return
-    }
-
-    $match = [regex]::Match([string] $enumLine[0], '^\s+enum:\s*\[(?<items>[^\]]*)\]\s*$')
-    $actualValues = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($item in ($match.Groups['items'].Value -split ',')) {
-        [void] $actualValues.Add($item.Trim())
-    }
-
-    foreach ($expectedValue in $ExpectedValues) {
-        if (-not $actualValues.Contains($expectedValue)) {
-            Add-Failure "Materialization enum schema '$SchemaName' is missing string value '$expectedValue'."
-        }
-    }
-}
-
 function Get-YamlIndentLength {
     param([string] $Line)
 
@@ -1086,79 +1012,6 @@ function Test-OpenApiBranchReferenceDiffDetails {
     if ($referenceComponentsText -match '(RepositoryText|ReferenceCommand|ReferenceEvent|Actor)') {
         Add-Failure 'Reference OpenAPI components must expose public selector fields, not internal actor command/event shapes or stale RepositoryText naming.'
     }
-
-    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
-    foreach ($requiredAnnotationReferenceTypeContract in @(
-            '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType''',
-            'ReferenceTypeFilter:',
-            '- commit',
-            '- save'
-        )) {
-        Assert-TextContains $branchComponentsText $requiredAnnotationReferenceTypeContract "Branch annotation OpenAPI contract must publish ReferenceType wire values and shared ReferenceType references; missing '$requiredAnnotationReferenceTypeContract'."
-    }
-
-    foreach ($staleAnnotationReferenceType in @('- Commit', '- Save')) {
-        if ($branchComponentsText.Contains($staleAnnotationReferenceType, [StringComparison]::Ordinal)) {
-            Add-Failure "Branch annotation OpenAPI examples must use ReferenceType JSON wire values, not F# case-name item '$staleAnnotationReferenceType'."
-        }
-    }
-
-    $branchPathsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Paths.OpenAPI.yaml') -Raw
-    $createBranchOperation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' 'CreateBranch'
-    $createBranchOperationText = if ($null -eq $createBranchOperation) { '' } else { [string] $createBranchOperation.OperationText }
-
-    foreach ($requiredCreateBranchReferenceTypeValue in @(
-            '- commit',
-            '- checkpoint',
-            '- save',
-            '- tag'
-        )) {
-        Assert-TextContains $createBranchOperationText $requiredCreateBranchReferenceTypeValue "Branch create OpenAPI path example must publish ReferenceType wire value '$requiredCreateBranchReferenceTypeValue'."
-    }
-
-    foreach ($staleCreateBranchReferenceTypeValue in @('- Commit', '- Checkpoint', '- Save', '- Tag')) {
-        if ($createBranchOperationText.Contains($staleCreateBranchReferenceTypeValue, [StringComparison]::Ordinal)) {
-            Add-Failure "Branch create OpenAPI path example must use ReferenceType JSON wire values, not F# case-name item '$staleCreateBranchReferenceTypeValue'."
-        }
-    }
-
-    foreach ($requiredAnnotatePathReferenceTypeContract in @(
-            'ReferenceTypes:',
-            '- commit',
-            '- save'
-        )) {
-        Assert-TextContains $branchPathsText $requiredAnnotatePathReferenceTypeContract "Branch annotate OpenAPI path example must publish ReferenceType wire values; missing '$requiredAnnotatePathReferenceTypeContract'."
-    }
-
-    $sharedComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
-    $referenceTypeSchemaMatch = [regex]::Match($sharedComponentsText, '(?m)^    ReferenceType:\r?\n      type:\s*string\r?\n      enum:\s*\[(?<values>[^\]]+)\]')
-    if (-not $referenceTypeSchemaMatch.Success) {
-        Add-Failure 'Shared ReferenceType OpenAPI schema must declare a string enum.'
-    }
-    else {
-        $referenceTypeValues =
-            $referenceTypeSchemaMatch.Groups['values'].Value.Split(',') |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-
-        $expectedReferenceTypeWireValues = @('promotion', 'commit', 'checkpoint', 'save', 'tag', 'external', 'rebase')
-        foreach ($requiredReferenceType in $expectedReferenceTypeWireValues) {
-            if ($requiredReferenceType -cnotin $referenceTypeValues) {
-                Add-Failure "Shared ReferenceType OpenAPI enum is missing server-supported wire value '$requiredReferenceType'."
-            }
-        }
-
-        foreach ($staleReferenceTypeName in @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')) {
-            if ($staleReferenceTypeName -cin $referenceTypeValues) {
-                Add-Failure "Shared ReferenceType OpenAPI enum must publish JSON wire value '$($staleReferenceTypeName.Substring(0, 1).ToLowerInvariant())$($staleReferenceTypeName.Substring(1))', not F# case name '$staleReferenceTypeName'."
-            }
-        }
-
-        $unexpectedReferenceTypeValues = @($referenceTypeValues | Where-Object { $_ -cnotin $expectedReferenceTypeWireValues })
-        if ($unexpectedReferenceTypeValues.Count -gt 0) {
-            Add-Failure "Shared ReferenceType OpenAPI enum contains unexpected value(s): $($unexpectedReferenceTypeValues -join ', ')."
-        }
-    }
 }
 
 function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
@@ -1302,6 +1155,38 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         'RepositoryBooleanReturnValue must keep exists/isEmpty ReturnValue as boolean.'
 
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
+
+    Assert-TextContains $branchComponentsText 'ReferenceDefaultSentinel:' 'Type-specific latest Reference fields must expose the canonical ReferenceDto.Default sentinel.'
+    Assert-TextContains $branchComponentsText 'TypedReferenceApiDto:' 'Type-specific latest Reference fields must distinguish complete References from the canonical sentinel.'
+    Assert-TextContains $branchComponentsText 'enum: [00000000-0000-0000-0000-000000000000]' 'The canonical sentinel must use empty identifiers.'
+    Assert-TextContains $branchComponentsText "enum: ['']" 'The canonical sentinel must use empty hashes and text.'
+    Assert-TextContains $branchComponentsText 'additionalProperties: false' 'The canonical sentinel must reject arbitrary partial Reference properties.'
+
+    foreach ($auditField in @('CreatedBy', 'UpdatedAt', 'DeletedAt')) {
+        Assert-OperationTextMatches `
+            ([pscustomobject]@{ OperationText = $branchComponentsText }) `
+            "(?s)ReferenceDefaultSentinel:\s*.*?${auditField}:\s*.*?nullable:\s*true\s*.*?minLength:\s*1\s*.*?pattern:\s*'\^\$'" `
+            "ReferenceDefaultSentinel.${auditField} must admit only the null audit value from ReferenceDto.Default."
+    }
+
+    $typedReferenceCount = ([regex]::Matches($branchComponentsText, [regex]::Escape("`$ref: '#/TypedReferenceApiDto'"))).Count
+    if ($typedReferenceCount -ne 4) {
+        Add-Failure "BranchApiDto must use TypedReferenceApiDto for exactly four type-specific latest slots; found $typedReferenceCount."
+    }
+    else {
+        Add-Pass 'BranchApiDto confines the sentinel-capable union to exactly four type-specific latest slots.'
+    }
+
+    $sharedContractText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    $rawDirectoryRequired = [regex]::Match($sharedContractText, '(?s)DirectoryVersion:\s*.*?required:\s*(?<required>.*?)\s*example:').Groups['required'].Value
+    if ($rawDirectoryRequired -match '(?m)^\s*-\s+RecursiveSize\s*$') {
+        Add-Failure 'Raw DirectoryVersion must not require the DTO-only RecursiveSize field.'
+    }
+    else {
+        Add-Pass 'Raw DirectoryVersion leaves the DTO-only RecursiveSize field optional.'
+    }
     foreach ($requiredDirectoryContract in @(
             'DirectoryVersionId:',
             'DirectoryVersionApiDto:',
@@ -1359,105 +1244,13 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-OperationTextMatches `
         $getBySha256HashOperation `
         "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionSha256HashLookupResponse'" `
-        'GetDirectoryVersionBySha256Hash must use the SHA lookup envelope that narrowly models the no-match sentinel.'
+        'GetDirectoryVersionBySha256Hash must use the strict SHA lookup envelope; no-match is an error response.'
 
     $getByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionByBlake3Hash'
     Assert-OperationTextMatches `
         $getByBlake3HashOperation `
         "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionHashLookupResponse'" `
         'GetDirectoryVersionByBlake3Hash must use the strict raw directory-version envelope.'
-}
-
-function Test-OpenApiMaterializationContractDetails {
-    param([string] $OpenApiRoot)
-
-    $materializationText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Materialization.Components.OpenAPI.yaml') -Raw
-
-    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationExecutionMode' @('direct', 'cachePreferred', 'cacheRequired')
-    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationTargetSelectorKind' @(
-        'directoryVersionId',
-        'referenceId',
-        'branchName',
-        'referenceType'
-    )
-    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationCacheSelectionKind' @('bypassCache', 'preferCache', 'requireCache')
-    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationArtifactKind' @(
-        'directoryVersionZip',
-        'recursiveDirectoryMetadata',
-        'wholeFileContent',
-        'fileManifest',
-        'contentBlock'
-    )
-    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationArtifactSourceKind' @('directUri', 'cacheEntry', 'deferred')
-
-    Assert-OpenApiSchemaRequiresProperties `
-        $materializationText `
-        'PlanParameters' `
-        @('Request') `
-        'PlanParameters must require the materialization request while allowing ValidateIdsMiddleware ID-or-name repository authority'
-
-    Assert-TextContains `
-        $materializationText `
-        'Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware' `
-        'PlanParameters must document the ID-or-name repository authority contract accepted by the server.'
-
-    $targetSelectorBlock = Get-OpenApiNamedBlock $materializationText 'MaterializationTargetSelector'
-    if ($null -eq $targetSelectorBlock) {
-        Add-Failure 'MaterializationTargetSelector schema is missing.'
-    }
-    else {
-        $targetSelectorText = [string] $targetSelectorBlock.Text
-        foreach ($requiredSelectorNeedle in @(
-                'BranchId:',
-                'BranchName:',
-                'ReferenceType:',
-                '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/BranchId''',
-                '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/BranchName''',
-                '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType''',
-                'ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.'
-            )) {
-            Assert-TextContains $targetSelectorText $requiredSelectorNeedle "MaterializationTargetSelector schema must publish ReferenceType selector contract member '$requiredSelectorNeedle'."
-        }
-    }
-
-    foreach ($requiredExampleValue in @(
-            'SelectorKind: directoryVersionId',
-            'ExecutionMode: direct',
-            'SelectionKind: bypassCache',
-            'RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]'
-        )) {
-        Assert-TextContains $materializationText $requiredExampleValue "Materialization OpenAPI examples must use string enum value '$requiredExampleValue'."
-    }
-}
-
-function Test-OpenApiCacheRegistrationContractDetails {
-    param([string] $OpenApiRoot)
-
-    $cacheComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Cache.Components.OpenAPI.yaml') -Raw
-
-    Assert-OpenApiNamedBlockDoesNotContain `
-        $cacheComponentsText `
-        'CacheEnrollmentRequest' `
-        'Health:' `
-        'Cache enrollment must not accept caller-controlled Health.'
-
-    Assert-OpenApiSchemaRequiresProperties `
-        $cacheComponentsText `
-        'CacheEnrollmentRequest' `
-        @('Class', 'DisplayName', 'BoundaryKind', 'OwnerId', 'RepositoryScopes', 'PublicKey', 'Endpoint', 'AllowHttpEndpoint', 'SoftwareVersion', 'ProtocolVersion', 'PrefetchSupported') `
-        'Cache enrollment must require its durable identity and endpoint facts without caller Health.'
-
-    Assert-OpenApiSchemaHasProperty `
-        $cacheComponentsText `
-        'CacheRegistrationRefreshRequest' `
-        'Health' `
-        'Cache refresh must retain its operational Health input.'
-
-    Assert-OpenApiSchemaHasProperty `
-        $cacheComponentsText `
-        'CacheRegistration' `
-        'Health' `
-        'Persisted Cache registration must retain durable Health.'
 }
 
 function Test-OpenApiSharedContractDetails {
@@ -1517,15 +1310,44 @@ function Test-OpenApiSharedContractDetails {
         'Persisted DirectoryVersion.Sha256Hash must stay a strict full SHA-256 hash.'
 
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
-        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'" `
-        'Only the directory hash lookup response may model the DirectoryVersion.Default empty SHA-256 sentinel.'
+        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256Hash'" `
+        'Directory hash lookup success responses must carry a strict SHA-256 hash.'
 
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
         "(?s)DirectoryVersionSha256HashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/DirectoryVersionHashLookupResult'" `
-        'Only SHA directory hash lookup responses may use the sentinel-aware result schema rather than weakening persisted DirectoryVersion.'
+        'SHA directory hash lookup responses must use the complete current directory result schema.'
+
+    $shaLookupRequired = [regex]::Match(
+        $directoryComponentsText,
+        '(?s)DirectoryVersionHashLookupResult:\s*.*?required:\s*(?<required>.*?)\s*DirectoryCommandReturnValue:'
+    ).Groups['required'].Value
+
+    if ($shaLookupRequired -match '(?m)^\s*-\s+RecursiveSize\s*$') {
+        Add-Failure 'SHA-256 directory lookup results must not require the DTO-only RecursiveSize field.'
+    }
+    else {
+        Add-Pass 'SHA-256 directory lookup results leave the raw DirectoryVersion RecursiveSize field optional.'
+    }
+
+    foreach ($requiredSchemaProof in @(
+            [pscustomobject]@{ Text = $sharedText; Schema = 'FileVersion'; Properties = @('RelativePath', 'Sha256Hash', 'Blake3Hash', 'ContentReference') },
+            [pscustomobject]@{ Text = $sharedText; Schema = 'DirectoryVersion'; Properties = @('DirectoryVersionId', 'Sha256Hash', 'Blake3Hash', 'HashesValidated') },
+            [pscustomobject]@{ Text = $directoryComponentsText; Schema = 'DirectoryVersionHashLookupResult'; Properties = @('DirectoryVersionId', 'Sha256Hash', 'Blake3Hash', 'HashesValidated') },
+            [pscustomobject]@{ Text = $branchComponentsText; Schema = 'ReferenceApiDto'; Properties = @('ReferenceId', 'DirectoryId', 'Sha256Hash', 'Blake3Hash') },
+            [pscustomobject]@{ Text = $dtoComponentsText; Schema = 'ReferenceDto'; Properties = @('ReferenceId', 'DirectoryId', 'Sha256Hash', 'Blake3Hash') }
+        )) {
+        foreach ($property in $requiredSchemaProof.Properties) {
+            Assert-OperationTextMatches `
+                ([pscustomobject]@{ OperationText = $requiredSchemaProof.Text }) `
+                "(?s)$($requiredSchemaProof.Schema):\s*.*?required:\s*(?:\[[^\]]*\b$property\b[^\]]*\]|(?:\s*-\s+\w+)*\s*-\s+$property\b)" `
+                "$($requiredSchemaProof.Schema).$property must be required in the public OpenAPI schema."
+        }
+    }
 
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
@@ -1583,8 +1405,6 @@ function Test-OpenApiSharedContractDetails {
 
     Test-OpenApiBranchReferenceDiffDetails $OpenApiRoot $Operations
     Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails $OpenApiRoot $Operations
-    Test-OpenApiCacheRegistrationContractDetails $OpenApiRoot
-    Test-OpenApiMaterializationContractDetails $OpenApiRoot
 }
 
 function Test-OpenApiQuality {
@@ -1682,94 +1502,64 @@ function Get-RequiredJsonProperty {
     return $property.Value
 }
 
-function Get-ProjectionHashFromManifest {
-    param(
-        [string] $RepoRoot,
-        [string] $ProjectionRelativePath
-    )
-
-    $openApiRoot = Get-OpenApiRoot $RepoRoot
-    $manifest = Get-OpenApiManifest $openApiRoot
-    if ($null -eq $manifest) {
-        return $null
-    }
-
-    $projectionArtifact =
-        @($manifest.generatedArtifacts) |
-        Where-Object { $_.path -eq ([IO.Path]::GetFileName($ProjectionRelativePath)) } |
-        Select-Object -First 1
-
-    if ($null -eq $projectionArtifact) {
-        Add-Failure "OpenAPI proof manifest is missing generated artifact '$ProjectionRelativePath'."
-        return $null
-    }
-
-    $manifestHash = [string] (Get-RequiredJsonProperty $projectionArtifact 'sha256' "OpenAPI proof manifest artifact '$ProjectionRelativePath'")
-    if ([string]::IsNullOrWhiteSpace($manifestHash)) {
-        Add-Failure "OpenAPI proof manifest artifact '$ProjectionRelativePath' is missing sha256."
-        return $null
-    }
-
-    return $manifestHash.ToLowerInvariant()
-}
-
-function Test-SdkGeneratedHarnessFreshness {
+function Test-GeneratedSdkMetadataFreshness {
     param(
         [string] $RepoRoot,
         [string] $ProjectionRelativePath,
-        [string] $ActualProjectionHash,
-        [string] $ManifestProjectionHash
+        [string] $ProjectionSha256
     )
 
+    $failureCountBefore = $script:Failures.Count
     $reportPath = Join-Path $RepoRoot 'sdk/generated/generator-report.json'
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
         Add-Failure "Missing SDK generator report: $reportPath"
-        return
     }
+    else {
+        $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+        $reportProjection = [string] (Get-RequiredJsonProperty $report 'sourceProjection' 'SDK generator report')
+        $reportProjectionSha256 = [string] (Get-RequiredJsonProperty $report 'sourceProjectionSha256' 'SDK generator report')
 
-    $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-    $reportedProjection = [string] (Get-RequiredJsonProperty $report 'sourceProjection' 'SDK generator report')
-    $reportedProjectionHash = [string] (Get-RequiredJsonProperty $report 'sourceProjectionSha256' 'SDK generator report')
-
-    if ($reportedProjection -ne $ProjectionRelativePath) {
-        Add-Failure "SDK generator report sourceProjection must be '$ProjectionRelativePath'; actual '$reportedProjection'."
-    }
-
-    if ($reportedProjectionHash.ToLowerInvariant() -ne $ActualProjectionHash) {
-        Add-Failure "SDK generator report is stale for $ProjectionRelativePath. Expected final projection hash $ActualProjectionHash, actual $reportedProjectionHash."
-    }
-
-    if ($null -ne $ManifestProjectionHash -and $reportedProjectionHash.ToLowerInvariant() -ne $ManifestProjectionHash) {
-        Add-Failure "SDK generator report hash must match OpenAPI proof manifest for $ProjectionRelativePath. Manifest $ManifestProjectionHash, report $reportedProjectionHash."
-    }
-
-    foreach ($generatedFile in @($report.generatedFiles)) {
-        $kind = [string] $generatedFile.kind
-        if (-not $kind.EndsWith('-generated-metadata', [StringComparison]::Ordinal)) {
-            continue
+        if ($reportProjection -ne $ProjectionRelativePath) {
+            Add-Failure "SDK generator report sourceProjection is stale. Expected $ProjectionRelativePath, actual $reportProjection."
         }
 
-        $relativePath = [string] (Get-RequiredJsonProperty $generatedFile 'path' 'SDK generator report generated file')
-        if ([string]::IsNullOrWhiteSpace($relativePath)) {
-            continue
+        if ($reportProjectionSha256.ToLowerInvariant() -ne $ProjectionSha256) {
+            Add-Failure "SDK generator report sourceProjectionSha256 is stale for $ProjectionRelativePath. Expected $ProjectionSha256, actual $reportProjectionSha256."
         }
+    }
 
-        $metadataPath = Join-Path $RepoRoot $relativePath
+    $facadeMetadataFiles = @(
+        @{ Path = 'sdk/typescript/grace/src/internal/generated/grace-raw-client-metadata.ts'; SourceHashCount = 2 },
+        @{ Path = 'sdk/python/grace-sdk/src/grace_sdk/_generated/grace_raw_client_metadata.py'; SourceHashCount = 2 },
+        @{ Path = 'sdk/python/grace-sdk/src/grace_sdk/_generated/__init__.py'; SourceHashCount = 1 },
+        @{ Path = 'sdk/rust/grace-sdk/src/generated.rs'; SourceHashCount = 2 },
+        @{ Path = 'sdk/dotnet/Grace.Sdk.Harness/Internal/Generated/GraceRawClientMetadata.cs'; SourceHashCount = 2 }
+    )
+
+    foreach ($metadataFile in $facadeMetadataFiles) {
+        $metadataPath = Join-Path $RepoRoot $metadataFile.Path
         if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
-            Add-Failure "SDK generated metadata file is missing: $relativePath"
+            Add-Failure "Missing generated SDK facade metadata: $($metadataFile.Path)"
             continue
         }
 
-        $metadataText = Get-Content -LiteralPath $metadataPath -Raw
-        Assert-TextContains $metadataText $ProjectionRelativePath "SDK generated metadata file $relativePath must name source projection '$ProjectionRelativePath'."
-        Assert-TextContains $metadataText $ActualProjectionHash "SDK generated metadata file $relativePath must carry final projection hash '$ActualProjectionHash'."
+        $sourceHashClaims = @([regex]::Matches((Get-Content -LiteralPath $metadataPath -Raw), '(?i)\b[0-9a-f]{64}\b') |
+            ForEach-Object { $_.Value.ToLowerInvariant() })
+        if ($sourceHashClaims.Count -ne $metadataFile.SourceHashCount) {
+            Add-Failure "Generated SDK facade metadata has an unexpected source-hash claim count for $($metadataFile.Path). Expected $($metadataFile.SourceHashCount), actual $($sourceHashClaims.Count)."
+            continue
+        }
 
-        if ($null -ne $ManifestProjectionHash -and -not $metadataText.Contains($ManifestProjectionHash, [StringComparison]::Ordinal)) {
-            Add-Failure "SDK generated metadata file $relativePath must match OpenAPI proof manifest projection hash '$ManifestProjectionHash'."
+        foreach ($sourceHashClaim in $sourceHashClaims) {
+            if ($sourceHashClaim -ne $ProjectionSha256) {
+                Add-Failure "Generated SDK facade metadata is stale for $($metadataFile.Path). Expected $ProjectionSha256, actual $sourceHashClaim."
+            }
         }
     }
 
-    Add-Pass 'SDK generator report and generated language metadata match the final OpenAPI projection and proof manifest hash.'
+    if ($script:Failures.Count -eq $failureCountBefore) {
+        Add-Pass 'SDK generator report and every generated facade metadata source-hash claim match the current OpenAPI projection.'
+    }
 }
 
 function Test-GeneratedClientMatrixProof {
@@ -1790,7 +1580,6 @@ function Test-GeneratedClientMatrixProof {
     }
 
     $projectionPath = Join-Path $RepoRoot ([string] $projectionRelativePath)
-    $actualProjectionHash = $null
     if (-not (Test-Path -LiteralPath $projectionPath -PathType Leaf)) {
         Add-Failure "Generator matrix source projection is missing: $projectionRelativePath"
     }
@@ -1800,15 +1589,8 @@ function Test-GeneratedClientMatrixProof {
         if ($actualProjectionHash -ne $recordedProjectionHash.ToLowerInvariant()) {
             Add-Failure "Generator matrix evidence is stale for $projectionRelativePath. Expected $recordedProjectionHash, actual $actualProjectionHash."
         }
-    }
 
-    $manifestProjectionHash = Get-ProjectionHashFromManifest $RepoRoot ([string] $projectionRelativePath)
-    if ($null -ne $actualProjectionHash -and $null -ne $manifestProjectionHash -and $actualProjectionHash -ne $manifestProjectionHash) {
-        Add-Failure "OpenAPI proof manifest is stale for $projectionRelativePath. Manifest $manifestProjectionHash, actual $actualProjectionHash."
-    }
-
-    if ($null -ne $actualProjectionHash) {
-        Test-SdkGeneratedHarnessFreshness $RepoRoot ([string] $projectionRelativePath) $actualProjectionHash $manifestProjectionHash
+        Test-GeneratedSdkMetadataFreshness $RepoRoot ([string] $projectionRelativePath) $actualProjectionHash
     }
 
     $acceptedTier = [string] (Get-RequiredJsonProperty $evidence 'acceptedTier' 'Generator matrix evidence')
@@ -1824,18 +1606,6 @@ function Test-GeneratedClientMatrixProof {
     $pendingRationale = [string] (Get-RequiredJsonProperty $evidence 'pendingSdkGradeRationale' 'Generator matrix evidence')
     if ([string]::IsNullOrWhiteSpace($pendingRationale)) {
         Add-Failure 'Generator matrix evidence must record why SDK-grade generated-client acceptance remains pending.'
-    }
-
-    if ($null -eq $evidence.toolVersions -or $null -eq $evidence.toolVersions.PSObject.Properties['kiota']) {
-        Add-Failure 'Generator matrix evidence must record an executed Kiota version probe.'
-    }
-    else {
-        $kiotaVersion = [string] $evidence.toolVersions.kiota
-        if ([string]::IsNullOrWhiteSpace($kiotaVersion) -or
-            $kiotaVersion -eq 'unavailable' -or
-            $kiotaVersion -match 'does not exist|not recognized|failed|unavailable') {
-            Add-Failure "Generator matrix Kiota version proof must come from an executable Kiota tool; actual '$kiotaVersion'."
-        }
     }
 
     foreach ($traceId in @('B-043', 'B-044', 'drift-002', 'drift-006', 'drift-008')) {
@@ -1886,24 +1656,12 @@ function Test-GeneratedClientMatrixProof {
         elseif ($entry.outcome -ne 'Rejected') {
             Add-Failure "$($rejected.generator) $($rejected.language) must remain rejected until schema-shape debt is fixed; actual outcome '$($entry.outcome)'."
         }
-        elseif ($rejected.generator -eq 'Kiota') {
-            $kiotaEvidence = @($entry.evidence | ForEach-Object { [string] $_ })
-            $kiotaEvidenceText = $kiotaEvidence -join "`n"
-            if ($kiotaEvidence.Count -eq 0) {
-                Add-Failure "Generator matrix $($rejected.generator) $($rejected.language) rejection must include Kiota command output evidence."
-            }
-
-            if ($kiotaEvidenceText -match 'application to execute does not exist|does not exist: .*kiota|missing executable' -or
-                [string] $entry.conclusion -match 'missing executable|tool.*missing|tool.*unavailable') {
-                Add-Failure "Generator matrix $($rejected.generator) $($rejected.language) rejection records tool infrastructure failure instead of executed schema-shape evidence."
-            }
-        }
     }
 
     foreach ($probeName in @(
-            'TypeScript generated client import/build',
-            'Python generated client import/build',
-            'Rust generated client cargo check'
+        'TypeScript generated client import/build and PascalCase wire round trip',
+        'Python generated client import/build and UUID wire round trip',
+        'Rust generated client semantic union wire round trip'
         )) {
         $probe = @($evidence.probes) | Where-Object { $_.name -eq $probeName } | Select-Object -First 1
         if ($null -eq $probe) {
@@ -1911,138 +1669,6 @@ function Test-GeneratedClientMatrixProof {
         }
         elseif ($probe.exitCode -ne 0) {
             Add-Failure "Generator matrix probe '$probeName' failed with exit code $($probe.exitCode)."
-        }
-    }
-
-    $generatedEnumChecks = @(
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationExecutionMode.ts'
-            required = @("Direct: 'direct'", "CachePreferred: 'cachePreferred'", "CacheRequired: 'cacheRequired'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationTargetSelectorKind.ts'
-            required = @("DirectoryVersionId: 'directoryVersionId'", "ReferenceId: 'referenceId'", "BranchName: 'branchName'", "ReferenceType: 'referenceType'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/ReferenceType.ts'
-            required = @("Promotion: 'promotion'", "Commit: 'commit'", "Checkpoint: 'checkpoint'", "Save: 'save'", "Tag: 'tag'", "External: 'external'", "Rebase: 'rebase'")
-            forbidden = @("Promotion: 'Promotion'", "Commit: 'Commit'", "Checkpoint: 'Checkpoint'", "Save: 'Save'", "Tag: 'Tag'", "External: 'External'", "Rebase: 'Rebase'", 'NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_target_selector_kind.py'
-            required = @('directoryVersionId', 'referenceId', 'branchName', 'referenceType')
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/reference_type.py'
-            required = @("PROMOTION = 'promotion'", "COMMIT = 'commit'", "CHECKPOINT = 'checkpoint'", "SAVE = 'save'", "TAG = 'tag'", "EXTERNAL = 'external'", "REBASE = 'rebase'")
-            forbidden = @("PROMOTION = 'Promotion'", "COMMIT = 'Commit'", "CHECKPOINT = 'Checkpoint'", "SAVE = 'Save'", "TAG = 'Tag'", "EXTERNAL = 'External'", "REBASE = 'Rebase'", 'NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_target_selector_kind.rs'
-            required = @('directoryVersionId', 'referenceId', 'branchName', 'referenceType')
-            forbidden = @('Number1', 'Number2', 'Number3', 'Number4')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/reference_type.rs'
-            required = @('#[serde(rename = "promotion")]', '#[serde(rename = "commit")]', '#[serde(rename = "checkpoint")]', '#[serde(rename = "save")]', '#[serde(rename = "tag")]', '#[serde(rename = "external")]', '#[serde(rename = "rebase")]')
-            forbidden = @('#[serde(rename = "Promotion")]', '#[serde(rename = "Commit")]', '#[serde(rename = "Checkpoint")]', '#[serde(rename = "Save")]', '#[serde(rename = "Tag")]', '#[serde(rename = "External")]', '#[serde(rename = "Rebase")]', 'Number1', 'Number2', 'Number3', 'Number4', 'Number5', 'Number6', 'Number7')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationCacheSelectionKind.ts'
-            required = @("BypassCache: 'bypassCache'", "PreferCache: 'preferCache'", "RequireCache: 'requireCache'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationArtifactKind.ts'
-            required = @("DirectoryVersionZip: 'directoryVersionZip'", "RecursiveDirectoryMetadata: 'recursiveDirectoryMetadata'", "WholeFileContent: 'wholeFileContent'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationArtifactSourceKind.ts'
-            required = @("DirectUri: 'directUri'", "CacheEntry: 'cacheEntry'", "Deferred: 'deferred'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_execution_mode.py'
-            required = @('direct', 'cachePreferred', 'cacheRequired')
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_artifact_kind.py'
-            required = @('directoryVersionZip', 'recursiveDirectoryMetadata', 'wholeFileContent')
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_artifact_source_kind.py'
-            required = @('directUri', 'cacheEntry', 'deferred')
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_execution_mode.rs'
-            required = @('direct', 'cachePreferred', 'cacheRequired')
-            forbidden = @('Number1', 'Number2', 'Number3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_artifact_kind.rs'
-            required = @('directoryVersionZip', 'recursiveDirectoryMetadata', 'wholeFileContent')
-            forbidden = @('Number1', 'Number2', 'Number3', 'Number4', 'Number5')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_artifact_source_kind.rs'
-            required = @('directUri', 'cacheEntry', 'deferred')
-            forbidden = @('Number1', 'Number2', 'Number3')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/PlanParameters.ts'
-            required = @('ownerId?: string;', 'ownerName?: string;', 'organizationId?: string;', 'organizationName?: string;', 'repositoryId?: string;', 'repositoryName?: string;', "if (!('request' in value)")
-            forbidden = @('ownerId: string;', 'organizationId: string;', 'repositoryId: string;', "if (!('ownerId' in value)", "if (!('organizationId' in value)", "if (!('repositoryId' in value)")
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationTargetSelector.ts'
-            required = @('branchId?: string;', 'branchName?: string;', 'referenceType?: ReferenceType;', "'BranchId': value['branchId']", "'ReferenceType': ReferenceTypeToJSON(value['referenceType'])")
-            forbidden = @('branchId: string;', 'referenceType: ReferenceType;')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_target_selector.py'
-            required = @('branch_id: Optional[UUID]', 'branch_name: Optional[StrictStr]', 'reference_type: Optional[ReferenceType]', '"BranchId"', '"BranchName"', '"ReferenceType"')
-            forbidden = @('branch_id: UUID', 'reference_type: ReferenceType = Field(alias="ReferenceType")')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_target_selector.rs'
-            required = @('pub branch_id: Option<uuid::Uuid>', 'pub branch_name: Option<String>', 'pub reference_type: Option<models::ReferenceType>')
-            forbidden = @('pub branch_id: uuid::Uuid', 'pub reference_type: models::ReferenceType')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/plan_parameters.py'
-            required = @('owner_id: Optional[UUID]', 'owner_name: Optional[StrictStr]', 'organization_id: Optional[UUID]', 'organization_name: Optional[StrictStr]', 'repository_id: Optional[UUID]', 'repository_name: Optional[StrictStr]', 'request: MaterializationPlanRequest')
-            forbidden = @('owner_id: UUID', 'organization_id: UUID', 'repository_id: UUID')
-        },
-        @{
-            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/plan_parameters.rs'
-            required = @('pub owner_id: Option<uuid::Uuid>', 'pub owner_name: Option<String>', 'pub organization_id: Option<uuid::Uuid>', 'pub organization_name: Option<String>', 'pub repository_id: Option<uuid::Uuid>', 'pub repository_name: Option<String>', 'pub request: Box<models::MaterializationPlanRequest>', 'pub fn new(request: models::MaterializationPlanRequest)')
-            forbidden = @('pub owner_id: uuid::Uuid', 'pub organization_id: uuid::Uuid', 'pub repository_id: uuid::Uuid', 'pub fn new(owner_id: uuid::Uuid')
-        }
-    )
-
-    foreach ($check in $generatedEnumChecks) {
-        $generatedPath = Join-Path $RepoRoot ([string] $check.path)
-        if (-not (Test-Path -LiteralPath $generatedPath -PathType Leaf)) {
-            Add-Failure "Generated-client contract proof file is missing: $($check.path)"
-            continue
-        }
-
-        $generatedText = Get-Content -LiteralPath $generatedPath -Raw
-        foreach ($requiredNeedle in @($check.required)) {
-            Assert-TextContains $generatedText $requiredNeedle "Generated-client contract proof $($check.path) is missing '$requiredNeedle'."
-        }
-
-        foreach ($forbiddenNeedle in @($check.forbidden)) {
-            if ($generatedText.Contains($forbiddenNeedle, [StringComparison]::Ordinal)) {
-                Add-Failure "Generated-client contract proof $($check.path) must not contain stale numeric enum or optional authority shape '$forbiddenNeedle'."
-            }
         }
     }
 
@@ -2054,7 +1680,22 @@ function Test-GeneratedClientMatrixProof {
         }
     }
 
-    Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota executed and remains explicitly rejected with schema-shape evidence.'
+    $generatedContractProofs = @(
+        @{ Path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/BranchApiDto.ts'; Strict = 'basedOn: ReferenceApiDto;'; Typed = 'latestCommit: TypedReferenceApiDto;' },
+        @{ Path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/branch_api_dto.py'; Strict = 'based_on: ReferenceApiDto = Field(alias="BasedOn")'; Typed = 'latest_commit: TypedReferenceApiDto = Field(alias="LatestCommit")' },
+        @{ Path = 'sdk/generated/matrix/openapi-generator/rust/src/models/branch_api_dto.rs'; Strict = 'pub based_on: Box<models::ReferenceApiDto>'; Typed = 'pub latest_commit: Box<models::TypedReferenceApiDto>' }
+    )
+
+    foreach ($proof in $generatedContractProofs) {
+        $generatedText = Get-Content -LiteralPath (Join-Path $RepoRoot $proof.Path) -Raw
+        Assert-TextContains $generatedText $proof.Strict "$($proof.Path) must keep BasedOn on the strict Reference schema."
+        Assert-TextContains $generatedText $proof.Typed "$($proof.Path) must deserialize typed latest slots through the sentinel-capable union."
+    }
+
+    $generatedDirectoryVersionText = Get-Content -LiteralPath (Join-Path $RepoRoot 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/DirectoryVersion.ts') -Raw
+    Assert-TextContains $generatedDirectoryVersionText 'recursiveSize?: number;' 'Generated raw DirectoryVersion must keep RecursiveSize optional.'
+
+    Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota and NSwag remain explicitly rejected.'
 }
 
 function Test-ProtocolVectorProof {

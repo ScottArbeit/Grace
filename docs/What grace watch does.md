@@ -35,7 +35,20 @@ This is meant to be an exhaustive list of the things that `grace watch` does. If
 Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://github.com/ScottArbeit/Grace/blob/main/src/Grace.CLI/Command/Watch.CLI.fs).
 
 - `grace watch` uses a .NET [`FileSystemWatcher()`](https://learn.microsoft.com/en-us/dotnet/api/system.io.filesystemwatcher?view=net-8.0) to watch your working directory for all changes and updates.
-- `grace watch` establishes a SignalR connection with Grace Server, and sends the BranchId of the parent branch. Grace Server then registers your connection in the correct notification groups.
+- `grace watch` establishes a SignalR connection with Grace Server, and sends the BranchId of the parent branch. Grace
+  Server then registers your connection in the correct notification groups. Same-branch Reference notifications only
+  wake Watch; startup, reconnect, and each wake replay server-ordered Commit, Checkpoint, and Save events after the
+  opaque cursor stored for the current repository and branch. Watch advances that cursor only after successful
+  materialization or verified same-root acknowledgement.
+- Watch starts only when the local SQLite database contains a complete status tree and a matching ordered remote-event
+  boundary for the configured repository and branch. Missing, schema-only, corrupt, incompatible, or mismatched state
+  fails before callback admission, working-tree scan, upload, Save, cursor mutation, or materialization.
+- Watch never reconstructs missing local state, invents descendant identities, or establishes an unmatched server-tail
+  baseline. If a materialized working tree still exactly matches a root in configured branch history, stop Watch and
+  run `grace doctor --repair-local-state`. The explicit repair preserves local bytes, fetches the server's immutable
+  recursive directory closure, and atomically records its real identities with the latest matching event boundary.
+- `grace connect --retrieve-default-branch false` does not establish a materialized local root. Watch treats a missing
+  or incomplete root as non-incremental state and never selects a historical Reference to fill it implicitly.
 - When it starts, it scans the working directory and all (not-ignored) subdirectories and files for changes since the last time the local Grace Status file was updated.
 - When it starts, and at a couple of other times, it reads and deserializes the local Grace Status file. For small repos, it's well under 10K and is processed in about 1ms. The largest repositories I've tested had a ~53MB status file, and, if I recall correctly, reading and deserializing the data happened in low two-digit milliseconds on a four-year-old laptop.
   - `grace watch` doesn't keep the Grace Status file in memory while it's running. It's so fast to read and deserialize it when it's needed that we make the tradeoff to release the memory rather than hold it indefinitely, especially given that there will be many times that the user isn't coding and `grace watch` should have as small of a memory footprint as possible.
@@ -60,9 +73,28 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
     Save with an empty message because the changed root directory version is the durable record of the directory change.
 - In V1, renames are captured as the old path being deleted plus the new path being added or changed. Grace does not
   assign rename identity, tombstones, or a durable "same file moved" relationship for V1 rename capture.
+- `grace watch` gates incremental reconciliation through an explicit runtime mode. Healthy mode can apply filesystem
+  observations to local status and branch history. Startup and resync mode may scan, rebuild trusted state, and queue
+  observations, but they do not apply normal event-derived saves until the trusted status boundary is restored.
+- Watch reads `.graceignore` into one immutable eligibility snapshot when it starts. Ordinary `.graceignore` edits take
+  effect after Watch restarts; an existing Grace-owned branch transition reloads a new valid snapshot for its target
+  branch.
+- If Watch cannot read a configured `.graceignore` during startup or branch-transition reload, it does not substitute an
+  empty ignore set. A running Watch retains its last valid snapshot and resynchronizes; startup without a valid snapshot
+  does not advertise incremental safety.
+- Ignore rules are project-specific and belong in `.graceignore`. Grace does not provide a generic catalog for editor,
+  IDE, operating-system, build-output, or generated-file names.
+- If the filesystem watcher reports confidence loss, `grace watch` quarantines queued observations, switches to
+  resynchronizing mode, and performs an explicit scan-derived reconciliation before incremental observations resume.
+  If that recovery cannot reach the durable local-status boundary, Watch suspends incremental capture instead of
+  guessing from stale events.
 - When a promotion event from your parent branch is sent to `grace watch` by the server, `grace watch` will run auto-rebase.
 - Every 4.8 minutes, `grace watch` will recompute and rewrite the Grace interprocess-communication (IPC) file, which requires reading and deserializing the local Grace Status file. The size of the IPC file is under 1K for small repos, and scales with the number of directories in the repo. A repo with 275 directories would fit in a 10K IPC file, and a repo with 2,750 directories would fit in a 100K IPC file. They're usually very small.
   > Long story about why we rewrite the file: Imagine that you're at the command line, and you run `grace checkpoint -m ...`. That instance of Grace uses the existence of the IPC file as proof that `grace watch` is running in a separate process. `grace watch` writes the IPC file as soon as it starts, and, deletes it in a `try...finally` clause when it exits. In other words: in any normal exit, including exits caused by unhandled exceptions, the IPC file will be deleted when `grace watch` exits. However: it's possible that `grace watch` could be killed before it has a chance to execute that `finally` clause. For instance, in Windows, if I open Task Manager, right-click on the `grace watch` process, and hit `End Task`, the process dies immediately, and does not execute the `finally` clause. To ensure that there's not a stale IPC file laying around, Grace checks the value of the UpdatedAt field; if it's more than 5 minutes old, Grace will ignore the IPC file and assume that `grace watch` isn't running. So: *that's* why the IPC file gets refreshed every 4.8 minutes: it resets the UpdatedAt field so the file stays under 5 minutes old.
+- `grace watch --check` reports whether the IPC file is usable for incremental shortcuts. Human output explains
+  starting, stale, resynchronizing, suspended, and stopping states without showing local IPC paths or exception stacks.
+  `grace watch --check --output Json` emits the same status as machine-readable fields, including `Mode`, `Reason`,
+  `CanUseIncrementalStatus`, and `SafetyFlags`.
 - Once a minute, `grace watch` does the fullest of garbage collection:
 
   `GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)`

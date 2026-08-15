@@ -253,9 +253,27 @@ module Configuration =
         let exists = File.Exists(graceIgnorePath)
 
         let entries, errorMessage =
-            match tryGetGraceIgnoreEntries graceIgnorePath with
-            | Ok entries -> entries, None
-            | Error errorMessage -> Array.empty, Some errorMessage
+            let pathKindError =
+                if Directory.Exists(graceIgnorePath) then
+                    Some $"Configured {Constants.GraceIgnoreFileName} path is not a file."
+                elif exists then
+                    None
+                else
+                    try
+                        File.GetAttributes(graceIgnorePath) |> ignore
+
+                        Some $"Configured {Constants.GraceIgnoreFileName} path is not a file."
+                    with
+                    | :? FileNotFoundException
+                    | :? DirectoryNotFoundException -> None
+                    | ex -> Some $"Could not inspect configured {Constants.GraceIgnoreFileName} path: {ex.Message}"
+
+            match pathKindError with
+            | Some errorMessage -> Array.empty, Some errorMessage
+            | None ->
+                match tryGetGraceIgnoreEntries graceIgnorePath with
+                | Ok entries -> entries, None
+                | Error errorMessage -> Array.empty, Some errorMessage
 
         {
             Path = graceIgnorePath
@@ -285,17 +303,6 @@ module Configuration =
 
                 Ok { Path = graceConfigurationFilePath; RootDirectory = configuration.RootDirectory; Configuration = configuration; Ignore = ignore }
 
-    /// Builds default configuration file from the validated inputs used by this contract.
-    let private createDefaultConfigurationFile () =
-        let graceConfigurationFilePath = Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
-
-        Directory.CreateDirectory(Path.GetDirectoryName(graceConfigurationFilePath))
-        |> ignore
-
-        let newConfiguration = GraceConfiguration()
-        saveConfigFile graceConfigurationFilePath newConfiguration
-        graceConfigurationFilePath, newConfiguration
-
     /// Checks whether cached configuration still belongs to the current working directory tree.
     let private isCurrentDirectoryWithinRoot (rootDirectory: string) =
         if String.IsNullOrWhiteSpace rootDirectory then
@@ -313,33 +320,24 @@ module Configuration =
 
             normalizedCurrent.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
 
-    /// Gets grace configuration.
-    let private getGraceConfiguration () =
+    /// Loads the repository configuration for the current directory without writing files or console output.
+    let tryCurrent () =
         if graceConfiguration.IsPopulated
            && isCurrentDirectoryWithinRoot graceConfiguration.RootDirectory then
-            graceConfiguration
+            Ok graceConfiguration
         else
-            match findGraceConfigurationFile () with
-            | Ok graceConfigurationFilePath ->
-#if DEBUG
-                if writeNewConfiguration then
-                    GraceConfiguration()
-                    |> saveConfigFile graceConfigurationFilePath
-#endif
-                match (parseConfigurationFile graceConfigurationFilePath) with
-                | Ok graceConfigurationFromFile ->
-                    graceConfiguration <- graceConfigurationFromFile
-                    graceConfiguration <- populateDerivedFields graceConfigurationFilePath graceConfiguration
-                    graceConfiguration
-                | Result.Error errorMessage ->
-                    printfn $"{errorMessage}"
-                    exit Results.InvalidConfigurationFile
-            | Result.Error errorMessage ->
-                // We didn't find a graceconfig.json file, so we'll create a default one on disk just to finish the command.
-                printfn $"{errorMessage}"
-                let graceConfigurationFilePath, newConfiguration = createDefaultConfigurationFile ()
-                graceConfiguration <- populateDerivedFields graceConfigurationFilePath newConfiguration
-                graceConfiguration
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection ->
+                graceConfiguration <- inspection.Configuration
+                Ok graceConfiguration
+            | Error error -> Error error
+
+    /// Gets the current repository configuration or fails when the current directory is not configured.
+    let private getGraceConfiguration () =
+        match tryCurrent () with
+        | Ok configuration -> configuration
+        | Error (ConfigurationFileNotFound errorMessage) -> invalidOp errorMessage
+        | Error (ConfigurationFileMalformed (_, errorMessage)) -> invalidOp errorMessage
 
     // graceConfiguration <- GraceConfiguration()
     // graceConfiguration.IsPopulated <- true

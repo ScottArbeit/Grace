@@ -68,9 +68,11 @@ All URIs are relative to *http://localhost:5000*
 *ApprovalsApi* | [**showApprovalRequest**](docs/ApprovalsApi.md#showapprovalrequest) | **POST** /approval/request/show | Show a workflow-generated approval request.
 *ApprovalsApi* | [**updateApprovalPolicy**](docs/ApprovalsApi.md#updateapprovalpolicy) | **POST** /approval/policy/update | Update an approval policy.
 *BranchesApi* | [**annotateBranch**](docs/BranchesApi.md#annotatebranch) | **POST** /branch/annotate | Annotate a branch reference.
+*BranchesApi* | [**assignBranch**](docs/BranchesApi.md#assignbranch) | **POST** /branch/assign | Assign a promotion to a branch.
 *BranchesApi* | [**checkpointBranch**](docs/BranchesApi.md#checkpointbranch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 *BranchesApi* | [**commitBranch**](docs/BranchesApi.md#commitbranch) | **POST** /branch/commit | Commit the current branch content.
 *BranchesApi* | [**createBranch**](docs/BranchesApi.md#createbranch) | **POST** /branch/create | Create a branch.
+*BranchesApi* | [**createExternalBranchReference**](docs/BranchesApi.md#createexternalbranchreference) | **POST** /branch/createExternal | Create an external Reference.
 *BranchesApi* | [**deleteBranch**](docs/BranchesApi.md#deletebranch) | **POST** /branch/delete | Delete a branch.
 *BranchesApi* | [**enableBranchCheckpoint**](docs/BranchesApi.md#enablebranchcheckpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references.
 *BranchesApi* | [**enableBranchCommit**](docs/BranchesApi.md#enablebranchcommit) | **POST** /branch/enableCommit | Enable or disable commit references.
@@ -80,6 +82,7 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**getBranch**](docs/BranchesApi.md#getbranch) | **POST** /branch/get | Get a branch.
 *BranchesApi* | [**getBranchReference**](docs/BranchesApi.md#getbranchreference) | **POST** /branch/getReference | Get a branch reference.
 *BranchesApi* | [**getParentBranch**](docs/BranchesApi.md#getparentbranch) | **POST** /branch/getParentBranch | Get the parent branch.
+*BranchesApi* | [**getReferenceMaterializationBoundary**](docs/BranchesApi.md#getreferencematerializationboundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 *BranchesApi* | [**listBranchCheckpoints**](docs/BranchesApi.md#listbranchcheckpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 *BranchesApi* | [**listBranchCommits**](docs/BranchesApi.md#listbranchcommits) | **POST** /branch/getCommits | List branch commits.
 *BranchesApi* | [**listBranchPromotions**](docs/BranchesApi.md#listbranchpromotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -88,13 +91,10 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**listBranchTags**](docs/BranchesApi.md#listbranchtags) | **POST** /branch/getTags | List branch tags.
 *BranchesApi* | [**promoteBranch**](docs/BranchesApi.md#promotebranch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebaseBranch**](docs/BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch.
+*BranchesApi* | [**replayReferenceEvents**](docs/BranchesApi.md#replayreferenceevents) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+*BranchesApi* | [**resolveReferenceEventBoundary**](docs/BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
-*CacheApi* | [**assignCacheRepositories**](docs/CacheApi.md#assigncacherepositories) | **POST** /cache/assign-repositories | Replace a Cache\&#39;s exact repository assignments as a current administrator.
-*CacheApi* | [**enrollCache**](docs/CacheApi.md#enrollcache) | **POST** /cache/enroll | Enroll a Grace Cache with an administrator-authorized repository boundary.
-*CacheApi* | [**getArtifactGrantValidationKeys**](docs/CacheApi.md#getartifactgrantvalidationkeys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
-*CacheApi* | [**refreshCache**](docs/CacheApi.md#refreshcache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
-*CacheApi* | [**revokeCache**](docs/CacheApi.md#revokecache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirmContentBlockUpload**](docs/DefaultApi.md#confirmcontentblockupload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discoverContentBlocks**](docs/DefaultApi.md#discovercontentblocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -119,7 +119,6 @@ All URIs are relative to *http://localhost:5000*
 *DirectoriesApi* | [**listDirectoryVersionsById**](docs/DirectoriesApi.md#listdirectoryversionsbyid) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**listDirectoryVersionsRecursive**](docs/DirectoriesApi.md#listdirectoryversionsrecursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
 *DirectoriesApi* | [**saveDirectoryVersions**](docs/DirectoriesApi.md#savedirectoryversions) | **POST** /directory/saveDirectoryVersions | Save directory versions.
-*MaterializationApi* | [**createMaterializationPlan**](docs/MaterializationApi.md#creatematerializationplan) | **POST** /materialization/plan | Create a Materialization Plan.
 *OrganizationsApi* | [**createOrganization**](docs/OrganizationsApi.md#createorganization) | **POST** /organization/create | Create an organization.
 *OrganizationsApi* | [**deleteOrganization**](docs/OrganizationsApi.md#deleteorganization) | **POST** /organization/delete | Delete an organization.
 *OrganizationsApi* | [**getOrganization**](docs/OrganizationsApi.md#getorganization) | **POST** /organization/get | Get an organization.
@@ -165,6 +164,10 @@ All URIs are relative to *http://localhost:5000*
 *WebhooksApi* | [**showWebhookRule**](docs/WebhooksApi.md#showwebhookrule) | **POST** /webhook/rule/show | Show a webhook rule.
 *WebhooksApi* | [**testWebhookRule**](docs/WebhooksApi.md#testwebhookrule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**updateWebhookRule**](docs/WebhooksApi.md#updatewebhookrule) | **POST** /webhook/rule/update | Update a webhook rule.
+*WorkItemsApi* | [**clearWorkItemDescription**](docs/WorkItemsApi.md#clearworkitemdescription) | **POST** /work/description/clear | Clear a work-item description.
+*WorkItemsApi* | [**deleteWorkItemAttachment**](docs/WorkItemsApi.md#deleteworkitemattachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**setWorkItemDescription**](docs/WorkItemsApi.md#setworkitemdescription) | **POST** /work/description/set | Replace a work-item description.
+*WorkItemsApi* | [**undeleteWorkItemAttachment**](docs/WorkItemsApi.md#undeleteworkitemattachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
 ### Models
@@ -187,13 +190,8 @@ All URIs are relative to *http://localhost:5000*
 - [ApprovalScope](docs/ApprovalScope.md)
 - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
 - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
-- [ArtifactGrantHeader](docs/ArtifactGrantHeader.md)
-- [ArtifactGrantHolderPublicKey](docs/ArtifactGrantHolderPublicKey.md)
-- [ArtifactGrantPayload](docs/ArtifactGrantPayload.md)
-- [ArtifactGrantRequesterPrincipalType](docs/ArtifactGrantRequesterPrincipalType.md)
-- [ArtifactGrantValidationKey](docs/ArtifactGrantValidationKey.md)
-- [ArtifactGrantValidationKeySet](docs/ArtifactGrantValidationKeySet.md)
-- [ArtifactRequestProofPayload](docs/ArtifactRequestProofPayload.md)
+- [ArtifactDeletionResult](docs/ArtifactDeletionResult.md)
+- [AssignParameters](docs/AssignParameters.md)
 - [BlockUploadIntent](docs/BlockUploadIntent.md)
 - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
 - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)
@@ -205,22 +203,10 @@ All URIs are relative to *http://localhost:5000*
 - [BranchParameters](docs/BranchParameters.md)
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
-- [CacheBoundaryKind](docs/CacheBoundaryKind.md)
-- [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
-- [CacheHealthStatus](docs/CacheHealthStatus.md)
-- [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
-- [CacheRegistration](docs/CacheRegistration.md)
-- [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
-- [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
-- [CacheRegistrationResult](docs/CacheRegistrationResult.md)
-- [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
-- [CacheRepositoryAssignmentRequest](docs/CacheRepositoryAssignmentRequest.md)
-- [CacheRepositoryScope](docs/CacheRepositoryScope.md)
-- [CacheRequestProofPayload](docs/CacheRequestProofPayload.md)
-- [CacheRevocationRequest](docs/CacheRevocationRequest.md)
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
+- [ClearWorkItemDescriptionParameters](docs/ClearWorkItemDescriptionParameters.md)
 - [CommonParameters](docs/CommonParameters.md)
 - [ConfirmContentBlockUploadParameters](docs/ConfirmContentBlockUploadParameters.md)
 - [ConfirmedBlockUpload](docs/ConfirmedBlockUpload.md)
@@ -238,11 +224,13 @@ All URIs are relative to *http://localhost:5000*
 - [CreateReferenceParameters](docs/CreateReferenceParameters.md)
 - [CreateRepositoryParameters](docs/CreateRepositoryParameters.md)
 - [CreateWebhookRuleParameters](docs/CreateWebhookRuleParameters.md)
+- [CurrentBranchReferenceNotification](docs/CurrentBranchReferenceNotification.md)
 - [DedupeDiscoverySnapshot](docs/DedupeDiscoverySnapshot.md)
 - [DeleteBranchParameters](docs/DeleteBranchParameters.md)
 - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
 - [DeleteOwnerParameters](docs/DeleteOwnerParameters.md)
 - [DeleteRepositoryParameters](docs/DeleteRepositoryParameters.md)
+- [DeleteWorkItemAttachmentParameters](docs/DeleteWorkItemAttachmentParameters.md)
 - [DiffApiDto](docs/DiffApiDto.md)
 - [DiffDto](docs/DiffDto.md)
 - [DiffParameters](docs/DiffParameters.md)
@@ -293,6 +281,7 @@ All URIs are relative to *http://localhost:5000*
 - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
 - [GetOwnerParameters](docs/GetOwnerParameters.md)
 - [GetParameters](docs/GetParameters.md)
+- [GetReferenceMaterializationBoundaryParameters](docs/GetReferenceMaterializationBoundaryParameters.md)
 - [GetReferenceParameters](docs/GetReferenceParameters.md)
 - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
 - [GetReferencesParameters](docs/GetReferencesParameters.md)
@@ -311,6 +300,8 @@ All URIs are relative to *http://localhost:5000*
 - [InlineObject5](docs/InlineObject5.md)
 - [InlineObject6](docs/InlineObject6.md)
 - [InlineObject7](docs/InlineObject7.md)
+- [InlineObject8](docs/InlineObject8.md)
+- [InlineObject9](docs/InlineObject9.md)
 - [IsEmptyParameters](docs/IsEmptyParameters.md)
 - [IssueDedupeDiscoveryParameters](docs/IssueDedupeDiscoveryParameters.md)
 - [ListApprovalPoliciesParameters](docs/ListApprovalPoliciesParameters.md)
@@ -319,18 +310,6 @@ All URIs are relative to *http://localhost:5000*
 - [ListRepositoriesParameters](docs/ListRepositoriesParameters.md)
 - [ListWebhookDeliveriesParameters](docs/ListWebhookDeliveriesParameters.md)
 - [ListWebhookRulesParameters](docs/ListWebhookRulesParameters.md)
-- [MaterializationArtifactDescriptor](docs/MaterializationArtifactDescriptor.md)
-- [MaterializationArtifactKind](docs/MaterializationArtifactKind.md)
-- [MaterializationArtifactSource](docs/MaterializationArtifactSource.md)
-- [MaterializationArtifactSourceKind](docs/MaterializationArtifactSourceKind.md)
-- [MaterializationCacheSelection](docs/MaterializationCacheSelection.md)
-- [MaterializationCacheSelectionKind](docs/MaterializationCacheSelectionKind.md)
-- [MaterializationExecutionMode](docs/MaterializationExecutionMode.md)
-- [MaterializationPlan](docs/MaterializationPlan.md)
-- [MaterializationPlanRequest](docs/MaterializationPlanRequest.md)
-- [MaterializationPlanReturnValue](docs/MaterializationPlanReturnValue.md)
-- [MaterializationTargetSelector](docs/MaterializationTargetSelector.md)
-- [MaterializationTargetSelectorKind](docs/MaterializationTargetSelectorKind.md)
 - [ObjectStorageProvider](docs/ObjectStorageProvider.md)
 - [OrganizationCommandReturnValue](docs/OrganizationCommandReturnValue.md)
 - [OrganizationDto](docs/OrganizationDto.md)
@@ -343,7 +322,6 @@ All URIs are relative to *http://localhost:5000*
 - [OwnerParameters](docs/OwnerParameters.md)
 - [OwnerReturnValue](docs/OwnerReturnValue.md)
 - [OwnerType](docs/OwnerType.md)
-- [PlanParameters](docs/PlanParameters.md)
 - [PopulateParameters](docs/PopulateParameters.md)
 - [ProblemDetails](docs/ProblemDetails.md)
 - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)
@@ -351,12 +329,19 @@ All URIs are relative to *http://localhost:5000*
 - [RebaseParameters](docs/RebaseParameters.md)
 - [RecordSavesParameters](docs/RecordSavesParameters.md)
 - [ReferenceApiDto](docs/ReferenceApiDto.md)
+- [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
 - [ReferenceDto](docs/ReferenceDto.md)
 - [ReferenceListReturnValue](docs/ReferenceListReturnValue.md)
+- [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
+- [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
 - [ReferenceParameters](docs/ReferenceParameters.md)
+- [ReferenceReplayApiDto](docs/ReferenceReplayApiDto.md)
+- [ReferenceReplayEventApiDto](docs/ReferenceReplayEventApiDto.md)
+- [ReferenceReplayReturnValue](docs/ReferenceReplayReturnValue.md)
 - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
 - [ReferenceType](docs/ReferenceType.md)
 - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
+- [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
 - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
 - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
 - [RepositoryCommandReturnValue](docs/RepositoryCommandReturnValue.md)
@@ -366,6 +351,7 @@ All URIs are relative to *http://localhost:5000*
 - [RepositoryReturnValue](docs/RepositoryReturnValue.md)
 - [RepositoryStatus](docs/RepositoryStatus.md)
 - [RepositoryVisibility](docs/RepositoryVisibility.md)
+- [ResolveReferenceEventBoundaryParameters](docs/ResolveReferenceEventBoundaryParameters.md)
 - [SaveDirectoryVersionsParameters](docs/SaveDirectoryVersionsParameters.md)
 - [ScopedOutboundUrl](docs/ScopedOutboundUrl.md)
 - [SearchVisibility](docs/SearchVisibility.md)
@@ -385,17 +371,17 @@ All URIs are relative to *http://localhost:5000*
 - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
 - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
 - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
-- [SignedArtifactGrant](docs/SignedArtifactGrant.md)
-- [SignedArtifactRequestProof](docs/SignedArtifactRequestProof.md)
-- [SignedCacheRequestProof](docs/SignedCacheRequestProof.md)
+- [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
 - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
 - [StartUploadSession](docs/StartUploadSession.md)
 - [StorageParameters](docs/StorageParameters.md)
 - [SwitchParameters](docs/SwitchParameters.md)
 - [TestWebhookRuleParameters](docs/TestWebhookRuleParameters.md)
+- [TypedReferenceApiDto](docs/TypedReferenceApiDto.md)
 - [UndeleteOrganizationParameters](docs/UndeleteOrganizationParameters.md)
 - [UndeleteOwnerParameters](docs/UndeleteOwnerParameters.md)
 - [UndeleteRepositoryParameters](docs/UndeleteRepositoryParameters.md)
+- [UndeleteWorkItemAttachmentParameters](docs/UndeleteWorkItemAttachmentParameters.md)
 - [UploadMetadata](docs/UploadMetadata.md)
 - [UploadMetadataArrayReturnValue](docs/UploadMetadataArrayReturnValue.md)
 - [UploadSessionBlockUploadConfirmedEvent](docs/UploadSessionBlockUploadConfirmedEvent.md)
@@ -427,6 +413,7 @@ All URIs are relative to *http://localhost:5000*
 - [WebhookRuleParameters](docs/WebhookRuleParameters.md)
 - [WebhookRuleStatus](docs/WebhookRuleStatus.md)
 - [WebhookScope](docs/WebhookScope.md)
+- [WorkItemParameters](docs/WorkItemParameters.md)
 
 ### Authorization
 

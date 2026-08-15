@@ -6,6 +6,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Text.Json
 
 module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
 
@@ -19,9 +20,9 @@ type ManifestContributionWorkflowActorTests() =
     let otherStoragePoolId = StoragePoolId "pool-archive"
     let manifestAddress = "manifest:blake3:alpha"
 
-    let range0 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-a"; OrdinalStart = 0; OrdinalCount = 8 }
+    let range0 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-a" }
 
-    let range1 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
+    let range1 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-b" }
 
     /// Constructs metadata fixtures used by the server unit manifest Contribution Workflow Actor assertions.
     let metadata correlationId =
@@ -35,11 +36,15 @@ type ManifestContributionWorkflowActorTests() =
 
     /// Builds start With Ranges test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let startWithRanges direction ranges =
-        ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges)
+        ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges, 1L)
 
     /// Builds start With Operation test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let startWithOperation operationId direction ranges =
-        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges)
+        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, 1L)
+
+    /// Builds a start command carrying the counter revision that orders contribution cycles.
+    let startWithOperationAtRevision operationId direction ranges counterRevision =
+        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision)
 
     let start direction = startWithRanges direction [| range0; range1 |]
 
@@ -65,6 +70,157 @@ type ManifestContributionWorkflowActorTests() =
         | Error error ->
             Assert.Fail($"Expected command to succeed, got {error.Error}.")
             Unchecked.defaultof<ManifestContributionWorkflowDecision>
+
+    /// Verifies add/remove/add cycles cannot reuse the original downstream ContentBlock operation identity.
+    [<Test>]
+    member _.CounterRevisionDistinguishesDownstreamContentBlockOperationIdentity() =
+        let originalAdd = ManifestContributionWorkflowActor.contentBlockOperationId "workflow-cycle" 1L 0
+        let removal = ManifestContributionWorkflowActor.contentBlockOperationId "workflow-cycle" 2L 0
+        let laterAddAfterRedisLoss = ManifestContributionWorkflowActor.contentBlockOperationId "workflow-cycle" 3L 0
+
+        Assert.That(removal, Is.Not.EqualTo(originalAdd))
+        Assert.That(laterAddAfterRedisLoss, Is.Not.EqualTo(originalAdd))
+        Assert.That(laterAddAfterRedisLoss, Is.Not.EqualTo(removal))
+
+    /// Verifies a completed cycle is overwritten by the next bounded workflow snapshot.
+    [<Test>]
+    member _.NextCycleOverwritesPriorRangeProgress() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-bounded-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let firstRange =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "bounded-range-0" range0) (metadata "corr-bounded-range-0")
+            |> expectOk
+
+        let afterFirst = applyAll firstRange.Events afterStart
+
+        let secondRange =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events @ firstRange.Events)
+                afterFirst
+                (succeeded "bounded-range-1" range1)
+                (metadata "corr-bounded-range-1")
+            |> expectOk
+
+        let restarted =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events
+                 @ firstRange.Events @ secondRange.Events)
+                secondRange.Workflow
+                (startWithOperationAtRevision "bounded-next-cycle" ManifestContributionDirection.Decrement [| range0 |] 2L)
+                (metadata "corr-bounded-next-cycle")
+            |> expectOk
+
+        Assert.That(restarted.Workflow.Revision, Is.EqualTo(4L))
+        Assert.That(restarted.Workflow.Ranges, Is.EquivalentTo([| range0 |]))
+        Assert.That(restarted.Workflow.CompletedRanges, Is.Empty)
+        Assert.That(restarted.Workflow.FailedRanges, Is.Empty)
+
+    /// Verifies snapshot-only restart recovery replays start and range completion without persisted lifetime events.
+    [<Test>]
+    member _.SnapshotOnlyRecoveryReplaysCurrentProgress() =
+        let startCommand = start ManifestContributionDirection.Increment
+
+        let started =
+            ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-snapshot-start")
+            |> expectOk
+
+        let replayedStart =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow startCommand (metadata "corr-snapshot-start-replay")
+            |> expectOk
+
+        Assert.That(replayedStart.WasIdempotentReplay, Is.True)
+        Assert.That(replayedStart.Events, Is.Empty)
+
+        let rangeCommand = succeeded "snapshot-range" range0
+
+        let completed =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow rangeCommand (metadata "corr-snapshot-range")
+            |> expectOk
+
+        let replayedRange =
+            ManifestContributionWorkflowActor.decideCommand [] completed.Workflow rangeCommand (metadata "corr-snapshot-range-replay")
+            |> expectOk
+
+        Assert.That(replayedRange.WasIdempotentReplay, Is.True)
+        Assert.That(replayedRange.Events, Is.Empty)
+        Assert.That(replayedRange.Intents, Is.Empty)
+
+    /// Verifies bounded workflow progress uses a Cosmos-compatible JSON array shape.
+    [<Test>]
+    member _.BoundedProgressSerializesWithoutDictionaryKeys() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-json-start")
+            |> expectOk
+
+        let progressed =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow (succeeded "json-range" range0) (metadata "corr-json-range")
+            |> expectOk
+
+        let json = JsonSerializer.Serialize(progressed.Workflow, Grace.Shared.Constants.JsonSerializerOptions)
+        use document = JsonDocument.Parse json
+        let completedRanges = document.RootElement.GetProperty("CompletedRanges")
+        let failedRanges = document.RootElement.GetProperty("FailedRanges")
+
+        Assert.That(completedRanges.ValueKind, Is.EqualTo(JsonValueKind.Array))
+        Assert.That(completedRanges.GetArrayLength(), Is.EqualTo(1))
+        let completedRange = completedRanges[ 0 ].GetProperty("Range")
+        Assert.That(completedRange.ValueKind, Is.EqualTo(JsonValueKind.Object))
+
+        Assert.That(
+            completedRange
+                .GetProperty("StoragePoolId")
+                .GetString(),
+            Is.EqualTo(storagePoolId)
+        )
+
+        Assert.That(
+            completedRange
+                .GetProperty("ContentBlockAddress")
+                .GetString(),
+            Is.EqualTo(string range0.ContentBlockAddress)
+        )
+
+        let mutable ignoredProperty = Unchecked.defaultof<JsonElement>
+        Assert.That(completedRange.TryGetProperty("OrdinalStart", &ignoredProperty), Is.False)
+        Assert.That(completedRange.TryGetProperty("OrdinalCount", &ignoredProperty), Is.False)
+        Assert.That(failedRanges.ValueKind, Is.EqualTo(JsonValueKind.Array))
+
+    /// Verifies bounded failed-range progress retains enough identity for snapshot-only retries.
+    [<Test>]
+    member _.SnapshotOnlyRecoveryReplaysFailedRange() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-failure-start")
+            |> expectOk
+
+        let failureCommand = failed "snapshot-failure" range0 "transient"
+
+        let failedRange =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow failureCommand (metadata "corr-failure")
+            |> expectOk
+
+        let replay =
+            ManifestContributionWorkflowActor.decideCommand [] failedRange.Workflow failureCommand (metadata "corr-failure-replay")
+            |> expectOk
+
+        Assert.That(replay.WasIdempotentReplay, Is.True)
+        Assert.That(replay.Events, Is.Empty)
+        Assert.That(replay.Workflow.Revision, Is.EqualTo(failedRange.Workflow.Revision))
 
     /// Verifies that workflow Primary Key Combines Repository Id Storage Pool Id And Manifest Address.
     [<Test>]
@@ -120,6 +276,38 @@ type ManifestContributionWorkflowActorTests() =
         match replay with
         | Ok _ -> Assert.Fail("Expected reused start operation id with different payload to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
+
+    /// Verifies a workflow start can resume after bounded range progress replaced LastOperationId.
+    [<Test>]
+    member _.StartReplayAfterRangeProgressResumesCurrentWorkflow() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start-resume")
+            |> expectOk
+
+        let progressed =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow (succeeded "range-resume" range0) (metadata "corr-range-resume")
+            |> expectOk
+
+        let replay =
+            ManifestContributionWorkflowActor.decideCommand [] progressed.Workflow (start ManifestContributionDirection.Increment) (metadata "corr-start-retry")
+            |> expectOk
+
+        Assert.That(replay.WasIdempotentReplay, Is.True)
+        Assert.That(replay.Events, Is.Empty)
+
+        Assert.That(
+            replay.Workflow.CompletedRanges
+            |> Array.exists (fun completed -> completed.Range = range0),
+            Is.True
+        )
+
+        let pending = ManifestContributionWorkflowActor.pendingRanges replay.Workflow
+        Assert.That(pending, Has.Length.EqualTo(1))
+        Assert.That(pending[0], Is.EqualTo(range1))
 
     /// Verifies that reused Range Success Operation Id With Different Range Rejects Instead Of Replaying.
     [<Test>]
@@ -182,7 +370,7 @@ type ManifestContributionWorkflowActorTests() =
             ManifestContributionWorkflowActor.decideCommand
                 completedEvents
                 range1Done.Workflow
-                (startWithOperation "workflow-restart" ManifestContributionDirection.Decrement [| range0 |])
+                (startWithOperationAtRevision "workflow-restart" ManifestContributionDirection.Decrement [| range0 |] 2L)
                 (metadata "corr-restart")
             |> expectOk
 
@@ -191,6 +379,73 @@ type ManifestContributionWorkflowActorTests() =
         let restartedPending = ManifestContributionWorkflowActor.pendingRanges restarted.Workflow
         Assert.That(restartedPending.Length, Is.EqualTo(1))
         Assert.That(restartedPending[0], Is.EqualTo(range0))
+
+    /// Verifies that a superseded completed start cannot reopen an older contribution cycle.
+    [<Test>]
+    member _.SupersededCompletedStartDoesNotReapplyContentBlockDelta() =
+        let olderStart = startWithOperationAtRevision "workflow-older" ManifestContributionDirection.Increment [| range0 |] 1L
+
+        let olderStarted =
+            ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default olderStart (metadata "corr-older-start")
+            |> expectOk
+
+        let olderCompleted =
+            ManifestContributionWorkflowActor.decideCommand [] olderStarted.Workflow (succeeded "workflow-older-range" range0) (metadata "corr-older-range")
+            |> expectOk
+
+        Assert.That(olderCompleted.Intents.Length, Is.EqualTo(1))
+
+        let newerStart = startWithOperationAtRevision "workflow-newer" ManifestContributionDirection.Decrement [| range0 |] 2L
+
+        let newerStarted =
+            ManifestContributionWorkflowActor.decideCommand [] olderCompleted.Workflow newerStart (metadata "corr-newer-start")
+            |> expectOk
+
+        let newerCompleted =
+            ManifestContributionWorkflowActor.decideCommand [] newerStarted.Workflow (succeeded "workflow-newer-range" range0) (metadata "corr-newer-range")
+            |> expectOk
+
+        Assert.That(newerCompleted.Intents.Length, Is.EqualTo(1))
+
+        let supersededReplay =
+            ManifestContributionWorkflowActor.decideCommand [] newerCompleted.Workflow olderStart (metadata "corr-older-replay")
+            |> expectOk
+
+        Assert.That(supersededReplay.WasIdempotentReplay, Is.True)
+        Assert.That(supersededReplay.Events, Is.Empty)
+        Assert.That(supersededReplay.Intents, Is.Empty)
+        Assert.That(supersededReplay.Workflow.StartOperationId, Is.EqualTo(newerCompleted.Workflow.StartOperationId))
+        Assert.That(supersededReplay.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+
+    /// Verifies that one counter revision cannot identify two different contribution operations.
+    [<Test>]
+    member _.SameCounterRevisionWithDifferentOperationRejects() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (startWithOperationAtRevision "workflow-revision-owner" ManifestContributionDirection.Increment [| range0 |] 7L)
+                (metadata "corr-revision-owner")
+            |> expectOk
+
+        let completed =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                started.Workflow
+                (succeeded "workflow-revision-owner-range" range0)
+                (metadata "corr-revision-owner-range")
+            |> expectOk
+
+        let conflicting =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                completed.Workflow
+                (startWithOperationAtRevision "workflow-revision-conflict" ManifestContributionDirection.Decrement [| range0 |] 7L)
+                (metadata "corr-revision-conflict")
+
+        match conflicting with
+        | Ok _ -> Assert.Fail("Expected a different operation at the current counter revision to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow counter revision was already used by a different operation."))
 
     /// Verifies that range Progress Rejects When Actor Key Does Not Match Workflow Target.
     [<Test>]
@@ -261,7 +516,8 @@ type ManifestContributionWorkflowActorTests() =
                 otherStoragePoolId,
                 manifestAddress,
                 ManifestContributionDirection.Increment,
-                [| archiveRange |]
+                [| archiveRange |],
+                1L
             )
 
         let result =
@@ -334,7 +590,12 @@ type ManifestContributionWorkflowActorTests() =
         let pendingAfterFailure = ManifestContributionWorkflowActor.pendingRanges afterFailure
         Assert.That(pendingAfterFailure.Length, Is.EqualTo(1))
         Assert.That(pendingAfterFailure[0], Is.EqualTo(range1))
-        Assert.That(afterFailure.FailedRanges.ContainsKey(range1), Is.True)
+
+        Assert.That(
+            afterFailure.FailedRanges
+            |> Array.exists (fun failure -> failure.Range = range1),
+            Is.True
+        )
 
         let retrySucceeded =
             ManifestContributionWorkflowActor.decideCommand

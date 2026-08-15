@@ -198,6 +198,10 @@ module Constants =
     [<Literal>]
     let ClientVersionHeaderKey = "X-Grace-Client-Version"
 
+    /// The best-effort delivery header that identifies one live Grace Watch process.
+    [<Literal>]
+    let WatchProcessIdHeaderKey = "X-Grace-Watch-Process-Id"
+
     /// The response header that exposes SDK lifecycle status for recognized Grace clients.
     [<Literal>]
     let SdkLifecycleStatusHeaderKey = "X-Grace-Client-Support-Status"
@@ -361,6 +365,10 @@ module Constants =
         /// The environment variable that contains the maximum number of reminders that each Grace instance should retrieve from the database and publish for processing.
         [<Literal>]
         let GraceReminderBatchSize = "grace__reminder__batch__size"
+
+        /// Limits Unicode scalar values accepted for one immutable work-item text object.
+        [<Literal>]
+        let GraceTextContentMaxCharacters = "grace__text_content__max_characters"
 
         /// The environment variable that contains the name of the Orleans cluster to use.
         [<Literal>]

@@ -14,44 +14,44 @@ use serde::{Deserialize, Serialize};
 /// ReferenceDto : (automatically generated)
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReferenceDto {
-    #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
-    pub class: Option<String>,
-    #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
-    pub reference_id: Option<uuid::Uuid>,
-    #[serde(rename = "BranchId", skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<uuid::Uuid>,
-    #[serde(rename = "DirectoryId", skip_serializing_if = "Option::is_none")]
-    pub directory_id: Option<uuid::Uuid>,
-    /// Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
-    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
-    pub sha256_hash: Option<String>,
-    /// Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
-    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
-    pub blake3_hash: Option<String>,
-    #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]
-    pub reference_type: Option<models::ReferenceType>,
-    #[serde(rename = "ReferenceText", skip_serializing_if = "Option::is_none")]
-    pub reference_text: Option<String>,
+    #[serde(rename = "Class")]
+    pub class: String,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
+    #[serde(rename = "BranchId")]
+    pub branch_id: uuid::Uuid,
+    #[serde(rename = "DirectoryId")]
+    pub directory_id: uuid::Uuid,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash")]
+    pub sha256_hash: String,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
+    #[serde(rename = "ReferenceType")]
+    pub reference_type: models::ReferenceType,
+    #[serde(rename = "ReferenceText")]
+    pub reference_text: String,
     #[serde(rename = "CreatedBy", skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
-    #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(rename = "CreatedAt")]
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
 impl ReferenceDto {
     /// (automatically generated)
-    pub fn new() -> ReferenceDto {
+    pub fn new(class: String, reference_id: uuid::Uuid, branch_id: uuid::Uuid, directory_id: uuid::Uuid, sha256_hash: String, blake3_hash: String, reference_type: models::ReferenceType, reference_text: String, created_at: chrono::DateTime<chrono::FixedOffset>) -> ReferenceDto {
         ReferenceDto {
-            class: None,
-            reference_id: None,
-            branch_id: None,
-            directory_id: None,
-            sha256_hash: None,
-            blake3_hash: None,
-            reference_type: None,
-            reference_text: None,
+            class,
+            reference_id,
+            branch_id,
+            directory_id,
+            sha256_hash,
+            blake3_hash,
+            reference_type,
+            reference_text,
             created_by: None,
-            created_at: None,
+            created_at,
         }
     }
 }

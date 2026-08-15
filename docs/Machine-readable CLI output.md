@@ -24,6 +24,8 @@ grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace --output Json watch --check
+grace watch --check --select Mode
 ```
 
 bash / zsh:
@@ -34,6 +36,8 @@ grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace --output Json watch --check
+grace watch --check --select Mode
 ```
 
 ## Output Envelopes
@@ -96,12 +100,22 @@ An error emits a `GraceError` document:
     "Mutating": true,
     "EnvelopeContract": "ExistingGraceResultEnvelope: ReuseExistingApiOrSdkDto",
     "JsonMode": "ExistingBehavior",
-    "Schema": "FutureInertIntrospection",
-    "Examples": "FutureInertIntrospection",
+    "Schema": "ExistingBehavior",
+    "Examples": "ExistingBehavior",
     "Select": "ExistingBehavior"
   }
 }
 ```
+
+For every routed command with an existing JSON success envelope, the registry stores its declared result type.
+`--schema` derives the nested `ReturnValue` schema from that type and Grace's shared JSON options. `--examples`
+constructs a deterministic representative value and serializes it with the same options. Both commands preserve the
+outer `GraceReturnValue<T>` success envelope and the `GraceError` error envelope shown above.
+
+The schema describes the JSON shape Grace already emits; it does not rename or remodel result types for presentation.
+For example, `grace refs` is the alias for `grace branch get-references`, whose result remains
+`BranchDto * ReferenceDto array`. Its `ReturnValue` schema and example are therefore two-element JSON arrays: the
+branch object followed by the reference array.
 
 ## Select Projection
 
@@ -131,13 +145,16 @@ The final registry-backed inventory covers every CLI leaf command with exactly o
 
 - Total leaf commands: `207`
 - JSON-ready routed commands: `186`
-- Intentionally human-only commands: `1`
+- Conditionally JSON-ready routed commands: `1`
+- Intentionally human-only commands: `0`
 - Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`
 - Deleted commands: `0`
 
-The intentionally human-only command is `watch`. In JSON mode, it short-circuits to a `GraceError` document instead of
-starting the continuous foreground workflow.
+The conditional command is `watch`. `grace watch --check --output Json` returns a `WatchCheckStatusDto` in the normal
+`GraceReturnValue<T>` envelope so scripts and agents can read `IsRunning`, `CanUseIncrementalStatus`, `Mode`,
+`Reason`, and `SafetyFlags`. Foreground `grace watch --output Json` still short-circuits to a `GraceError` document
+instead of starting the continuous workflow.
 
 The source-only/unrouted commands are defined in source but are not attached to `GraceCommand.rootCommand` in V1:
 
@@ -167,17 +184,12 @@ metadata and V2 scope because their success paths still need migration before Gr
 - `diff.tag`
 - `history.run`
 
-The `watch` command is not counted in those V2 routed-success migrations. It is intentionally human-only for success
-behavior because it is a continuous foreground workflow; JSON mode returns an explicit error envelope instead of
-starting the watcher.
+The foreground `watch` workflow is not counted in those V2 routed-success migrations. Its supported machine-readable
+surface is the `--check` status probe; starting the continuous watcher in JSON mode still returns an explicit error
+envelope.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
-
-`cache status` is also JSON-ready. It is repository-independent and reads only protected local Cache identity state.
-Its closed `oneOf` schema emits `Class`, `Enrollment`, and `Key` for every state; only an enrolled ready state includes
-`CacheId`, `Endpoint`, `BoundaryKind`, and `RepositoryCount`. The command performs no credential lookup, server request,
-repair, cleanup, or local mutation.
 
 ## Agent Recipes
 
@@ -216,6 +228,7 @@ When using `--select`, request only the `ReturnValue` field path the automation 
 ```powershell
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace watch --check --select Mode
 ```
 
 ## V2 Deferrals

@@ -128,25 +128,27 @@ These are script parameters (not environment variables):
 
 - `-SkipAuthProbe`: skip auth preflight (`/authenticate/oidc/config`, `/authenticate/me`).
 - `-NoTokenBootstrap`: skip PAT creation.
-- `-TokenBootstrapMaxAttempts`: set max token bootstrap attempts.
-- `-TokenBootstrapInitialBackoffSeconds`: set initial retry backoff.
 - `-StartupTimeoutSeconds`: set health wait timeout.
 - `-CleanupWaitSeconds`: set process cleanup wait timeout.
+
+PAT bootstrap sends one create request after the health and auth readiness checks pass. A failed or uncertain create is
+not replayed because token creation is non-idempotent. The failure diagnostics preserve the endpoint error so a storage
+failure is not replaced by a later duplicate-name response.
 
 PowerShell:
 
 ```powershell
 pwsh ./scripts/start-debuglocal.ps1 `
-  -TokenBootstrapMaxAttempts 5 `
-  -TokenBootstrapInitialBackoffSeconds 2
+  -StartupTimeoutSeconds 300 `
+  -CleanupWaitSeconds 10
 ```
 
 bash / zsh:
 
 ```bash
 pwsh ./scripts/start-debuglocal.ps1 \
-  --TokenBootstrapMaxAttempts 5 \
-  --TokenBootstrapInitialBackoffSeconds 2
+  --StartupTimeoutSeconds 300 \
+  --CleanupWaitSeconds 10
 ```
 
 ## DebugLocal Diagnostics Artifacts
@@ -210,8 +212,15 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 
 ### Redis
 
-- `grace__redis__host`: Redis host.
-- `grace__redis__port`: Redis port.
+- `grace__redis__host`: optional Redis host for ten-minute repository-counter
+  recent results.
+- `grace__redis__port`: Redis port; defaults to `6379` when a host is set.
+
+When Redis is not configured or cannot be reached, recent-result reads return
+unknown. Addition processing may continue because retaining content is safe.
+Removal processing pauses, or withholds its decrement workflow, until Redis
+confirms the bounded completed result. Durable exact relationships and bounded
+counter/workflow snapshots remain responsible for correctness.
 
 ### Orleans
 
@@ -277,6 +286,29 @@ that exact endpoint; the cache runtime cannot change it during refresh.
 - `GRACE_TOKEN`: Grace PAT for non-interactive auth. OIDC/MSA access tokens are not valid here. This value wins before
   M2M and interactive login.
 - `GRACE_TOKEN_FILE`: not supported; local plaintext token file storage is intentionally disabled.
+
+### Work-item descriptions
+
+- `grace__text_content__max_characters` (configuration key `grace:text_content:max_characters`): positive integer
+  limit for one work-item description. The default is `65,536` Unicode scalar values, not UTF-16 code units or UTF-8
+  bytes.
+
+Set this once for each `Grace.Server` process; it is a system-wide setting for every owner served by that process, not
+an owner-level override. Grace uses it when validating description text for work-item create and `description set`
+storage. Text over the limit is rejected before storage. An absent or whitespace value uses the default; a malformed,
+zero, or negative value prevents the server from starting.
+
+PowerShell:
+
+```powershell
+$env:grace__text_content__max_characters="65536"
+```
+
+bash / zsh:
+
+```bash
+export grace__text_content__max_characters="65536"
+```
 
 ### Reminders
 

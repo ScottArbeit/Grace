@@ -20,8 +20,6 @@
     <Compile Include="AuthTokenBundle.Tests.fs" />
     <Compile Include="Branch.CLI.Parsing.Tests.fs" />
     <Compile Include="Branch.CLI.Tests.fs" />
-		<Compile Include="Cache.CLI.Parsing.Tests.fs" />
-		<Compile Include="Cache.CLI.Tests.fs" />
     <Compile Include="Connect.CLI.Parsing.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
@@ -30,7 +28,6 @@
     <Compile Include="Storage.SDK.Tests.fs" />
     <Compile Include="SelectProjection.CLI.Parsing.Tests.fs" />
     <Compile Include="Program.CLI.Parsing.Tests.fs" />
-    <Compile Include="Program.CLI.Host.Tests.fs" />
     <Compile Include="Program.CLI.Tests.fs" />
     <Compile Include="HistoryStorage.CLI.Tests.fs" />
     <Compile Include="LocalStateDb.Tests.fs" />
@@ -56,11 +53,10 @@
   </ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="FsCheck" Version="3.3.3" />
-		<PackageReference Include="FsCheck.NUnit" Version="3.3.3" />
+		<PackageReference Include="FsCheck" Version="3.3.4" />
+		<PackageReference Include="FsCheck.NUnit" Version="3.3.4" />
 		<PackageReference Include="FsUnit" Version="7.1.1" />
-		<PackageReference Include="JsonSchema.Net" Version="9.4.0" />
-		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
 		<PackageReference Include="NUnit" Version="4.6.1" />
 		<PackageReference Include="NUnit3TestAdapter" Version="6.2.0" />
 		<PackageReference Include="NUnit.Analyzers" Version="4.14.0">
@@ -77,11 +73,10 @@
 		<ProjectReference Include="..\Grace.CLI\Grace.CLI.fsproj" />
 		<ProjectReference Include="..\Grace.CLI.LocalStateDb.Worker\Grace.CLI.LocalStateDb.Worker.fsproj" ReferenceOutputAssembly="false" />
 		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
-		<ProjectReference Include="..\Grace.Cache\Grace.Cache.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.1.301" />
+		<PackageReference Update="FSharp.Core" Version="10.1.302" />
 	</ItemGroup>
 </Project>

@@ -9,6 +9,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
 open Grace.Types.Common
+open Grace.Types.Reference
 open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Spectre.Console
@@ -31,6 +32,16 @@ module Common =
 
     /// Clears process-local lifecycle warning suppression so tests and repeated invocations can render warnings again.
     let resetLifecycleWarningSuppression () = renderedLifecycleWarnings <- HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+    /// Selects concrete typed-slot Reference IDs so canonical absence sentinels never reach a Reference mutation or lookup boundary.
+    let concreteReferenceIds (references: seq<ReferenceDto>) =
+        references
+        |> Seq.choose (fun referenceDto ->
+            if referenceDto.ReferenceId = ReferenceId.Empty then
+                None
+            else
+                Some referenceDto.ReferenceId)
+        |> Seq.toList
 
     /// Executes the parameter base command by binding ParseResult values to the SDK request and CLI output contract.
     type ParameterBase() =
@@ -149,6 +160,43 @@ module Common =
                 Differences: MaintenanceScanDifferenceDto array
                 NewDirectoryVersionCount: int
                 NewDirectoryVersions: MaintenanceScanDirectoryVersionDto array
+            }
+
+        /// Models one durable Watch journal row emitted by maintenance show-journal.
+        type MaintenanceJournalRowDto =
+            {
+                Sequence: int64
+                CreatedAtUnixTicks: int64
+                State: string
+                DifferenceType: string
+                FileSystemEntryType: string
+                RelativePath: string option
+                QuarantineReason: string option
+            }
+
+        /// Models filtered durable Watch journal diagnostics for maintenance show-journal.
+        type MaintenanceShowJournalDto =
+            {
+                DbPath: string
+                AppliedThroughSequence: int64
+                AllocatedSequence: int64
+                TotalRows: int64
+                RowCount: int
+                StateFilter: string
+                PathFilter: string option
+                Limit: int
+                Rows: MaintenanceJournalRowDto array
+            }
+
+        /// Models the scoped durable Watch journal reset result for maintenance clear-journal.
+        type MaintenanceClearJournalDto =
+            {
+                DbPath: string
+                RowsDeleted: int64
+                AppliedThroughSequenceBefore: int64
+                AppliedThroughSequenceAfter: int64
+                AllocatedSequenceBefore: int64
+                AllocatedSequenceAfter: int64
             }
 
         /// Defines structured data exchanged by CLI helpers.
@@ -696,21 +744,73 @@ module Common =
             OptionName.BranchName
         ]
 
+    /// Describes how an omitted hierarchy identity is presented before command-time resolution.
+    type internal HierarchyIdentityDefaultDisplay = { OptionAlias: string; CurrentDisplay: string; CreateDisplay: string; CreateParentCommand: string }
+
+    /// Defines the shared, configuration-independent hierarchy identity presentation used by help and verbose output.
+    let internal hierarchyIdentityDefaultDisplays =
+        [
+            { OptionAlias = OptionName.OwnerId; CurrentDisplay = "current OwnerId"; CreateDisplay = "new Guid"; CreateParentCommand = "owner" }
+            {
+                OptionAlias = OptionName.OrganizationId
+                CurrentDisplay = "current OrganizationId"
+                CreateDisplay = "new Guid"
+                CreateParentCommand = "organization"
+            }
+            { OptionAlias = OptionName.RepositoryId; CurrentDisplay = "current RepositoryId"; CreateDisplay = "new Guid"; CreateParentCommand = "repository" }
+            { OptionAlias = OptionName.BranchId; CurrentDisplay = "current BranchId"; CreateDisplay = "new Guid"; CreateParentCommand = "branch" }
+        ]
+
+    /// Returns the symbolic human display for an omitted GUID option without resolving configuration or generating an identity.
+    let private tryGetImplicitGuidDisplay (parseResult: ParseResult) (option: Option) (value: obj) =
+        let optionResult = parseResult.GetResult(option.Name) :?> OptionResult
+
+        if isNull optionResult
+           || not optionResult.Implicit
+           || not (value :? Guid)
+           || unbox<Guid> value <> Guid.Empty then
+            None
+        else
+            match hierarchyIdentityDefaultDisplays
+                  |> List.tryFind (fun display -> display.OptionAlias = option.Name)
+                with
+            | Some display ->
+                let isCreate = parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
+
+                let createsThisIdentity =
+                    isCreate
+                    && parseResult
+                        .CommandResult
+                        .Command
+                        .Parents
+                        .OfType<Command>()
+                        .Any(fun parent -> parent.Name.Equals(display.CreateParentCommand, StringComparison.OrdinalIgnoreCase))
+
+                if createsThisIdentity then
+                    Some display.CreateDisplay
+                else
+                    Some display.CurrentDisplay
+            | None -> Some "not supplied"
+
     /// Resolves shared CLI should show resolved values values from parse results, configuration, or Grace identifiers.
     let private shouldShowResolvedValues (parseResult: ParseResult) =
         resolvedValueOptionNames
         |> List.exists (isOptionPresent parseResult)
 
     /// Tries to map build resolved values text and returns a GraceError instead of throwing on unsupported input.
-    let private tryBuildResolvedValuesText (parseResult: ParseResult) =
+    let private tryBuildResolvedValuesText (parseResult: ParseResult) (resolvedGraceIds: GraceIds option) =
         if
             isNull parseResult
-            || not (configurationFileExists ())
+            || (resolvedGraceIds.IsNone
+                && not (configurationFileExists ()))
             || not (shouldShowResolvedValues parseResult)
         then
             None
         else
-            let graceIds = Services.getNormalizedIdsAndNames parseResult
+            let graceIds =
+                resolvedGraceIds
+                |> Option.defaultWith (fun () -> Services.getNormalizedIdsAndNames parseResult)
+
             let sb = stringBuilderPool.Get()
 
             try
@@ -740,8 +840,8 @@ module Common =
             finally
                 stringBuilderPool.Return sb
 
-    /// Prints the ParseResult with markup.
-    let printParseResult (parseResult: ParseResult) =
+    /// Prints the ParseResult with symbolic implicit GUIDs and optional command-resolved hierarchy values.
+    let printParseResultWithResolvedValues (parseResult: ParseResult) (resolvedGraceIds: GraceIds option) =
         if not <| isNull parseResult then
             let sb = stringBuilderPool.Get()
 
@@ -766,23 +866,48 @@ module Common =
                         with
                         | :? InvalidOperationException -> None
 
-                for option in optionList do
-                    match tryGetValue option with
-                    | Some value ->
-                        if option.ValueType.IsArray then
-                            sb.AppendLine($"{option.Name}: {serialize value}")
-                            |> ignore
-                        else
-                            sb.AppendLine($"{option.Name}: {value}") |> ignore
-                    | None -> ()
+                let mutable synopsis = parseResult.ToString()
 
-                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
+                for option in optionList do
+                    if option.Name = OptionName.CorrelationId then
+                        let correlationId = getCorrelationId parseResult
+
+                        synopsis <-
+                            synopsis.Replace(
+                                $"{option.Name} <{parseResult.GetValue(option.Name)}>",
+                                $"{option.Name} <{correlationId}>",
+                                StringComparison.Ordinal
+                            )
+
+                        sb.AppendLine($"{option.Name}: {correlationId}")
+                        |> ignore
+                    else
+                        match tryGetValue option with
+                        | Some value ->
+                            match tryGetImplicitGuidDisplay parseResult option value with
+                            | Some display ->
+                                synopsis <- synopsis.Replace($"{option.Name} <{value}>", $"{option.Name} <{display}>", StringComparison.Ordinal)
+
+                                sb.AppendLine($"{option.Name}: {display}")
+                                |> ignore
+                            | None ->
+                                if option.ValueType.IsArray then
+                                    sb.AppendLine($"{option.Name}: {serialize value}")
+                                    |> ignore
+                                else
+                                    sb.AppendLine($"{option.Name}: {value}") |> ignore
+                        | None when option.ValueType = typeof<Guid> ->
+                            sb.AppendLine($"{option.Name}: not supplied")
+                            |> ignore
+                        | None -> ()
+
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets synopsis}[/]")
                 AnsiConsole.WriteLine()
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]Parameter values:[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (sb.ToString())}[/]")
                 AnsiConsole.WriteLine()
 
-                match tryBuildResolvedValuesText parseResult with
+                match tryBuildResolvedValuesText parseResult resolvedGraceIds with
                 | Some resolvedValues ->
                     AnsiConsole.MarkupLine($"[{Colors.Verbose}]Resolved values:[/]")
                     AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets resolvedValues}[/]")
@@ -790,6 +915,30 @@ module Common =
                 | None -> ()
             finally
                 stringBuilderPool.Return sb
+
+    /// Prints the ParseResult with markup using configuration-backed hierarchy resolution when available.
+    let printParseResult (parseResult: ParseResult) = printParseResultWithResolvedValues parseResult None
+
+    /// Resolves one create-owned hierarchy identity exactly once while preserving explicit IDs and all parsed names.
+    let internal resolveCreateGraceIdsWith (newGuid: unit -> Guid) (createdIdOptionName: string) (parseResult: ParseResult) =
+        let graceIds = Services.getNormalizedIdsAndNames parseResult
+        let optionResult = parseResult.GetResult(createdIdOptionName) :?> OptionResult
+
+        if isNull optionResult || not optionResult.Implicit then
+            graceIds
+        else
+            let createdId = newGuid ()
+            let createdIdString = createdId.ToString()
+
+            match createdIdOptionName with
+            | OptionName.OwnerId -> { graceIds with OwnerId = createdId; OwnerIdString = createdIdString }
+            | OptionName.OrganizationId -> { graceIds with OrganizationId = createdId; OrganizationIdString = createdIdString }
+            | OptionName.RepositoryId -> { graceIds with RepositoryId = createdId; RepositoryIdString = createdIdString }
+            | OptionName.BranchId -> { graceIds with BranchId = createdId; BranchIdString = createdIdString }
+            | _ -> invalidArg (nameof createdIdOptionName) $"{createdIdOptionName} is not a create-owned hierarchy identity option."
+
+    /// Resolves one create-owned hierarchy identity for command output, local reporting, and request construction.
+    let resolveCreateGraceIds createdIdOptionName parseResult = resolveCreateGraceIdsWith Guid.NewGuid createdIdOptionName parseResult
 
     /// Prints AnsiConsole markup to the console.
     let writeMarkup (markup: IRenderable) =

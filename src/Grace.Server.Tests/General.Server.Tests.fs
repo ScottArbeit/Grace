@@ -50,6 +50,8 @@ module Services =
     let rnd = Random.Shared
 
     let mutable App: Aspire.Hosting.DistributedApplication option = None
+    /// Retains the full shared Aspire host contract for focused durable-state assertions.
+    let mutable HostState: TestHostState option = None
     let mutable Client: HttpClient = Unchecked.defaultof<HttpClient>
 
     let mutable ownerId = String.Empty
@@ -114,6 +116,7 @@ type Setup() =
             logToTestConsole "Grace.Server.Tests progress: Aspire setup ready."
 
             App <- Some hostState.App
+            HostState <- Some hostState
             Client <- hostState.Client
             graceServerBaseAddress <- hostState.GraceServerBaseAddress
             serviceBusConnectionString <- hostState.ServiceBusConnectionString
