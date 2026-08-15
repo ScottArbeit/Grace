@@ -11,6 +11,7 @@
   <ItemGroup>
     <Compile Include="CacheHost.Tests.fs" />
     <Compile Include="CacheStore.Tests.fs" />
+    <Compile Include="CacheArtifactStore.Tests.fs" />
     <Compile Include="CacheIdentity.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
