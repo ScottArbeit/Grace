@@ -1,10 +1,10 @@
-# Grace Cache storage tracer
+# Grace Cache local artifact path
 
 ## Purpose
 
-Grace Cache currently contains one internal storage tracer: a Linux x64 caller can commit one immutable
-`DirectoryVersionZip` artifact to a managed local root. The tracer exists to establish truthful filesystem and SQLite
-durability before any Cache host, route, identity, enrollment, serving, or network behavior is considered.
+Grace Cache supports one deliberately local path on Linux x64. A producer can commit one immutable
+`DirectoryVersionZip` artifact to a managed local root, and one local development caller can read a pre-existing
+verified artifact over HTTP on `127.0.0.1`.
 
 ## Supported world
 
@@ -14,6 +14,8 @@ durability before any Cache host, route, identity, enrollment, serving, or netwo
   exact byte size.
 - Only `DirectoryVersionZip` is accepted.
 - A local reset is the explicit operator action for a `Complete` disagreement.
+- `Cache__DatabasePath` and `Cache__ManagedRoot` must name pre-existing readable locations. Cache and AppHost do not
+  invent or create them.
 
 ## Lifecycle
 
@@ -30,8 +32,13 @@ The commit point is the exact `Complete` SQLite transaction after verified final
 hit. On a fresh store instance, verified `Staging` plus final bytes becomes `Complete`; other staging residue is cleaned
 to `Absent`. A `Complete` row that disagrees with its final file fails closed and retains its record for local reset.
 
-## Deliberate exclusions
+## Local read boundary
 
-This tracer has no public or hosted Cache surface. It does not include routes, listeners, identity, enrollment,
-liveness, serving, network fill, recursive metadata, complete-root publication, coalescing, scheduling, durable retry,
-reconciliation, or generalized recovery.
+`GET /directory-version-zips/{directoryVersionId}` requires `canonicalIdentity`, lowercase `sha256`, and `size` query
+values. It returns `application/zip` only when the exact supplied tuple matches a SQLite `Complete` row and the managed
+final file independently verifies to that row's exact size and SHA-256. Malformed tuples return 400. Missing,
+ineligible, conflicting, corrupt, or byte-disagreeing state returns 404 without mutation.
+
+The host exposes no write route and binds only to loopback. It does not include identity, enrollment, liveness, network
+fill, recursive metadata, complete-root publication, coalescing, scheduling, retry, reconciliation, or generalized
+recovery.
