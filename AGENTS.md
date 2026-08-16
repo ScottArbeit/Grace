@@ -48,11 +48,14 @@ directory, run that script to emit one temporary Markdown body per issue, lint t
 them as a single `pwsh -Command` string; that wastes time, floods the transcript, and can hit Windows command-length
 limits. After issue creation, patch the epic body with the real child issue numbers and create the native relationships
 with GraphQL `addSubIssue`.
-When implementing an epic, always use an explicit epic integration branch. Create
-`epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
-sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
-the production release candidate. Do not use direct-to-`main` epic slices. Ensure CI or recorded validation covers PRs
-targeting `epic/**` before relying on the integration branch flow.
+Keep epics as durable product and planning records, not long-running agent conversations. Use fresh epic-checkpoint
+sessions before the first child, after each merged child, and at epic closure. Select each child's delivery mode
+explicitly. Default to a mainline slice from current `origin/main` when the child is independently correct and safe or
+inert until consumed. Use an epic integration branch only when the owner approves a real composition need, CI coverage,
+refresh policy, delivery-delta review, and final epic-to-`main` release candidate. Do not create an epic branch merely
+because an issue has an epic parent.
+Use one checkpoint agent by default; at most two read-only scouts may answer concrete independent questions with
+explicit `fork_turns = "none"`. Checkpoints never spawn implementation workers.
 Every pull request must link its related GitHub issue in the PR body. When a PR targets the default branch and should
 close an issue, use one of GitHub's supported closing keywords: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`,
 `resolve`, `resolves`, or `resolved`. Use `docs/Development process.md` for default-branch versus epic-branch wording
@@ -108,8 +111,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   operation/request"; describe the Grace behavior, invariant, route, command, state transition, or contract role the
   declaration owns.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
-  issue-owned branch/worktree from the selected base before editing: latest `origin/main` for standalone non-epic
-  issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.
+  issue-owned branch/worktree from the selected admissible base before editing. A child of an epic normally branches
+  directly from current `origin/main`; use current `origin/epic/...` only when the owner selected integration-branch
+  mode for that epic.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices with focused local proof: RED where applicable, formatting, the smallest relevant test or
@@ -125,40 +129,60 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   files. For broad waves, consider a preparatory compile-item or file-scaffold slice before later branches edit
   separate files.
 - Before tracked implementation, freeze a Factory Run Charter from `dev-process/TEMPLATES.md`: issue and outcome,
-  base SHA, supported world, quality contract, algorithm-witness result, agent topology, review protocol, and stop
-  conditions. Do not change these rules inside the run. A material process change stops the run and starts a new charter.
+  delivery mode, exact base SHA, eventual delivery target, Baseline Admissibility verdict, supported world, quality
+  contract, algorithm-witness result, agent topology, context-fork policy, review protocol, and stop conditions. Do not
+  change these rules inside the run. A material process, base, or delivery-mode change stops the run and starts a new
+  charter.
+- Prove the base before semantic work. Inspect both the issue delta and eventual delivery delta against `main`. Treat
+  conflicts in project shape, solution membership, package policy, generated surfaces, runtime topology, language
+  migration, persistence, authorization, or public contracts as owner decisions. Prior branches are salvage sources,
+  not ancestry requirements, unless the issue states an explicit compatibility reason.
 - For stateful, destructive, filesystem, retry, recovery, concurrent, background, or multi-authority work, require the
   `dev-process` Algorithm Readiness Gate before production coding. Use a disposable executable witness that injects
   failure at meaningful effect boundaries and restarts from captured state. Do not use review to discover the algorithm.
 - Default to one active high-risk epic or factory-calibration stream. Parallelize only when the owner explicitly approves
   independent outcomes, authority models, write sets, and integration paths.
-- Use one short-lived controller per issue or pull request. The controller is the only agent allowed to spawn subagents.
-  Workers and reviewers must not spawn agents. Do not keep one root controller alive across an entire epic.
-- Use one issue-owner implementation worker. That worker owns the implementation, focused proof, self-review, and all
-  accepted in-scope repairs. Do not start a fresh worker for each finding. Use one replacement only when the original
-  worker is genuinely unavailable or its context is unusable, and record why.
-- The controller may inspect code, diffs, logs, tests, and validation evidence and may run read-only or validation
-  commands. It coordinates GitHub state, CI, review ledgers, merge, and cleanup. It must not silently replace the issue
-  owner's implementation work.
+- Choose the issue execution mode in the Run Charter. Use **direct single-agent mode** for Tier 0 and bounded Tier 1
+  work with a stable contract and one worktree. Use **controller/worker mode** for Tier 2, factory calibration, stateful
+  or destructive work, or complicated integration. Direct mode has no implementation child; controller/worker mode has
+  one issue-owner worker. Never parallelize writers on one issue.
+- Use one short-lived root session per issue or pull request. Only that root may spawn subagents. Workers, scouts, and
+  reviewers must not spawn agents. Do not keep one root controller alive across an entire epic.
+- For tracked work, always specify `fork_turns`; do not omit it because the current Codex default is full history.
+  Spawn new workers, scouts, and reviewers with `fork_turns = "none"` and a complete Run Packet. A read-only scout may
+  use the smallest positive turn count, normally `"1"` or `"2"`, only when the immediately preceding failure exchange
+  is required evidence. Never use `fork_turns = "all"` for tracked implementation or review.
+- Continue the same implementation owner. In direct mode, continue the root session. In controller/worker mode, resume
+  the one worker for local compile/test corrections and one consolidated accepted R1 repair pass. Do not start a fresh
+  worker for each finding. One replacement worker is allowed only in controller/worker mode when the original thread is
+  unavailable or unusable, and the reason must be recorded.
+- At a blocker, classify the next action as continue the same implementation owner, one read-only diagnostic scout, one replacement worker,
+  owner stop, or supersede/split. Never ask the vague question “May I try one more worker?” An owner stop must state the
+  exact decision, evidence, recommendation, repository and tracker effects, salvage disposition, and next command or
+  prompt.
+- The root may inspect code, diffs, logs, tests, and validation evidence and may run read-only or validation commands. It
+  coordinates GitHub state, CI, review ledgers, merge, and cleanup. In direct mode it is also the implementation owner.
+  In controller/worker mode it must not silently replace the issue worker's implementation role.
 - Do not require temp status files or fixed-interval worker heartbeats. Require concise updates before a long-running
   command, when a material finding or blocker appears, and at handoff. Never sleep or poll for more than 120 seconds in
   one command.
 - Before handoff, require the issue owner to inspect the actual diff against the outcome, non-goals, quality contract,
   authority and effect model, contract propagation, proof truth, and owned paths. The worker must not start an independent
-  review agent.
+  review agent. In direct mode, the root performs this self-review before spawning R1.
 - Open one coherent ready-for-review pull request after the first validated candidate. Do not use the PR as a scratchpad
   for discovering the architecture.
-- Run one independent **R1 discovery review** of the complete candidate using `dev-process/CODE_REVIEW.md` in a
-  fresh, read-only review context supplied only with the complete run packet and repository evidence needed for the
-  review. It must produce a finite Review Discovery Ledger. If R1 passes and current-head GitHub `Validate` passes,
-  the PR may proceed without R2.
+- Run one independent **R1 discovery review** of the complete candidate using `dev-process/CODE_REVIEW.md`. Spawn it
+  read-only with `fork_turns = "none"`, a complete review packet, the pinned issue diff, and any eventual delivery delta
+  against `main`. It must produce a finite Review Discovery Ledger. If R1 passes and current-head GitHub `Validate`
+  passes, the PR may proceed without R2.
 - Classify the R1 ledger once. Reject unsupported-path hardening, stale or duplicate findings, and product decisions
   presented as defects. Freeze accepted findings for the run.
-- Route the accepted ledger back to the same issue-owner worker for one consolidated repair pass. Do not restart broad
+- Route the accepted ledger back to the same implementation owner for one consolidated repair pass. Do not restart broad
   discovery review after each repair commit.
-- When repairs were required, run one independent **R2 closure review** on the repaired current head. R2 verifies accepted
-  ledger items, repair hunks, direct repair regressions, current-head proof, required CI, and scope preservation. R2 must
-  not reopen untouched parts of the original diff for another unconstrained search.
+- When repairs were required, resume the R1 reviewer for **R2 closure review** when available. Otherwise spawn one fresh
+  read-only R2 reviewer with `fork_turns = "none"`, the frozen ledger, and repair packet. R2 verifies accepted ledger
+  items, repair hunks, direct repair regressions, current-head proof, required CI, delivery-delta preservation, and scope.
+  It must not reopen untouched parts of the original diff.
 - There is no automatic R3. If R2 incidentally exposes a supported-world merge blocker outside the frozen ledger and
   direct repair-regression scope, record one `DISCOVERY ESCAPE` and stop. Do not ignore it or keep searching. A new
   material invariant, authority boundary, state machine, product semantic, or scope expansion is likewise an owner stop

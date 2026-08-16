@@ -64,8 +64,9 @@ Use these installed or sibling skills when the task needs a specialized workflow
   `dev-process` Algorithm Readiness Gate before production coding.
 - For tracked coding issues, use the compact Issue Readiness and Factory Run Charter from `dev-process`. Do not paste
   broad risk checklists, require fixed worker heartbeats, or start a fresh worker for every review finding.
-- When implementing an epic, always use the `epic/<parent-issue>-<slug>` integration branch mode described in
-  `references/workflow.md`. Route sub-issue pull requests to that epic branch; do not use direct-to-`main` epic slices.
+- Choose each epic child's delivery mode separately from its issue hierarchy. Default to a mainline slice when the
+  child is independently correct and safe or inert until consumed. Use the integration-branch exception only after
+  the owner records the composition need and proof conditions described in `references/workflow.md`.
 - Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests
   when one surface changes another.
 - Prefer the smallest focused proof. GitHub `Validate` is the required broad current-head gate. Use local `-Fast` only

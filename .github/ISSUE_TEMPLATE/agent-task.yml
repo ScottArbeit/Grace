@@ -1,5 +1,5 @@
 name: Agent Task
-description: Deliver one bounded Grace outcome through a Factory V2 run.
+description: Deliver one bounded Grace outcome through a Factory V2.1 run.
 title: ""
 labels: []
 assignees: []
@@ -7,9 +7,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use one issue for one user-visible outcome and one primary invariant family. Remove unrelated prompts rather
-        than filling them with speculative N/A answers. Stateful, destructive, filesystem, retry, recovery,
-        concurrency, background, or multi-authority work requires an algorithm-witness result before coding.
+        Use one issue for one value-bearing outcome and one primary invariant family. An epic is a planning container,
+        not an agent session. Choose mainline or integration-branch delivery explicitly. Stateful, destructive,
+        filesystem, retry, recovery, concurrency, background, or multi-authority work requires an algorithm witness.
 
   - type: textarea
     id: outcome
@@ -17,9 +17,25 @@ body:
       label: Outcome
       description: What can one supported user or system actor observe when this issue is complete?
       placeholder: |
-        User-visible outcome:
+        User-visible or value-bearing outcome:
         Why this matters for Grace:
-        Stable public or behavioral proof seam:
+        Stable behavioral proof seam:
+    validations:
+      required: true
+
+  - type: textarea
+    id: delivery-base
+    attributes:
+      label: Delivery mode and baseline admissibility
+      description: Default to a mainline slice. Use an epic branch only for an owner-approved integration need.
+      placeholder: |
+        - Delivery mode: mainline slice or epic integration branch
+        - Base branch and exact SHA:
+        - Eventual delivery target:
+        - Required restore/build/integration baseline proof:
+        - Eventual delivery-delta comparison against main:
+        - Prior lineage used only as salvage, or explicit ancestry requirement and reason:
+        - Baseline Admissibility verdict and evidence:
     validations:
       required: true
 
@@ -140,10 +156,29 @@ body:
       required: true
 
   - type: textarea
+    id: agent-run
+    attributes:
+      label: Factory run and subagent policy
+      description: Select direct single-agent or controller/worker mode, then freeze bounded child and review behavior.
+      placeholder: |
+        - Execution mode: direct single-agent or controller/worker
+        - Mode rationale: Tier, statefulness, integration risk, and expected turn shape
+        - Root issue-session scope: this issue through merge or owner stop
+        - Implementation owner: root in direct mode, or one named worker thread
+        - New child context: fork_turns = "none"
+        - Positive-integer context exception: none, or exact read-only scout reason
+        - Nested spawning: prohibited
+        - Implementation-owner continuation: same root or same worker for local fixes and accepted R1 repairs
+        - Replacement condition: controller/worker mode only; unavailable or unusable worker thread
+    validations:
+      required: true
+
+  - type: textarea
     id: proof
     attributes:
       label: Proof and validation
       placeholder: |
+        - Baseline admissibility proof:
         - Focused failing proof or prior regression evidence:
         - Positive, negative, and boundary proof:
         - Failure-injection, restart, replay, or concurrency proof when included:
@@ -158,9 +193,11 @@ body:
     attributes:
       label: Owner stop conditions and definition of done
       placeholder: |
-        Stop and return to the owner if:
-        - a second primary invariant, durable state machine, or authority boundary is needed
-        - a new product semantic or public contract is needed
+        Stop and return an Owner Decision Packet if:
+        - the base or integration result is not admissible
+        - a semantic merge or rebase conflict requires an architectural choice
+        - the delivery delta against main exceeds the capability budget
+        - a second primary invariant, durable state machine, authority boundary, product semantic, or public contract is needed
         - supported topology or owned paths must expand materially
         - the algorithm witness is contradicted
         - a third enabling PR would precede the tracer
