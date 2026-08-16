@@ -106,6 +106,16 @@ public partial class Program
                 Directory.CreateDirectory(stateRoot);
                 Directory.CreateDirectory(logDirectory);
 
+                var cacheTargetPort = GetAvailableTcpPort();
+                var cacheUrl = "http://127.0.0.1:" + cacheTargetPort;
+                var graceCache = builder.AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.csproj")
+                    .WithEnvironment("ASPNETCORE_URLS", cacheUrl)
+                    .WithHttpEndpoint(targetPort: cacheTargetPort, name: "http");
+                var forwardedCacheKeys = new List<string>();
+                AddOptionalEnvironment(graceCache, configuration, "Cache__DatabasePath", forwardedCacheKeys);
+                AddOptionalEnvironment(graceCache, configuration, "Cache__ManagedRoot", forwardedCacheKeys);
+                LogForwardedSettings("Grace.Cache local settings", forwardedCacheKeys);
+
                 // These get set in both Local and Azure-debug runs.
                 var orleansClusterId = configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "local";
                 var orleansServiceId = configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-dev";

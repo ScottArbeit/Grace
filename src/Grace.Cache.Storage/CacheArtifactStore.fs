@@ -42,6 +42,11 @@ exception internal CacheArtifactInjectedFailure of CacheArtifactEffect * CacheAr
 /// Holds one managed artifact root coupled to the already-owned private storage database.
 type CacheArtifactStore = private { Store: CacheStore; ManagedRoot: string }
 
+/// Holds pre-existing Cache locations without opening the writer store or taking its process lock.
+type CacheArtifactReader internal (databasePath: string, managedRoot: string) =
+    member internal _.DatabasePath = databasePath
+    member internal _.ManagedRoot = managedRoot
+
 /// Owns exact-tuple local artifact publication and finite restart classification.
 module CacheArtifactStore =
 
@@ -63,13 +68,16 @@ module CacheArtifactStore =
         |> sha256
 
     /// Returns the managed staging root on the same filesystem as deterministic final files.
-    let private stagingRoot store = Path.Combine(store.ManagedRoot, "staging")
+    let private stagingRoot (store: CacheArtifactStore) = Path.Combine(store.ManagedRoot, "staging")
 
     /// Returns the managed final-file root for one opaque artifact key.
-    let private finalRoot store = Path.Combine(store.ManagedRoot, "artifacts")
+    let private finalRoot (store: CacheArtifactStore) = Path.Combine(store.ManagedRoot, "artifacts")
 
     /// Returns the deterministic opaque final path for an immutable tuple.
     let private finalPath store tuple = Path.Combine(finalRoot store, artifactKey tuple + ".bin")
+
+    /// Returns the deterministic opaque final path from a read-only managed root.
+    let private readOnlyFinalPath (reader: CacheArtifactReader) tuple = Path.Combine(reader.ManagedRoot, "artifacts", artifactKey tuple + ".bin")
 
     /// Validates the exact Product V1 tuple without accepting alternate artifact kinds or digest forms.
     let private validateTuple tuple =
@@ -155,6 +163,58 @@ module CacheArtifactStore =
                 Convert
                     .ToHexString(hash.GetHashAndReset())
                     .ToLowerInvariant() = tuple.ExpectedSha256
+
+    /// Opens SQLite without create or write capability for one read-only operation.
+    let private openReadOnlyConnection databasePath =
+        let connectionString =
+            SqliteConnectionStringBuilder(
+                DataSource = Uri(databasePath).AbsoluteUri + "?immutable=1",
+                Mode = SqliteOpenMode.ReadOnly,
+                Cache = SqliteCacheMode.Private,
+                Pooling = false
+            )
+                .ToString()
+
+        let connection = new SqliteConnection(connectionString)
+        connection.Open()
+        connection
+
+    /// Checks that the existing artifact-state table can support exact read queries without initializing schema.
+    let private validateReadSchema (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+
+        command.CommandText <-
+            "SELECT artifact_key, kind, canonical_identity, directory_version_id, expected_sha256, expected_size, state, operation_identity FROM cache_artifact_states LIMIT 0;"
+
+        use _reader = command.ExecuteReader()
+        ()
+
+    /// Reads only an exact Complete row and never classifies or changes other durable residue.
+    let private hasExactCompleteRow (connection: SqliteConnection) tuple =
+        use command = connection.CreateCommand()
+
+        command.CommandText <-
+            "SELECT 1 FROM cache_artifact_states WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND directory_version_id = @directoryVersionId AND expected_sha256 = @sha256 AND expected_size = @size AND state = 'Complete' AND operation_identity IS NULL LIMIT 1;"
+
+        command.Parameters.AddWithValue("@key", artifactKey tuple)
+        |> ignore
+
+        command.Parameters.AddWithValue("@kind", tuple.Kind)
+        |> ignore
+
+        command.Parameters.AddWithValue("@identity", tuple.CanonicalIdentity)
+        |> ignore
+
+        command.Parameters.AddWithValue("@directoryVersionId", tuple.DirectoryVersionId)
+        |> ignore
+
+        command.Parameters.AddWithValue("@sha256", tuple.ExpectedSha256)
+        |> ignore
+
+        command.Parameters.AddWithValue("@size", tuple.ExpectedSize)
+        |> ignore
+
+        command.ExecuteScalar() <> null
 
     /// Clears the one-operation staging area before a fresh classification or write advances.
     let private clearStaging store =
@@ -371,6 +431,62 @@ module CacheArtifactStore =
         match validateTuple tuple with
         | Error message -> Rejected message
         | Ok () -> classify store tuple
+
+    /// Opens only pre-existing readable Cache locations and fails without creating a database, root, lock, or schema.
+    let createReader databasePath managedRoot =
+        if String.IsNullOrWhiteSpace databasePath then
+            invalidArg (nameof databasePath) "Cache database path is required."
+
+        if String.IsNullOrWhiteSpace managedRoot then
+            invalidArg (nameof managedRoot) "Managed artifact root is required."
+
+        let database = Path.GetFullPath(databasePath)
+
+        let root =
+            Path
+                .GetFullPath(managedRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+        let artifacts = Path.Combine(root, "artifacts")
+
+        if not (File.Exists database) then
+            invalidOp "The configured Cache database must already exist."
+
+        if
+            not (Directory.Exists root)
+            || not (Directory.Exists artifacts)
+        then
+            invalidOp "The configured Cache managed root and artifact directory must already exist."
+
+        Directory.EnumerateFileSystemEntries(root)
+        |> Seq.tryHead
+        |> ignore
+
+        Directory.EnumerateFileSystemEntries(artifacts)
+        |> Seq.tryHead
+        |> ignore
+
+        use connection = openReadOnlyConnection database
+        validateReadSchema connection
+        CacheArtifactReader(database, root)
+
+    /// Returns a final path only when the request exactly selects Complete metadata and independently verified bytes.
+    let read (reader: CacheArtifactReader) tuple =
+        match validateTuple tuple with
+        | Error message -> Rejected message
+        | Ok () ->
+            use connection = openReadOnlyConnection reader.DatabasePath
+
+            if not (hasExactCompleteRow connection tuple) then
+                Absent
+            else
+                let path = readOnlyFinalPath reader tuple
+
+                try
+                    if verifyFile path tuple then Hit path else Absent
+                with
+                | :? IOException
+                | :? UnauthorizedAccessException -> Absent
 
     /// Commits one streamed immutable artifact in the proven effect order and exposes success only after recheck.
     let private commitInternal store tuple (source: Stream) failurePoint =
