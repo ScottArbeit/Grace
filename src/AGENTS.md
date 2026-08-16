@@ -1,182 +1,132 @@
-# Grace Repository Agents Guide
+# Grace Source Agent Guide
 
-Agents operating under `/src` should follow this playbook alongside the existing `AGENTS.md` in the repo root.
-Treat this file as the canonical high-level brief; each project folder contains an `AGENTS.md` with deeper context.
+Agents operating under `src/` must follow the repository-root `AGENTS.md`, `docs/Development process.md`, and this
+source-specific guide. Project-level `AGENTS.md` files add narrower context for their subtrees.
+
+The root process documents own issue readiness, delivery mode, branch and worktree mechanics, controller and subagent
+topology, review, merge, and cleanup. This file does not create a second workflow.
 
 ## Local Commands
 
 - `pwsh ./scripts/bootstrap.ps1`
-- Focused project proof for the changed behavior; use Fast or Full only as optional broad local escalation.
+- Run the smallest meaningful focused proof for the changed behavior.
+- Format touched F# files before build and test validation.
+- Finish each coherent checkpoint with `git diff --check`.
 
-Optional: `pwsh ./scripts/install-githooks.ps1` adds a staged-diff check only; focused tests and formatting stay explicit.
+Use `pwsh ./scripts/validate.ps1 -Fast` only as an optional broad local preflight. Use `-Full` for local integration
+reproduction or diagnosis. GitHub `Validate` is the required broad gate for the current pull-request revision.
 
-## Work Tracking
+Optional: `pwsh ./scripts/install-githooks.ps1` adds a staged-diff check only. Focused tests and formatting remain
+explicit responsibilities.
 
-Use GitHub issues and pull requests as the active coordination surface for implementation work.
-For non-trivial work, follow `../docs/Development process.md`: create or confirm a GitHub issue, declare objective,
-owned paths, risk surfaces, validation, docs impact, and definition of done before editing. If the write set grows,
-update the issue before editing the new paths.
+## Tracked Source Work
+
+- Read the root and nearest `AGENTS.md` files before editing, then load `../skills/grace/SKILL.md` as the Grace context
+  router when Agent Skills are available.
+- Implement only from an issue that has passed the compact Issue Readiness gate and has a frozen Factory Run Charter.
+- Use the delivery mode and exact base SHA from the Run Charter. A child of an epic normally branches from current
+  `origin/main`; use an `epic/**` base only when the owner selected integration-branch mode.
+- Prove Baseline Admissibility before semantic edits. Restore, build, or run the integration proof selected by the
+  charter. A conflict involving project or solution shape, package policy, generated surfaces, runtime topology,
+  language migration, persistence, authorization, or public contracts is an owner stop unless the issue already
+  specifies the exact resolution.
+- Treat earlier branches and commits as salvage evidence, not mandatory ancestry, unless the issue names a current
+  compatibility requirement.
+- Declare the owned and forbidden paths before editing. Update the issue and stop for an owner decision before crossing
+  the frozen write set for a material project, topology, contract, state, or authority change.
+- Use the execution mode frozen in the Run Charter. In direct single-agent mode, the root owns implementation and no
+  implementation child is created. In controller/worker mode, keep one issue-owner worker thread and resume it for
+  in-scope compiler, focused-test, formatting, and accepted R1 repair work. Do not start a fresh worker per error or
+  finding.
+- Only the root issue session may spawn agents. Always specify `fork_turns`; do not rely on its current full-history
+  default. New workers, scouts, and reviewers use `fork_turns = "none"` plus a complete Run Packet. A read-only
+  diagnostic scout may use the smallest positive turn count only when the immediately preceding failure exchange is
+  required evidence. Source work never uses `fork_turns = "all"`.
+- At a blocker, use the typed action model from the root process: continue the same implementation owner, one read-only
+  diagnostic scout, one replacement for an unavailable or unusable worker in controller/worker mode, owner stop, or
+  supersede/split. Do not ask for an unclassified “one more worker.”
+- The implementation owner performs focused validation and a review-prevention self-check of the actual diff. In
+  controller/worker mode, the root may inspect code, diffs, logs, tests, and validation evidence, but it must not silently
+  replace the worker's implementation role.
+- Run one R1 Discovery Review of the coherent candidate. Route the finite accepted ledger to the same implementation
+  owner in one consolidated repair pass. Run R2 Closure Review only when repairs occurred. There is no automatic R3.
+- Inspect both the issue delta against its selected base and the eventual delivery delta against `main`. Capability
+  already present in an epic base still counts as delivered capability.
+- Never sleep or poll for more than 120 seconds in one command. Use repeated shorter checks with concise updates at
+  material transitions.
 
 ## Core Engineering Expectations
 
-- Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
-- When the user says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when the user explicitly asks
-  for one, asks to start tracked implementation, or otherwise requests tracker setup.
-- For tracked multi-step implementation, follow `docs/Development process.md`: create an epic parent issue, link
-  sub-issues for each implementation step, assign each sub-issue's parent issue relationship to the epic in GitHub
-  Relationships, and include a DAG in the parent issue that shows dependencies and parallelization opportunities. As
-  each sub-issue completes, update the epic checklist. Use the concrete `addSubIssue` GraphQL workflow in
-  `docs/Development process.md` when creating the native parent/child relationships.
-- For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. It should prove
-  one narrow user-visible behavior through the closest stable public boundary, crossing the main contract, runtime,
-  persistence, validation, and documentation surfaces that later slices are likely to reuse. Use the result to refine
-  child issues, owned paths, validation profiles, and parallelization boundaries.
-- When implementing an epic, always use an explicit epic integration branch. Create
-  `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
-  sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR
-  as the production release candidate. Do not use direct-to-`main` epic slices.
-- Before assigning behavior-changing work, require the compact Issue Readiness gate from
-  `docs/Development process.md`: one user-visible outcome, supported world, capability budget, primary invariant and
-  authority, explicit non-goals, algorithm-witness result when required, focused proof, and owner stop conditions.
-
-- For code tasks that implement a product spec or generated plan, verify decision closure before editing: accepted or
-  assumed product decisions, supported/rejected inputs, audience/authorization semantics, failure behavior, lifecycle
-  states, and contract propagation must be explicit in the issue or PR. If a critical decision is missing, update the
-  issue or report the gap before coding.
-- For runtime, storage, materialization, Watch, eventing, or auth work, write a stale-authority preflight in the worker
-  handoff: what state is authoritative, when it is re-read, what can change between decision and mutation, how retries and
-  cleanup behave, and which focused proof catches stale snapshots.
-
-- Claim the issue with a comment, assign it to the authenticated GitHub user, and create or switch to an issue-owned
-  branch/worktree from the selected base before editing implementation files: latest `origin/main` for standalone
-  non-epic issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.
-- When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
-  absolute path under the assigned worktree. After the first patch, verify git status in both locations.
-- Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
-- Validate the changed behavior locally with the smallest focused proof. Format touched F# files first, build the
-  focused project before a `--no-build` test, run required freshness checks, and finish with `git diff --check`.
-- GitHub `Validate` is the required broad gate for the current pull-request revision. Local Fast is an optional broad
-  preflight; Full is for local integration reproduction or diagnosis, not a routine consequence of touching a runtime
-  surface. If either broad command is intentionally selected, do not duplicate its build/test work with routine focused
-  build/test commands for that checkpoint.
-- Product/DAG independence is not the same as merge/write-set independence. Parallelize branches only when their write
-  sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared project
-  files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
-  preparatory compile-item or file-scaffold slice before later branches edit separate files.
-- Follow the Factory V2 orchestration and bounded review protocol in `../docs/Development process.md`. Do not copy a
-  separate review loop into project-local guidance.
-- Before Tier 2 production coding, confirm the Algorithm Readiness Gate is complete for stateful, destructive,
-  filesystem, retry, recovery, concurrent, background, or multi-authority behavior. Production implementation should
-  translate a proven finite algorithm rather than discover effect ordering through code review.
-- Use one short-lived controller per issue or pull request. The controller is the sole agent spawner. Workers and
-  reviewers must not spawn subagents.
-- Use one issue-owner implementation worker. The same worker owns all accepted in-scope repairs. Do not create a fresh
-  worker for each finding. A replacement requires evidence that the original worker is unavailable or unusable.
-- The controller may inspect source, diffs, logs, tests, and validation evidence and may run read-only or validation
-  commands. It coordinates issue and PR state, review ledger, CI, merge, and cleanup.
-- Do not require temp status files or fixed five-minute heartbeats. Require concise progress updates before long-running
-  commands, at material blockers, and at handoff. Never sleep or poll for more than 120 seconds in one command.
-- Before handoff, the issue owner must self-review the actual diff against the outcome, non-goals, Product V1 supported
-  world, authority and effect model, contract propagation, proof truth, and owned paths.
-- Open one coherent ready-for-review PR after the first validated candidate. Run one independent R1 discovery review of
-  the full candidate with `dev-process/CODE_REVIEW.md`. Freeze the accepted finite ledger.
-- Route the accepted R1 ledger back to the same issue owner for one consolidated repair pass. Do not start another broad
-  review after each repair commit.
-- When repairs were required, run one independent R2 closure review on the repaired current head. R2 checks accepted
-  ledger items, repair hunks, direct repair regressions, current-head proof and CI, and scope preservation. It must not
-  reopen untouched parts of the original diff.
-- There is no automatic R3. If R2 incidentally exposes a supported-world merge blocker outside the frozen ledger and
-  direct repair-regression scope, record one `DISCOVERY ESCAPE` and stop. Do not ignore it or keep searching. A new
-  material invariant, authority boundary, state machine, product semantic, or scope expansion also requires a new
-  owner-approved charter, split, or supersession.
-- GitHub `Validate` must pass on the final head. A current R1 pass with no findings plus final-head CI is sufficient;
-  after repairs, R2 plus final-head CI certifies closure.
-- When a required check fails, inspect the newest failed workflow for the final head and distinguish owned-diff failures
-  from unrelated repository or environment failures before assigning repair work.
-- Stop when the issue gains another primary invariant, durable state machine, authority boundary, or product semantic;
-  when a third enabling PR is proposed before the tracer; when review is writing the product model; or when process rules
-  must change mid-run. Preserve a salvage map before superseding.
-- After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
-  is mandatory: verify the destination contains the change, delete the remote issue branch, delete the local issue
-  branch, remove the task worktree, run `git fetch --prune`, and `git pull --ff-only` in the local repo so `main` is up
-  to date. Do not wait for a separate user prompt before deleting the remote branch.
-- Record skipped validation, docs impact, residual risk, and follow-ups in the task record or pull request.
-- Write tests for new features and bug fixes; prioritize critical paths.
-- Document new F# modules, types, functions, methods, members, and meaningful local helper functions with concise
-  `///` XML comments so future maintainers and IntelliSense users understand their purpose.
-- Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
+- Prefer a vertical slice that proves one observable behavior through the closest stable boundary.
+- Keep effects isolated, authorities explicit, and retry, cleanup, and stale-state behavior visible.
+- For runtime, storage, materialization, Watch, eventing, or authorization work, identify the authoritative source, the
+  revalidation point before mutation or publication, the failure state, retry and cleanup behavior, and the proof that a
+  stale snapshot cannot win.
+- Resolve compilation errors and failures introduced by the changed slice before handoff.
+- Build the focused project before using `dotnet test --no-build`.
+- Commit coherent completed checkpoints. Do not create commits merely to record a broken intermediate state unless the
+  Run Charter requires a deliberate RED proof.
+- Write tests for new features and bug fixes, prioritizing positive, negative, restart, boundary, and direct regression
+  behavior selected by the issue contract.
+- Record skipped validation, documentation impact, residual risk, and follow-up ownership in the issue or pull request.
+- Treat secrets with care, avoid logging personally identifiable information, and preserve structured logging and
+  correlation identifiers.
 - Favor existing helpers in `Grace.Shared` before adding new utilities.
 
 ## Test Project Organization
 
-- `Grace.Server.Tests` is the Aspire-backed server integration project. Put HTTP flows, emulator/resource coverage,
+- `Grace.Server.Tests` is the Aspire-backed server integration project. Put HTTP flows, emulator and resource coverage,
   Service Bus validation, storage route behavior, and server-surface actor behavior there.
 - `Grace.Server.Unit.Tests` is the no-Aspire server-adjacent project. Put pure helper, deterministic contract, and
   unit-shaped server coverage there only when it does not need HTTP hosting, emulators, blob storage, Service Bus,
   Redis, `Grace.Server.Tests.Services`, or `Grace.Aspire.AppHost`.
-- `Grace.CLI/Command/*.CLI.fs` should be primarily covered by `Grace.CLI.Tests/*.CLI.Tests.fs`. Pure parser coverage
-  belongs in dedicated `*.CLI.Parsing.Tests.fs` files that can be parallelized. Tests that touch command invocation,
-  local config/history, environment variables, console output, filesystem/current-directory state, or SDK identity
-  remain serialized in the non-parsing CLI test files.
+- `Grace.CLI/Command/*.CLI.fs` should be primarily covered by `Grace.CLI.Tests/*.CLI.Tests.fs`. Put pure parser coverage
+  in dedicated `*.CLI.Parsing.Tests.fs` files that can run in parallel. Keep command invocation, local config and
+  history, environment variables, console output, filesystem and current-directory state, and SDK identity tests in
+  the serialized non-parsing CLI test files.
 - `Grace.Types/*.Types.fs` should be covered by `Grace.Types.Tests/*.Types.Tests.fs`.
-- Keep auth-focused suites separate for now (`Grace.Authorization.Tests`, plus auth-specific files inside other test
-  projects).
-- Prefer server-surface integration tests for actor behavior; avoid duplicating deep actor internals in server test files.
+- Keep authorization-focused suites separate for now, including `Grace.Authorization.Tests` and authorization-specific
+  files inside other test projects.
+- Prefer server-surface integration tests for actor behavior. Avoid duplicating deep actor internals in server tests.
 
 ## Test Parallelization And Validation
 
 - `pwsh ./scripts/validate.ps1 -Fast` uses one solution-level `dotnet test "src/Grace.slnx"` command with the selected
-  non-Aspire filter: Authorization, CLI, Operations, Types, and Server.Unit tests. `-Full` uses one unfiltered
-  solution-level command, so every current and future test project in `src/Grace.slnx` runs. GitHub `Validate` reuses
-  this Full selection implementation rather than maintaining its own test list.
-- Do not reintroduce custom per-project process fan-out into validation unless a future issue owns that runner change.
-- Assembly-level NUnit parallel defaults are intentionally limited. `Grace.Authorization.Tests` and `Grace.Types.Tests`
-  have bounded defaults. `Grace.Server.Unit.Tests` is deferred while process-static approval-store mutation remains in
-  the project. `Grace.CLI.Tests` is deferred while global/current-process mutations remain. `Grace.Server.Tests` stays
-  integration-controlled because it shares Aspire-hosted resources and setup state.
-- If running a project-specific `dotnet test --no-build` command, run the matching Release build for that project first
-  so the test assembly exists and reflects current source.
+  non-Aspire filter: Authorization, CLI, Operations, Types, and Server.Unit tests.
+- `-Full` uses one unfiltered solution-level command, so every current and future test project in `src/Grace.slnx` runs.
+  GitHub `Validate` reuses this Full selection instead of maintaining a separate project list.
+- Do not reintroduce custom per-project process fan-out unless a future issue owns that runner change.
+- Assembly-level NUnit parallel defaults are intentionally limited. `Grace.Authorization.Tests` and
+  `Grace.Types.Tests` have bounded defaults. `Grace.Server.Unit.Tests` remains deferred while process-static approval
+  store mutation exists. `Grace.CLI.Tests` remains deferred while global and current-process mutation exists.
+  `Grace.Server.Tests` remains integration-controlled because it shares Aspire-hosted resources and setup state.
 
 ## F# Coding Guidelines
 
-- Default to F# for new code unless stakeholders specify another language.
+- Default to F# for new source unless the accepted issue chooses another language.
 - Use `task { }` for asynchronous workflows and keep side effects isolated.
 - Prefer immutable data, small pure functions, and explicit dependencies passed as parameters.
-- Prefer collections from `System.Collections.Generic` (for example `List<T>`, `Dictionary<K,V>`) over F#-specific
-  collections unless pattern matching or discriminated unions are needed.
-- Apply the modern indexer syntax (`myList[0]`) for lists, arrays, and sequences; avoid the legacy `.[ ]` form.
-- Structure modules so domain types live in `Grace.Types`, shared helpers in `Grace.Shared`, and orchestration in the
-  project-specific assembly.
-- Treat `///` XML documentation comments as required for new F# declaration surfaces: modules, types, functions,
-  methods, members, and meaningful local helper functions. Keep these comments concise and purpose-focused.
-- Do not satisfy the XML documentation rule with boilerplate such as "performs X", "returns X", "creates X", or
-  "for the current operation/request" when that repeats the declaration name. Describe the concrete Grace behavior,
-  invariant, route, command, state transition, storage operation, validation rule, or contract role instead.
+- Prefer `System.Collections.Generic` collections, such as `List<T>` and `Dictionary<K,V>`, unless F# collections add
+  meaningful pattern-matching or discriminated-union value.
+- Use modern indexer syntax such as `myList[0]`; avoid the legacy `.[ ]` form.
+- Keep domain types in `Grace.Types`, reusable helpers in `Grace.Shared`, and orchestration in the owning project.
+- Add concise `///` XML documentation to new modules, types, functions, methods, members, and meaningful local helpers.
+  Describe the concrete Grace behavior, invariant, route, command, state transition, storage operation, validation rule,
+  or contract role. Do not restate the declaration name with boilerplate.
 - Add ordinary inline comments only where control flow or transformations are non-obvious.
-- Run Fantomas formatting or a targeted Fantomas check before build and test validation. Avoid the slow loop where tests
-  pass, Fantomas then changes files, and the same build/tests must be repeated. For broad F# edits, format with
-  `dotnet tool run fantomas --recurse .` from `./src`; for narrow fixes, run targeted Fantomas on the touched files
-  before validation.
+- Run Fantomas on touched files before build and tests. For broad F# edits, use
+  `dotnet tool run fantomas --recurse .` from `src`; for narrow edits, format only the touched files.
 
-## Avoid FS3511 in Resumable Computation Expressions
+## Avoid FS3511 In Resumable Computation Expressions
 
-These rules apply to `task { }` and `backgroundTask { }`.
+These rules apply to `task { }` and `backgroundTask { }`:
 
-1. **Do not define `let rec` inside `task { }`.**
-2. **Avoid `for ... in ... do` loops inside `task { }`.**
-3. **Treat FS3511 warnings as regressions; do not suppress them.**
+1. Do not define `let rec` inside the computation expression.
+2. Avoid `for ... in ... do` loops inside the computation expression.
+3. Treat FS3511 warnings as regressions; do not suppress them.
 
-## Agent-Friendly Context Practices
+## Handoff
 
-- Start with relevant `AGENTS.md` files to load patterns, dependencies, and test strategy before broad code exploration.
-- When Agent Skills are available, load `../skills/grace/SKILL.md` after the relevant `AGENTS.md` files and use its
-  references as the on-demand router for Grace-specific workflow, architecture, testing, and public-surface guidance.
-- Use these summaries to target only source files needed for implementation or verification.
-- When documenting new behavior, update the closest `AGENTS.md` so future agents inherit context quickly.
-
-## Collaboration and Communication
-
-- Summarize modifications clearly, cite file paths with 1-based line numbers, and call out remaining follow-ups/tests.
-- Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.CLI`,
-  and `Grace.SDK`.
-- When adding capabilities, ensure matching tests exist and note any residual risk.
+Summarize modifications with file paths and 1-based line numbers, report focused and broad proof truthfully, and call
+out residual risks and follow-up ownership. Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`,
+`Grace.Server`, `Grace.Actors`, `Grace.CLI`, and `Grace.SDK` when the accepted issue requires them.

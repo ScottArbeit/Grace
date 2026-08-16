@@ -1,0 +1,6 @@
+# Allow Codex to discover the combined root and nested Grace guidance.
+project_doc_max_bytes = 65536
+
+[agents]
+# Bound each issue controller to one worker plus one scout or reviewer.
+max_concurrent_threads_per_session = 2
