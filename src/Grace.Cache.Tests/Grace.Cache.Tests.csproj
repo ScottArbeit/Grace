@@ -18,7 +18,7 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Grace.Cache\Grace.Cache.csproj" />
+    <ProjectReference Include="..\Grace.Cache\Grace.Cache.fsproj" />
     <ProjectReference Include="..\Grace.Cache.Storage\Grace.Cache.Storage.fsproj" />
   </ItemGroup>
 </Project>

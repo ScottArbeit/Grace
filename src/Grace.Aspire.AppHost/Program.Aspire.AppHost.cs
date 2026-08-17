@@ -108,7 +108,7 @@ public partial class Program
 
                 var cacheTargetPort = GetAvailableTcpPort();
                 var cacheUrl = "http://127.0.0.1:" + cacheTargetPort;
-                var graceCache = builder.AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.csproj")
+                var graceCache = builder.AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.fsproj")
                     .WithEnvironment("ASPNETCORE_URLS", cacheUrl)
                     .WithHttpEndpoint(targetPort: cacheTargetPort, name: "http");
                 var forwardedCacheKeys = new List<string>();

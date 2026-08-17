@@ -20,7 +20,7 @@ provide ancestry or host topology.
 
 ## Deferred capability
 
-GC-CAL-02 adds one C# ASP.NET Core host and one localhost-only
+GC-CAL-02 adds one F# ASP.NET Core host and one localhost-only
 `GET /directory-version-zips/{directoryVersionId}` route. Its separate storage reader opens the existing SQLite
 database in immutable read-only mode, queries only an exact `Complete` tuple, derives the opaque final path, and verifies
 the stored size and lowercase SHA-256 before serving `application/zip`. Startup requires existing database, managed
