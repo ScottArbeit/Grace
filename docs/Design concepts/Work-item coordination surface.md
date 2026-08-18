@@ -1,10 +1,9 @@
 # Work-Item Coordination Surface Design Map
 
-- **Status:** Exploratory; Section A is delivered and awaiting its final epic integration gate
+- **Status:** Exploratory; Section A is delivered and Stage 5 comment-lifecycle design is active
 - **Quality contract:** Product V1
 - **Canonical source:** `docs/Design concepts/Work-item coordination surface.md`
-- **Evidence current through:** 2026-08-10, `epic/825-blob-backed-work-item-descriptions` at
-  `78ff968f569eacbd2ebc9ad1d487d7f312426689`
+- **Evidence current through:** 2026-08-12, `main` at `c477d09529b1bf0cc789d512c9e8c43731cda6f1`
 
 ## Destination
 
@@ -22,17 +21,16 @@ Follow these stages in order. This is the order for closing design decisions, no
 order. Work one owner decision at a time, update this document after each answer, and advance only when the current
 stage's exit condition is satisfied.
 
-> **Current stage: Stage 4 — notes vocabulary (DEC-008).** DEC-007 is accepted: supported description writes append in
-> accepted actor order and the last appended description is current. There is no public revision, persisted revision,
-> or compare-before-write requirement. DEC-006 keeps clear explicit and leaves earlier immutable objects retained.
-> DEC-013 defers retained TextContent usage accounting to #829 under Operations epic #554; Section A publishes no usage
-> fact and makes no accounting claim.
+> **Current stage: Stage 5 — comment lifecycle (DEC-012).** DEC-008 is accepted: remove the standalone
+> `WorkItemDto.Notes` field and expose work-item attachments as one untyped public resource. Do not replace `notes` with
+> `review-evidence` or another prescribed role. Keep the internal `ArtifactType` union, generic Artifact API, and
+> producer-specific cases unchanged until a separate internal design pass.
 
 ```mermaid
 flowchart TD
     A["1. Bound collaboration depth"] --> B["2. Define body meaning and input"]
     B --> C["3. Define atomic append-order description updates"]
-    C --> D["4. Resolve notes vocabulary"]
+    C --> D["4. Simplify notes and attachment vocabulary"]
     D --> E["5. Define comment lifecycle"]
     E --> F["6. Define progress projection"]
     F --> G["7. Define repository list and search"]
@@ -44,7 +42,7 @@ flowchart TD
 | 1. Collaboration depth | DEC-003 and DEC-004 accepted | Removes or retains the expensive thread, resolution, and direct-edit capabilities before modeling comments. | Satisfied: V1 defers replies, resolution, direct editing, and edit history. |
 | 2. Body meaning and input | DEC-005 and DEC-011 accepted | Defines the primary mutable resource and the long-Markdown workflow used by the first tracer. | Satisfied: the body meaning and exactly-one-source input behavior are coherent. |
 | 3. Atomic description updates | DEC-006 and DEC-007 accepted | Completes the first bounded delivery section and establishes append-order last-write-wins for the body resource. | Set, clear, validation failure, immutable storage, and append-order behavior have one explicit contract. |
-| 4. Notes vocabulary | DEC-008 | Opens the comments section by preventing a fourth overlapping notes concept before public names spread further. | Inline notes, attached evidence, structured review records, and comments have distinct names and ownership. |
+| 4. Notes and attachment vocabulary | DEC-008 accepted | Opens the comments section without preserving a fourth overlapping notes concept or prescribing workflow-specific attachment roles. | `WorkItemDto.Notes` is removed; attachments are one untyped public resource; structured review records and comments remain distinct. |
 | 5. Comment lifecycle | DEC-012 | Applies the Stage 1 capability boundary using the vocabulary and concurrency model established earlier. | Comment identity, creator, timestamp, ordering, correction, deletion, visibility, retry, and replay behavior are explicit. |
 | 6. Progress projection | DEC-010 | A truthful activity view can be designed only after the complete update and comment event families are known. | Included event categories, ordering, pagination, and visibility are explicit, with no second write model. |
 | 7. Repository list and search | DEC-009 | Listing and indexing depend on stable fields, visibility, comment behavior, and activity timestamps. | Repository scope, filters, ordering, pagination, indexed content, and deferred aggregation are explicit. |
@@ -90,7 +88,7 @@ The smallest plausible V1 provides:
 - repeatable whole-body replacement for the work-item description;
 - append-order last-write-wins with explicit clear-versus-omit behavior;
 - no public history, previous-version link, or caller comparison value;
-- first-class chronological comments distinct from attached evidence; and
+- first-class chronological comments distinct from supporting attachments; and
 - enough progress inspection to understand what changed and what collaborators said.
 
 ## Quality contract
@@ -133,15 +131,21 @@ Grace's Product V1 profile applies.
 No named work-item source, test, or documentation path changed between the #810 merge commit
 `af1aa306a3107bec13383069dfb812d54a3a5362` and the evidence revision.
 
-## Delivered baseline that must remain true
+## Current #810 behavior and accepted DEC-008 change
 
 - Canonical status mutation is `grace workitem set-status <work-item> --status <status>` with lowercase `-s`.
-- Attachment creation is `grace workitem attachments add <work-item> --type <summary|prompt|notes>` with exactly one of
-  `--file`, `--text`, or `--stdin`.
-- Summary, prompt, and notes are classification values sharing one attachment lifecycle.
+- The current implementation creates attachments with
+  `grace workitem attachments add <work-item> --type <summary|prompt|notes>` and exactly one of `--file`, `--text`, or
+  `--stdin`.
+- DEC-008 supersedes that public classification contract. The intended work-item interface has one attachment resource,
+  no `--type` input, no semantic-type buckets, and no type-based `--latest` selection.
+- Public attachment reads identify an attachment by its artifact ID. List results may expose storage and creation facts,
+  but do not expose a Grace-prescribed workflow role.
 - Owned reviewer attachment deletion is logical and recoverable until its stored repository-retention deadline.
 - Generic exact or type-based unlink cannot bypass owned attachment deletion.
-- An attachment is evidence, input, or an agent result. It is not a first-class collaboration comment.
+- An attachment is supporting content owned by a work item. It is not a first-class collaboration comment.
+- The internal `ArtifactType` union, generic Artifact API, and producer-specific uses such as agent summaries, prompts,
+  promotion conflict reports, and validation artifacts remain unchanged in this decision.
 - Removed status, attachment-add, and bulk-unlink command shapes do not return as compatibility aliases.
 
 ## Capability inventory
@@ -152,7 +156,7 @@ No named work-item source, test, or documentation path changed between the #810 
 | CAP-002 | Repeatable work-item body replacement | Required now | The owner wants the work-item description to carry evolving task intent like an issue body. Exact semantics remain open. |
 | CAP-003 | Atomic multi-field work-item mutation | Required now | A request must not persist only its first accepted field and then fail. |
 | CAP-004 | Competing description writes | Required now | Supported writes append in accepted actor order; the last appended description is current. No mismatch response, revision, or compare-before-write input is exposed. |
-| CAP-005 | First-class chronological comments | Required now | Feedback and progress are immutable records in one flat stream. Corrections are new comments that explicitly identify the original. |
+| CAP-005 | First-class chronological comments | Required now | Feedback and progress are immutable records in one flat stream. Corrections are new comments that explicitly identify the original. Ordinary collaboration has no delete or hide operation. |
 | CAP-006 | Progress inspection | Required now | Users need to understand meaningful state changes and collaboration. The projection shape remains open. |
 | CAP-007 | Direct comment editing | Deferred | DEC-004 accepts immutable comments and explicit correction entries; direct editing and edit history are not part of V1. |
 | CAP-008 | Replies and resolvable discussion threads | Deferred | DEC-003 accepts one chronological V1 stream. Responses are later comments, with no reply nesting or resolved discussion state. |
@@ -163,6 +167,11 @@ No named work-item source, test, or documentation path changed between the #810 
 | CAP-013 | Treating an attachment as a comment | Rejected | Loses comment identity, ordering, creator, timestamp, and collaboration lifecycle. |
 | CAP-014 | Arbitrary deletion of nonattachment artifacts | Out of scope | Not part of the work-item coordination outcome. |
 | CAP-015 | Retained TextContent usage accounting | Deferred | Owner-selected Option A keeps Section A focused on description storage and retrieval. #829 moved to Operations epic #554 because Grace has no production repository-storage bytes-minute producer to extend. |
+| CAP-016 | Workflow-neutral public work-item attachments | Required now | Add and inspect one attachment resource without selecting or receiving a Grace-prescribed semantic type. Preserve the delivered owned-attachment lifecycle. |
+| CAP-017 | Global `ArtifactType` redesign | Deferred | Keep the internal union, generic Artifact API, persisted metadata, and producer-specific cases unchanged until each internal use is evaluated separately. |
+| CAP-018 | User-defined attachment labels or roles | Deferred | Do not replace the removed closed type choice with free-form labels or namespaced roles until observed use justifies their contracts. |
+| CAP-019 | Ordinary comment deletion or hiding | Rejected | Comment authors and other ordinary collaborators cannot remove a published comment from the shared history. They can add an explicit correction. |
+| CAP-020 | Privileged comment moderation | Deferred to #876 | Grace needs an administrative moderation capability, but it is outside this coordination-surface epic. Standalone design issue #876 will define its access, visibility, storage, reason, audit, and recovery contracts. |
 
 Deferred recommendations in this inventory are not owner decisions. They remain open until their linked decision closes.
 
@@ -181,8 +190,8 @@ Rows are ordered by the stage in which they should be closed, not by decision ID
 | DEC-006 | 3 | What distinguishes set and clear? | Product | Accepted | Use `workitem description set` and `workitem description clear`. Set requires exactly one non-empty `--text`, `--file`, or `--stdin` source; empty input fails with guidance to use clear. The API and SDK represent set, clear, and omission distinctly. | Removes empty-string ambiguity and gives scripts an explicit clear operation. | Owner | Parameters, validation, serialization, CLI, API, SDK |
 | DEC-007 | 3 | What determines the current description when supported callers compete? | Architecture | Accepted | Append-order last-write-wins. The serialized actor accepts descriptions in order; the last appended description is current. Do not add a public or persisted revision, previous-version link, or compare-before-write requirement. | Requires ordered actor projection, stable retry identity, and last-append proof; removes revision propagation and mismatch proof. | Owner decision, 2026-08-10 | Actor, internal projection, API/SDK/CLI hydration, tests, docs |
 | DEC-013 | 3 | Does Section A implement retained TextContent usage accounting? | Scope | Accepted | No. Owner-selected Option A defers accounting to #829 under Operations epic #554. Section A retains `Utf8ByteLength` for integrity but publishes no usage fact and claims no quota or billing effect. | Removes a new durable minute-measurement producer and the active PR #712 write-set conflict from #825. Future #829 work must first close the producer design in #554. | Owner decision, 2026-08-10 | Capability inventory, quality boundary, evidence, proof, tracker relationships |
-| DEC-008 | 4 | How should the three notes concepts be named? | Domain | Open | Recommend reserving `comment` for collaboration, keeping structured review records explicit, and renaming the attachment classification away from bare `notes`; exact label needs a vocabulary pass. | Prevents a fourth overlapping notes concept. | Owner | Types, CLI, docs, generated contracts |
-| DEC-012 | 5 | What is the V1 comment lifecycle? | Product | Open | After Stage 1 closes, define identity, creator, timestamp, ordering, correction, deletion, visibility, duplicate-request, and replay behavior inside that boundary. | Establishes the durable comment contract consumed by activity and search. | Owner | Types, actor, API, SDK, CLI, events, tests |
+| DEC-008 | 4 | Which notes concepts and attachment roles belong in the public work-item contract? | Domain and scope | Accepted | Remove `WorkItemDto.Notes` without conversion or compatibility behavior. Reserve `comment` for collaboration. Expose work-item attachments as one untyped public resource: no `--type`, semantic buckets, prescribed replacement label, or type-based `--latest` lookup. Keep the internal `ArtifactType` model and producer-specific workflows unchanged pending a separate design pass. | Removes overlapping notes concepts and methodology-specific attachment roles while preserving the existing internal model and attachment lifecycle for later evaluation. | Owner decisions, 2026-08-10 and 2026-08-12 | WorkItem DTO and update contracts, work-item attachment CLI/API/SDK/results, link projection, docs, generated contracts, tests |
+| DEC-012 | 5 | What is the V1 comment lifecycle? | Product | Open, partially accepted | Comments have no ordinary delete or hide operation; collaborators use explicit corrections. Administrative content moderation is required eventually but deferred to standalone issue #876 outside this epic. Close identity, creator, timestamp, ordering, duplicate-request, restart, and replay behavior without designing moderation here. | Keeps the collaboration contract append-only and prevents moderation storage and access policy from expanding Section B. | Owner decision, 2026-08-12 | Types, actor, API, SDK, CLI, events, tests; moderation N/A for this epic |
 | DEC-010 | 6 | Is progress one combined activity timeline? | Product | Open | Recommend a read-only projection combining WorkItem changes and comments; do not create a second write model. | Requires stable event categories and visibility rules after updates and comments are defined. | Owner | Events, server projection, CLI, tests |
 | DEC-009 | 7 | What list and search scope belongs in V1? | Scope | Open | Recommend repository-scoped list first, then title/body search; defer organization aggregation and comment-content search. | Avoids indexing unsettled visibility and lifecycle behavior. | Owner | API, search projection, CLI |
 
@@ -195,12 +204,16 @@ These terms are recommendations until their linked decisions close.
 | Work-item body | The current replaceable Markdown description of the task, its purpose, and acceptance context. | A chronological log or attached file. |
 | Comment | A chronological collaboration entry with its own identity, creator, and timestamp. | An Artifact or a mutable work-item field. |
 | Correction | A later comment that explicitly corrects an earlier comment while preserving the original record. | An invisible rewrite of history. |
+| Comment moderation | A future privileged capability for handling unacceptable comment content. Its contract belongs to standalone issue #876 outside this epic. | An ordinary comment-author delete or hide operation or a blocker for Section B. |
 | Activity entry | A read-only projection of a durable WorkItem change or comment event. | A second mutation endpoint or duplicate state store. |
-| Attached evidence | Prompt, agent summary, or review-related file/text content governed by the #810 lifecycle. | A comment or discussion thread. |
+| Attachment | Supporting content owned by a work item and governed by the #810 lifecycle, with no public semantic type prescribed by Grace. | A comment, discussion thread, or workflow-specific role such as summary, prompt, or review evidence. |
 | Structured review record | A review-domain object referenced by `ReviewNotesIds`. | Inline work-item notes or generic attachment text. |
 | Append order | The accepted serialized order of description events; the final accepted description is current. | A public revision, history API, previous-version link, or caller comparison value. |
 
-The design must still decide whether inline `WorkItemDto.Notes` remains a supported concept, is renamed, or is removed.
+`WorkItemDto.Notes` is removed rather than renamed. There is no compatibility alias or stored-data conversion because
+Grace has no production data contract to preserve. `Description` owns current task intent, comments own chronological
+collaboration, attachments own supporting content, and structured review records remain a separate review-domain
+concept.
 
 ## Decision frontier
 
@@ -265,23 +278,47 @@ retry, and append-order last-write-wins.
 When this exit condition is satisfied, Section A can receive its section-level readiness audit and issue packet without
 waiting for the comments, activity, or search sections.
 
-### Stage 4: notes vocabulary
+### Stage 4: notes and attachment vocabulary
 
-**Question:** Which existing notes concepts remain, and what public name replaces the attachment classification
-currently exposed as `notes`?
+**Accepted decisions:**
 
-**Why it blocks:** Comments should not create another ambiguous notes surface.
+- Remove `WorkItemDto.Notes`, its generic-update input, actor command and event, public DTO property, SDK and OpenAPI
+  exposure, and related tests. Add no conversion or compatibility behavior.
+- Reserve `Description` for current task intent and acceptance context, and reserve `comment` for chronological
+  collaboration and progress.
+- Expose work-item attachments as one untyped public resource. Do not replace `notes` with `review-evidence`, preserve a
+  closed public role list, or introduce free-form labels in this section.
+- Remove semantic type selection, type buckets, and type-based latest lookup from the intended work-item attachment
+  interface. Use artifact identity for single-attachment reads and mutations.
+- Preserve the internal `ArtifactType` union, generic Artifact API, persisted metadata, and producer-specific behavior
+  for a later focused design pass. The future interface adapter must preserve the owned-attachment lifecycle without
+  leaking an internal type choice into the public contract.
 
-**Recommendation:** Reserve comment vocabulary for collaboration and choose a distinct evidence-oriented attachment
-label during a focused domain-modeling pass.
+**Stage result:** Work items have four non-overlapping concepts: a current description, chronological comments,
+workflow-neutral attachments, and structured review records.
 
-**Exit condition:** DEC-008 gives inline notes, attached evidence, structured review records, and comments distinct
-names and ownership boundaries.
+**Accepted risk:** The generic work-item attachment interface no longer offers “latest summary,” “latest prompt,” or
+another role-based lookup. Callers use artifact identity and attachment listing; producer-specific workflows may retain
+their existing internal behavior until separately redesigned.
+
+**Exit condition:** Satisfied. DEC-008 removes the inline notes field and public attachment-role vocabulary while
+leaving internal artifact redesign explicitly deferred.
 
 ### Stage 5: comment lifecycle
 
 **Question:** What identity, creator, timestamp, ordering, correction, deletion, and visibility contract applies to a
 comment under the V1 scope selected by Stage 1?
+
+**Accepted so far:**
+
+- Ordinary collaborators, including the comment creator, cannot delete or hide a published comment.
+- Corrections remain ordinary later comments that explicitly reference the original.
+- A separate privileged moderation capability is required eventually, but its complete contract is deferred to
+  standalone issue #876 outside this epic and does not block Section B.
+
+**Current decision:** With deletion, hiding, and moderation removed from this epic, define the remaining comment identity
+and ordering contract: which identifier, creator identity, server-created timestamp, and actor-accepted order are stored
+and returned?
 
 **Why it blocks:** Activity and search cannot be truthful until comment visibility and history are stable.
 
@@ -350,17 +387,17 @@ disposition.
 
 | Surface | Likely relevance | Current design status |
 | ------- | ---------------- | --------------------- |
-| `Grace.Types` WorkItem DTOs, commands, events, persisted state | Internal immutable description reference, current projection, comment identities and events | Section A delivered; later comment decisions remain pending |
-| `Grace.Shared` parameters and validators | Dedicated description request, explicit clear/omit distinction, comment requests | Section A delivered; comments remain pending |
-| WorkItem actor | Ordered description append, current projection, replay | Section A delivered and proven; comments remain pending |
-| Server handlers and routes | Description set/show/clear plus future comment, activity, list, and search behavior | Description routes delivered; later surfaces pending decisions |
+| `Grace.Types` WorkItem DTOs, commands, events, persisted state | Remove inline Notes and public attachment type buckets; add future comment identities and events; leave internal Artifact types unchanged | DEC-008 accepted; attachment and comment propagation not implemented |
+| `Grace.Shared` parameters and validators | Remove Notes update input and public AttachmentType inputs/results; identify single attachments by artifact ID; add future comment requests | DEC-008 accepted; comments remain pending |
+| WorkItem actor | Remove inline Notes command/event; preserve ordered description projection and generic artifact links; add future comments | DEC-008 accepted; description behavior delivered; comments pending |
+| Server handlers and routes | Untyped attachment add/list/show/download/delete/undelete plus future comment, activity, list, and search behavior | Description routes delivered; DEC-008 attachment simplification and later surfaces pending implementation |
 | Endpoint access rules | Stored-resource scope and list filtering | Pending decisions |
-| SDK facade | Thin methods aligned to accepted routes and DTOs | Description methods delivered; later methods pending decisions |
-| CLI and executable output registry | Update/body, comments, activity, list/search, long-text input | Description set/clear/show and exactly-one input delivered; later commands pending |
-| Static OpenAPI and generated clients | Every accepted public route and shape | Description contract delivered and freshness-proven; later contracts pending |
+| SDK facade | Thin methods aligned to accepted routes and DTOs | Description methods delivered; DEC-008 attachment contract and later methods pending |
+| CLI and executable output registry | Remove Notes update and attachment `--type`; make attachment reads identity-based; add comments, activity, list/search | Description commands delivered; DEC-008 and later commands pending |
+| Static OpenAPI and generated clients | Every accepted public route and shape | Description contract delivered and freshness-proven; DEC-008 attachment and Notes removals pending |
 | Events, webhooks, SignalR, Watch, and search projections | Classify accepted WorkItem and comment events or record specific non-applicability | Pending decisions |
-| Tests | Pure contract, actor replay/concurrency, server behavior, CLI parsing/output, generated freshness | Pending decisions |
-| Documentation and agent guidance | Work-item workflows, vocabulary, lifecycle, and future implementation guidance | Pending decisions |
+| Tests | Notes-removal propagation, untyped attachment parsing and results, identity-based reads, lifecycle regression, comment behavior, generated freshness | DEC-008 proof classes accepted; exact issue-level seams pending |
+| Documentation and agent guidance | Work-item workflows, workflow-neutral attachment language, lifecycle, and future implementation guidance | DEC-008 terminology accepted; user docs remain current-state until implementation |
 
 ## Proof implications
 
@@ -371,7 +408,13 @@ The Plan-ready specification will need false-positive-resistant proof for at lea
 - two callers setting different descriptions, with the last accepted actor append current;
 - actor restart and event replay preserving the current body, ordered description events, comments, and selected ordering;
 - duplicate request behavior without duplicate comments or transitions;
-- comment identity, creator, timestamp, order, correction, deletion, and visibility semantics selected for V1;
+- removal of inline Notes across persisted and public WorkItem contracts without a compatibility alias;
+- attachment add without `--type`, one unbucketed list, identity-based show/download/delete/undelete, and rejection of
+  removed semantic-type inputs;
+- absence of semantic attachment types from CLI results, work-item link projections, OpenAPI, and generated clients;
+- preservation of the owned-attachment deletion lifecycle and producer-specific internal artifact behavior while the
+  public work-item interface changes;
+- comment identity, creator, timestamp, order, correction, and ordinary nondeletion semantics selected for V1;
 - activity pagination and event classification without duplicating or hiding supported entries;
 - repository list/search filtering that does not reveal inaccessible work items;
 - CLI normal and JSON output, `--select`, `--schema`, `--examples`, help, and parse-failure behavior;
@@ -381,15 +424,15 @@ The Plan-ready specification will need false-positive-resistant proof for at lea
 Exact proof seams and requirement IDs will be added after the dependent owner decisions close. Until then, this section
 records expected proof classes rather than claiming traceability coverage.
 
-Section A's tracked issues already provide focused proof for immutable storage integrity, actor ordering and replay,
+Section A's completed Epic #825 provides focused proof for immutable storage integrity, actor ordering and replay,
 explicit clear and retained objects, exact CLI text/file/stdin dispatch, inert introspection, public-contract freshness,
-and cross-repository rejection. The final #825 gate reconciles those results without claiming deferred accounting proof.
+and cross-repository rejection without claiming deferred accounting proof.
 
 ## Fog
 
 These in-scope concerns are not yet sharp enough to decide before the earlier frontier closes:
 
-- whether comments need logical deletion, redaction, or only correction entries;
+- the complete administrative moderation contract, deferred to standalone issue #876 outside this epic;
 - whether a comment belongs directly to a work item or optionally to a future discussion;
 - whether activity needs a durable projection or can be assembled from existing event streams within acceptable query
   bounds;
@@ -402,7 +445,10 @@ Promote a fog item into the decision frontier only when an earlier answer makes 
 
 ## Explicitly out of scope for this design pass
 
-- Reopening the #810 status or attachment lifecycle.
+- Reopening the #810 status or owned-attachment lifecycle.
+- Redesigning the internal `ArtifactType` union, generic Artifact API, persisted artifact metadata, or producer-specific
+  artifact behavior.
+- Adding free-form attachment labels, namespaced roles, or another replacement classification system.
 - Treating attachments as comments.
 - Arbitrary nonattachment Artifact deletion.
 - General-purpose social collaboration beyond work-item coordination.
@@ -426,9 +472,8 @@ The artifact passes these early criteria:
 - decision dependencies and a provisional tracer are explicit; and
 - likely public, durable, generated, event, documentation, and proof surfaces are mapped.
 
-The complete coordination surface is not Design-ready because the notes vocabulary, comment lifecycle, activity
-projection, and list/search scope remain open. Section A is Design-ready, Plan-ready, and delivered through #826, #827,
-and #828; only its final #825 integration gate remains. Individual
+The complete coordination surface is not Design-ready because the comment lifecycle, activity projection, and
+list/search scope remain open. Section A is Design-ready, Plan-ready, and delivered through Epic #825. Individual
 bounded sections may advance to Plan-ready and tracked implementation once their own decisions, requirements,
 propagation dispositions, and proof seams are closed without depending on unresolved later behavior.
 
@@ -452,10 +497,6 @@ propagation dispositions, and requirement-to-proof traceability depend on those 
 
 ## Next action
 
-Complete #825's final Section A integration gate and release-candidate review without claiming retained-content
-accounting. Then broaden the active frontier by asking DEC-008 only:
-
-> Which existing notes concepts remain, and what public name replaces the attachment classification currently exposed as
-> `notes`?
-
-After the owner answers, update this canonical artifact and continue only through the decisions required for Section B.
+Continue with DEC-012 and define only the remaining V1 comment lifecycle needed for Section B. Start with the
+identity and ordering contract now that ordinary deletion, hiding, and the deferred moderation capability are out of
+scope. Keep activity and search decisions closed until the comment lifecycle is complete.

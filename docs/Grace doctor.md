@@ -222,6 +222,20 @@ Repair never uploads files, creates directory versions, publishes Save or Refere
 content into the working tree. No exact root, changed bytes, a repository or branch mismatch, cancellation, server
 failure, or SQLite failure leaves no partially initialized status. The default command never invokes this path.
 
+### Planned Working Directory Update recovery
+
+The Plan-ready [Working Directory Update specification](Working%20Directory%20Update.md) extends the explicit repair
+gesture after the shared update module is implemented. A command that reaches `FinalizationIncomplete` will recommend
+`grace doctor --repair-local-state`.
+
+For a matching recorded update, the planned repair path first acquires the same local update lease, proves that working
+bytes and local status still match the recorded target, and retries only the idempotent Branch or Watch finalization.
+It performs no filesystem mutation. If recorded finalization is not applicable, Doctor may use the exact reconstruction
+path described above. Changed or ambiguous bytes still cause refusal and preserve recovery evidence.
+
+This section records an accepted design, not current executable behavior. Until the Working Directory Update work is
+implemented, `--repair-local-state` retains the current exact reconstruction behavior above.
+
 ## V1 Boundaries
 
 The current v1 command does not document or implement:

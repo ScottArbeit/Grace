@@ -62,3 +62,10 @@ Reference already provide the required boundary.
 
 Other Grace commands may trust a clean IPC snapshot. Publishing it before durable apply and marker closure, or when
 the final write cannot be verified, would let an unproven state cross that process boundary.
+
+## Related decision
+
+[ADR 0011](0011-working-directory-update-transaction.md) moves filesystem planning, mutation, dual-hash verification,
+marker behavior, and local completion into the shared Working Directory Update module. This ADR continues to define
+Watch's server-event ordering, replay admission, cursor progression, IPC publication, and resync policy around that
+shared transaction.
