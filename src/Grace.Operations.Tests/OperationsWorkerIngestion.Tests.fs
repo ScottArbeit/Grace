@@ -191,7 +191,7 @@ type OperationsWorkerIngestionTests() =
                                      )
                                      KeyValuePair<string, string>(
                                          getConfigKey OperationsWorkerSettings.ProcessorSubscriptionEnvironmentVariable,
-                                         OperationsWorkerSettings.DefaultProcessorSubscriptionName
+                                         "configured-usage-collector"
                                      )
                                      KeyValuePair<string, string>(
                                          getConfigKey OperationsWorkerSettings.SqlConnectionStringEnvironmentVariable,
@@ -211,7 +211,7 @@ type OperationsWorkerIngestionTests() =
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(value.TopicName, Is.EqualTo("operations-topic"))
-                    Assert.That(value.SubscriptionName, Is.EqualTo(OperationsWorkerSettings.DefaultProcessorSubscriptionName))
+                    Assert.That(value.SubscriptionName, Is.EqualTo("configured-usage-collector"))
 
                     Assert.That(
                         value.SqlConnectionString,

@@ -47,10 +47,6 @@ module ApplicationContext =
     [<Literal>]
     let private AzureServiceBusOperationalFactsProcessorSubscription = "grace__azure_service_bus__operational_facts_processor_subscription"
 
-    /// Fixed Service Bus subscription that consumes immutable operational usage facts.
-    [<Literal>]
-    let private OperationalFactsProcessorSubscriptionName = "operational-facts-processor"
-
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
     let mutable private log: ILogger = null
@@ -285,9 +281,9 @@ module ApplicationContext =
                     | null -> String.Empty
                     | value -> value.Trim()
 
-                if not (String.Equals(operationalFactsProcessorSubscription, OperationalFactsProcessorSubscriptionName, StringComparison.Ordinal)) then
+                if String.IsNullOrWhiteSpace operationalFactsProcessorSubscription then
                     invalidOp
-                        $"Environment variable '{AzureServiceBusOperationalFactsProcessorSubscription}' must be set to '{OperationalFactsProcessorSubscriptionName}' when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}, after confirming topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' has that durable subscription."
+                        $"Environment variable '{AzureServiceBusOperationalFactsProcessorSubscription}' must name the durable usage collector subscription on topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
                 let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 
