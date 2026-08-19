@@ -41,6 +41,21 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Contain("Using Azure Storage account: {azureStorageAccountName}")))
         )
 
+    /// Verifies DebugAzure forwards every explicit secure Redis setting without logging credential values.
+    [<Test>]
+    member _.DebugAzureForwardsTlsRedisSettingsWithoutSecretDiagnostics() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(appHostSource, Does.Contain(".WithEnvironment(EnvironmentVariables.RedisTls, redisTls)"))
+                Assert.That(appHostSource, Does.Contain(".WithEnvironment(EnvironmentVariables.RedisUsername, redisUsername)"))
+                Assert.That(appHostSource, Does.Contain(".WithEnvironment(EnvironmentVariables.RedisPassword, redisPassword)"))
+                Assert.That(appHostSource, Does.Contain(".WithEnvironment(EnvironmentVariables.RedisCaCertificate, redisCaCertificate)"))
+                Assert.That(appHostSource, Does.Not.Contain("Console.WriteLine(redisPassword"))
+                Assert.That(appHostSource, Does.Not.Contain("Console.WriteLine(redisCaCertificate")))
+        )
+
     /// Verifies that AppHost provisions and forwards the same operational facts topic name.
     [<Test>]
     member _.AppHostConfiguresOperationalFactsTopicConsistently() =
@@ -84,10 +99,7 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Contain("GraceEventSubscriptionResourceName = \"grace-event-subscription\""))
                 Assert.That(appHostSource, Does.Contain("OperationalFactsTopicResourceName = \"grace-operational-facts-topic\""))
 
-                Assert.That(
-                    appHostSource,
-                    Does.Contain("GraceUsageCollectorSubscriptionResourceName = \"grace-usage-collector-subscription\"")
-                )
+                Assert.That(appHostSource, Does.Contain("GraceUsageCollectorSubscriptionResourceName = \"grace-usage-collector-subscription\""))
 
                 Assert.That(appHostSource, Does.Contain("serviceBus.AddServiceBusTopic(GraceEventTopicResourceName, serviceBusTopicName)"))
 
@@ -141,19 +153,13 @@ type OperationalFactsPublisherAppHostTests() =
             (fun () ->
                 let configuration = ConfigurationBuilder().Build()
 
-                Environment.SetEnvironmentVariable(
-                    Program.DebugAzureBootstrapModeEnvironmentVariable,
-                    Program.DebugAzureBootstrapModeSuppress
-                )
+                Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapModeEnvironmentVariable, Program.DebugAzureBootstrapModeSuppress)
 
                 let suppressed = Program.ResolveAuthorizationBootstrapSettings(configuration, true)
                 Assert.That(suppressed.Users, Is.Null)
                 Assert.That(suppressed.Groups, Is.Null)
 
-                Environment.SetEnvironmentVariable(
-                    Program.DebugAzureBootstrapModeEnvironmentVariable,
-                    Program.DebugAzureBootstrapModeExactUser
-                )
+                Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapModeEnvironmentVariable, Program.DebugAzureBootstrapModeExactUser)
 
                 Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapUserIdEnvironmentVariable, "authenticated-user")
 
@@ -165,7 +171,9 @@ type OperationalFactsPublisherAppHostTests() =
                 Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapUserIdEnvironmentVariable, "first-user;second-user")
 
                 Assert.Throws<InvalidOperationException>(
-                    Action(fun () -> Program.ResolveAuthorizationBootstrapSettings(configuration, true) |> ignore)
+                    Action (fun () ->
+                        Program.ResolveAuthorizationBootstrapSettings(configuration, true)
+                        |> ignore)
                 )
                 |> ignore
 

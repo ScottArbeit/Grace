@@ -68,6 +68,11 @@ system assignments, it performs one bounded restart that offers the authenticate
 environment is never reassigned by this flow; an existing SystemAdmin must grant access. Successful startup leaves
 Aspire running and reports its process ID and log paths.
 
+For the disposable infrastructure lab, use `Invoke-GraceInfrastructureLab.ps1 -Action Deploy`. That runner generates
+the process-scoped Redis TLS and ACL material, deploys the matching endpoint, launches this wrapper, proves authenticated
+`PING` with custom-root and hostname validation, and clears its parent-process secrets before reporting readiness.
+Direct wrapper use without those settings retains the existing local Redis container.
+
 ## Verify Components
 
 Open `http://localhost:18888` and confirm the following resources show

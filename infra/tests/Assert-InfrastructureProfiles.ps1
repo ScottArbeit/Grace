@@ -76,7 +76,16 @@ Assert-PatternAbsent $productionTemplate "skuName:\s*'GP_S_" 'The production-sha
 
 Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
 Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'
-Assert-PatternAbsent $redisContainerModule 'ipAddress\s*:' 'The lab Redis container must not expose a public IP address.'
+Assert-Pattern $redisContainerModule "--port'[\s\S]*'0'" 'The lab Redis container must disable its plaintext listener.'
+Assert-Pattern $redisContainerModule "--tls-port'[\s\S]*'6380'" 'The lab Redis container must listen on the accepted TLS port.'
+Assert-Pattern $redisContainerModule "--aclfile'" 'The lab Redis container must load its generated ACL from a mounted secret.'
+Assert-Pattern $redisContainerModule "type:\s*'Public'" 'The lab Redis container must expose its certificate hostname publicly.'
+Assert-Pattern $redisContainerModule 'ports:\s*\[[\s\S]*port:\s*6380' 'The lab Redis container must expose TLS port 6380.'
+Assert-PatternAbsent $redisContainerModule 'port:\s*6379' 'The lab Redis container must not expose plaintext port 6379.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param caCertificate' 'The lab Redis CA input must be a secure Bicep parameter.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param serverPrivateKey' 'The lab Redis private key input must be a secure Bicep parameter.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param aclFile' 'The lab Redis ACL input must be a secure Bicep parameter.'
+Assert-PatternAbsent $redisContainerModule 'output\s+\w*(password|privateKey|acl|certificate)' 'The lab Redis module must not output generated secure material.'
 
 Assert-Pattern $serviceBusModule 'graceUsageTopicName' 'The Service Bus module must use GraceUsage vocabulary for its usage topic.'
 Assert-Pattern $serviceBusModule 'graceUsageSubscriptionName' 'The Service Bus module must use GraceUsage vocabulary for its usage subscription.'
@@ -92,6 +101,11 @@ Assert-PatternAbsent $serviceBusModule 'enablePartitioning:\s*false' 'The Servic
 Assert-Pattern $labRunner "DeploymentSuffix\s*=\s*\(Get-Date\s+-Format\s+'yyyyMMdd'\)" 'The lab runner must derive its default deployment suffix at runtime.'
 Assert-PatternAbsent $labRunner "DeploymentSuffix\s*=\s*'\d{8}'" 'The lab runner must not embed a dated deployment suffix.'
 Assert-PatternAbsent $labRunner "ResourceGroupName\s*=\s*'rg-grace-infra-lab-\d{8}'" 'The lab runner must not embed a dated resource group name.'
+Assert-Pattern $labRunner "readEnvironmentVariable\('GRACE_LAB_REDIS_SERVER_PRIVATE_KEY'\)" 'The runner must resolve the Redis private key through inherited environment.'
+Assert-Pattern $labRunner 'Test-RedisTlsReadiness\s+-Material' 'The runner must complete authenticated TLS PING before readiness.'
+Assert-Pattern $labRunner 'Test-RedisTlsReadiness[\s\S]*Clear-LabRedisSecrets[\s\S]*readiness passed' 'The runner must clear parent Redis secrets before reporting readiness.'
+Assert-PatternAbsent $labRunner 'redis(ServerPrivateKey|AclFile|Password)=\$' 'The runner must not place secure Redis values in Azure CLI arguments.'
+Assert-PatternAbsent $labRunner 'Write-(Host|LabStatus)[^\r\n]*(Password|ServerKeyBase64|AclBase64|CaBase64)' 'The runner must not write generated Redis material to status output.'
 
 $expectedInventory = @(
     [pscustomobject]@{ name = 'expected-redis'; type = 'Microsoft.ContainerInstance/containerGroups' }

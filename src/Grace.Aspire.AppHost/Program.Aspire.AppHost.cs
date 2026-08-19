@@ -458,6 +458,25 @@ public partial class Program
                         GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
                     var operationsSqlConnectionString = GetRequiredSetting(configuration, OperationsSqlConnectionStringSettingName);
+                    var redisHost = ResolveSetting(configuration, EnvironmentVariables.RedisHost);
+                    var redisPort = ResolveSetting(configuration, EnvironmentVariables.RedisPort);
+                    var redisTls = ResolveSetting(configuration, EnvironmentVariables.RedisTls);
+                    var redisUsername = ResolveSetting(configuration, EnvironmentVariables.RedisUsername);
+                    var redisPassword = ResolveSetting(configuration, EnvironmentVariables.RedisPassword);
+                    var redisCaCertificate = ResolveSetting(configuration, EnvironmentVariables.RedisCaCertificate);
+
+                    if (!string.IsNullOrWhiteSpace(redisHost))
+                    {
+                        if (!IsTruthy(redisTls)
+                            || string.IsNullOrWhiteSpace(redisPort)
+                            || string.IsNullOrWhiteSpace(redisUsername)
+                            || string.IsNullOrWhiteSpace(redisPassword)
+                            || string.IsNullOrWhiteSpace(redisCaCertificate))
+                        {
+                            throw new InvalidOperationException(
+                                "DebugAzure Redis requires explicit TLS, port, ACL username, password, and CA settings.");
+                        }
+                    }
 
                     graceServer
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
@@ -471,6 +490,12 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
                         .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
+                        .WithEnvironment(EnvironmentVariables.RedisHost, redisHost ?? "127.0.0.1")
+                        .WithEnvironment(EnvironmentVariables.RedisPort, redisPort ?? "6379")
+                        .WithEnvironment(EnvironmentVariables.RedisTls, redisTls)
+                        .WithEnvironment(EnvironmentVariables.RedisUsername, redisUsername)
+                        .WithEnvironment(EnvironmentVariables.RedisPassword, redisPassword)
+                        .WithEnvironment(EnvironmentVariables.RedisCaCertificate, redisCaCertificate)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
@@ -489,6 +514,9 @@ public partial class Program
                     Console.WriteLine("  - Azure Storage: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Cosmos: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Service Bus: using DefaultAzureCredential.");
+                    Console.WriteLine(string.IsNullOrWhiteSpace(redisHost)
+                        ? "  - Redis: using the local unauthenticated container."
+                        : "  - Redis: using the TLS-authenticated infrastructure lab endpoint.");
                     Console.WriteLine($"  - Operational facts processor subscription: {operationalFactsProcessorSubscription}.");
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");

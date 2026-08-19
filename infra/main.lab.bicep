@@ -17,6 +17,22 @@ param developerPrincipalName string
 @description('Public IPv4 address allowed to connect to Azure SQL during the lab run.')
 param clientIpAddress string = ''
 
+@secure()
+@description('Base64-encoded PEM certificate for the per-run lab CA.')
+param redisCaCertificate string
+
+@secure()
+@description('Base64-encoded PEM certificate for the Redis TLS server.')
+param redisServerCertificate string
+
+@secure()
+@description('Base64-encoded PEM private key for the Redis TLS server.')
+param redisServerPrivateKey string
+
+@secure()
+@description('Base64-encoded Redis ACL file containing the generated per-run credential.')
+param redisAclFile string
+
 @description('Common tags added to disposable lab resources.')
 param tags object = {
   environment: 'infrastructure-lab'
@@ -84,8 +100,13 @@ module sql 'modules/sql.bicep' = {
 module redisContainer 'modules/redis-container.bicep' = {
   name: 'redis-container'
   params: {
+    aclFile: redisAclFile
+    caCertificate: redisCaCertificate
+    dnsNameLabel: redisContainerGroupName
     location: location
     name: redisContainerGroupName
+    serverCertificate: redisServerCertificate
+    serverPrivateKey: redisServerPrivateKey
     tags: tags
   }
 }
@@ -103,3 +124,5 @@ output serviceBusGraceUsageSubscription string = serviceBus.outputs.graceUsageSu
 output sqlConnectionString string = sql.outputs.entraConnectionString
 output redisContainerGroupName string = redisContainer.outputs.containerGroupName
 output redisContainerImage string = redisContainer.outputs.image
+output redisEndpoint string = redisContainer.outputs.fqdn
+output redisTlsPort int = redisContainer.outputs.tlsPort

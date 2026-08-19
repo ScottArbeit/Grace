@@ -386,6 +386,22 @@ module Constants =
         [<Literal>]
         let RedisPort = "grace__redis__port"
 
+        /// The environment variable that enables certificate-validated TLS for Redis.
+        [<Literal>]
+        let RedisTls = "grace__redis__tls"
+
+        /// The environment variable that contains the Redis ACL username.
+        [<Literal>]
+        let RedisUsername = "grace__redis__username"
+
+        /// The environment variable that contains the Redis ACL password.
+        [<Literal>]
+        let RedisPassword = "grace__redis__password"
+
+        /// The environment variable that contains the Base64-encoded PEM certificate for the Redis custom trust root.
+        [<Literal>]
+        let RedisCaCertificate = "grace__redis__ca_certificate"
+
         /// The environment variable that selects the pub-sub provider.
         [<Literal>]
         let GracePubSubSystem = "grace__pubsub__system"
