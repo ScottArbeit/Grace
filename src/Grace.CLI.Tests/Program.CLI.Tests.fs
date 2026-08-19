@@ -2,6 +2,8 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.SDK
+open Grace.Shared
 open NUnit.Framework
 open System
 
@@ -80,6 +82,14 @@ module CommandParsingTests =
             action ()
         finally
             Environment.SetEnvironmentVariable(name, original)
+
+    /// Verifies that SDK POST requests can resolve Grace Server without repository configuration.
+    [<Test>]
+    let ``SDK server URI prefers GRACE_SERVER_URI`` () =
+        withEnvironmentVariable
+            Constants.EnvironmentVariables.GraceServerUri
+            (Some "https://grace.example.test")
+            (fun () -> Grace.SDK.Common.resolveGraceServerUri () |> should equal "https://grace.example.test")
 
     /// Verifies that resolve invocation source prefers explicit source over environment.
     [<Test>]
@@ -608,6 +618,31 @@ module HelpDoesNotReadConfigTests =
             |> should equal RepositoryId.Empty
 
             graceIds.BranchId |> should equal BranchId.Empty
+            graceIds.HasOrganization |> should equal false
+            graceIds.HasRepository |> should equal false
+            graceIds.HasBranch |> should equal false)
+
+    /// Verifies that a system permission preflight does not require repository-local Grace configuration.
+    [<Test>]
+    let ``authz check system scope does not require graceconfig`` () =
+        withTempDir (fun _ ->
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "authorize"
+                        "check"
+                        "--resource"
+                        "system"
+                        "--operation"
+                        "SystemAdmin"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Command.Access.normalizeCheckPermissionIds parseResult "system"
+
+            graceIds.HasOwner |> should equal false
             graceIds.HasOrganization |> should equal false
             graceIds.HasRepository |> should equal false
             graceIds.HasBranch |> should equal false)

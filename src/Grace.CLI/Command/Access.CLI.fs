@@ -295,6 +295,13 @@ module Access =
         |> getNormalizedIdsAndNames
         |> clearImplicitChildScopeIds parseResult
 
+    /// Resolves no local scope for system checks and preserves configured ids for narrower permission checks.
+    let internal normalizeCheckPermissionIds (parseResult: ParseResult) (resourceKind: string) =
+        if resourceKind.Equals("system", StringComparison.OrdinalIgnoreCase) then
+            GraceIds.Default
+        else
+            parseResult |> getNormalizedIdsAndNames
+
     /// Formats scope values into the text shown in Spectre.Console tables or command output.
     let private formatScope (scope: Scope) =
         match scope with
@@ -959,8 +966,8 @@ module Access =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
                     let resourceKind = parseResult.GetValue(Options.resourceKindRequired)
+                    let graceIds = normalizeCheckPermissionIds parseResult resourceKind
 
                     let pathValue =
                         parseResult.GetValue(Options.pathOptional)

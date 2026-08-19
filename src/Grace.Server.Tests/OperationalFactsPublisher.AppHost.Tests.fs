@@ -107,3 +107,27 @@ type OperationalFactsPublisherAppHostTests() =
                     Does.Contain(".WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)")
                 ))
         )
+
+    /// Verifies Aspire forwards explicit authorization bootstrap settings without embedding a fixed Azure identity.
+    [<Test>]
+    member _.AppHostForwardsExplicitAuthorizationBootstrapSettings() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(
+                    appHostSource,
+                    Does.Contain(
+                        "AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, forwardedAuthKeys);"
+                    )
+                )
+
+                Assert.That(
+                    appHostSource,
+                    Does.Contain(
+                        "AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups, forwardedAuthKeys);"
+                    )
+                )
+
+                Assert.That(appHostSource, Does.Not.Contain("GraceAuthzBootstrapSystemAdminUsers, \"test-admin\"")))
+        )

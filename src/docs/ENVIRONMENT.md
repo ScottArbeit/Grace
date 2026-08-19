@@ -34,6 +34,33 @@ The Aspire dashboard defaults to <http://localhost:18888> and OTLP export defaul
 - `grace__auth__oidc__authority`
 - `grace__auth__oidc__audience`
 - `grace__auth__oidc__cli_client_id` (publish mode)
+- `grace__authz__bootstrap__system_admin_users`
+- `grace__authz__bootstrap__system_admin_groups`
+
+## DebugAzure Authorization Startup
+
+Use `scripts/start-debugazure.ps1` to start the Azure-backed development profile. The script builds the CLI, starts
+Aspire, waits for `grace authenticate whoami`, and checks `SystemAdmin` on the system resource.
+
+PowerShell:
+
+```powershell
+pwsh ./scripts/start-debugazure.ps1
+```
+
+bash / zsh:
+
+```bash
+pwsh ./scripts/start-debugazure.ps1
+```
+
+If the current identity is already authorized, startup does not change authorization. If the check is denied, the
+script restarts Aspire once with that exact authenticated Grace user ID as a bootstrap candidate. Grace seeds the
+assignment only when the durable system assignment list is empty. If assignments already exist, the restart cannot
+grant access and the script stops with a message that an existing SystemAdmin must grant the role.
+
+The script never uses the DebugLocal `test-admin` fallback and does not print tokens or the bootstrap user ID. Successful
+startup leaves Aspire running and prints its process ID plus stdout and stderr log paths under `.grace/logs`.
 
 ## DebugLocal Onboarding Variables
 

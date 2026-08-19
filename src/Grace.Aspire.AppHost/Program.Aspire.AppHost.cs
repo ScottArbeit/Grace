@@ -148,6 +148,8 @@ public partial class Program
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups, forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 if (isTestRun && !useFixedTestPorts)
@@ -561,6 +563,8 @@ public partial class Program
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups, forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 Console.WriteLine("Grace.Server publish/production environment configured (Azure resources with MI by default).");
