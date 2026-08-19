@@ -10,7 +10,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$bootstrapUsersVariable = "grace__authz__bootstrap__system_admin_users"
+$bootstrapModeVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_MODE"
+$bootstrapUserIdVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_USER_ID"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $appHostProject = Join-Path $repoRoot "src\Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj"
 $cliProject = Join-Path $repoRoot "src\Grace.CLI\Grace.CLI.fsproj"
@@ -41,15 +42,18 @@ function Stop-AppHostProcess {
 function Start-AppHostProcess {
     param([AllowNull()][string] $BootstrapUserId)
 
-    $originalBootstrapUsers = [Environment]::GetEnvironmentVariable($bootstrapUsersVariable, "Process")
+    $originalBootstrapMode = [Environment]::GetEnvironmentVariable($bootstrapModeVariable, "Process")
+    $originalBootstrapUserId = [Environment]::GetEnvironmentVariable($bootstrapUserIdVariable, "Process")
 
     try {
         if ([string]::IsNullOrWhiteSpace($BootstrapUserId)) {
-            [Environment]::SetEnvironmentVariable($bootstrapUsersVariable, $null, "Process")
+            [Environment]::SetEnvironmentVariable($bootstrapModeVariable, "Suppress", "Process")
+            [Environment]::SetEnvironmentVariable($bootstrapUserIdVariable, $null, "Process")
             Write-Status "Starting DebugAzure without bootstrap authorization."
         }
         else {
-            [Environment]::SetEnvironmentVariable($bootstrapUsersVariable, $BootstrapUserId, "Process")
+            [Environment]::SetEnvironmentVariable($bootstrapModeVariable, "ExactUser", "Process")
+            [Environment]::SetEnvironmentVariable($bootstrapUserIdVariable, $BootstrapUserId, "Process")
             Write-Status "Restarting DebugAzure with the authenticated user as the one-time bootstrap candidate."
         }
 
@@ -63,7 +67,8 @@ function Start-AppHostProcess {
             -PassThru
     }
     finally {
-        [Environment]::SetEnvironmentVariable($bootstrapUsersVariable, $originalBootstrapUsers, "Process")
+        [Environment]::SetEnvironmentVariable($bootstrapModeVariable, $originalBootstrapMode, "Process")
+        [Environment]::SetEnvironmentVariable($bootstrapUserIdVariable, $originalBootstrapUserId, "Process")
     }
 }
 

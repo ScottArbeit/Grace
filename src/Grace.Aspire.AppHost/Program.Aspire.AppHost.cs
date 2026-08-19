@@ -30,6 +30,12 @@ public partial class Program
     private const string GraceUsageCollectorSubscriptionResourceName = "grace-usage-collector-subscription";
     private const string OperationalFactsProcessorSubscriptionSettingName = "grace__azure_service_bus__operational_facts_processor_subscription";
     private const string OperationsSqlConnectionStringSettingName = "grace__operations__sql__connectionstring";
+    internal const string DebugAzureBootstrapModeEnvironmentVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_MODE";
+    internal const string DebugAzureBootstrapUserIdEnvironmentVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_USER_ID";
+    internal const string DebugAzureBootstrapModeSuppress = "Suppress";
+    internal const string DebugAzureBootstrapModeExactUser = "ExactUser";
+
+    internal sealed record AuthorizationBootstrapSettings(string? Users, string? Groups);
 
     private static void Main(string[] args)
     {
@@ -148,8 +154,17 @@ public partial class Program
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups, forwardedAuthKeys);
+                var authorizationBootstrapSettings = ResolveAuthorizationBootstrapSettings(configuration, isAzureDebugRun);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers,
+                    authorizationBootstrapSettings.Users,
+                    forwardedAuthKeys);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups,
+                    authorizationBootstrapSettings.Groups,
+                    forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 if (isTestRun && !useFixedTestPorts)
@@ -563,8 +578,17 @@ public partial class Program
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups, forwardedAuthKeys);
+                var authorizationBootstrapSettings = ResolveAuthorizationBootstrapSettings(configuration, false);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers,
+                    authorizationBootstrapSettings.Users,
+                    forwardedAuthKeys);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups,
+                    authorizationBootstrapSettings.Groups,
+                    forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 Console.WriteLine("Grace.Server publish/production environment configured (Azure resources with MI by default).");
@@ -688,12 +712,56 @@ public partial class Program
         string name,
         IList<string> forwardedKeys)
     {
-        var value = ResolveSetting(configuration, name);
+        AddOptionalEnvironment(resource, name, ResolveSetting(configuration, name), forwardedKeys);
+    }
+
+    private static void AddOptionalEnvironment(
+        IResourceBuilder<ProjectResource> resource,
+        string name,
+        string? value,
+        IList<string> forwardedKeys)
+    {
         if (!string.IsNullOrWhiteSpace(value))
         {
             resource.WithEnvironment(name, value);
             forwardedKeys?.Add(name);
         }
+    }
+
+    internal static AuthorizationBootstrapSettings ResolveAuthorizationBootstrapSettings(
+        IConfiguration configuration,
+        bool allowDebugAzureOverride)
+    {
+        if (allowDebugAzureOverride)
+        {
+            var mode = Environment.GetEnvironmentVariable(DebugAzureBootstrapModeEnvironmentVariable);
+
+            if (DebugAzureBootstrapModeSuppress.Equals(mode, StringComparison.Ordinal))
+            {
+                return new AuthorizationBootstrapSettings(null, null);
+            }
+
+            if (DebugAzureBootstrapModeExactUser.Equals(mode, StringComparison.Ordinal))
+            {
+                var exactUserId = Environment.GetEnvironmentVariable(DebugAzureBootstrapUserIdEnvironmentVariable);
+                if (string.IsNullOrWhiteSpace(exactUserId) || exactUserId.Contains(';'))
+                {
+                    throw new InvalidOperationException(
+                        $"{DebugAzureBootstrapModeExactUser} mode requires exactly one non-empty bootstrap user ID.");
+                }
+
+                return new AuthorizationBootstrapSettings(exactUserId, null);
+            }
+
+            if (!string.IsNullOrWhiteSpace(mode))
+            {
+                throw new InvalidOperationException($"Unsupported DebugAzure bootstrap mode '{mode}'.");
+            }
+        }
+
+        return new AuthorizationBootstrapSettings(
+            ResolveSetting(configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers),
+            ResolveSetting(configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups));
     }
 
     private static void LogForwardedSettings(string label, IList<string> forwardedKeys)
