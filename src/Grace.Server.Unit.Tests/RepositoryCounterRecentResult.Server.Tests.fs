@@ -7,6 +7,8 @@ open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
 open NUnit.Framework
 open System
+open System.Security.Cryptography
+open System.Security.Cryptography.X509Certificates
 open System.Threading
 
 /// Covers the provider-neutral Redis recent-result wire contract without starting Redis.
@@ -31,6 +33,22 @@ type RepositoryCounterRecentResultTests() =
         Assert.That(configuration.AsyncTimeout, Is.EqualTo(int connectionTimeout.TotalMilliseconds))
         Assert.That(requiresReadinessProbe false, Is.True)
         Assert.That(requiresReadinessProbe true, Is.False)
+
+    /// Verifies the lab endpoint enables TLS, keeps hostname validation, and supplies the generated ACL identity.
+    [<Test>]
+    member _.SecureLabConfigurationUsesTlsAclAndCustomRoot() =
+        use key = RSA.Create(2048)
+        let request = CertificateRequest("CN=Grace Lab CA", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+        request.CertificateExtensions.Add(X509BasicConstraintsExtension(true, false, 0, true))
+        use certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1.0), DateTimeOffset.UtcNow.AddHours(1.0))
+        let caPem = certificate.ExportCertificatePem()
+
+        let configuration = configurationForSecureEndpoint "redis.example.test" 6380 "grace" "secret" caPem
+
+        Assert.That(configuration.Ssl, Is.True)
+        Assert.That(configuration.SslHost, Is.EqualTo("redis.example.test"))
+        Assert.That(configuration.User, Is.EqualTo("grace"))
+        Assert.That(configuration.Password, Is.EqualTo("secret"))
 
     /// Verifies cached changes round-trip without inventing a zero for missing or malformed values.
     [<Test>]
@@ -104,4 +122,14 @@ type RepositoryCounterRecentResultTests() =
                 )
 
             Assert.That(confirmed, Is.False)
+        }
+
+    /// Verifies the startup warmup remains a no-op when Redis is intentionally absent.
+    [<Test>]
+    member _.UnavailableRedisWarmupCompletesWithoutConnection() =
+        task {
+            let recent = UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
+            let warmup = RedisRepositoryCounterRecentResultWarmup(recent) :> Microsoft.Extensions.Hosting.IHostedService
+
+            do! warmup.StartAsync(CancellationToken.None)
         }

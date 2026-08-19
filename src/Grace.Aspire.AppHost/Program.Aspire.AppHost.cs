@@ -92,7 +92,8 @@ public partial class Program
                 .WithContainerName(redisContainerName)
                 //.WithLifetime(ContainerLifetime.Session)
                 .WithEnvironment("ACCEPT_EULA", "Y")
-                .WithEndpoint(targetPort: 6379, port: 6379);
+                .WithEndpoint(targetPort: 6379, port: 6379, name: "tcp", scheme: "tcp");
+            var redisEndpoint = redis.GetEndpoint("tcp");
             if (isTestRun)
             {
                 redis.WithLifetime(ContainerLifetime.Session);
@@ -143,8 +144,6 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
                     .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")
-                    .WithEnvironment(EnvironmentVariables.RedisHost, "127.0.0.1")
-                    .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, orleansClusterId)
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, orleansServiceId)
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
@@ -190,6 +189,18 @@ public partial class Program
                     // DebugLocal (default): containers/emulators
                     // -------------------------
                     Console.WriteLine("Configuring Grace.Server for DebugLocal with local emulators.");
+                    graceServer.WithEnvironment(async context =>
+                    {
+                        var endpoint = await redisEndpoint.GetValueAsync(context.CancellationToken);
+                        if (string.IsNullOrWhiteSpace(endpoint))
+                        {
+                            throw new InvalidOperationException("Aspire did not allocate the local Redis endpoint.");
+                        }
+
+                        var endpointUri = new Uri(endpoint);
+                        context.EnvironmentVariables[EnvironmentVariables.RedisHost] = endpointUri.Host;
+                        context.EnvironmentVariables[EnvironmentVariables.RedisPort] = endpointUri.Port.ToString();
+                    });
                     var azuriteDataPath = Path.Combine(stateRoot, "azurite");
                     var cosmosCertPath = Path.Combine(stateRoot, "cosmos-cert");
                     var serviceBusConfigPath = Path.Combine(stateRoot, "servicebus");
@@ -458,6 +469,25 @@ public partial class Program
                         GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
                     var operationsSqlConnectionString = GetRequiredSetting(configuration, OperationsSqlConnectionStringSettingName);
+                    var redisHost = ResolveSetting(configuration, EnvironmentVariables.RedisHost);
+                    var redisPort = ResolveSetting(configuration, EnvironmentVariables.RedisPort);
+                    var redisTls = ResolveSetting(configuration, EnvironmentVariables.RedisTls);
+                    var redisUsername = ResolveSetting(configuration, EnvironmentVariables.RedisUsername);
+                    var redisPassword = ResolveSetting(configuration, EnvironmentVariables.RedisPassword);
+                    var redisCaCertificate = ResolveSetting(configuration, EnvironmentVariables.RedisCaCertificate);
+
+                    if (!string.IsNullOrWhiteSpace(redisHost))
+                    {
+                        if (!IsTruthy(redisTls)
+                            || string.IsNullOrWhiteSpace(redisPort)
+                            || string.IsNullOrWhiteSpace(redisUsername)
+                            || string.IsNullOrWhiteSpace(redisPassword)
+                            || string.IsNullOrWhiteSpace(redisCaCertificate))
+                        {
+                            throw new InvalidOperationException(
+                                "DebugAzure Redis requires explicit TLS, port, ACL username, password, and CA settings.");
+                        }
+                    }
 
                     graceServer
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
@@ -471,6 +501,12 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
                         .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
+                        .WithEnvironment(EnvironmentVariables.RedisHost, redisHost ?? "127.0.0.1")
+                        .WithEnvironment(EnvironmentVariables.RedisPort, redisPort ?? "6379")
+                        .WithEnvironment(EnvironmentVariables.RedisTls, redisTls)
+                        .WithEnvironment(EnvironmentVariables.RedisUsername, redisUsername)
+                        .WithEnvironment(EnvironmentVariables.RedisPassword, redisPassword)
+                        .WithEnvironment(EnvironmentVariables.RedisCaCertificate, redisCaCertificate)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
@@ -489,6 +525,9 @@ public partial class Program
                     Console.WriteLine("  - Azure Storage: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Cosmos: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Service Bus: using DefaultAzureCredential.");
+                    Console.WriteLine(string.IsNullOrWhiteSpace(redisHost)
+                        ? "  - Redis: using the local unauthenticated container."
+                        : "  - Redis: using the TLS-authenticated infrastructure lab endpoint.");
                     Console.WriteLine($"  - Operational facts processor subscription: {operationalFactsProcessorSubscription}.");
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");
@@ -624,7 +663,7 @@ public partial class Program
         }
     }
 
-    private static string? ResolveSetting(IConfiguration configuration, string name)
+    internal static string? ResolveSetting(IConfiguration configuration, string name)
     {
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value))

@@ -256,6 +256,15 @@ Orleans:
 - `grace__redis__port`
   - Redis port.
 
+- `grace__redis__tls`
+  - Enables certificate-validated Redis TLS.
+
+- `grace__redis__username` and `grace__redis__password`
+  - Redis ACL credential required when TLS is enabled.
+
+- `grace__redis__ca_certificate`
+  - Base64-encoded PEM custom root required when TLS is enabled.
+
 Redis:
 
 - <https://redis.io/docs/latest/>

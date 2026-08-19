@@ -10,6 +10,7 @@ $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
 $redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
 $labRunnerPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\Invoke-GraceInfrastructureLab.ps1'
+$startDebugAzurePath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\start-debugazure.ps1'
 $inventoryAssertionsPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\GraceInfrastructureLab.Inventory.ps1'
 . $inventoryAssertionsPath
 
@@ -76,7 +77,16 @@ Assert-PatternAbsent $productionTemplate "skuName:\s*'GP_S_" 'The production-sha
 
 Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
 Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'
-Assert-PatternAbsent $redisContainerModule 'ipAddress\s*:' 'The lab Redis container must not expose a public IP address.'
+Assert-Pattern $redisContainerModule "--port'[\s\S]*'0'" 'The lab Redis container must disable its plaintext listener.'
+Assert-Pattern $redisContainerModule "--tls-port'[\s\S]*'6380'" 'The lab Redis container must listen on the accepted TLS port.'
+Assert-Pattern $redisContainerModule "--aclfile'" 'The lab Redis container must load its generated ACL from a mounted secret.'
+Assert-Pattern $redisContainerModule "type:\s*'Public'" 'The lab Redis container must expose its certificate hostname publicly.'
+Assert-Pattern $redisContainerModule 'ports:\s*\[[\s\S]*port:\s*6380' 'The lab Redis container must expose TLS port 6380.'
+Assert-PatternAbsent $redisContainerModule 'port:\s*6379' 'The lab Redis container must not expose plaintext port 6379.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param caCertificate' 'The lab Redis CA input must be a secure Bicep parameter.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param serverPrivateKey' 'The lab Redis private key input must be a secure Bicep parameter.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param aclFile' 'The lab Redis ACL input must be a secure Bicep parameter.'
+Assert-PatternAbsent $redisContainerModule 'output\s+\w*(password|privateKey|acl|certificate)' 'The lab Redis module must not output generated secure material.'
 
 Assert-Pattern $serviceBusModule 'graceUsageTopicName' 'The Service Bus module must use GraceUsage vocabulary for its usage topic.'
 Assert-Pattern $serviceBusModule 'graceUsageSubscriptionName' 'The Service Bus module must use GraceUsage vocabulary for its usage subscription.'
@@ -92,6 +102,16 @@ Assert-PatternAbsent $serviceBusModule 'enablePartitioning:\s*false' 'The Servic
 Assert-Pattern $labRunner "DeploymentSuffix\s*=\s*\(Get-Date\s+-Format\s+'yyyyMMdd'\)" 'The lab runner must derive its default deployment suffix at runtime.'
 Assert-PatternAbsent $labRunner "DeploymentSuffix\s*=\s*'\d{8}'" 'The lab runner must not embed a dated deployment suffix.'
 Assert-PatternAbsent $labRunner "ResourceGroupName\s*=\s*'rg-grace-infra-lab-\d{8}'" 'The lab runner must not embed a dated resource group name.'
+Assert-Pattern $labRunner "readEnvironmentVariable\('GRACE_LAB_REDIS_SERVER_PRIVATE_KEY'\)" 'The runner must resolve the Redis private key through inherited environment.'
+Assert-Pattern $labRunner 'Test-RedisTlsReadiness\s+-Material' 'The runner must complete authenticated TLS PING before readiness.'
+Assert-Pattern $labRunner 'Test-RedisTlsReadiness[\s\S]*Clear-LabRedisSecrets[\s\S]*readiness passed' 'The runner must clear parent Redis secrets before reporting readiness.'
+Assert-Pattern $labRunner '''grace__azure_storage__account_name''\s*=\s*\$outputs\.storageAccountName\.value' 'The runner must override the exact Storage setting consumed by DebugAzure.'
+Assert-Pattern $labRunner '''grace__azurecosmosdb__endpoint''\s*=\s*\$outputs\.cosmosEndpoint\.value' 'The runner must override the exact Cosmos endpoint setting consumed by DebugAzure.'
+Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*Deployment completed; launching DebugAzure" 'The runner must clear deployment-only Redis material after deployment and before launching DebugAzure.'
+Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*& pwsh -NoProfile -File" 'The DebugAzure child must be launched only after deployment-only Redis secrets are cleared.'
+Assert-Pattern $labRunner "-PreflightOnly[\s\S]*Invoke-BicepBuilds[\s\S]*'deployment', 'group', 'create'" 'Deploy must reject a pre-existing Grace Server listener before rotating Azure credentials.'
+Assert-PatternAbsent $labRunner 'redis(ServerPrivateKey|AclFile|Password)=\$' 'The runner must not place secure Redis values in Azure CLI arguments.'
+Assert-PatternAbsent $labRunner 'Write-(Host|LabStatus)[^\r\n]*(Password|ServerKeyBase64|AclBase64|CaBase64)' 'The runner must not write generated Redis material to status output.'
 
 $expectedInventory = @(
     [pscustomobject]@{ name = 'expected-redis'; type = 'Microsoft.ContainerInstance/containerGroups' }
@@ -128,6 +148,29 @@ catch {
     if ($_.Exception.Message -notmatch 'unexpected top-level: stale-storage') {
         throw
     }
+}
+
+$occupiedListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$occupiedListener.Start()
+$occupiedPort = ([Net.IPEndPoint] $occupiedListener.LocalEndpoint).Port
+$occupiedUri = "http://127.0.0.1:$occupiedPort"
+try {
+    $occupiedOutput = @(& pwsh -NoProfile -File $startDebugAzurePath -GraceServerUri $occupiedUri -PreflightOnly 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw 'DebugAzure preflight accepted an occupied Grace Server URI.'
+    }
+
+    if (($occupiedOutput -join [Environment]::NewLine) -notmatch 'already has a listener') {
+        throw 'DebugAzure preflight did not explain that the configured URI was already occupied.'
+    }
+}
+finally {
+    $occupiedListener.Stop()
+}
+
+$availableOutput = @(& pwsh -NoProfile -File $startDebugAzurePath -GraceServerUri $occupiedUri -PreflightOnly 2>&1)
+if ($LASTEXITCODE -ne 0 -or ($availableOutput -join [Environment]::NewLine) -notmatch 'is available for a new DebugAzure child') {
+    throw 'DebugAzure preflight rejected an available Grace Server URI.'
 }
 
 Write-Host 'Infrastructure profile assertions passed.' -ForegroundColor Green

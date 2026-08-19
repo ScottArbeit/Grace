@@ -242,6 +242,14 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 - `grace__redis__host`: optional Redis host for ten-minute repository-counter
   recent results.
 - `grace__redis__port`: Redis port; defaults to `6379` when a host is set.
+- `grace__redis__tls`: set to `true` for the infrastructure lab endpoint.
+- `grace__redis__username`: Redis ACL username required when TLS is enabled.
+- `grace__redis__password`: Redis ACL password required when TLS is enabled.
+- `grace__redis__ca_certificate`: Base64-encoded PEM custom root required when TLS is enabled.
+
+The infrastructure lab runner supplies all five secure-endpoint settings to `DebugAzure`, validates the generated CA
+and DNS hostname, completes authenticated `PING`, and clears its parent-process copies before reporting readiness.
+When these lab settings are absent, `DebugAzure` retains the existing unauthenticated local Redis container.
 
 When Redis is not configured or cannot be reached, recent-result reads return
 unknown. Addition processing may continue because retaining content is safe.

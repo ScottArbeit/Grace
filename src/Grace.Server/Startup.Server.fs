@@ -2191,6 +2191,7 @@ module Application =
                 let redisHost = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.RedisHost)
 
                 let redisPort = configuration.GetValue<int>(getConfigKey Constants.EnvironmentVariables.RedisPort)
+                let redisTls = configuration.GetValue<bool>(getConfigKey Constants.EnvironmentVariables.RedisTls)
 
                 if String.IsNullOrWhiteSpace redisHost then
                     RepositoryCounterRecentResult.UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
@@ -2202,7 +2203,36 @@ module Application =
                             .GetRequiredService<ILoggerFactory>()
                             .CreateLogger("RepositoryCounterRecentResult.Server")
 
-                    new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog) :> IRepositoryCounterRecentResult)
+                    if redisTls then
+                        let redisUsername = configuration[getConfigKey Constants.EnvironmentVariables.RedisUsername]
+                        let redisPassword = configuration[getConfigKey Constants.EnvironmentVariables.RedisPassword]
+                        let encodedCaCertificate = configuration[getConfigKey Constants.EnvironmentVariables.RedisCaCertificate]
+
+                        if String.IsNullOrWhiteSpace redisUsername
+                           || String.IsNullOrWhiteSpace redisPassword
+                           || String.IsNullOrWhiteSpace encodedCaCertificate then
+                            invalidOp "Redis TLS requires an ACL username, password, and custom CA certificate."
+
+                        let caCertificatePem =
+                            encodedCaCertificate
+                            |> Convert.FromBase64String
+                            |> Encoding.UTF8.GetString
+
+                        new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(
+                            redisHost,
+                            effectivePort,
+                            redisUsername,
+                            redisPassword,
+                            caCertificatePem,
+                            redisLog
+                        )
+                        :> IRepositoryCounterRecentResult
+                    else
+                        new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog)
+                        :> IRepositoryCounterRecentResult)
+            |> ignore
+
+            services.AddHostedService<RepositoryCounterRecentResult.RedisRepositoryCounterRecentResultWarmup>()
             |> ignore
 
             services.AddSingleton<IExactRelationshipStore> (fun _ ->
