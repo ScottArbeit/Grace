@@ -22,7 +22,7 @@ type OperationalFactsPublisherActorTests() =
 
     /// Durable Service Bus subscription required before publishing operational usage facts.
     [<Literal>]
-    let OperationalFactsProcessorSubscriptionName = "operational-facts-processor"
+    let OperationalFactsProcessorSubscriptionName = "grace-usage-collector"
 
     /// Builds a valid repository storage usage fact for publisher envelope assertions.
     let usageFact usageFactId correlationId =
@@ -292,16 +292,15 @@ type OperationalFactsPublisherActorTests() =
                 )
 
             Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionSettingName))
-            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionName))
-            Assert.That(ex.Message, Does.Contain("durable subscription"))
+            Assert.That(ex.Message, Does.Contain("durable usage collector subscription"))
         finally
             previous
             |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
 
-    /// Verifies that server startup rejects processor subscription acknowledgements for the wrong durable subscription.
+    /// Verifies that server startup accepts a configured durable usage collector subscription.
     [<Test>]
     [<NonParallelizable>]
-    member _.StartupValidationRejectsInvalidOperationalFactsProcessorSubscription() =
+    member _.StartupValidationAcceptsConfiguredUsageCollectorSubscription() =
         let keys =
             [|
                 Constants.EnvironmentVariables.GracePubSubSystem
@@ -332,19 +331,12 @@ type OperationalFactsPublisherActorTests() =
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, "grace-operational-facts")
-            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, "operational-facts-dev")
+            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, "configured-usage-collector")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
 
-            let ex =
-                Assert.Throws<InvalidOperationException>(
-                    Action (fun () ->
-                        ApplicationContext.configurePubSubSettings ()
-                        |> ignore)
-                )
+            let settings = ApplicationContext.configurePubSubSettings ()
 
-            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionSettingName))
-            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionName))
-            Assert.That(ex.Message, Does.Contain("durable subscription"))
+            Assert.That(settings.AzureServiceBus.IsSome, Is.True)
         finally
             previous
             |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))

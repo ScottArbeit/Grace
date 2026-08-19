@@ -16,11 +16,11 @@ param eventTopicName string = 'graceeventstream'
 @description('Grace Server subscription name.')
 param eventSubscriptionName string = 'grace-server'
 
-@description('Operational usage facts topic name.')
-param operationalFactsTopicName string = 'grace-usage'
+@description('Grace usage topic name.')
+param graceUsageTopicName string = 'grace-usage'
 
-@description('Operational facts processor subscription name.')
-param operationalFactsSubscriptionName string = 'grace-usage-collector'
+@description('Grace usage collector subscription name.')
+param graceUsageSubscriptionName string = 'grace-usage-collector'
 
 var serviceBusDataOwnerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -50,7 +50,7 @@ resource eventTopic 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = {
     defaultMessageTimeToLive: 'P14D'
     enableBatchedOperations: true
     enableExpress: false
-    enablePartitioning: false
+    enablePartitioning: true
     maxSizeInMegabytes: 1024
     requiresDuplicateDetection: false
     status: 'Active'
@@ -72,14 +72,14 @@ resource eventSubscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions
   }
 }
 
-resource operationalFactsTopic 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = {
+resource graceUsageTopic 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = {
   parent: serviceBus
-  name: operationalFactsTopicName
+  name: graceUsageTopicName
   properties: {
     defaultMessageTimeToLive: 'P14D'
     enableBatchedOperations: true
     enableExpress: false
-    enablePartitioning: false
+    enablePartitioning: true
     maxSizeInMegabytes: 1024
     requiresDuplicateDetection: false
     status: 'Active'
@@ -87,9 +87,9 @@ resource operationalFactsTopic 'Microsoft.ServiceBus/namespaces/topics@2024-01-0
   }
 }
 
-resource operationalFactsSubscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
-  parent: operationalFactsTopic
-  name: operationalFactsSubscriptionName
+resource graceUsageSubscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: graceUsageTopic
+  name: graceUsageSubscriptionName
   properties: {
     deadLetteringOnFilterEvaluationExceptions: true
     deadLetteringOnMessageExpiration: true
@@ -114,5 +114,5 @@ resource developerAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 output namespaceName string = serviceBus.name
 output eventTopicName string = eventTopic.name
 output eventSubscriptionName string = eventSubscription.name
-output operationalFactsTopicName string = operationalFactsTopic.name
-output operationalFactsSubscriptionName string = operationalFactsSubscription.name
+output graceUsageTopicName string = graceUsageTopic.name
+output graceUsageSubscriptionName string = graceUsageSubscription.name

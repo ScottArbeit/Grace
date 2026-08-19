@@ -7,6 +7,9 @@ $ErrorActionPreference = 'Stop'
 $infraRoot = Split-Path -Parent $PSScriptRoot
 $labTemplatePath = Join-Path $infraRoot 'main.lab.bicep'
 $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
+$serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
+$redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
+$labRunnerPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\Invoke-GraceInfrastructureLab.ps1'
 
 function Assert-Pattern {
     <#
@@ -52,11 +55,14 @@ function Assert-PatternAbsent {
 
 $labTemplate = Get-Content -LiteralPath $labTemplatePath -Raw
 $productionTemplate = Get-Content -LiteralPath $productionTemplatePath -Raw
+$serviceBusModule = Get-Content -LiteralPath $serviceBusModulePath -Raw
+$redisContainerModule = Get-Content -LiteralPath $redisContainerModulePath -Raw
+$labRunner = Get-Content -LiteralPath $labRunnerPath -Raw
 
 Assert-Pattern $labTemplate 'serverless:\s*true' 'The lab profile must use serverless Cosmos and SQL modules.'
 Assert-Pattern $labTemplate "skuName:\s*'GP_S_Gen5_1'" 'The lab profile must use the agreed SQL serverless SKU.'
-Assert-Pattern $labTemplate "skuName:\s*'Balanced_B0'" 'The lab profile must use the low-cost Redis B0 SKU.'
-Assert-Pattern $labTemplate 'highAvailability:\s*false' 'The lab profile must disable Redis high availability.'
+Assert-Pattern $labTemplate "modules/redis-container\.bicep" 'The lab profile must use the disposable Redis container module.'
+Assert-PatternAbsent $labTemplate "modules/redis\.bicep" 'The lab profile must not deploy Azure Managed Redis.'
 
 Assert-Pattern $productionTemplate 'serverless:\s*false' 'The production-shaped profile must use provisioned Cosmos and SQL modules.'
 Assert-Pattern $productionTemplate 'param\s+cosmosProvisionedThroughput\s+int(\s|$)' 'The production-shaped profile must require Cosmos throughput.'
@@ -65,5 +71,24 @@ Assert-Pattern $productionTemplate 'validatedSqlSkuName' 'The production-shaped 
 Assert-Pattern $productionTemplate 'param\s+redisSkuName\s+string(\s|$)' 'The production-shaped profile must require a Redis SKU.'
 Assert-Pattern $productionTemplate 'highAvailability:\s*true' 'The production-shaped profile must enable Redis high availability.'
 Assert-PatternAbsent $productionTemplate "skuName:\s*'GP_S_" 'The production-shaped profile must not embed a SQL serverless SKU.'
+
+Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
+Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'
+Assert-PatternAbsent $redisContainerModule 'ipAddress\s*:' 'The lab Redis container must not expose a public IP address.'
+
+Assert-Pattern $serviceBusModule 'graceUsageTopicName' 'The Service Bus module must use GraceUsage vocabulary for its usage topic.'
+Assert-Pattern $serviceBusModule 'graceUsageSubscriptionName' 'The Service Bus module must use GraceUsage vocabulary for its usage subscription.'
+Assert-PatternAbsent $serviceBusModule 'operationalFacts|OperationalFacts|operational-facts' 'The Service Bus template must not retain OperationalFacts vocabulary.'
+Assert-Pattern $labTemplate 'serviceBusGraceUsageTopic' 'The lab profile must expose the Grace usage topic output.'
+Assert-Pattern $productionTemplate 'serviceBusGraceUsageTopic' 'The production-shaped profile must expose the Grace usage topic output.'
+
+$partitionedTopicCount = ([regex]::Matches($serviceBusModule, 'enablePartitioning:\s*true')).Count
+if ($partitionedTopicCount -ne 2) {
+    throw "Both Service Bus topics must enable partitioning; found $partitionedTopicCount partitioned topic declarations."
+}
+Assert-PatternAbsent $serviceBusModule 'enablePartitioning:\s*false' 'The Service Bus module must not create an unpartitioned topic.'
+Assert-Pattern $labRunner "DeploymentSuffix\s*=\s*\(Get-Date\s+-Format\s+'yyyyMMdd'\)" 'The lab runner must derive its default deployment suffix at runtime.'
+Assert-PatternAbsent $labRunner "DeploymentSuffix\s*=\s*'\d{8}'" 'The lab runner must not embed a dated deployment suffix.'
+Assert-PatternAbsent $labRunner "ResourceGroupName\s*=\s*'rg-grace-infra-lab-\d{8}'" 'The lab runner must not embed a dated resource group name.'
 
 Write-Host 'Infrastructure profile assertions passed.' -ForegroundColor Green

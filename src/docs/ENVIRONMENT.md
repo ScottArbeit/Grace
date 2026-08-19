@@ -193,7 +193,7 @@ These capture failure classification, retryability, cleanup notes, and runtime m
 - `grace__azure_service_bus__operational_facts_topic`: Service Bus topic for operational usage facts. Defaults to
   `grace-operational-facts` in Aspire-managed local and publish configurations.
 - `grace__azure_service_bus__operational_facts_processor_subscription`: Required Azure Service Bus startup
-  acknowledgement that the operational facts topic already has the durable `operational-facts-processor` subscription.
+  acknowledgement naming the durable usage collector subscription. The infrastructure lab uses `grace-usage-collector`.
 - `grace__azure_service_bus__subscription`: Service Bus subscription name.
 
 ### Operations Worker
@@ -205,8 +205,8 @@ These capture failure classification, retryability, cleanup notes, and runtime m
   `4`.
 - `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `16`.
 
-The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and requires
-`grace__azure_service_bus__operational_facts_processor_subscription` to be exactly `operational-facts-processor`.
+The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and consumes the durable
+subscription named by `grace__azure_service_bus__operational_facts_processor_subscription`.
 Malformed or unsupported usage fact messages are dead-lettered; transient storage failures are abandoned for retry.
 Messages are completed only after SQL processing succeeds or the durable usage fact identity is already present.
 

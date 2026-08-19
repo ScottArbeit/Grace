@@ -69,7 +69,7 @@ Open `http://localhost:18888` and confirm the following resources show
   endpoint on `5300`)
 - `grace-server` – HTTP `5000` / HTTPS `5001`
 - `grace-operations-worker` – operational usage fact ingestion worker for the
-  `grace-operational-facts` topic and durable `operational-facts-processor`
+  `grace-operational-facts` topic and durable `grace-usage-collector`
   subscription
 
 For the fixed full-run manifest contribution accounting command, its exact-SHA evidence packet, and the local/Azure
@@ -115,7 +115,7 @@ already processed.
    startup and Aspire instrumentation.
 4. **Operations worker** – In the `grace-operations-worker` logs, confirm the
    startup line for topic `grace-operational-facts` and subscription
-   `operational-facts-processor`.
+   `grace-usage-collector`.
 
 ## Service Bus Emulator Connection String
 

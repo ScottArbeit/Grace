@@ -7,7 +7,7 @@ Both entry points share focused resource modules, but they make different capaci
 
 | Profile | Cosmos DB | Azure SQL Database | Azure Managed Redis | Intended use |
 | --- | --- | --- | --- | --- |
-| `main.lab.bicep` | Serverless | General Purpose serverless | `Balanced_B0`, one node | Short-lived infrastructure practice |
+| `main.lab.bicep` | Serverless | General Purpose serverless | Private ACI Redis container | Short-lived infrastructure practice |
 | `main.production.bicep` | Provisioned throughput | Provisioned compute | Caller-selected SKU, two-node high availability | Development or production design input |
 
 The production-shaped profile deliberately has no parameter file. It requires explicit Cosmos throughput, SQL SKU and
@@ -21,12 +21,15 @@ The lab profile creates these top-level billable resources in one disposable res
 
 - Standard LRS StorageV2 account and Grace blob containers
 - Cosmos DB for NoSQL serverless account, database, and `/PartitionKey` container
-- Service Bus Standard namespace with Grace event and operational-usage topics and subscriptions
+- Service Bus Standard namespace with partitioned Grace event and operational-usage topics and subscriptions
 - Azure SQL Database General Purpose serverless database with Microsoft Entra-only administration
-- Azure Managed Redis `Balanced_B0` instance without high availability
+- Private Azure Container Instances group running `redis:7.4-alpine`
 
 The template grants the signed-in developer the Storage blob/table, Cosmos DB data contributor, and Service Bus data
 owner roles needed by Grace's `DefaultAzureCredential` development path. It does not emit resource keys or passwords.
+The Redis container has no public IP address. `DebugAzure` continues to use its local Redis container while exercising
+the lab's real Azure Storage, Cosmos DB, Service Bus, and SQL resources. The production-shaped profile retains Azure
+Managed Redis because ACI is only a fast disposable lab substitute.
 
 ## Cost boundary
 
@@ -38,6 +41,9 @@ The lab is not designed to remain deployed.
 
 The wrapper verifies the subscription name and ID before every operation. `WhatIf` registers the six required resource
 providers and creates the otherwise free disposable resource group before running Azure validation and `what-if`.
+Each action prints timestamped progress messages before long-running or externally visible steps. By default, the local
+date in `yyyyMMdd` form becomes the deployment suffix and the matching `rg-grace-infra-lab-<suffix>` resource group
+name. Pass `-DeploymentSuffix` and `-ResourceGroupName` explicitly when operating a lab created on a different date.
 
 PowerShell:
 

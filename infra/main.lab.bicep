@@ -29,7 +29,7 @@ var storageName = take('gracelab${normalizedSuffix}', 24)
 var cosmosName = take('grace-cosmos-lab-${normalizedSuffix}', 44)
 var serviceBusName = take('grace-sb-lab-${normalizedSuffix}', 50)
 var sqlServerName = take('grace-sql-lab-${normalizedSuffix}', 63)
-var redisName = take('grace-redis-lab-${normalizedSuffix}', 60)
+var redisContainerGroupName = take('grace-redis-lab-${normalizedSuffix}', 63)
 
 module storage 'modules/storage.bicep' = {
   name: 'storage'
@@ -81,13 +81,11 @@ module sql 'modules/sql.bicep' = {
   }
 }
 
-module redis 'modules/redis.bicep' = {
-  name: 'redis'
+module redisContainer 'modules/redis-container.bicep' = {
+  name: 'redis-container'
   params: {
-    highAvailability: false
     location: location
-    name: redisName
-    skuName: 'Balanced_B0'
+    name: redisContainerGroupName
     tags: tags
   }
 }
@@ -100,8 +98,8 @@ output cosmosContainerName string = cosmos.outputs.containerName
 output serviceBusNamespace string = serviceBus.outputs.namespaceName
 output serviceBusEventTopic string = serviceBus.outputs.eventTopicName
 output serviceBusEventSubscription string = serviceBus.outputs.eventSubscriptionName
-output serviceBusOperationalFactsTopic string = serviceBus.outputs.operationalFactsTopicName
-output serviceBusOperationalFactsSubscription string = serviceBus.outputs.operationalFactsSubscriptionName
+output serviceBusGraceUsageTopic string = serviceBus.outputs.graceUsageTopicName
+output serviceBusGraceUsageSubscription string = serviceBus.outputs.graceUsageSubscriptionName
 output sqlConnectionString string = sql.outputs.entraConnectionString
-output redisHostName string = redis.outputs.hostName
-output redisPort int = redis.outputs.port
+output redisContainerGroupName string = redisContainer.outputs.containerGroupName
+output redisContainerImage string = redisContainer.outputs.image
