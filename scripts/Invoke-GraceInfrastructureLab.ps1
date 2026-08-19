@@ -31,6 +31,7 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $labTemplatePath = Join-Path $repositoryRoot 'infra\main.lab.bicep'
 $productionTemplatePath = Join-Path $repositoryRoot 'infra\main.production.bicep'
 $profileAssertionPath = Join-Path $repositoryRoot 'infra\tests\Assert-InfrastructureProfiles.ps1'
+. (Join-Path $PSScriptRoot 'GraceInfrastructureLab.Inventory.ps1')
 $deploymentName = "grace-infra-lab-$DeploymentSuffix"
 $resourceGroupPattern = '^rg-grace-infra-lab-[a-z0-9-]+$'
 $normalizedSuffix = $DeploymentSuffix.ToLowerInvariant().Replace('-', '')
@@ -244,15 +245,15 @@ function Test-LabResources {
         '--output', 'json'
     ) | ConvertFrom-Json
 
-    $expectedTopLevelTypes = @(
-        'Microsoft.ContainerInstance/containerGroups',
-        'Microsoft.DocumentDB/databaseAccounts',
-        'Microsoft.ServiceBus/namespaces',
-        'Microsoft.Sql/servers',
-        'Microsoft.Storage/storageAccounts'
+    $expectedTopLevelResources = @(
+        [pscustomobject]@{ name = $redisContainerGroupName; type = 'Microsoft.ContainerInstance/containerGroups' }
+        [pscustomobject]@{ name = $cosmosName; type = 'Microsoft.DocumentDB/databaseAccounts' }
+        [pscustomobject]@{ name = $serviceBusName; type = 'Microsoft.ServiceBus/namespaces' }
+        [pscustomobject]@{ name = $sqlServerName; type = 'Microsoft.Sql/servers' }
+        [pscustomobject]@{ name = $storageName; type = 'Microsoft.Storage/storageAccounts' }
     )
     $allowedTypes = @(
-        $expectedTopLevelTypes
+        $expectedTopLevelResources.type
         'Microsoft.Authorization/roleAssignments'
         'Microsoft.DocumentDB/databaseAccounts/sqlDatabases'
         'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers'
@@ -264,13 +265,10 @@ function Test-LabResources {
         'Microsoft.Storage/storageAccounts/blobServices'
         'Microsoft.Storage/storageAccounts/blobServices/containers'
     )
-    $actualTypes = @($resources.type | Sort-Object -Unique)
-    $unexpectedTypes = @($actualTypes | Where-Object { $_ -notin $allowedTypes })
-    $missingTypes = @($expectedTopLevelTypes | Where-Object { $_ -notin $actualTypes })
-
-    if ($unexpectedTypes.Count -gt 0 -or $missingTypes.Count -gt 0) {
-        throw "Lab resource types differ. Missing: $($missingTypes -join ', '); unexpected: $($unexpectedTypes -join ', ')."
-    }
+    Assert-ExactLabResourceInventory `
+        -Resources $resources `
+        -ExpectedTopLevelResources $expectedTopLevelResources `
+        -AllowedResourceTypes $allowedTypes
 
     Write-LabStatus 'Verifying the Storage account SKU.'
     $storageSku = Invoke-AzureCli @(

@@ -10,6 +10,8 @@ $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
 $redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
 $labRunnerPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\Invoke-GraceInfrastructureLab.ps1'
+$inventoryAssertionsPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\GraceInfrastructureLab.Inventory.ps1'
+. $inventoryAssertionsPath
 
 function Assert-Pattern {
     <#
@@ -90,5 +92,42 @@ Assert-PatternAbsent $serviceBusModule 'enablePartitioning:\s*false' 'The Servic
 Assert-Pattern $labRunner "DeploymentSuffix\s*=\s*\(Get-Date\s+-Format\s+'yyyyMMdd'\)" 'The lab runner must derive its default deployment suffix at runtime.'
 Assert-PatternAbsent $labRunner "DeploymentSuffix\s*=\s*'\d{8}'" 'The lab runner must not embed a dated deployment suffix.'
 Assert-PatternAbsent $labRunner "ResourceGroupName\s*=\s*'rg-grace-infra-lab-\d{8}'" 'The lab runner must not embed a dated resource group name.'
+
+$expectedInventory = @(
+    [pscustomobject]@{ name = 'expected-redis'; type = 'Microsoft.ContainerInstance/containerGroups' }
+    [pscustomobject]@{ name = 'expected-storage'; type = 'Microsoft.Storage/storageAccounts' }
+)
+$validInventory = @(
+    $expectedInventory
+    [pscustomobject]@{ name = 'expected-storage/default'; type = 'Microsoft.Storage/storageAccounts/blobServices' }
+)
+$allowedInventoryTypes = @(
+    'Microsoft.ContainerInstance/containerGroups'
+    'Microsoft.Storage/storageAccounts'
+    'Microsoft.Storage/storageAccounts/blobServices'
+)
+
+Assert-ExactLabResourceInventory `
+    -Resources $validInventory `
+    -ExpectedTopLevelResources $expectedInventory `
+    -AllowedResourceTypes $allowedInventoryTypes
+
+$inventoryWithStaleAllowedResource = @(
+    $validInventory
+    [pscustomobject]@{ name = 'stale-storage'; type = 'Microsoft.Storage/storageAccounts' }
+)
+
+try {
+    Assert-ExactLabResourceInventory `
+        -Resources $inventoryWithStaleAllowedResource `
+        -ExpectedTopLevelResources $expectedInventory `
+        -AllowedResourceTypes $allowedInventoryTypes
+    throw 'Exact inventory assertion accepted an additional Storage account.'
+}
+catch {
+    if ($_.Exception.Message -notmatch 'unexpected top-level: stale-storage') {
+        throw
+    }
+}
 
 Write-Host 'Infrastructure profile assertions passed.' -ForegroundColor Green
