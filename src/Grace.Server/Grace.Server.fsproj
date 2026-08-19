@@ -134,8 +134,8 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="Asp.Versioning.Mvc" Version="10.0.1" />
-		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.0.1" />
+		<PackageReference Include="Asp.Versioning.Mvc" Version="10.2.1" />
+		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.2.1" />
 		<PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.2" />
 		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.3" />
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.29.1" />
@@ -146,12 +146,12 @@
 		<PackageReference Include="Giraffe" Version="8.3.0" />
 		<PackageReference Include="MessagePack" Version="3.1.8" />
 		<PackageReference Include="MessagePack.Annotations" Version="3.1.8" />
-		<PackageReference Include="MessagePack.NodaTime" Version="3.5.6" />
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.10" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.10" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.0" />
-		<PackageReference Include="Microsoft.OpenApi" Version="3.9.0" />
+		<PackageReference Include="MessagePack.NodaTime" Version="3.5.7" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.1" />
+		<PackageReference Include="Microsoft.OpenApi" Version="3.10.0" />
 		<PackageReference Include="Microsoft.Orleans.Clustering.AzureStorage" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.AzureStorage" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="10.2.2" />
@@ -174,10 +174,10 @@
 		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.2.3" />
 		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.2.3" />
 		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
-		<PackageReference Include="StackExchange.Redis" Version="3.1.0" />
+		<PackageReference Include="StackExchange.Redis" Version="3.1.13" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.1.302" />
+		<PackageReference Update="FSharp.Core" Version="10.1.400" />
 	</ItemGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="Grace.Server.Tests" />

@@ -10,7 +10,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Update="FSharp.Core" Version="10.1.302" />
+    <PackageReference Update="FSharp.Core" Version="10.1.400" />
     <ProjectReference Include="..\Grace.Cache.Storage\Grace.Cache.Storage.fsproj" />
   </ItemGroup>
 </Project>
