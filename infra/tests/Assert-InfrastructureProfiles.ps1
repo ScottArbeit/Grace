@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 $infraRoot = Split-Path -Parent $PSScriptRoot
 $labTemplatePath = Join-Path $infraRoot 'main.lab.bicep'
 $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
+$infraReadmePath = Join-Path $infraRoot 'README.md'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
 $containerAppModulePath = Join-Path $infraRoot 'modules\container-app.bicep'
 $containerRegistryModulePath = Join-Path $infraRoot 'modules\container-registry.bicep'
@@ -67,6 +68,7 @@ $containerRegistryModule = Get-Content -LiteralPath $containerRegistryModulePath
 $redisContainerModule = Get-Content -LiteralPath $redisContainerModulePath -Raw
 $labRunner = Get-Content -LiteralPath $labRunnerPath -Raw
 $graceServerDockerfile = Get-Content -LiteralPath $graceServerDockerfilePath -Raw
+$infraReadme = Get-Content -LiteralPath $infraReadmePath -Raw
 
 Assert-Pattern $labTemplate 'serverless:\s*true' 'The lab profile must use serverless Cosmos and SQL modules.'
 Assert-Pattern $labTemplate "skuName:\s*'GP_S_Gen5_1'" 'The lab profile must use the agreed SQL serverless SKU.'
@@ -109,6 +111,8 @@ Assert-Pattern $graceServerDockerfile 'FROM\s+mcr\.microsoft\.com/dotnet/aspnet:
 Assert-Pattern $graceServerDockerfile 'dotnet publish[^\r\n]+-c Release' 'The production image must publish Grace Server in Release mode.'
 Assert-Pattern $graceServerDockerfile '/p:DebugSymbols=false' 'The production image must exclude debug symbols.'
 Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:10\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
+
+Assert-Pattern $infraReadme 'sqlSkuName=GP_Gen5_2[\s\S]*sqlVCoreCapacity=2[\s\S]*sqlMaxSizeBytes=5368709120' 'The production deployment example must use an available West US 2 provisioned SQL configuration.'
 
 Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
 Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'

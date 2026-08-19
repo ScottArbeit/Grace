@@ -83,9 +83,9 @@ az deployment group create `
         developerPrincipalId='<developer-object-id>' `
         developerPrincipalName='<developer-upn>' `
         cosmosProvisionedThroughput=400 `
-        sqlSkuName='<provisioned-sql-sku>' `
-        sqlVCoreCapacity=1 `
-        sqlMaxSizeBytes=1073741824 `
+        sqlSkuName=GP_Gen5_2 `
+        sqlVCoreCapacity=2 `
+        sqlMaxSizeBytes=5368709120 `
         redisSkuName='<managed-redis-sku>' `
         graceServerImage=$image
 
