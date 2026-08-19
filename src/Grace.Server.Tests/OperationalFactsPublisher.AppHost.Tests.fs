@@ -56,6 +56,20 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Not.Contain("Console.WriteLine(redisCaCertificate")))
         )
 
+    /// Verifies DebugLocal resolves Redis host and port from Aspire's allocated endpoint instead of fixed defaults.
+    [<Test>]
+    member _.DebugLocalForwardsAllocatedRedisEndpoint() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(appHostSource, Does.Contain("var redisEndpoint = redis.GetEndpoint(\"tcp\");"))
+                Assert.That(appHostSource, Does.Contain("await redisEndpoint.GetValueAsync(context.CancellationToken)"))
+                Assert.That(appHostSource, Does.Contain("context.EnvironmentVariables[EnvironmentVariables.RedisHost] = endpointUri.Host;"))
+
+                Assert.That(appHostSource, Does.Contain("context.EnvironmentVariables[EnvironmentVariables.RedisPort] = endpointUri.Port.ToString();")))
+        )
+
     /// Verifies a fresh exact process setting wins over stale configuration inherited from an earlier lab run.
     [<Test>]
     member _.DebugAzureExactProcessSettingOverridesStaleConfiguration() =
