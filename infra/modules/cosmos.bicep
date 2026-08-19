@@ -17,6 +17,9 @@ param provisionedThroughput int = 400
 @description('Microsoft Entra principal that runs Grace during infrastructure validation.')
 param developerPrincipalId string
 
+@description('Optional managed-identity principal that runs Grace Server.')
+param graceServerPrincipalId string = ''
+
 @description('Grace Cosmos DB database name.')
 param databaseName string = 'grace-dev'
 
@@ -103,6 +106,16 @@ resource developerAccess 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignmen
   name: guid(account.id, developerPrincipalId, cosmosDataContributorRoleDefinitionId)
   properties: {
     principalId: developerPrincipalId
+    roleDefinitionId: cosmosDataContributorRoleDefinitionId
+    scope: account.id
+  }
+}
+
+resource graceServerAccess 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = if (!empty(graceServerPrincipalId)) {
+  parent: account
+  name: guid(account.id, graceServerPrincipalId, cosmosDataContributorRoleDefinitionId)
+  properties: {
+    principalId: graceServerPrincipalId
     roleDefinitionId: cosmosDataContributorRoleDefinitionId
     scope: account.id
   }

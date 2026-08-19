@@ -8,10 +8,13 @@ $infraRoot = Split-Path -Parent $PSScriptRoot
 $labTemplatePath = Join-Path $infraRoot 'main.lab.bicep'
 $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
+$containerAppModulePath = Join-Path $infraRoot 'modules\container-app.bicep'
+$containerRegistryModulePath = Join-Path $infraRoot 'modules\container-registry.bicep'
 $redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
 $labRunnerPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\Invoke-GraceInfrastructureLab.ps1'
 $startDebugAzurePath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\start-debugazure.ps1'
 $inventoryAssertionsPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\GraceInfrastructureLab.Inventory.ps1'
+$graceServerDockerfilePath = Join-Path (Split-Path -Parent $infraRoot) 'src\Grace.Server\Dockerfile'
 . $inventoryAssertionsPath
 
 function Assert-Pattern {
@@ -59,8 +62,11 @@ function Assert-PatternAbsent {
 $labTemplate = Get-Content -LiteralPath $labTemplatePath -Raw
 $productionTemplate = Get-Content -LiteralPath $productionTemplatePath -Raw
 $serviceBusModule = Get-Content -LiteralPath $serviceBusModulePath -Raw
+$containerAppModule = Get-Content -LiteralPath $containerAppModulePath -Raw
+$containerRegistryModule = Get-Content -LiteralPath $containerRegistryModulePath -Raw
 $redisContainerModule = Get-Content -LiteralPath $redisContainerModulePath -Raw
 $labRunner = Get-Content -LiteralPath $labRunnerPath -Raw
+$graceServerDockerfile = Get-Content -LiteralPath $graceServerDockerfilePath -Raw
 
 Assert-Pattern $labTemplate 'serverless:\s*true' 'The lab profile must use serverless Cosmos and SQL modules.'
 Assert-Pattern $labTemplate "skuName:\s*'GP_S_Gen5_1'" 'The lab profile must use the agreed SQL serverless SKU.'
@@ -74,6 +80,35 @@ Assert-Pattern $productionTemplate 'validatedSqlSkuName' 'The production-shaped 
 Assert-Pattern $productionTemplate 'param\s+redisSkuName\s+string(\s|$)' 'The production-shaped profile must require a Redis SKU.'
 Assert-Pattern $productionTemplate 'highAvailability:\s*true' 'The production-shaped profile must enable Redis high availability.'
 Assert-PatternAbsent $productionTemplate "skuName:\s*'GP_S_" 'The production-shaped profile must not embed a SQL serverless SKU.'
+Assert-Pattern $productionTemplate "modules/container-registry\.bicep" 'The production-shaped profile must deploy Azure Container Registry.'
+Assert-Pattern $productionTemplate "modules/managed-identity\.bicep" 'The production-shaped profile must deploy a user-assigned managed identity.'
+Assert-Pattern $productionTemplate "modules/container-app-environment\.bicep" 'The production-shaped profile must deploy a Container Apps environment.'
+Assert-Pattern $productionTemplate "modules/container-app\.bicep" 'The production-shaped profile must deploy Grace Server as a Container App.'
+Assert-Pattern $productionTemplate 'param\s+graceServerImage\s+string(\s|$)' 'The production-shaped profile must require an immutable Grace Server image.'
+Assert-Pattern $productionTemplate "startsWith\(validatedGraceServerImage, '\$\{registry\.outputs\.loginServer\}/'\)" 'Grace Server must use the registry created by its deployment.'
+Assert-Pattern $productionTemplate 'output\s+graceServerFqdn\s+string' 'The production-shaped profile must expose the Grace Server hostname.'
+Assert-Pattern $productionTemplate 'output\s+graceServerIdentityClientId\s+string' 'The production-shaped profile must expose the Grace Server identity client ID.'
+Assert-Pattern $productionTemplate 'output\s+graceServerIdentityPrincipalId\s+string' 'The production-shaped profile must expose the Grace Server identity principal ID.'
+
+Assert-Pattern $containerRegistryModule 'adminUserEnabled:\s*false' 'The registry must not enable administrator credentials.'
+Assert-Pattern $containerRegistryModule '7f951dda-4ed3-4680-a7ca-43fe172d538d' 'The registry module must grant managed-identity AcrPull access.'
+Assert-Pattern $containerAppModule 'minReplicas:\s*1' 'Grace Server must keep exactly one minimum replica.'
+Assert-Pattern $containerAppModule 'maxReplicas:\s*1' 'Grace Server must keep exactly one maximum replica.'
+Assert-Pattern $containerAppModule "external:\s*true" 'Grace Server must expose external HTTPS ingress.'
+Assert-Pattern $containerAppModule 'targetPort:\s*5000' 'Grace Server ingress must target its documented HTTP port.'
+Assert-Pattern $containerAppModule 'registries:\s*\[[\s\S]*identity:\s*identityId' 'Grace Server must use its managed identity for registry pulls.'
+Assert-Pattern $containerAppModule "name:\s*'AZURE_CLIENT_ID'" 'Grace Server must select its user-assigned identity at runtime.'
+Assert-Pattern $containerAppModule "type:\s*'Startup'" 'Grace Server must have a startup probe.'
+Assert-Pattern $containerAppModule "type:\s*'Readiness'" 'Grace Server must have a readiness probe.'
+Assert-Pattern $containerAppModule "type:\s*'Liveness'" 'Grace Server must have a liveness probe.'
+Assert-Pattern $containerAppModule "path:\s*'/healthz'" 'Grace Server HTTP probes must use the existing health endpoint.'
+Assert-PatternAbsent $containerAppModule '(registryPassword|passwordSecretRef|adminUserEnabled:\s*true)' 'The Container App must not use registry credentials.'
+Assert-PatternAbsent $containerAppModule 'grace__redis__' 'The Container App tracer must not activate Redis before issue #983 supplies its managed-identity contract.'
+
+Assert-Pattern $graceServerDockerfile 'FROM\s+mcr\.microsoft\.com/dotnet/aspnet:10\.0\s+AS\s+final' 'The production image must use the ASP.NET runtime image.'
+Assert-Pattern $graceServerDockerfile 'dotnet publish[^\r\n]+-c Release' 'The production image must publish Grace Server in Release mode.'
+Assert-Pattern $graceServerDockerfile '/p:DebugSymbols=false' 'The production image must exclude debug symbols.'
+Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:10\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
 
 Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
 Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'

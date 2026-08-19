@@ -39,6 +39,9 @@ param sqlMaxSizeBytes int
 @description('High-availability Azure Managed Redis SKU.')
 param redisSkuName string
 
+@description('Immutable Grace Server image in this deployment registry, including its sha256 digest.')
+param graceServerImage string
+
 @description('Common environment tags.')
 param tags object = {
   environment: environmentName
@@ -56,11 +59,28 @@ var cosmosName = take('grace-cosmos-${environmentName}-${normalizedSuffix}', 44)
 var serviceBusName = take('grace-sb-${environmentName}-${normalizedSuffix}', 50)
 var sqlServerName = take('grace-sql-${environmentName}-${normalizedSuffix}', 63)
 var redisName = take('grace-redis-${environmentName}-${normalizedSuffix}', 60)
+var registryName = take('grace${normalizedEnvironment}${normalizedSuffix}acr', 50)
+var identityName = take('grace-server-${environmentName}-${normalizedSuffix}', 128)
+var containerEnvironmentName = take('grace-${environmentName}-${normalizedSuffix}', 60)
+var containerAppName = take('grace-server-${environmentName}-${normalizedSuffix}', 32)
+var validatedGraceServerImage = contains(graceServerImage, '@sha256:')
+  ? graceServerImage
+  : fail('graceServerImage must be an immutable sha256 digest reference.')
+
+module identity 'modules/managed-identity.bicep' = {
+  name: 'grace-server-identity'
+  params: {
+    location: location
+    name: identityName
+    tags: tags
+  }
+}
 
 module storage 'modules/storage.bicep' = {
   name: 'storage'
   params: {
     developerPrincipalId: developerPrincipalId
+    graceServerPrincipalId: identity.outputs.principalId
     location: location
     name: storageName
     tags: tags
@@ -73,6 +93,7 @@ module cosmos 'modules/cosmos.bicep' = {
     containerName: 'grace-events'
     databaseName: 'grace-${environmentName}'
     developerPrincipalId: developerPrincipalId
+    graceServerPrincipalId: identity.outputs.principalId
     location: location
     name: cosmosName
     provisionedThroughput: cosmosProvisionedThroughput
@@ -85,6 +106,7 @@ module serviceBus 'modules/service-bus.bicep' = {
   name: 'service-bus'
   params: {
     developerPrincipalId: developerPrincipalId
+    graceServerPrincipalId: identity.outputs.principalId
     location: location
     name: serviceBusName
     tags: tags
@@ -118,6 +140,51 @@ module redis 'modules/redis.bicep' = {
   }
 }
 
+module registry 'modules/container-registry.bicep' = {
+  name: 'container-registry'
+  params: {
+    imagePullPrincipalId: identity.outputs.principalId
+    location: location
+    name: registryName
+    tags: tags
+  }
+}
+
+module containerEnvironment 'modules/container-app-environment.bicep' = {
+  name: 'container-app-environment'
+  params: {
+    location: location
+    name: containerEnvironmentName
+    tags: tags
+  }
+}
+
+module graceServer 'modules/container-app.bicep' = {
+  name: 'grace-server'
+  params: {
+    cosmosContainerName: cosmos.outputs.containerName
+    cosmosDatabaseName: cosmos.outputs.databaseName
+    cosmosEndpoint: cosmos.outputs.endpoint
+    environmentId: containerEnvironment.outputs.id
+    identityClientId: identity.outputs.clientId
+    identityId: identity.outputs.id
+    image: startsWith(validatedGraceServerImage, '${registry.outputs.loginServer}/')
+      ? validatedGraceServerImage
+      : fail('graceServerImage must be hosted by the registry created by this deployment.')
+    location: location
+    name: containerAppName
+    registryServer: registry.outputs.loginServer
+    serviceBusEventSubscription: serviceBus.outputs.eventSubscriptionName
+    serviceBusEventTopic: serviceBus.outputs.eventTopicName
+    serviceBusGraceUsageSubscription: serviceBus.outputs.graceUsageSubscriptionName
+    serviceBusGraceUsageTopic: serviceBus.outputs.graceUsageTopicName
+    serviceBusNamespace: '${serviceBus.outputs.namespaceName}.servicebus.windows.net'
+    sqlConnectionString: sql.outputs.entraConnectionString
+    storageAccountName: storage.outputs.accountName
+    tags: tags
+  }
+}
+
 output profile string = 'production-shaped-${environmentName}'
 output storageAccountName string = storage.outputs.accountName
 output cosmosEndpoint string = cosmos.outputs.endpoint
@@ -131,3 +198,8 @@ output serviceBusGraceUsageSubscription string = serviceBus.outputs.graceUsageSu
 output sqlConnectionString string = sql.outputs.entraConnectionString
 output redisHostName string = redis.outputs.hostName
 output redisPort int = redis.outputs.port
+output containerRegistryLoginServer string = registry.outputs.loginServer
+output graceServerFqdn string = graceServer.outputs.fqdn
+output graceServerRevisionName string = graceServer.outputs.latestRevisionName
+output graceServerIdentityClientId string = identity.outputs.clientId
+output graceServerIdentityPrincipalId string = identity.outputs.principalId

@@ -10,6 +10,9 @@ param tags object
 @description('Microsoft Entra principal that runs Grace during infrastructure validation.')
 param developerPrincipalId string
 
+@description('Optional managed-identity principal that runs Grace Server.')
+param graceServerPrincipalId string = ''
+
 var storageBlobDataContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
@@ -79,6 +82,26 @@ resource blobAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: developerPrincipalId
     principalType: 'User'
     roleDefinitionId: storageBlobDataContributorRoleId
+  }
+}
+
+resource graceServerBlobAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(graceServerPrincipalId)) {
+  name: guid(account.id, graceServerPrincipalId, storageBlobDataContributorRoleId)
+  scope: account
+  properties: {
+    principalId: graceServerPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageBlobDataContributorRoleId
+  }
+}
+
+resource graceServerTableAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(graceServerPrincipalId)) {
+  name: guid(account.id, graceServerPrincipalId, storageTableDataContributorRoleId)
+  scope: account
+  properties: {
+    principalId: graceServerPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageTableDataContributorRoleId
   }
 }
 

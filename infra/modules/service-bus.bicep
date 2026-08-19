@@ -10,6 +10,9 @@ param tags object
 @description('Microsoft Entra principal that runs Grace during infrastructure validation.')
 param developerPrincipalId string
 
+@description('Optional managed-identity principal that runs Grace Server.')
+param graceServerPrincipalId string = ''
+
 @description('Grace event stream topic name.')
 param eventTopicName string = 'graceeventstream'
 
@@ -107,6 +110,16 @@ resource developerAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   properties: {
     principalId: developerPrincipalId
     principalType: 'User'
+    roleDefinitionId: serviceBusDataOwnerRoleId
+  }
+}
+
+resource graceServerAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(graceServerPrincipalId)) {
+  name: guid(serviceBus.id, graceServerPrincipalId, serviceBusDataOwnerRoleId)
+  scope: serviceBus
+  properties: {
+    principalId: graceServerPrincipalId
+    principalType: 'ServicePrincipal'
     roleDefinitionId: serviceBusDataOwnerRoleId
   }
 }
