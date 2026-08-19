@@ -104,6 +104,10 @@ Assert-PatternAbsent $labRunner "ResourceGroupName\s*=\s*'rg-grace-infra-lab-\d{
 Assert-Pattern $labRunner "readEnvironmentVariable\('GRACE_LAB_REDIS_SERVER_PRIVATE_KEY'\)" 'The runner must resolve the Redis private key through inherited environment.'
 Assert-Pattern $labRunner 'Test-RedisTlsReadiness\s+-Material' 'The runner must complete authenticated TLS PING before readiness.'
 Assert-Pattern $labRunner 'Test-RedisTlsReadiness[\s\S]*Clear-LabRedisSecrets[\s\S]*readiness passed' 'The runner must clear parent Redis secrets before reporting readiness.'
+Assert-Pattern $labRunner '''grace__azure_storage__account_name''\s*=\s*\$outputs\.storageAccountName\.value' 'The runner must override the exact Storage setting consumed by DebugAzure.'
+Assert-Pattern $labRunner '''grace__azurecosmosdb__endpoint''\s*=\s*\$outputs\.cosmosEndpoint\.value' 'The runner must override the exact Cosmos endpoint setting consumed by DebugAzure.'
+Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*Deployment completed; launching DebugAzure" 'The runner must clear deployment-only Redis material after deployment and before launching DebugAzure.'
+Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*& pwsh -NoProfile -File" 'The DebugAzure child must be launched only after deployment-only Redis secrets are cleared.'
 Assert-PatternAbsent $labRunner 'redis(ServerPrivateKey|AclFile|Password)=\$' 'The runner must not place secure Redis values in Azure CLI arguments.'
 Assert-PatternAbsent $labRunner 'Write-(Host|LabStatus)[^\r\n]*(Password|ServerKeyBase64|AclBase64|CaBase64)' 'The runner must not write generated Redis material to status output.'
 

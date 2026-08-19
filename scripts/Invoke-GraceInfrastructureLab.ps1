@@ -210,6 +210,16 @@ function Clear-LabRedisSecrets {
     }
 }
 
+function Clear-LabRedisDeploymentSecrets {
+    <#
+    .SYNOPSIS
+    Removes deployment-only certificate, private-key, and ACL inputs before any DebugAzure child process is launched.
+    #>
+    foreach ($name in $redisParameterEnvironmentVariables) {
+        [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+}
+
 function Test-RedisTlsReadiness {
     <#
     .SYNOPSIS
@@ -595,17 +605,26 @@ switch ($Action) {
             $arguments = Get-DeploymentArguments -SecureParameterPath $secureParameterPath
             Write-LabStatus 'Submitting the lab deployment. Most resources provide no intermediate ARM progress.'
             Invoke-AzureCli (@('deployment', 'group', 'create') + $arguments + @('--output', 'none')) | Out-Null
+            Clear-LabRedisDeploymentSecrets
             Write-LabStatus 'Deployment completed; launching DebugAzure with the matching process-scoped Redis material.'
 
             $outputs = Invoke-AzureCli @(
                 'deployment', 'group', 'show', '--resource-group', $ResourceGroupName, '--name', $deploymentName,
                 '--query', 'properties.outputs', '--output', 'json'
             ) | ConvertFrom-Json
+            foreach ($staleAlias in @(
+                'grace__azure_storage_account_name',
+                'grace__azure_cosmos_db__endpoint',
+                'grace__azure_cosmos_db__database_name',
+                'grace__azure_cosmos_db__container_name')) {
+                [Environment]::SetEnvironmentVariable($staleAlias, $null, 'Process')
+            }
+
             $debugAzureSettings = @{
-                'grace__azure_storage_account_name' = $outputs.storageAccountName.value
-                'grace__azure_cosmos_db__endpoint' = $outputs.cosmosEndpoint.value
-                'grace__azure_cosmos_db__database_name' = $outputs.cosmosDatabaseName.value
-                'grace__azure_cosmos_db__container_name' = $outputs.cosmosContainerName.value
+                'grace__azure_storage__account_name' = $outputs.storageAccountName.value
+                'grace__azurecosmosdb__endpoint' = $outputs.cosmosEndpoint.value
+                'grace__azurecosmosdb__database_name' = $outputs.cosmosDatabaseName.value
+                'grace__azurecosmosdb__container_name' = $outputs.cosmosContainerName.value
                 'grace__azure_service_bus__namespace' = "$($outputs.serviceBusNamespace.value).servicebus.windows.net"
                 'grace__azure_service_bus__topic' = $outputs.serviceBusEventTopic.value
                 'grace__azure_service_bus__subscription' = $outputs.serviceBusEventSubscription.value

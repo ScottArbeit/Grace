@@ -56,6 +56,19 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Not.Contain("Console.WriteLine(redisCaCertificate")))
         )
 
+    /// Verifies a fresh exact process setting wins over stale configuration inherited from an earlier lab run.
+    [<Test>]
+    member _.DebugAzureExactProcessSettingOverridesStaleConfiguration() =
+        let settingName = Constants.EnvironmentVariables.AzureStorageAccountName
+
+        let configuration =
+            ConfigurationBuilder()
+                .AddInMemoryCollection(dict [ Grace.Shared.Utilities.getConfigKey settingName, "gracelab-stale" ])
+                .Build()
+
+        withEnvironmentVariables [ settingName, "gracelab-fresh" ] (fun () ->
+            Assert.That(Program.ResolveSetting(configuration, settingName), Is.EqualTo("gracelab-fresh")))
+
     /// Verifies that AppHost provisions and forwards the same operational facts topic name.
     [<Test>]
     member _.AppHostConfiguresOperationalFactsTopicConsistently() =

@@ -652,7 +652,7 @@ public partial class Program
         }
     }
 
-    private static string? ResolveSetting(IConfiguration configuration, string name)
+    internal static string? ResolveSetting(IConfiguration configuration, string name)
     {
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value))
