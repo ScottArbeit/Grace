@@ -42,6 +42,7 @@ $sqlServerName = "grace-sql-lab-$normalizedSuffix"
 $redisContainerGroupName = "grace-redis-lab-$normalizedSuffix"
 $redisDnsName = "$redisContainerGroupName.$($Location.ToLowerInvariant()).azurecontainer.io"
 $redisTlsPort = 6380
+$graceServerUri = 'http://localhost:5000'
 $redisParameterEnvironmentVariables = @(
     'GRACE_LAB_REDIS_CA_CERTIFICATE',
     'GRACE_LAB_REDIS_SERVER_CERTIFICATE',
@@ -593,6 +594,14 @@ switch ($Action) {
     }
     'Deploy' {
         Write-LabStatus 'Preparing to deploy the disposable infrastructure lab.'
+        Write-LabStatus "Rejecting any pre-existing Grace Server listener at '$graceServerUri'."
+        & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'start-debugazure.ps1') `
+            -GraceServerUri $graceServerUri `
+            -PreflightOnly
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Stop the existing DebugAzure process before deploying new Redis credentials.'
+        }
+
         Invoke-BicepBuilds
         Register-LabResourceProviders
         New-LabResourceGroup
@@ -642,7 +651,7 @@ switch ($Action) {
                 [Environment]::SetEnvironmentVariable($setting.Key, [string] $setting.Value, 'Process')
             }
 
-            & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'start-debugazure.ps1')
+            & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'start-debugazure.ps1') -GraceServerUri $graceServerUri
             if ($LASTEXITCODE -ne 0) {
                 throw 'DebugAzure failed before Redis readiness could be proven.'
             }

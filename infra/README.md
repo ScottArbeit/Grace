@@ -64,7 +64,9 @@ Review the complete `what-if` result before deployment. It must contain only the
 child resources, deployments, and role assignments.
 
 `Deploy` also starts `DebugAzure` and leaves it running after the authenticated Redis readiness proof. Generated Redis
-credentials and private keys are never written to the repository or printed by the runner.
+credentials and private keys are never written to the repository or printed by the runner. Stop any existing
+`DebugAzure` process first: deployment fails before rotating credentials when `http://localhost:5000` already has a
+listener, so an older child cannot satisfy readiness for the new run.
 
 PowerShell:
 

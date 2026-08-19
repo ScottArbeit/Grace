@@ -10,6 +10,7 @@ $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
 $redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
 $labRunnerPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\Invoke-GraceInfrastructureLab.ps1'
+$startDebugAzurePath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\start-debugazure.ps1'
 $inventoryAssertionsPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\GraceInfrastructureLab.Inventory.ps1'
 . $inventoryAssertionsPath
 
@@ -108,6 +109,7 @@ Assert-Pattern $labRunner '''grace__azure_storage__account_name''\s*=\s*\$output
 Assert-Pattern $labRunner '''grace__azurecosmosdb__endpoint''\s*=\s*\$outputs\.cosmosEndpoint\.value' 'The runner must override the exact Cosmos endpoint setting consumed by DebugAzure.'
 Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*Deployment completed; launching DebugAzure" 'The runner must clear deployment-only Redis material after deployment and before launching DebugAzure.'
 Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*& pwsh -NoProfile -File" 'The DebugAzure child must be launched only after deployment-only Redis secrets are cleared.'
+Assert-Pattern $labRunner "-PreflightOnly[\s\S]*Invoke-BicepBuilds[\s\S]*'deployment', 'group', 'create'" 'Deploy must reject a pre-existing Grace Server listener before rotating Azure credentials.'
 Assert-PatternAbsent $labRunner 'redis(ServerPrivateKey|AclFile|Password)=\$' 'The runner must not place secure Redis values in Azure CLI arguments.'
 Assert-PatternAbsent $labRunner 'Write-(Host|LabStatus)[^\r\n]*(Password|ServerKeyBase64|AclBase64|CaBase64)' 'The runner must not write generated Redis material to status output.'
 
@@ -146,6 +148,29 @@ catch {
     if ($_.Exception.Message -notmatch 'unexpected top-level: stale-storage') {
         throw
     }
+}
+
+$occupiedListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$occupiedListener.Start()
+$occupiedPort = ([Net.IPEndPoint] $occupiedListener.LocalEndpoint).Port
+$occupiedUri = "http://127.0.0.1:$occupiedPort"
+try {
+    $occupiedOutput = @(& pwsh -NoProfile -File $startDebugAzurePath -GraceServerUri $occupiedUri -PreflightOnly 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw 'DebugAzure preflight accepted an occupied Grace Server URI.'
+    }
+
+    if (($occupiedOutput -join [Environment]::NewLine) -notmatch 'already has a listener') {
+        throw 'DebugAzure preflight did not explain that the configured URI was already occupied.'
+    }
+}
+finally {
+    $occupiedListener.Stop()
+}
+
+$availableOutput = @(& pwsh -NoProfile -File $startDebugAzurePath -GraceServerUri $occupiedUri -PreflightOnly 2>&1)
+if ($LASTEXITCODE -ne 0 -or ($availableOutput -join [Environment]::NewLine) -notmatch 'is available for a new DebugAzure child') {
+    throw 'DebugAzure preflight rejected an available Grace Server URI.'
 }
 
 Write-Host 'Infrastructure profile assertions passed.' -ForegroundColor Green

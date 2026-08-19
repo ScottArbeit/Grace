@@ -4,7 +4,8 @@ param(
     [ValidateRange(30, 1800)]
     [int] $StartupTimeoutSeconds = 300,
     [ValidateSet("Debug", "Release")]
-    [string] $Configuration = "Debug"
+    [string] $Configuration = "Debug",
+    [switch] $PreflightOnly
 )
 
 Set-StrictMode -Version Latest
@@ -25,6 +26,38 @@ function Write-Status {
     param([Parameter(Mandatory)][string] $Message)
 
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Message"
+}
+
+function Assert-GraceServerUriAvailable {
+    <#
+    .SYNOPSIS
+    Rejects a pre-existing Grace Server listener so readiness cannot be satisfied by an older DebugAzure child.
+    #>
+    $serverUri = $null
+    if (-not [Uri]::TryCreate($GraceServerUri, [UriKind]::Absolute, [ref] $serverUri) -or
+        $serverUri.Scheme -notin @('http', 'https')) {
+        throw "GraceServerUri must be an absolute HTTP or HTTPS URI."
+    }
+
+    $tcpClient = [Net.Sockets.TcpClient]::new()
+    $listenerDetected = $false
+    try {
+        $tcpClient.ConnectAsync($serverUri.Host, $serverUri.Port).WaitAsync([TimeSpan]::FromSeconds(1)).GetAwaiter().GetResult()
+        $listenerDetected = $true
+    }
+    catch [Net.Sockets.SocketException] {
+        $listenerDetected = $false
+    }
+    catch [TimeoutException] {
+        $listenerDetected = $false
+    }
+    finally {
+        $tcpClient.Dispose()
+    }
+
+    if ($listenerDetected) {
+        throw "Grace Server URI '$GraceServerUri' already has a listener. Stop the existing DebugAzure process before deployment."
+    }
 }
 
 function Stop-AppHostProcess {
@@ -159,6 +192,12 @@ function Test-SystemAdmin {
     )
 
     return $result.ReturnValue.PSObject.Properties.Name -contains "allowed"
+}
+
+Assert-GraceServerUriAvailable
+if ($PreflightOnly) {
+    Write-Status "Grace Server URI '$GraceServerUri' is available for a new DebugAzure child."
+    return
 }
 
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null

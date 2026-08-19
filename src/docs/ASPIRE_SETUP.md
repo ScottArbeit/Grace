@@ -71,7 +71,8 @@ Aspire running and reports its process ID and log paths.
 For the disposable infrastructure lab, use `Invoke-GraceInfrastructureLab.ps1 -Action Deploy`. That runner generates
 the process-scoped Redis TLS and ACL material, deploys the matching endpoint, launches this wrapper, proves authenticated
 `PING` with custom-root and hostname validation, and clears its parent-process secrets before reporting readiness.
-Direct wrapper use without those settings retains the existing local Redis container.
+Direct wrapper use without those settings retains the existing local Redis container. Stop an existing `DebugAzure`
+process before another lab deployment; the runner rejects an occupied Grace Server URI before rotating Redis material.
 
 ## Verify Components
 
