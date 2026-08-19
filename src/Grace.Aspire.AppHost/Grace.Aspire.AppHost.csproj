@@ -30,4 +30,8 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Grace.Server.Tests" />
+  </ItemGroup>
+
 </Project>

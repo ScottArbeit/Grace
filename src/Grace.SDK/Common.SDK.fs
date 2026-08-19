@@ -28,6 +28,15 @@ open Microsoft.Extensions.Caching.Memory
 /// Shared Grace Server HTTP helpers used by endpoint-specific SDK modules.
 module Common =
 
+    /// Resolves Grace Server from the process environment before falling back to repository configuration.
+    let internal resolveGraceServerUri () =
+        let environmentUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+
+        if String.IsNullOrWhiteSpace(environmentUri) then
+            string (Current().ServerUri)
+        else
+            environmentUri.Trim()
+
     /// <summary>
     /// Sends GET commands to Grace Server.
     /// </summary>
@@ -44,9 +53,7 @@ module Common =
                 do! Auth.addAuthorizationHeader httpClient
                 let startTime = getCurrentInstant ()
 
-                let graceServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
-
-                let serverUri = Uri($"{graceServerUri}/{route}")
+                let serverUri = Uri($"{resolveGraceServerUri ()}/{route}")
 
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.GetAsync(new Uri($"{serverUri}")))
 
@@ -86,7 +93,7 @@ module Common =
                 //checkMemoryCache ()
                 use httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                 do! Auth.addAuthorizationHeader httpClient
-                let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
+                let serverUriWithRoute = Uri($"{resolveGraceServerUri ()}/{route}")
                 let startTime = getCurrentInstant ()
                 let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters)
 

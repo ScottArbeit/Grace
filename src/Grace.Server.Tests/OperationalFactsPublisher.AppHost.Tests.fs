@@ -1,16 +1,33 @@
 namespace Grace.Server.Tests
 
 open Grace.Shared
+open Microsoft.Extensions.Configuration
 open NUnit.Framework
 open System
 open System.IO
 
 /// Covers Aspire AppHost wiring for the operational usage facts Service Bus topic.
 [<TestFixture>]
+[<NonParallelizable>]
 type OperationalFactsPublisherAppHostTests() =
 
     /// Reads the AppHost source so focused wiring assertions stay on the Aspire-facing test surface.
     let appHostSource () = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs")))
+
+    /// Runs an assertion while restoring every process-level environment value it changes.
+    let withEnvironmentVariables (values: (string * string) list) assertion =
+        let originals =
+            values
+            |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Process))
+
+        try
+            values
+            |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process))
+
+            assertion ()
+        finally
+            originals
+            |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process))
 
     /// Verifies DebugAzure gives an explicitly configured storage account precedence over ambient connection strings.
     [<Test>]
@@ -107,3 +124,54 @@ type OperationalFactsPublisherAppHostTests() =
                     Does.Contain(".WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)")
                 ))
         )
+
+    /// Verifies wrapper startup suppresses retained principals and retry forwards only the authenticated user.
+    [<Test>]
+    member _.DebugAzureWrapperOwnsAuthorizationBootstrapPrecedence() =
+        let usersName = Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers
+        let groupsName = Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups
+
+        withEnvironmentVariables
+            [
+                usersName, "configured-user"
+                groupsName, "configured-group"
+                Program.DebugAzureBootstrapModeEnvironmentVariable, null
+                Program.DebugAzureBootstrapUserIdEnvironmentVariable, null
+            ]
+            (fun () ->
+                let configuration = ConfigurationBuilder().Build()
+
+                Environment.SetEnvironmentVariable(
+                    Program.DebugAzureBootstrapModeEnvironmentVariable,
+                    Program.DebugAzureBootstrapModeSuppress
+                )
+
+                let suppressed = Program.ResolveAuthorizationBootstrapSettings(configuration, true)
+                Assert.That(suppressed.Users, Is.Null)
+                Assert.That(suppressed.Groups, Is.Null)
+
+                Environment.SetEnvironmentVariable(
+                    Program.DebugAzureBootstrapModeEnvironmentVariable,
+                    Program.DebugAzureBootstrapModeExactUser
+                )
+
+                Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapUserIdEnvironmentVariable, "authenticated-user")
+
+                let retry = Program.ResolveAuthorizationBootstrapSettings(configuration, true)
+                Assert.That(retry.Users, Is.EqualTo("authenticated-user"))
+                Assert.That(retry.Users.Split(';'), Has.Length.EqualTo(1))
+                Assert.That(retry.Groups, Is.Null)
+
+                Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapUserIdEnvironmentVariable, "first-user;second-user")
+
+                Assert.Throws<InvalidOperationException>(
+                    Action(fun () -> Program.ResolveAuthorizationBootstrapSettings(configuration, true) |> ignore)
+                )
+                |> ignore
+
+                Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapModeEnvironmentVariable, null)
+                Environment.SetEnvironmentVariable(Program.DebugAzureBootstrapUserIdEnvironmentVariable, null)
+
+                let directStart = Program.ResolveAuthorizationBootstrapSettings(configuration, true)
+                Assert.That(directStart.Users, Is.EqualTo("configured-user"))
+                Assert.That(directStart.Groups, Is.EqualTo("configured-group")))

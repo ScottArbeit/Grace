@@ -55,6 +55,19 @@ DOTNET_ENVIRONMENT=Development dotnet run
 The CLI host prints connection details for each emulator (Azurite, Redis,
 Cosmos, Service Bus) as they start.
 
+### DebugAzure
+
+Start the Azure-backed profile through its authorization-aware wrapper:
+
+```powershell
+pwsh ./scripts/start-debugazure.ps1
+```
+
+The wrapper checks the current Grace CLI identity and existing `SystemAdmin` access. For a new environment with no
+system assignments, it performs one bounded restart that offers the authenticated identity for bootstrap. An established
+environment is never reassigned by this flow; an existing SystemAdmin must grant access. Successful startup leaves
+Aspire running and reports its process ID and log paths.
+
 ## Verify Components
 
 Open `http://localhost:18888` and confirm the following resources show
