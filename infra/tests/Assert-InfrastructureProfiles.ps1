@@ -112,6 +112,7 @@ Assert-Pattern $graceServerDockerfile 'dotnet publish[^\r\n]+-c Release' 'The pr
 Assert-Pattern $graceServerDockerfile '/p:DebugSymbols=false' 'The production image must exclude debug symbols.'
 Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:10\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
 
+Assert-Pattern $infraReadme 'cosmosProvisionedThroughput=1000' 'The production deployment example must use the accepted 1,000 RU/s manual Cosmos throughput.'
 Assert-Pattern $infraReadme 'sqlSkuName=GP_Gen5_2[\s\S]*sqlVCoreCapacity=2[\s\S]*sqlMaxSizeBytes=5368709120' 'The production deployment example must use an available West US 2 provisioned SQL configuration.'
 
 Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
