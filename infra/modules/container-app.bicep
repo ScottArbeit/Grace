@@ -88,7 +88,14 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'ASPNETCORE_HTTP_PORTS', value: '5000' }
             { name: 'AZURE_CLIENT_ID', value: identityClientId }
             { name: 'grace__debug_environment', value: 'Azure' }
+            { name: 'grace__log_directory', value: '/tmp/grace-logs' }
+            { name: 'grace__pubsub__system', value: 'AzureServiceBus' }
+            { name: 'grace__orleans__clusterid', value: 'production' }
+            { name: 'grace__orleans__serviceid', value: 'grace-prod' }
             { name: 'grace__azure_storage__account_name', value: storageAccountName }
+            { name: 'grace__azure_storage__directoryversion_container_name', value: 'directoryversions' }
+            { name: 'grace__azure_storage__diff_container_name', value: 'diffs' }
+            { name: 'grace__azure_storage__zipfile_container_name', value: 'zipfiles' }
             { name: 'grace__azurecosmosdb__endpoint', value: cosmosEndpoint }
             { name: 'grace__azurecosmosdb__database_name', value: cosmosDatabaseName }
             { name: 'grace__azurecosmosdb__container_name', value: cosmosContainerName }
