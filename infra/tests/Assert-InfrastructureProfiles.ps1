@@ -9,6 +9,7 @@ $labTemplatePath = Join-Path $infraRoot 'main.lab.bicep'
 $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
 $infraReadmePath = Join-Path $infraRoot 'README.md'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
+$sqlModulePath = Join-Path $infraRoot 'modules\sql.bicep'
 $containerAppModulePath = Join-Path $infraRoot 'modules\container-app.bicep'
 $containerRegistryModulePath = Join-Path $infraRoot 'modules\container-registry.bicep'
 $redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
@@ -63,6 +64,7 @@ function Assert-PatternAbsent {
 $labTemplate = Get-Content -LiteralPath $labTemplatePath -Raw
 $productionTemplate = Get-Content -LiteralPath $productionTemplatePath -Raw
 $serviceBusModule = Get-Content -LiteralPath $serviceBusModulePath -Raw
+$sqlModule = Get-Content -LiteralPath $sqlModulePath -Raw
 $containerAppModule = Get-Content -LiteralPath $containerAppModulePath -Raw
 $containerRegistryModule = Get-Content -LiteralPath $containerRegistryModulePath -Raw
 $redisContainerModule = Get-Content -LiteralPath $redisContainerModulePath -Raw
@@ -75,13 +77,23 @@ Assert-Pattern $labTemplate "skuName:\s*'GP_S_Gen5_1'" 'The lab profile must use
 Assert-Pattern $labTemplate "modules/redis-container\.bicep" 'The lab profile must use the disposable Redis container module.'
 Assert-PatternAbsent $labTemplate "modules/redis\.bicep" 'The lab profile must not deploy Azure Managed Redis.'
 
-Assert-Pattern $productionTemplate 'serverless:\s*false' 'The production-shaped profile must use provisioned Cosmos and SQL modules.'
+Assert-Pattern $productionTemplate 'serverless:\s*false' 'The production-shaped profile must use provisioned Cosmos throughput.'
 Assert-Pattern $productionTemplate 'param\s+cosmosProvisionedThroughput\s+int(\s|$)' 'The production-shaped profile must require Cosmos throughput.'
-Assert-Pattern $productionTemplate 'param\s+sqlSkuName\s+string(\s|$)' 'The production-shaped profile must require a SQL SKU.'
-Assert-Pattern $productionTemplate 'validatedSqlSkuName' 'The production-shaped profile must reject SQL serverless SKU names.'
+Assert-Pattern $productionTemplate "skuName:\s*'GP_S_Gen5_1'" 'The production-shaped profile must use the approved General Purpose serverless SQL SKU.'
+Assert-Pattern $productionTemplate 'skuCapacity:\s*1' 'The production-shaped profile must cap SQL serverless compute at one vCore.'
+Assert-Pattern $productionTemplate 'maxSizeBytes:\s*34359738368' 'The production-shaped profile must cap SQL data storage at 32 GiB.'
+Assert-Pattern $productionTemplate 'autoPauseDelayMinutes:\s*15' 'The production-shaped profile must auto-pause SQL after 15 idle minutes.'
+Assert-Pattern $productionTemplate "minimumCapacity:\s*'0\.5'" 'The production-shaped profile must set the SQL minimum capacity to 0.5 vCore.'
+Assert-Pattern $productionTemplate 'useFreeLimit:\s*true' 'The production-shaped profile must request the SQL free offer when eligible.'
+Assert-Pattern $productionTemplate "freeLimitExhaustionBehavior:\s*'BillOverUsage'" 'The production-shaped profile must remain online and bill at serverless rates after the free allowance.'
 Assert-Pattern $productionTemplate 'param\s+redisSkuName\s+string(\s|$)' 'The production-shaped profile must require a Redis SKU.'
 Assert-Pattern $productionTemplate 'highAvailability:\s*true' 'The production-shaped profile must enable Redis high availability.'
-Assert-PatternAbsent $productionTemplate "skuName:\s*'GP_S_" 'The production-shaped profile must not embed a SQL serverless SKU.'
+
+Assert-Pattern $sqlModule "Microsoft\.Sql/servers/databases@2025-01-01" 'The SQL module must use the API version that supports free-limit behavior.'
+Assert-Pattern $sqlModule 'autoPauseDelay:\s*autoPauseDelayMinutes' 'The SQL module must apply the selected auto-pause delay.'
+Assert-Pattern $sqlModule 'minCapacity:\s*json\(minimumCapacity\)' 'The SQL module must apply the selected serverless minimum capacity.'
+Assert-Pattern $sqlModule 'useFreeLimit:\s*useFreeLimit' 'The SQL module must apply free-offer eligibility.'
+Assert-Pattern $sqlModule 'freeLimitExhaustionBehavior:\s*freeLimitExhaustionBehavior' 'The SQL module must apply the selected free-limit exhaustion behavior.'
 Assert-Pattern $productionTemplate "modules/container-registry\.bicep" 'The production-shaped profile must deploy Azure Container Registry.'
 Assert-Pattern $productionTemplate "modules/managed-identity\.bicep" 'The production-shaped profile must deploy a user-assigned managed identity.'
 Assert-Pattern $productionTemplate "modules/container-app-environment\.bicep" 'The production-shaped profile must deploy a Container Apps environment.'
@@ -113,7 +125,7 @@ Assert-Pattern $graceServerDockerfile '/p:DebugSymbols=false' 'The production im
 Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:10\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
 
 Assert-Pattern $infraReadme 'cosmosProvisionedThroughput=1000' 'The production deployment example must use the accepted 1,000 RU/s manual Cosmos throughput.'
-Assert-Pattern $infraReadme 'sqlSkuName=GP_Gen5_2[\s\S]*sqlVCoreCapacity=2[\s\S]*sqlMaxSizeBytes=5368709120' 'The production deployment example must use an available West US 2 provisioned SQL configuration.'
+Assert-PatternAbsent $infraReadme 'sqlSkuName=|sqlVCoreCapacity=|sqlMaxSizeBytes=' 'The deployment example must not override the approved SQL serverless baseline.'
 
 Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
 Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'

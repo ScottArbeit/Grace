@@ -25,17 +25,6 @@ param developerPrincipalName string
 @minValue(400)
 param cosmosProvisionedThroughput int
 
-@description('Provisioned Azure SQL SKU name. Template evaluation rejects serverless SKU names.')
-param sqlSkuName string
-
-@description('Provisioned Azure SQL vCore capacity.')
-@minValue(1)
-param sqlVCoreCapacity int
-
-@description('Maximum Azure SQL database size in bytes.')
-@minValue(1073741824)
-param sqlMaxSizeBytes int
-
 @description('High-availability Azure Managed Redis SKU.')
 param redisSkuName string
 
@@ -51,9 +40,6 @@ param tags object = {
 
 var normalizedEnvironment = toLower(replace(environmentName, '-', ''))
 var normalizedSuffix = toLower(replace(deploymentSuffix, '-', ''))
-var validatedSqlSkuName = contains(toLower(sqlSkuName), '_s_')
-  ? fail('The production-shaped profile does not accept Azure SQL serverless SKU names.')
-  : sqlSkuName
 var storageName = take('grace${normalizedEnvironment}${normalizedSuffix}', 24)
 var cosmosName = take('grace-cosmos-${environmentName}-${normalizedSuffix}', 44)
 var serviceBusName = take('grace-sb-${environmentName}-${normalizedSuffix}', 50)
@@ -119,13 +105,17 @@ module sql 'modules/sql.bicep' = {
     administratorLogin: developerPrincipalName
     administratorObjectId: developerPrincipalId
     location: location
-    maxSizeBytes: sqlMaxSizeBytes
+    autoPauseDelayMinutes: 15
+    freeLimitExhaustionBehavior: 'BillOverUsage'
+    maxSizeBytes: 34359738368
+    minimumCapacity: '0.5'
     name: sqlServerName
-    serverless: false
-    skuCapacity: sqlVCoreCapacity
-    skuName: validatedSqlSkuName
+    serverless: true
+    skuCapacity: 1
+    skuName: 'GP_S_Gen5_1'
     tags: tags
     tenantId: tenant().tenantId
+    useFreeLimit: true
   }
 }
 

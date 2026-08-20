@@ -8,11 +8,14 @@ Both entry points share focused resource modules, but they make different capaci
 | Profile | Cosmos DB | Azure SQL Database | Azure Managed Redis | Intended use |
 | --- | --- | --- | --- | --- |
 | `main.lab.bicep` | Serverless | General Purpose serverless | TLS-only ACI Redis container | Short-lived infrastructure practice |
-| `main.production.bicep` | Provisioned throughput | Provisioned compute | Caller-selected SKU, two-node high availability | One production-shaped Grace Server deployment |
+| `main.production.bicep` | Provisioned throughput | General Purpose serverless | Caller-selected SKU, two-node high availability | One production-shaped Grace Server deployment |
 
-The production-shaped profile deliberately has no parameter file. It requires explicit Cosmos throughput, SQL SKU and
-vCore capacity, SQL maximum size, and Redis SKU values. Those choices need workload analysis before real development or
-production deployment. The profile also creates a Basic Azure Container Registry, one user-assigned managed identity,
+The production-shaped profile deliberately has no parameter file. It requires explicit Cosmos throughput and Redis SKU
+values. Those choices need workload analysis before real development or production deployment. Azure SQL uses the
+accepted General Purpose serverless baseline: `GP_S_Gen5_1`, 0.5 minimum and 1 maximum vCore, 15-minute auto-pause, and
+32 GiB maximum data storage. The profile requests the monthly Azure SQL free allowance when the subscription is eligible
+and keeps the database online at paid serverless rates after the allowance is exhausted. The profile also creates a
+Basic Azure Container Registry, one user-assigned managed identity,
 a Container Apps environment, and one externally reachable Grace Server replica. The Container App uses the identity
 to pull an immutable image without registry administrator credentials. Private networking and environment-specific
 reliability decisions remain separate work.
@@ -83,9 +86,6 @@ az deployment group create `
         developerPrincipalId='<developer-object-id>' `
         developerPrincipalName='<developer-upn>' `
         cosmosProvisionedThroughput=1000 `
-        sqlSkuName=GP_Gen5_2 `
-        sqlVCoreCapacity=2 `
-        sqlMaxSizeBytes=5368709120 `
         redisSkuName='<managed-redis-sku>' `
         graceServerImage=$image
 
@@ -103,6 +103,12 @@ managed-identity client and principal IDs for later slices. Re-running the compl
 a new immutable Container Apps revision. Do not pass registry passwords, administrator credentials, or access tokens as
 application settings. This tracer deliberately does not activate Grace's Redis client settings; issue #983 owns the
 Azure Managed Redis authentication and readiness contract.
+
+Azure applies the SQL free allowance only when the subscription and database are eligible. The
+[current free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) supports up to ten free-offer
+General Purpose databases per subscription. If no free-offer slot is available, resolve eligibility before deployment;
+do not change the exhaustion behavior to `AutoPause`, because that would make Grace unavailable for the rest of the
+month after the allowance is consumed.
 
 ## Lab resources
 

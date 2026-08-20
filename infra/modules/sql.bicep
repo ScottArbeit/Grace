@@ -36,6 +36,26 @@ param skuCapacity int
 @minValue(1073741824)
 param maxSizeBytes int
 
+@description('Idle minutes before a serverless database automatically pauses.')
+@minValue(15)
+param autoPauseDelayMinutes int = 60
+
+@description('Minimum vCore capacity available to a serverless database.')
+@allowed([
+  '0.5'
+])
+param minimumCapacity string = '0.5'
+
+@description('Whether to apply the Azure SQL monthly free allowance when the subscription is eligible.')
+param useFreeLimit bool = false
+
+@description('Behavior after an eligible database exhausts its monthly free allowance.')
+@allowed([
+  'AutoPause'
+  'BillOverUsage'
+])
+param freeLimitExhaustionBehavior string = 'AutoPause'
+
 @description('Optional public client IPv4 address allowed to connect to the lab database.')
 param clientIpAddress string = ''
 
@@ -89,8 +109,10 @@ resource database 'Microsoft.Sql/servers/databases@2025-01-01' = {
       zoneRedundant: false
     },
     serverless ? {
-      autoPauseDelay: 60
-      minCapacity: json('0.5')
+      autoPauseDelay: autoPauseDelayMinutes
+      freeLimitExhaustionBehavior: freeLimitExhaustionBehavior
+      minCapacity: json(minimumCapacity)
+      useFreeLimit: useFreeLimit
     } : {}
   )
 }
