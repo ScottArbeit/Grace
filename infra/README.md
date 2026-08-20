@@ -8,12 +8,107 @@ Both entry points share focused resource modules, but they make different capaci
 | Profile | Cosmos DB | Azure SQL Database | Azure Managed Redis | Intended use |
 | --- | --- | --- | --- | --- |
 | `main.lab.bicep` | Serverless | General Purpose serverless | TLS-only ACI Redis container | Short-lived infrastructure practice |
-| `main.production.bicep` | Provisioned throughput | Provisioned compute | Caller-selected SKU, two-node high availability | Development or production design input |
+| `main.production.bicep` | Provisioned throughput | General Purpose serverless | Caller-selected SKU, two-node high availability | One production-shaped Grace Server deployment |
 
-The production-shaped profile deliberately has no parameter file. It requires explicit Cosmos throughput, SQL SKU and
-vCore capacity, SQL maximum size, and Redis SKU values. Those choices need workload analysis before real development or
-production deployment. It is not a complete production environment: networking, application hosting, secrets, and
-environment-specific reliability decisions remain separate work.
+The production-shaped profile deliberately has no parameter file. It requires explicit Cosmos throughput and Redis SKU
+values. Those choices need workload analysis before real development or production deployment. Azure SQL uses the
+accepted General Purpose serverless baseline: `GP_S_Gen5_1`, 0.5 minimum and 1 maximum vCore, 15-minute auto-pause, and
+32 GiB maximum data storage. The profile requests the monthly Azure SQL free allowance when the subscription is eligible
+and keeps the database online at paid serverless rates after the allowance is exhausted. The profile also creates a
+Basic Azure Container Registry, one user-assigned managed identity,
+a Container Apps environment, and one externally reachable Grace Server replica. The Container App uses the identity
+to pull an immutable image without registry administrator credentials. Private networking and environment-specific
+reliability decisions remain separate work.
+
+## Build and deploy Grace Server
+
+The production container listens for HTTP on port 5000. Container Apps terminates public HTTPS and forwards requests to
+that port. A TCP startup probe checks that the process is listening; readiness and liveness probes call the existing
+`/healthz` route without changing that route's dependency semantics. The profile fixes both minimum and maximum replicas
+at one.
+
+The first deployment is intentionally explicit because the immutable image must exist before the Container App can run.
+Create the identity and registry, build the image in ACR, and then deploy the complete profile. These commands create
+billable Azure resources; review the subscription, resource group, names, cost, and cleanup plan before running them.
+
+PowerShell:
+
+```powershell
+$subscriptionId = '<subscription-id>'
+$resourceGroupName = '<resource-group-name>'
+$location = '<azure-region>'
+$environmentName = 'development'
+$deploymentSuffix = '<stable-unique-suffix>'
+$identityName = "grace-server-$environmentName-$deploymentSuffix"
+$registryName = "grace$($environmentName.Replace('-', ''))$($deploymentSuffix.Replace('-', ''))acr".ToLowerInvariant()
+
+az account set --subscription $subscriptionId
+
+az deployment group create `
+    --resource-group $resourceGroupName `
+    --name grace-server-identity `
+    --template-file ./infra/modules/managed-identity.bicep `
+    --parameters name=$identityName location=$location tags='{}'
+
+$principalId = az identity show `
+    --resource-group $resourceGroupName `
+    --name $identityName `
+    --query principalId `
+    --output tsv
+
+az deployment group create `
+    --resource-group $resourceGroupName `
+    --name grace-container-registry `
+    --template-file ./infra/modules/container-registry.bicep `
+    --parameters name=$registryName location=$location tags='{}' imagePullPrincipalId=$principalId
+
+az acr build `
+    --registry $registryName `
+    --image grace-server:tracer `
+    --file ./src/Grace.Server/Dockerfile `
+    ./src
+
+$digest = az acr repository show `
+    --name $registryName `
+    --image grace-server:tracer `
+    --query digest `
+    --output tsv
+$image = "$registryName.azurecr.io/grace-server@$digest"
+
+az deployment group create `
+    --resource-group $resourceGroupName `
+    --name grace-production `
+    --template-file ./infra/main.production.bicep `
+    --parameters `
+        environmentName=$environmentName `
+        deploymentSuffix=$deploymentSuffix `
+        location=$location `
+        developerPrincipalId='<developer-object-id>' `
+        developerPrincipalName='<developer-upn>' `
+        cosmosProvisionedThroughput=1000 `
+        redisSkuName='<managed-redis-sku>' `
+        graceServerImage=$image
+
+$fqdn = az deployment group show `
+    --resource-group $resourceGroupName `
+    --name grace-production `
+    --query properties.outputs.graceServerFqdn.value `
+    --output tsv
+
+Invoke-WebRequest -Uri "https://$fqdn/healthz"
+```
+
+The complete deployment outputs the registry login server, public Grace Server hostname, deployed revision name, and
+managed-identity client and principal IDs for later slices. Re-running the complete deployment with a new digest creates
+a new immutable Container Apps revision. Do not pass registry passwords, administrator credentials, or access tokens as
+application settings. This tracer deliberately does not activate Grace's Redis client settings; issue #983 owns the
+Azure Managed Redis authentication and readiness contract.
+
+Azure applies the SQL free allowance only when the subscription and database are eligible. The
+[current free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) supports up to ten free-offer
+General Purpose databases per subscription. If no free-offer slot is available, resolve eligibility before deployment;
+do not change the exhaustion behavior to `AutoPause`, because that would make Grace unavailable for the rest of the
+month after the allowance is consumed.
 
 ## Lab resources
 
