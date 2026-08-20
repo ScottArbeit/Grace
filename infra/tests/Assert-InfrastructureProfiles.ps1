@@ -101,6 +101,7 @@ Assert-Pattern $productionTemplate "modules/container-app\.bicep" 'The productio
 Assert-Pattern $productionTemplate 'param\s+graceServerImage\s+string(\s|$)' 'The production-shaped profile must require an immutable Grace Server image.'
 Assert-Pattern $productionTemplate "startsWith\(validatedGraceServerImage, '\$\{registry\.outputs\.loginServer\}/'\)" 'Grace Server must use the registry created by its deployment.'
 Assert-Pattern $productionTemplate 'output\s+graceServerFqdn\s+string' 'The production-shaped profile must expose the Grace Server hostname.'
+Assert-Pattern $productionTemplate 'output\s+graceServerReadyRevisionName\s+string\s*=\s*graceServer\.outputs\.latestReadyRevisionName' 'The production-shaped profile must expose the latest ready Grace Server revision.'
 Assert-Pattern $productionTemplate 'output\s+graceServerIdentityClientId\s+string' 'The production-shaped profile must expose the Grace Server identity client ID.'
 Assert-Pattern $productionTemplate 'output\s+graceServerIdentityPrincipalId\s+string' 'The production-shaped profile must expose the Grace Server identity principal ID.'
 

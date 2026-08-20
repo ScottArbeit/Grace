@@ -191,5 +191,6 @@ output redisPort int = redis.outputs.port
 output containerRegistryLoginServer string = registry.outputs.loginServer
 output graceServerFqdn string = graceServer.outputs.fqdn
 output graceServerRevisionName string = graceServer.outputs.latestRevisionName
+output graceServerReadyRevisionName string = graceServer.outputs.latestReadyRevisionName
 output graceServerIdentityClientId string = identity.outputs.clientId
 output graceServerIdentityPrincipalId string = identity.outputs.principalId
