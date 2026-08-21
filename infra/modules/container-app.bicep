@@ -32,6 +32,7 @@ param oidcAudience string
 param oidcCliClientId string
 
 @description('Semicolon-delimited Grace user IDs allowed to bootstrap the first SystemAdmin.')
+@minLength(1)
 param bootstrapSystemAdminUsers string
 
 @description('Azure Storage account name used by Orleans and Grace storage.')

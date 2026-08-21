@@ -134,6 +134,7 @@ Assert-Pattern $containerAppModule "name:\s*'AZURE_CLIENT_ID'" 'Grace Server mus
 Assert-Pattern $containerAppModule "name:\s*'grace__auth__oidc__authority',\s*value:\s*oidcAuthority" 'Grace Server must receive its OIDC authority from the deployment.'
 Assert-Pattern $containerAppModule "name:\s*'grace__auth__oidc__audience',\s*value:\s*oidcAudience" 'Grace Server must receive its OIDC audience from the deployment.'
 Assert-Pattern $containerAppModule "name:\s*'grace__auth__oidc__cli_client_id',\s*value:\s*oidcCliClientId" 'Grace Server must receive its OIDC CLI client ID from the deployment.'
+Assert-Pattern $containerAppModule '@minLength\(1\)\s*param\s+bootstrapSystemAdminUsers\s+string(\s|$)' 'The Container App module must reject an empty bootstrap SystemAdmin user list.'
 Assert-Pattern $containerAppModule "name:\s*'grace__authz__bootstrap__system_admin_users',\s*value:\s*bootstrapSystemAdminUsers" 'Grace Server must receive the bootstrap SystemAdmin user IDs from the deployment.'
 Assert-Pattern $containerAppModule "name:\s*'grace__redis__authentication_mode',\s*value:\s*'MicrosoftEntra'" 'Grace Server must explicitly select Microsoft Entra Redis authentication.'
 Assert-Pattern $containerAppModule "name:\s*'grace__redis__host',\s*value:\s*redisHost" 'Grace Server must receive the managed Redis hostname without a secret.'
