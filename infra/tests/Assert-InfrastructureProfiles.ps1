@@ -10,6 +10,7 @@ $productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
 $infraReadmePath = Join-Path $infraRoot 'README.md'
 $serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
 $sqlModulePath = Join-Path $infraRoot 'modules\sql.bicep'
+$redisModulePath = Join-Path $infraRoot 'modules\redis.bicep'
 $containerAppModulePath = Join-Path $infraRoot 'modules\container-app.bicep'
 $containerRegistryModulePath = Join-Path $infraRoot 'modules\container-registry.bicep'
 $redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
@@ -65,6 +66,7 @@ $labTemplate = Get-Content -LiteralPath $labTemplatePath -Raw
 $productionTemplate = Get-Content -LiteralPath $productionTemplatePath -Raw
 $serviceBusModule = Get-Content -LiteralPath $serviceBusModulePath -Raw
 $sqlModule = Get-Content -LiteralPath $sqlModulePath -Raw
+$redisModule = Get-Content -LiteralPath $redisModulePath -Raw
 $containerAppModule = Get-Content -LiteralPath $containerAppModulePath -Raw
 $containerRegistryModule = Get-Content -LiteralPath $containerRegistryModulePath -Raw
 $redisContainerModule = Get-Content -LiteralPath $redisContainerModulePath -Raw
@@ -88,6 +90,14 @@ Assert-Pattern $productionTemplate 'useFreeLimit:\s*true' 'The production-shaped
 Assert-Pattern $productionTemplate "freeLimitExhaustionBehavior:\s*'BillOverUsage'" 'The production-shaped profile must remain online and bill at serverless rates after the free allowance.'
 Assert-Pattern $productionTemplate 'param\s+redisSkuName\s+string(\s|$)' 'The production-shaped profile must require a Redis SKU.'
 Assert-Pattern $productionTemplate 'highAvailability:\s*true' 'The production-shaped profile must enable Redis high availability.'
+Assert-Pattern $productionTemplate 'graceServerPrincipalId:\s*identity\.outputs\.principalId' 'Azure Managed Redis must authorize the Grace Server identity.'
+Assert-Pattern $productionTemplate 'redisHost:\s*redis\.outputs\.hostName' 'Grace Server must receive the Azure Managed Redis hostname.'
+Assert-Pattern $productionTemplate 'redisPort:\s*redis\.outputs\.port' 'Grace Server must receive the Azure Managed Redis TLS port.'
+
+Assert-Pattern $redisModule "accessKeysAuthentication:\s*'Disabled'" 'Azure Managed Redis must reject access-key authentication.'
+Assert-Pattern $redisModule 'Microsoft\.Cache/redisEnterprise/databases/accessPolicyAssignments@2025-04-01' 'Azure Managed Redis must use the stable access-policy assignment API.'
+Assert-Pattern $redisModule "accessPolicyName:\s*'default'" 'Azure Managed Redis must assign its stable default data-plane policy.'
+Assert-Pattern $redisModule 'objectId:\s*graceServerPrincipalId' 'Azure Managed Redis must assign the policy to the Grace Server identity.'
 
 Assert-Pattern $sqlModule "Microsoft\.Sql/servers/databases@2025-01-01" 'The SQL module must use the API version that supports free-limit behavior.'
 Assert-Pattern $sqlModule 'autoPauseDelay:\s*autoPauseDelayMinutes' 'The SQL module must apply the selected auto-pause delay.'
@@ -113,12 +123,15 @@ Assert-Pattern $containerAppModule "external:\s*true" 'Grace Server must expose 
 Assert-Pattern $containerAppModule 'targetPort:\s*5000' 'Grace Server ingress must target its documented HTTP port.'
 Assert-Pattern $containerAppModule 'registries:\s*\[[\s\S]*identity:\s*identityId' 'Grace Server must use its managed identity for registry pulls.'
 Assert-Pattern $containerAppModule "name:\s*'AZURE_CLIENT_ID'" 'Grace Server must select its user-assigned identity at runtime.'
+Assert-Pattern $containerAppModule "name:\s*'grace__redis__authentication_mode',\s*value:\s*'MicrosoftEntra'" 'Grace Server must explicitly select Microsoft Entra Redis authentication.'
+Assert-Pattern $containerAppModule "name:\s*'grace__redis__host',\s*value:\s*redisHost" 'Grace Server must receive the managed Redis hostname without a secret.'
+Assert-Pattern $containerAppModule "name:\s*'grace__redis__port',\s*value:\s*string\(redisPort\)" 'Grace Server must receive the managed Redis port without a secret.'
 Assert-Pattern $containerAppModule "type:\s*'Startup'" 'Grace Server must have a startup probe.'
 Assert-Pattern $containerAppModule "type:\s*'Readiness'" 'Grace Server must have a readiness probe.'
 Assert-Pattern $containerAppModule "type:\s*'Liveness'" 'Grace Server must have a liveness probe.'
 Assert-Pattern $containerAppModule "path:\s*'/healthz'" 'Grace Server HTTP probes must use the existing health endpoint.'
 Assert-PatternAbsent $containerAppModule '(registryPassword|passwordSecretRef|adminUserEnabled:\s*true)' 'The Container App must not use registry credentials.'
-Assert-PatternAbsent $containerAppModule 'grace__redis__' 'The Container App tracer must not activate Redis before issue #983 supplies its managed-identity contract.'
+Assert-PatternAbsent $containerAppModule '(grace__redis__(username|password|ca_certificate)|secretRef)' 'The Container App must not receive Redis credentials, custom trust, or secrets.'
 
 Assert-Pattern $graceServerDockerfile 'FROM\s+mcr\.microsoft\.com/dotnet/aspnet:10\.0\s+AS\s+final' 'The production image must use the ASP.NET runtime image.'
 Assert-Pattern $graceServerDockerfile 'dotnet publish[^\r\n]+-c Release' 'The production image must publish Grace Server in Release mode.'

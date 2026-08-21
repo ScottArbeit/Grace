@@ -13,6 +13,9 @@ param skuName string
 @description('Whether Redis uses a replicated high-availability pair.')
 param highAvailability bool
 
+@description('Object ID of the Grace Server managed identity authorized for Redis data-plane access.')
+param graceServerPrincipalId string
+
 resource redis 'Microsoft.Cache/redisEnterprise@2025-04-01' = {
   name: name
   location: location
@@ -31,11 +34,23 @@ resource database 'Microsoft.Cache/redisEnterprise/databases@2025-04-01' = {
   parent: redis
   name: 'default'
   properties: {
+    accessKeysAuthentication: 'Disabled'
     clientProtocol: 'Encrypted'
     clusteringPolicy: 'OSSCluster'
     evictionPolicy: 'VolatileLRU'
     modules: []
     port: 10000
+  }
+}
+
+resource graceServerAccess 'Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2025-04-01' = {
+  parent: database
+  name: 'graceServer'
+  properties: {
+    accessPolicyName: 'default'
+    user: {
+      objectId: graceServerPrincipalId
+    }
   }
 }
 

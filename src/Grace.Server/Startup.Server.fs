@@ -2192,18 +2192,27 @@ module Application =
 
                 let redisPort = configuration.GetValue<int>(getConfigKey Constants.EnvironmentVariables.RedisPort)
                 let redisTls = configuration.GetValue<bool>(getConfigKey Constants.EnvironmentVariables.RedisTls)
+                let redisAuthenticationMode = configuration[getConfigKey Constants.EnvironmentVariables.RedisAuthenticationMode]
 
                 if String.IsNullOrWhiteSpace redisHost then
                     RepositoryCounterRecentResult.UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
                 else
                     let effectivePort = if redisPort > 0 then redisPort else 6379
 
-                    let redisLog =
-                        serviceProvider
-                            .GetRequiredService<ILoggerFactory>()
-                            .CreateLogger("RepositoryCounterRecentResult.Server")
+                    let loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>()
+                    let redisLog = loggerFactory.CreateLogger("RepositoryCounterRecentResult.Server")
 
-                    if redisTls then
+                    match RepositoryCounterRecentResult.selectAuthenticationMode redisAuthenticationMode redisTls with
+                    | RepositoryCounterRecentResult.RedisAuthenticationMode.MicrosoftEntra ->
+                        new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(
+                            redisHost,
+                            effectivePort,
+                            defaultAzureCredential.Value,
+                            loggerFactory,
+                            redisLog
+                        )
+                        :> IRepositoryCounterRecentResult
+                    | RepositoryCounterRecentResult.RedisAuthenticationMode.AclTls ->
                         let redisUsername = configuration[getConfigKey Constants.EnvironmentVariables.RedisUsername]
                         let redisPassword = configuration[getConfigKey Constants.EnvironmentVariables.RedisPassword]
                         let encodedCaCertificate = configuration[getConfigKey Constants.EnvironmentVariables.RedisCaCertificate]
@@ -2227,7 +2236,7 @@ module Application =
                             redisLog
                         )
                         :> IRepositoryCounterRecentResult
-                    else
+                    | RepositoryCounterRecentResult.RedisAuthenticationMode.Unauthenticated ->
                         new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog)
                         :> IRepositoryCounterRecentResult)
             |> ignore

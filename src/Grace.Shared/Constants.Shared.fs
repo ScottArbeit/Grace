@@ -382,6 +382,10 @@ module Constants =
         [<Literal>]
         let RedisHost = "grace__redis__host"
 
+        /// The environment variable that selects the Redis credential path.
+        [<Literal>]
+        let RedisAuthenticationMode = "grace__redis__authentication_mode"
+
         /// The environment variable that contains the Redis port number.
         [<Literal>]
         let RedisPort = "grace__redis__port"

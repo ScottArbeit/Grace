@@ -122,6 +122,7 @@ module sql 'modules/sql.bicep' = {
 module redis 'modules/redis.bicep' = {
   name: 'redis'
   params: {
+    graceServerPrincipalId: identity.outputs.principalId
     highAvailability: true
     location: location
     name: redisName
@@ -164,6 +165,8 @@ module graceServer 'modules/container-app.bicep' = {
     location: location
     name: containerAppName
     registryServer: registry.outputs.loginServer
+    redisHost: redis.outputs.hostName
+    redisPort: redis.outputs.port
     serviceBusEventSubscription: serviceBus.outputs.eventSubscriptionName
     serviceBusEventTopic: serviceBus.outputs.eventTopicName
     serviceBusGraceUsageSubscription: serviceBus.outputs.graceUsageSubscriptionName
