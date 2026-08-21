@@ -17,7 +17,9 @@ accepted General Purpose serverless baseline: `GP_S_Gen5_1`, 0.5 minimum and 1 m
 and keeps the database online at paid serverless rates after the allowance is exhausted. The profile also creates a
 Basic Azure Container Registry, one user-assigned managed identity,
 a Container Apps environment, and one externally reachable Grace Server replica. The Container App uses the identity
-to pull an immutable image without registry administrator credentials. Private networking and environment-specific
+to pull an immutable image without registry administrator credentials and to authenticate to Azure Managed Redis. The
+Redis database disables access-key authentication and grants that identity the stable `default` data-plane policy,
+which intentionally permits all Redis commands and keys for this Product V1 slice. Private networking and environment-specific
 reliability decisions remain separate work.
 
 ## Build and deploy Grace Server
@@ -99,10 +101,11 @@ Invoke-WebRequest -Uri "https://$fqdn/healthz"
 ```
 
 The complete deployment outputs the registry login server, public Grace Server hostname, deployed revision name, and
-managed-identity client and principal IDs for later slices. Re-running the complete deployment with a new digest creates
+managed-identity client and principal IDs. Re-running the complete deployment with a new digest creates
 a new immutable Container Apps revision. Do not pass registry passwords, administrator credentials, or access tokens as
-application settings. This tracer deliberately does not activate Grace's Redis client settings; issue #983 owns the
-Azure Managed Redis authentication and readiness contract.
+application settings. Grace receives only the Redis hostname, port, and explicit `MicrosoftEntra` mode. The server uses
+the same user-assigned identity selected by `AZURE_CLIENT_ID`; the Microsoft Redis extension acquires and refreshes its
+token, and startup must complete an authenticated `PING` before the configured integration is ready.
 
 Azure applies the SQL free allowance only when the subscription and database are eligible. The
 [current free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) supports up to ten free-offer

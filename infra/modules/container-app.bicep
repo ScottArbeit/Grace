@@ -52,6 +52,12 @@ param serviceBusGraceUsageSubscription string
 @description('Microsoft Entra Azure SQL connection string.')
 param sqlConnectionString string
 
+@description('Public TLS hostname of Azure Managed Redis.')
+param redisHost string
+
+@description('TLS port of Azure Managed Redis.')
+param redisPort int
+
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
@@ -108,6 +114,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               value: serviceBusGraceUsageSubscription
             }
             { name: 'grace__operations__sql__connectionstring', value: sqlConnectionString }
+            { name: 'grace__redis__authentication_mode', value: 'MicrosoftEntra' }
+            { name: 'grace__redis__host', value: redisHost }
+            { name: 'grace__redis__port', value: string(redisPort) }
           ]
           probes: [
             {

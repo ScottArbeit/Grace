@@ -241,6 +241,8 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 
 - `grace__redis__host`: optional Redis host for ten-minute repository-counter
   recent results.
+- `grace__redis__authentication_mode`: set to `MicrosoftEntra` for Azure Managed Redis. When omitted, Grace preserves
+  the existing local or infrastructure-lab path selected by `grace__redis__tls`.
 - `grace__redis__port`: Redis port; defaults to `6379` when a host is set.
 - `grace__redis__tls`: set to `true` for the infrastructure lab endpoint.
 - `grace__redis__username`: Redis ACL username required when TLS is enabled.
@@ -250,6 +252,12 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 The infrastructure lab runner supplies all five secure-endpoint settings to `DebugAzure`, validates the generated CA
 and DNS hostname, completes authenticated `PING`, and clears its parent-process copies before reporting readiness.
 When these lab settings are absent, `DebugAzure` retains the existing unauthenticated local Redis container.
+
+The production-shaped Container App sets `MicrosoftEntra`, the public TLS hostname, and port `10000`, but no Redis
+username, password, access key, token, or custom CA. Grace uses the user-assigned identity selected by `AZURE_CLIENT_ID`
+with `Microsoft.Azure.StackExchangeRedis`; the extension refreshes tokens and reauthenticates the RESP3 connection.
+The Azure Managed Redis database disables access keys and assigns the identity the stable `default` policy. That policy
+allows all commands and keys; a narrower custom ACL is outside this Product V1 deployment.
 
 When Redis is not configured or cannot be reached, recent-result reads return
 unknown. Addition processing may continue because retaining content is safe.

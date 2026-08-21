@@ -6,10 +6,12 @@ open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
 open NUnit.Framework
+open Microsoft.Extensions.Logging.Abstractions
 open System
 open System.Security.Cryptography
 open System.Security.Cryptography.X509Certificates
 open System.Threading
+open StackExchange.Redis
 
 /// Covers the provider-neutral Redis recent-result wire contract without starting Redis.
 [<Parallelizable(ParallelScope.All)>]
@@ -49,6 +51,36 @@ type RepositoryCounterRecentResultTests() =
         Assert.That(configuration.SslHost, Is.EqualTo("redis.example.test"))
         Assert.That(configuration.User, Is.EqualTo("grace"))
         Assert.That(configuration.Password, Is.EqualTo("secret"))
+
+    /// Verifies Redis authentication stays explicit while preserving the existing local and lab modes.
+    [<Test>]
+    member _.RedisAuthenticationModeSelectsTheConfiguredCredentialPath() =
+        Assert.That(selectAuthenticationMode null false, Is.EqualTo(RedisAuthenticationMode.Unauthenticated))
+        Assert.That(selectAuthenticationMode "" true, Is.EqualTo(RedisAuthenticationMode.AclTls))
+        Assert.That(selectAuthenticationMode "MicrosoftEntra" false, Is.EqualTo(RedisAuthenticationMode.MicrosoftEntra))
+
+    /// Verifies Azure Managed Redis configuration is TLS-only RESP3 and never carries a static credential.
+    [<Test>]
+    member _.AzureManagedRedisBaseConfigurationIsSecretFreeTlsResp3() =
+        let loggerFactory = NullLoggerFactory.Instance
+        let configuration = configurationForAzureManagedRedis "redis.example.test" 10000 loggerFactory
+
+        Assert.That(configuration.Ssl, Is.True)
+        Assert.That(configuration.SslHost, Is.EqualTo("redis.example.test"))
+        Assert.That(configuration.Protocol, Is.EqualTo(RedisProtocol.Resp3))
+        Assert.That(configuration.LoggerFactory, Is.SameAs(loggerFactory))
+        Assert.That(configuration.User, Is.Null)
+        Assert.That(configuration.Password, Is.Null)
+
+    /// Verifies a misspelled authentication mode fails instead of silently falling back to a static or anonymous path.
+    [<Test>]
+    member _.UnknownRedisAuthenticationModeIsRejected() =
+        Assert.Throws<InvalidOperationException>(
+            Action (fun () ->
+                selectAuthenticationMode "AccessKey" false
+                |> ignore)
+        )
+        |> ignore
 
     /// Verifies cached changes round-trip without inventing a zero for missing or malformed values.
     [<Test>]
