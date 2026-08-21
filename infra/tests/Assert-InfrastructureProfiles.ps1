@@ -1,0 +1,255 @@
+#Requires -Version 7.6
+
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+$infraRoot = Split-Path -Parent $PSScriptRoot
+$labTemplatePath = Join-Path $infraRoot 'main.lab.bicep'
+$productionTemplatePath = Join-Path $infraRoot 'main.production.bicep'
+$infraReadmePath = Join-Path $infraRoot 'README.md'
+$serviceBusModulePath = Join-Path $infraRoot 'modules\service-bus.bicep'
+$sqlModulePath = Join-Path $infraRoot 'modules\sql.bicep'
+$redisModulePath = Join-Path $infraRoot 'modules\redis.bicep'
+$containerAppModulePath = Join-Path $infraRoot 'modules\container-app.bicep'
+$containerRegistryModulePath = Join-Path $infraRoot 'modules\container-registry.bicep'
+$redisContainerModulePath = Join-Path $infraRoot 'modules\redis-container.bicep'
+$labRunnerPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\Invoke-GraceInfrastructureLab.ps1'
+$startDebugAzurePath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\start-debugazure.ps1'
+$inventoryAssertionsPath = Join-Path (Split-Path -Parent $infraRoot) 'scripts\GraceInfrastructureLab.Inventory.ps1'
+$graceServerDockerfilePath = Join-Path (Split-Path -Parent $infraRoot) 'src\Grace.Server\Dockerfile'
+. $inventoryAssertionsPath
+
+function Assert-Pattern {
+    <#
+    .SYNOPSIS
+    Verifies that a Bicep profile contains a required infrastructure choice.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string] $Text,
+
+        [Parameter(Mandatory)]
+        [string] $Pattern,
+
+        [Parameter(Mandatory)]
+        [string] $Message
+    )
+
+    if ($Text -notmatch $Pattern) {
+        throw $Message
+    }
+}
+
+function Assert-PatternAbsent {
+    <#
+    .SYNOPSIS
+    Verifies that a Bicep profile excludes a forbidden infrastructure choice.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string] $Text,
+
+        [Parameter(Mandatory)]
+        [string] $Pattern,
+
+        [Parameter(Mandatory)]
+        [string] $Message
+    )
+
+    if ($Text -match $Pattern) {
+        throw $Message
+    }
+}
+
+$labTemplate = Get-Content -LiteralPath $labTemplatePath -Raw
+$productionTemplate = Get-Content -LiteralPath $productionTemplatePath -Raw
+$serviceBusModule = Get-Content -LiteralPath $serviceBusModulePath -Raw
+$sqlModule = Get-Content -LiteralPath $sqlModulePath -Raw
+$redisModule = Get-Content -LiteralPath $redisModulePath -Raw
+$containerAppModule = Get-Content -LiteralPath $containerAppModulePath -Raw
+$containerRegistryModule = Get-Content -LiteralPath $containerRegistryModulePath -Raw
+$redisContainerModule = Get-Content -LiteralPath $redisContainerModulePath -Raw
+$labRunner = Get-Content -LiteralPath $labRunnerPath -Raw
+$graceServerDockerfile = Get-Content -LiteralPath $graceServerDockerfilePath -Raw
+$infraReadme = Get-Content -LiteralPath $infraReadmePath -Raw
+
+Assert-Pattern $labTemplate 'serverless:\s*true' 'The lab profile must use serverless Cosmos and SQL modules.'
+Assert-Pattern $labTemplate "skuName:\s*'GP_S_Gen5_1'" 'The lab profile must use the agreed SQL serverless SKU.'
+Assert-Pattern $labTemplate "modules/redis-container\.bicep" 'The lab profile must use the disposable Redis container module.'
+Assert-PatternAbsent $labTemplate "modules/redis\.bicep" 'The lab profile must not deploy Azure Managed Redis.'
+
+Assert-Pattern $productionTemplate 'serverless:\s*false' 'The production-shaped profile must use provisioned Cosmos throughput.'
+Assert-Pattern $productionTemplate 'param\s+cosmosProvisionedThroughput\s+int(\s|$)' 'The production-shaped profile must require Cosmos throughput.'
+Assert-Pattern $productionTemplate "skuName:\s*'GP_S_Gen5_1'" 'The production-shaped profile must use the approved General Purpose serverless SQL SKU.'
+Assert-Pattern $productionTemplate 'skuCapacity:\s*1' 'The production-shaped profile must cap SQL serverless compute at one vCore.'
+Assert-Pattern $productionTemplate 'maxSizeBytes:\s*34359738368' 'The production-shaped profile must cap SQL data storage at 32 GiB.'
+Assert-Pattern $productionTemplate 'autoPauseDelayMinutes:\s*15' 'The production-shaped profile must auto-pause SQL after 15 idle minutes.'
+Assert-Pattern $productionTemplate "minimumCapacity:\s*'0\.5'" 'The production-shaped profile must set the SQL minimum capacity to 0.5 vCore.'
+Assert-Pattern $productionTemplate 'useFreeLimit:\s*true' 'The production-shaped profile must request the SQL free offer when eligible.'
+Assert-Pattern $productionTemplate "freeLimitExhaustionBehavior:\s*'BillOverUsage'" 'The production-shaped profile must remain online and bill at serverless rates after the free allowance.'
+Assert-Pattern $productionTemplate 'param\s+redisSkuName\s+string(\s|$)' 'The production-shaped profile must require a Redis SKU.'
+Assert-Pattern $productionTemplate 'highAvailability:\s*true' 'The production-shaped profile must enable Redis high availability.'
+Assert-Pattern $productionTemplate 'graceServerPrincipalId:\s*identity\.outputs\.principalId' 'Azure Managed Redis must authorize the Grace Server identity.'
+Assert-Pattern $productionTemplate 'redisHost:\s*redis\.outputs\.hostName' 'Grace Server must receive the Azure Managed Redis hostname.'
+Assert-Pattern $productionTemplate 'redisPort:\s*redis\.outputs\.port' 'Grace Server must receive the Azure Managed Redis TLS port.'
+
+Assert-Pattern $redisModule "accessKeysAuthentication:\s*'Disabled'" 'Azure Managed Redis must reject access-key authentication.'
+Assert-Pattern $redisModule 'Microsoft\.Cache/redisEnterprise/databases/accessPolicyAssignments@2025-04-01' 'Azure Managed Redis must use the stable access-policy assignment API.'
+Assert-Pattern $redisModule "accessPolicyName:\s*'default'" 'Azure Managed Redis must assign its stable default data-plane policy.'
+Assert-Pattern $redisModule 'objectId:\s*graceServerPrincipalId' 'Azure Managed Redis must assign the policy to the Grace Server identity.'
+
+Assert-Pattern $sqlModule "Microsoft\.Sql/servers/databases@2025-01-01" 'The SQL module must use the API version that supports free-limit behavior.'
+Assert-Pattern $sqlModule 'autoPauseDelay:\s*autoPauseDelayMinutes' 'The SQL module must apply the selected auto-pause delay.'
+Assert-Pattern $sqlModule 'minCapacity:\s*json\(minimumCapacity\)' 'The SQL module must apply the selected serverless minimum capacity.'
+Assert-Pattern $sqlModule 'useFreeLimit:\s*useFreeLimit' 'The SQL module must apply free-offer eligibility.'
+Assert-Pattern $sqlModule 'freeLimitExhaustionBehavior:\s*freeLimitExhaustionBehavior' 'The SQL module must apply the selected free-limit exhaustion behavior.'
+Assert-Pattern $productionTemplate "modules/container-registry\.bicep" 'The production-shaped profile must deploy Azure Container Registry.'
+Assert-Pattern $productionTemplate "modules/managed-identity\.bicep" 'The production-shaped profile must deploy a user-assigned managed identity.'
+Assert-Pattern $productionTemplate "modules/container-app-environment\.bicep" 'The production-shaped profile must deploy a Container Apps environment.'
+Assert-Pattern $productionTemplate "modules/container-app\.bicep" 'The production-shaped profile must deploy Grace Server as a Container App.'
+Assert-Pattern $productionTemplate 'param\s+graceServerImage\s+string(\s|$)' 'The production-shaped profile must require an immutable Grace Server image.'
+Assert-Pattern $productionTemplate '@minLength\(1\)\s*param\s+oidcAuthority\s+string(\s|$)' 'The production-shaped profile must reject an empty OIDC authority.'
+Assert-Pattern $productionTemplate '@minLength\(1\)\s*param\s+oidcAudience\s+string(\s|$)' 'The production-shaped profile must reject an empty OIDC audience.'
+Assert-Pattern $productionTemplate '@minLength\(1\)\s*param\s+oidcCliClientId\s+string(\s|$)' 'The production-shaped profile must reject an empty OIDC CLI client ID.'
+Assert-Pattern $productionTemplate '@minLength\(1\)\s*param\s+bootstrapSystemAdminUsers\s+string(\s|$)' 'The production-shaped profile must require at least one bootstrap SystemAdmin user ID.'
+Assert-Pattern $productionTemplate 'oidcAuthority:\s*oidcAuthority' 'The production-shaped profile must pass the OIDC authority to Grace Server.'
+Assert-Pattern $productionTemplate 'oidcAudience:\s*oidcAudience' 'The production-shaped profile must pass the OIDC audience to Grace Server.'
+Assert-Pattern $productionTemplate 'oidcCliClientId:\s*oidcCliClientId' 'The production-shaped profile must pass the OIDC CLI client ID to Grace Server.'
+Assert-Pattern $productionTemplate 'bootstrapSystemAdminUsers:\s*bootstrapSystemAdminUsers' 'The production-shaped profile must pass the bootstrap SystemAdmin user IDs to Grace Server.'
+Assert-Pattern $productionTemplate "startsWith\(validatedGraceServerImage, '\$\{registry\.outputs\.loginServer\}/'\)" 'Grace Server must use the registry created by its deployment.'
+Assert-Pattern $productionTemplate 'output\s+graceServerFqdn\s+string' 'The production-shaped profile must expose the Grace Server hostname.'
+Assert-Pattern $productionTemplate 'output\s+graceServerReadyRevisionName\s+string\s*=\s*graceServer\.outputs\.latestReadyRevisionName' 'The production-shaped profile must expose the latest ready Grace Server revision.'
+Assert-Pattern $productionTemplate 'output\s+graceServerIdentityClientId\s+string' 'The production-shaped profile must expose the Grace Server identity client ID.'
+Assert-Pattern $productionTemplate 'output\s+graceServerIdentityPrincipalId\s+string' 'The production-shaped profile must expose the Grace Server identity principal ID.'
+
+Assert-Pattern $containerRegistryModule 'adminUserEnabled:\s*false' 'The registry must not enable administrator credentials.'
+Assert-Pattern $containerRegistryModule '7f951dda-4ed3-4680-a7ca-43fe172d538d' 'The registry module must grant managed-identity AcrPull access.'
+Assert-Pattern $containerAppModule 'minReplicas:\s*1' 'Grace Server must keep exactly one minimum replica.'
+Assert-Pattern $containerAppModule 'maxReplicas:\s*1' 'Grace Server must keep exactly one maximum replica.'
+Assert-Pattern $containerAppModule "external:\s*true" 'Grace Server must expose external HTTPS ingress.'
+Assert-Pattern $containerAppModule 'targetPort:\s*5000' 'Grace Server ingress must target its documented HTTP port.'
+Assert-Pattern $containerAppModule 'registries:\s*\[[\s\S]*identity:\s*identityId' 'Grace Server must use its managed identity for registry pulls.'
+Assert-Pattern $containerAppModule "name:\s*'AZURE_CLIENT_ID'" 'Grace Server must select its user-assigned identity at runtime.'
+Assert-Pattern $containerAppModule "name:\s*'grace__auth__oidc__authority',\s*value:\s*oidcAuthority" 'Grace Server must receive its OIDC authority from the deployment.'
+Assert-Pattern $containerAppModule "name:\s*'grace__auth__oidc__audience',\s*value:\s*oidcAudience" 'Grace Server must receive its OIDC audience from the deployment.'
+Assert-Pattern $containerAppModule "name:\s*'grace__auth__oidc__cli_client_id',\s*value:\s*oidcCliClientId" 'Grace Server must receive its OIDC CLI client ID from the deployment.'
+Assert-Pattern $containerAppModule '@minLength\(1\)\s*param\s+bootstrapSystemAdminUsers\s+string(\s|$)' 'The Container App module must reject an empty bootstrap SystemAdmin user list.'
+Assert-Pattern $containerAppModule "name:\s*'grace__authz__bootstrap__system_admin_users',\s*value:\s*bootstrapSystemAdminUsers" 'Grace Server must receive the bootstrap SystemAdmin user IDs from the deployment.'
+Assert-Pattern $containerAppModule "name:\s*'grace__redis__authentication_mode',\s*value:\s*'MicrosoftEntra'" 'Grace Server must explicitly select Microsoft Entra Redis authentication.'
+Assert-Pattern $containerAppModule "name:\s*'grace__redis__host',\s*value:\s*redisHost" 'Grace Server must receive the managed Redis hostname without a secret.'
+Assert-Pattern $containerAppModule "name:\s*'grace__redis__port',\s*value:\s*string\(redisPort\)" 'Grace Server must receive the managed Redis port without a secret.'
+Assert-Pattern $containerAppModule "type:\s*'Startup'" 'Grace Server must have a startup probe.'
+Assert-Pattern $containerAppModule "type:\s*'Readiness'" 'Grace Server must have a readiness probe.'
+Assert-Pattern $containerAppModule "type:\s*'Liveness'" 'Grace Server must have a liveness probe.'
+Assert-Pattern $containerAppModule "path:\s*'/healthz'" 'Grace Server HTTP probes must use the existing health endpoint.'
+Assert-PatternAbsent $containerAppModule '(registryPassword|passwordSecretRef|adminUserEnabled:\s*true)' 'The Container App must not use registry credentials.'
+Assert-PatternAbsent $containerAppModule '(grace__redis__(username|password|ca_certificate)|secretRef)' 'The Container App must not receive Redis credentials, custom trust, or secrets.'
+
+Assert-Pattern $graceServerDockerfile 'FROM\s+mcr\.microsoft\.com/dotnet/aspnet:10\.0\s+AS\s+final' 'The production image must use the ASP.NET runtime image.'
+Assert-Pattern $graceServerDockerfile 'dotnet publish[^\r\n]+-c Release' 'The production image must publish Grace Server in Release mode.'
+Assert-Pattern $graceServerDockerfile '/p:DebugSymbols=false' 'The production image must exclude debug symbols.'
+Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:10\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
+
+Assert-Pattern $infraReadme 'cosmosProvisionedThroughput=1000' 'The production deployment example must use the accepted 1,000 RU/s manual Cosmos throughput.'
+Assert-PatternAbsent $infraReadme 'sqlSkuName=|sqlVCoreCapacity=|sqlMaxSizeBytes=' 'The deployment example must not override the approved SQL serverless baseline.'
+
+Assert-Pattern $redisContainerModule 'Microsoft\.ContainerInstance/containerGroups' 'The lab Redis module must deploy Azure Container Instances.'
+Assert-Pattern $redisContainerModule "image string = 'redis:7\.4-alpine'" 'The lab Redis module must pin its disposable Redis image tag.'
+Assert-Pattern $redisContainerModule "--port'[\s\S]*'0'" 'The lab Redis container must disable its plaintext listener.'
+Assert-Pattern $redisContainerModule "--tls-port'[\s\S]*'6380'" 'The lab Redis container must listen on the accepted TLS port.'
+Assert-Pattern $redisContainerModule "--aclfile'" 'The lab Redis container must load its generated ACL from a mounted secret.'
+Assert-Pattern $redisContainerModule "type:\s*'Public'" 'The lab Redis container must expose its certificate hostname publicly.'
+Assert-Pattern $redisContainerModule 'ports:\s*\[[\s\S]*port:\s*6380' 'The lab Redis container must expose TLS port 6380.'
+Assert-PatternAbsent $redisContainerModule 'port:\s*6379' 'The lab Redis container must not expose plaintext port 6379.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param caCertificate' 'The lab Redis CA input must be a secure Bicep parameter.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param serverPrivateKey' 'The lab Redis private key input must be a secure Bicep parameter.'
+Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param aclFile' 'The lab Redis ACL input must be a secure Bicep parameter.'
+Assert-PatternAbsent $redisContainerModule 'output\s+\w*(password|privateKey|acl|certificate)' 'The lab Redis module must not output generated secure material.'
+
+Assert-Pattern $serviceBusModule 'graceUsageTopicName' 'The Service Bus module must use GraceUsage vocabulary for its usage topic.'
+Assert-Pattern $serviceBusModule 'graceUsageSubscriptionName' 'The Service Bus module must use GraceUsage vocabulary for its usage subscription.'
+Assert-PatternAbsent $serviceBusModule 'operationalFacts|OperationalFacts|operational-facts' 'The Service Bus template must not retain OperationalFacts vocabulary.'
+Assert-Pattern $labTemplate 'serviceBusGraceUsageTopic' 'The lab profile must expose the Grace usage topic output.'
+Assert-Pattern $productionTemplate 'serviceBusGraceUsageTopic' 'The production-shaped profile must expose the Grace usage topic output.'
+
+$partitionedTopicCount = ([regex]::Matches($serviceBusModule, 'enablePartitioning:\s*true')).Count
+if ($partitionedTopicCount -ne 2) {
+    throw "Both Service Bus topics must enable partitioning; found $partitionedTopicCount partitioned topic declarations."
+}
+Assert-PatternAbsent $serviceBusModule 'enablePartitioning:\s*false' 'The Service Bus module must not create an unpartitioned topic.'
+Assert-Pattern $labRunner "DeploymentSuffix\s*=\s*\(Get-Date\s+-Format\s+'yyyyMMdd'\)" 'The lab runner must derive its default deployment suffix at runtime.'
+Assert-PatternAbsent $labRunner "DeploymentSuffix\s*=\s*'\d{8}'" 'The lab runner must not embed a dated deployment suffix.'
+Assert-PatternAbsent $labRunner "ResourceGroupName\s*=\s*'rg-grace-infra-lab-\d{8}'" 'The lab runner must not embed a dated resource group name.'
+Assert-Pattern $labRunner "readEnvironmentVariable\('GRACE_LAB_REDIS_SERVER_PRIVATE_KEY'\)" 'The runner must resolve the Redis private key through inherited environment.'
+Assert-Pattern $labRunner 'Test-RedisTlsReadiness\s+-Material' 'The runner must complete authenticated TLS PING before readiness.'
+Assert-Pattern $labRunner 'Test-RedisTlsReadiness[\s\S]*Clear-LabRedisSecrets[\s\S]*readiness passed' 'The runner must clear parent Redis secrets before reporting readiness.'
+Assert-Pattern $labRunner '''grace__azure_storage__account_name''\s*=\s*\$outputs\.storageAccountName\.value' 'The runner must override the exact Storage setting consumed by DebugAzure.'
+Assert-Pattern $labRunner '''grace__azurecosmosdb__endpoint''\s*=\s*\$outputs\.cosmosEndpoint\.value' 'The runner must override the exact Cosmos endpoint setting consumed by DebugAzure.'
+Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*Deployment completed; launching DebugAzure" 'The runner must clear deployment-only Redis material after deployment and before launching DebugAzure.'
+Assert-Pattern $labRunner "'deployment', 'group', 'create'[\s\S]*Clear-LabRedisDeploymentSecrets[\s\S]*& pwsh -NoProfile -File" 'The DebugAzure child must be launched only after deployment-only Redis secrets are cleared.'
+Assert-Pattern $labRunner "-PreflightOnly[\s\S]*Invoke-BicepBuilds[\s\S]*'deployment', 'group', 'create'" 'Deploy must reject a pre-existing Grace Server listener before rotating Azure credentials.'
+Assert-PatternAbsent $labRunner 'redis(ServerPrivateKey|AclFile|Password)=\$' 'The runner must not place secure Redis values in Azure CLI arguments.'
+Assert-PatternAbsent $labRunner 'Write-(Host|LabStatus)[^\r\n]*(Password|ServerKeyBase64|AclBase64|CaBase64)' 'The runner must not write generated Redis material to status output.'
+
+$expectedInventory = @(
+    [pscustomobject]@{ name = 'expected-redis'; type = 'Microsoft.ContainerInstance/containerGroups' }
+    [pscustomobject]@{ name = 'expected-storage'; type = 'Microsoft.Storage/storageAccounts' }
+)
+$validInventory = @(
+    $expectedInventory
+    [pscustomobject]@{ name = 'expected-storage/default'; type = 'Microsoft.Storage/storageAccounts/blobServices' }
+)
+$allowedInventoryTypes = @(
+    'Microsoft.ContainerInstance/containerGroups'
+    'Microsoft.Storage/storageAccounts'
+    'Microsoft.Storage/storageAccounts/blobServices'
+)
+
+Assert-ExactLabResourceInventory `
+    -Resources $validInventory `
+    -ExpectedTopLevelResources $expectedInventory `
+    -AllowedResourceTypes $allowedInventoryTypes
+
+$inventoryWithStaleAllowedResource = @(
+    $validInventory
+    [pscustomobject]@{ name = 'stale-storage'; type = 'Microsoft.Storage/storageAccounts' }
+)
+
+try {
+    Assert-ExactLabResourceInventory `
+        -Resources $inventoryWithStaleAllowedResource `
+        -ExpectedTopLevelResources $expectedInventory `
+        -AllowedResourceTypes $allowedInventoryTypes
+    throw 'Exact inventory assertion accepted an additional Storage account.'
+}
+catch {
+    if ($_.Exception.Message -notmatch 'unexpected top-level: stale-storage') {
+        throw
+    }
+}
+
+$occupiedListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$occupiedListener.Start()
+$occupiedPort = ([Net.IPEndPoint] $occupiedListener.LocalEndpoint).Port
+$occupiedUri = "http://127.0.0.1:$occupiedPort"
+try {
+    $occupiedOutput = @(& pwsh -NoProfile -File $startDebugAzurePath -GraceServerUri $occupiedUri -PreflightOnly 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw 'DebugAzure preflight accepted an occupied Grace Server URI.'
+    }
+
+    if (($occupiedOutput -join [Environment]::NewLine) -notmatch 'already has a listener') {
+        throw 'DebugAzure preflight did not explain that the configured URI was already occupied.'
+    }
+}
+finally {
+    $occupiedListener.Stop()
+}
+
+$availableOutput = @(& pwsh -NoProfile -File $startDebugAzurePath -GraceServerUri $occupiedUri -PreflightOnly 2>&1)
+if ($LASTEXITCODE -ne 0 -or ($availableOutput -join [Environment]::NewLine) -notmatch 'is available for a new DebugAzure child') {
+    throw 'DebugAzure preflight rejected an available Grace Server URI.'
+}
+
+Write-Host 'Infrastructure profile assertions passed.' -ForegroundColor Green

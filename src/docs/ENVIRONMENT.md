@@ -34,6 +34,33 @@ The Aspire dashboard defaults to <http://localhost:18888> and OTLP export defaul
 - `grace__auth__oidc__authority`
 - `grace__auth__oidc__audience`
 - `grace__auth__oidc__cli_client_id` (publish mode)
+- `grace__authz__bootstrap__system_admin_users`
+- `grace__authz__bootstrap__system_admin_groups`
+
+## DebugAzure Authorization Startup
+
+Use `scripts/start-debugazure.ps1` to start the Azure-backed development profile. The script builds the CLI, starts
+Aspire, waits for `grace authenticate whoami`, and checks `SystemAdmin` on the system resource.
+
+PowerShell:
+
+```powershell
+pwsh ./scripts/start-debugazure.ps1
+```
+
+bash / zsh:
+
+```bash
+pwsh ./scripts/start-debugazure.ps1
+```
+
+If the current identity is already authorized, startup does not change authorization. If the check is denied, the
+script restarts Aspire once with that exact authenticated Grace user ID as a bootstrap candidate. Grace seeds the
+assignment only when the durable system assignment list is empty. If assignments already exist, the restart cannot
+grant access and the script stops with a message that an existing SystemAdmin must grant the role.
+
+The script never uses the DebugLocal `test-admin` fallback and does not print tokens or the bootstrap user ID. Successful
+startup leaves Aspire running and prints its process ID plus stdout and stderr log paths under `.grace/logs`.
 
 ## DebugLocal Onboarding Variables
 
@@ -193,7 +220,7 @@ These capture failure classification, retryability, cleanup notes, and runtime m
 - `grace__azure_service_bus__operational_facts_topic`: Service Bus topic for operational usage facts. Defaults to
   `grace-operational-facts` in Aspire-managed local and publish configurations.
 - `grace__azure_service_bus__operational_facts_processor_subscription`: Required Azure Service Bus startup
-  acknowledgement that the operational facts topic already has the durable `operational-facts-processor` subscription.
+  acknowledgement naming the durable usage collector subscription. The infrastructure lab uses `grace-usage-collector`.
 - `grace__azure_service_bus__subscription`: Service Bus subscription name.
 
 ### Operations Worker
@@ -205,8 +232,8 @@ These capture failure classification, retryability, cleanup notes, and runtime m
   `4`.
 - `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `16`.
 
-The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and requires
-`grace__azure_service_bus__operational_facts_processor_subscription` to be exactly `operational-facts-processor`.
+The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and consumes the durable
+subscription named by `grace__azure_service_bus__operational_facts_processor_subscription`.
 Malformed or unsupported usage fact messages are dead-lettered; transient storage failures are abandoned for retry.
 Messages are completed only after SQL processing succeeds or the durable usage fact identity is already present.
 
@@ -214,7 +241,23 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 
 - `grace__redis__host`: optional Redis host for ten-minute repository-counter
   recent results.
+- `grace__redis__authentication_mode`: set to `MicrosoftEntra` for Azure Managed Redis. When omitted, Grace preserves
+  the existing local or infrastructure-lab path selected by `grace__redis__tls`.
 - `grace__redis__port`: Redis port; defaults to `6379` when a host is set.
+- `grace__redis__tls`: set to `true` for the infrastructure lab endpoint.
+- `grace__redis__username`: Redis ACL username required when TLS is enabled.
+- `grace__redis__password`: Redis ACL password required when TLS is enabled.
+- `grace__redis__ca_certificate`: Base64-encoded PEM custom root required when TLS is enabled.
+
+The infrastructure lab runner supplies all five secure-endpoint settings to `DebugAzure`, validates the generated CA
+and DNS hostname, completes authenticated `PING`, and clears its parent-process copies before reporting readiness.
+When these lab settings are absent, `DebugAzure` retains the existing unauthenticated local Redis container.
+
+The production-shaped Container App sets `MicrosoftEntra`, the public TLS hostname, and port `10000`, but no Redis
+username, password, access key, token, or custom CA. Grace uses the user-assigned identity selected by `AZURE_CLIENT_ID`
+with `Microsoft.Azure.StackExchangeRedis`; the extension refreshes tokens and reauthenticates the RESP3 connection.
+The Azure Managed Redis database disables access keys and assigns the identity the stable `default` policy. That policy
+allows all commands and keys; a narrower custom ACL is outside this Product V1 deployment.
 
 When Redis is not configured or cannot be reached, recent-result reads return
 unknown. Addition processing may continue because retaining content is safe.

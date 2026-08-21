@@ -6,8 +6,12 @@ open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
 open NUnit.Framework
+open Microsoft.Extensions.Logging.Abstractions
 open System
+open System.Security.Cryptography
+open System.Security.Cryptography.X509Certificates
 open System.Threading
+open StackExchange.Redis
 
 /// Covers the provider-neutral Redis recent-result wire contract without starting Redis.
 [<Parallelizable(ParallelScope.All)>]
@@ -31,6 +35,52 @@ type RepositoryCounterRecentResultTests() =
         Assert.That(configuration.AsyncTimeout, Is.EqualTo(int connectionTimeout.TotalMilliseconds))
         Assert.That(requiresReadinessProbe false, Is.True)
         Assert.That(requiresReadinessProbe true, Is.False)
+
+    /// Verifies the lab endpoint enables TLS, keeps hostname validation, and supplies the generated ACL identity.
+    [<Test>]
+    member _.SecureLabConfigurationUsesTlsAclAndCustomRoot() =
+        use key = RSA.Create(2048)
+        let request = CertificateRequest("CN=Grace Lab CA", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+        request.CertificateExtensions.Add(X509BasicConstraintsExtension(true, false, 0, true))
+        use certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1.0), DateTimeOffset.UtcNow.AddHours(1.0))
+        let caPem = certificate.ExportCertificatePem()
+
+        let configuration = configurationForSecureEndpoint "redis.example.test" 6380 "grace" "secret" caPem
+
+        Assert.That(configuration.Ssl, Is.True)
+        Assert.That(configuration.SslHost, Is.EqualTo("redis.example.test"))
+        Assert.That(configuration.User, Is.EqualTo("grace"))
+        Assert.That(configuration.Password, Is.EqualTo("secret"))
+
+    /// Verifies Redis authentication stays explicit while preserving the existing local and lab modes.
+    [<Test>]
+    member _.RedisAuthenticationModeSelectsTheConfiguredCredentialPath() =
+        Assert.That(selectAuthenticationMode null false, Is.EqualTo(RedisAuthenticationMode.Unauthenticated))
+        Assert.That(selectAuthenticationMode "" true, Is.EqualTo(RedisAuthenticationMode.AclTls))
+        Assert.That(selectAuthenticationMode "MicrosoftEntra" false, Is.EqualTo(RedisAuthenticationMode.MicrosoftEntra))
+
+    /// Verifies Azure Managed Redis configuration is TLS-only RESP3 and never carries a static credential.
+    [<Test>]
+    member _.AzureManagedRedisBaseConfigurationIsSecretFreeTlsResp3() =
+        let loggerFactory = NullLoggerFactory.Instance
+        let configuration = configurationForAzureManagedRedis "redis.example.test" 10000 loggerFactory
+
+        Assert.That(configuration.Ssl, Is.True)
+        Assert.That(configuration.SslHost, Is.EqualTo("redis.example.test"))
+        Assert.That(configuration.Protocol, Is.EqualTo(RedisProtocol.Resp3))
+        Assert.That(configuration.LoggerFactory, Is.SameAs(loggerFactory))
+        Assert.That(configuration.User, Is.Null)
+        Assert.That(configuration.Password, Is.Null)
+
+    /// Verifies a misspelled authentication mode fails instead of silently falling back to a static or anonymous path.
+    [<Test>]
+    member _.UnknownRedisAuthenticationModeIsRejected() =
+        Assert.Throws<InvalidOperationException>(
+            Action (fun () ->
+                selectAuthenticationMode "AccessKey" false
+                |> ignore)
+        )
+        |> ignore
 
     /// Verifies cached changes round-trip without inventing a zero for missing or malformed values.
     [<Test>]
@@ -104,4 +154,14 @@ type RepositoryCounterRecentResultTests() =
                 )
 
             Assert.That(confirmed, Is.False)
+        }
+
+    /// Verifies the startup warmup remains a no-op when Redis is intentionally absent.
+    [<Test>]
+    member _.UnavailableRedisWarmupCompletesWithoutConnection() =
+        task {
+            let recent = UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
+            let warmup = RedisRepositoryCounterRecentResultWarmup(recent) :> Microsoft.Extensions.Hosting.IHostedService
+
+            do! warmup.StartAsync(CancellationToken.None)
         }

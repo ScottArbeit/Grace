@@ -23,7 +23,7 @@ type OperationsTracerBulletServerTests() =
 
     /// Durable operations worker subscription created by AppHost for local tracer-bullet runs.
     [<Literal>]
-    let operationsProcessorSubscriptionName = "operational-facts-processor"
+    let operationsProcessorSubscriptionName = "grace-usage-collector"
 
     /// JSON media type used for operational usage fact Service Bus messages.
     [<Literal>]

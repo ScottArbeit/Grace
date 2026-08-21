@@ -26,10 +26,16 @@ public partial class Program
     private const string GraceEventTopicResourceName = "grace-event-topic";
     private const string GraceEventSubscriptionResourceName = "grace-event-subscription";
     private const string OperationalFactsTopicResourceName = "grace-operational-facts-topic";
-    private const string OperationalFactsProcessorSubscriptionName = "operational-facts-processor";
-    private const string OperationalFactsProcessorSubscriptionResourceName = "grace-operational-facts-processor-subscription";
+    private const string GraceUsageCollectorSubscriptionName = "grace-usage-collector";
+    private const string GraceUsageCollectorSubscriptionResourceName = "grace-usage-collector-subscription";
     private const string OperationalFactsProcessorSubscriptionSettingName = "grace__azure_service_bus__operational_facts_processor_subscription";
     private const string OperationsSqlConnectionStringSettingName = "grace__operations__sql__connectionstring";
+    internal const string DebugAzureBootstrapModeEnvironmentVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_MODE";
+    internal const string DebugAzureBootstrapUserIdEnvironmentVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_USER_ID";
+    internal const string DebugAzureBootstrapModeSuppress = "Suppress";
+    internal const string DebugAzureBootstrapModeExactUser = "ExactUser";
+
+    internal sealed record AuthorizationBootstrapSettings(string? Users, string? Groups);
 
     private static void Main(string[] args)
     {
@@ -86,7 +92,8 @@ public partial class Program
                 .WithContainerName(redisContainerName)
                 //.WithLifetime(ContainerLifetime.Session)
                 .WithEnvironment("ACCEPT_EULA", "Y")
-                .WithEndpoint(targetPort: 6379, port: 6379);
+                .WithEndpoint(targetPort: 6379, port: 6379, name: "tcp", scheme: "tcp");
+            var redisEndpoint = redis.GetEndpoint("tcp");
             if (isTestRun)
             {
                 redis.WithLifetime(ContainerLifetime.Session);
@@ -105,6 +112,16 @@ public partial class Program
 
                 Directory.CreateDirectory(stateRoot);
                 Directory.CreateDirectory(logDirectory);
+
+                var cacheTargetPort = GetAvailableTcpPort();
+                var cacheUrl = "http://127.0.0.1:" + cacheTargetPort;
+                var graceCache = builder.AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.fsproj")
+                    .WithEnvironment("ASPNETCORE_URLS", cacheUrl)
+                    .WithHttpEndpoint(targetPort: cacheTargetPort, name: "http");
+                var forwardedCacheKeys = new List<string>();
+                AddOptionalEnvironment(graceCache, configuration, "Cache__DatabasePath", forwardedCacheKeys);
+                AddOptionalEnvironment(graceCache, configuration, "Cache__ManagedRoot", forwardedCacheKeys);
+                LogForwardedSettings("Grace.Cache local settings", forwardedCacheKeys);
 
                 // These get set in both Local and Azure-debug runs.
                 var orleansClusterId = configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "local";
@@ -127,8 +144,6 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
                     .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")
-                    .WithEnvironment(EnvironmentVariables.RedisHost, "127.0.0.1")
-                    .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, orleansClusterId)
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, orleansServiceId)
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
@@ -138,6 +153,17 @@ public partial class Program
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
+                var authorizationBootstrapSettings = ResolveAuthorizationBootstrapSettings(configuration, isAzureDebugRun);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers,
+                    authorizationBootstrapSettings.Users,
+                    forwardedAuthKeys);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups,
+                    authorizationBootstrapSettings.Groups,
+                    forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 if (isTestRun && !useFixedTestPorts)
@@ -163,6 +189,18 @@ public partial class Program
                     // DebugLocal (default): containers/emulators
                     // -------------------------
                     Console.WriteLine("Configuring Grace.Server for DebugLocal with local emulators.");
+                    graceServer.WithEnvironment(async context =>
+                    {
+                        var endpoint = await redisEndpoint.GetValueAsync(context.CancellationToken);
+                        if (string.IsNullOrWhiteSpace(endpoint))
+                        {
+                            throw new InvalidOperationException("Aspire did not allocate the local Redis endpoint.");
+                        }
+
+                        var endpointUri = new Uri(endpoint);
+                        context.EnvironmentVariables[EnvironmentVariables.RedisHost] = endpointUri.Host;
+                        context.EnvironmentVariables[EnvironmentVariables.RedisPort] = endpointUri.Port.ToString();
+                    });
                     var azuriteDataPath = Path.Combine(stateRoot, "azurite");
                     var cosmosCertPath = Path.Combine(stateRoot, "cosmos-cert");
                     var serviceBusConfigPath = Path.Combine(stateRoot, "servicebus");
@@ -180,6 +218,9 @@ public partial class Program
                 var serviceBusSubscriptionName =
                     ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription)
                     ?? "grace-server";
+                var graceUsageCollectorSubscriptionName =
+                    ResolveSetting(configuration, OperationalFactsProcessorSubscriptionSettingName)
+                    ?? GraceUsageCollectorSubscriptionName;
 
                 // Create Service Bus emulator config (when enabled for tests)
                 string? serviceBusConfigFile = null;
@@ -331,7 +372,7 @@ public partial class Program
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
-                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
+                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscriptionName);
 
                         _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
@@ -347,7 +388,7 @@ public partial class Program
                             )
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
-                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
+                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
                             .WithEnvironment(async context =>
                             {
                                 var sqlEndpoint = await serviceBusSqlEndpoint.GetValueAsync(context.CancellationToken);
@@ -394,14 +435,19 @@ public partial class Program
                     var azureStorageConnectionString = ResolveSetting(configuration, EnvironmentVariables.AzureStorageConnectionString);
                     var azureStorageAccountName = ResolveSetting(configuration, EnvironmentVariables.AzureStorageAccountName);
 
-                    if (string.IsNullOrWhiteSpace(azureStorageConnectionString))
+                    if (!string.IsNullOrWhiteSpace(azureStorageAccountName))
                     {
-                        azureStorageAccountName = GetRequiredSetting(configuration, EnvironmentVariables.AzureStorageAccountName);
+                        // An explicitly selected account must not be displaced by an old user-level connection string.
+                        azureStorageConnectionString = null;
                         Console.WriteLine($"Using Azure Storage account: {azureStorageAccountName}.");
+                    }
+                    else if (!string.IsNullOrWhiteSpace(azureStorageConnectionString))
+                    {
+                        Console.WriteLine("Using Azure Storage connection string from configuration.");
                     }
                     else
                     {
-                        Console.WriteLine("Using Azure Storage connection string from configuration.");
+                        azureStorageAccountName = GetRequiredSetting(configuration, EnvironmentVariables.AzureStorageAccountName);
                     }
 
                     var cosmosdbEndpoint = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBEndpoint);
@@ -421,9 +467,27 @@ public partial class Program
                     EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic);
                     var operationalFactsProcessorSubscription =
                         GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);
-                    EnsureOperationalFactsProcessorSubscription(operationalFactsProcessorSubscription);
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
                     var operationsSqlConnectionString = GetRequiredSetting(configuration, OperationsSqlConnectionStringSettingName);
+                    var redisHost = ResolveSetting(configuration, EnvironmentVariables.RedisHost);
+                    var redisPort = ResolveSetting(configuration, EnvironmentVariables.RedisPort);
+                    var redisTls = ResolveSetting(configuration, EnvironmentVariables.RedisTls);
+                    var redisUsername = ResolveSetting(configuration, EnvironmentVariables.RedisUsername);
+                    var redisPassword = ResolveSetting(configuration, EnvironmentVariables.RedisPassword);
+                    var redisCaCertificate = ResolveSetting(configuration, EnvironmentVariables.RedisCaCertificate);
+
+                    if (!string.IsNullOrWhiteSpace(redisHost))
+                    {
+                        if (!IsTruthy(redisTls)
+                            || string.IsNullOrWhiteSpace(redisPort)
+                            || string.IsNullOrWhiteSpace(redisUsername)
+                            || string.IsNullOrWhiteSpace(redisPassword)
+                            || string.IsNullOrWhiteSpace(redisCaCertificate))
+                        {
+                            throw new InvalidOperationException(
+                                "DebugAzure Redis requires explicit TLS, port, ACL username, password, and CA settings.");
+                        }
+                    }
 
                     graceServer
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
@@ -435,8 +499,14 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
-                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
+                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
+                        .WithEnvironment(EnvironmentVariables.RedisHost, redisHost ?? "127.0.0.1")
+                        .WithEnvironment(EnvironmentVariables.RedisPort, redisPort ?? "6379")
+                        .WithEnvironment(EnvironmentVariables.RedisTls, redisTls)
+                        .WithEnvironment(EnvironmentVariables.RedisUsername, redisUsername)
+                        .WithEnvironment(EnvironmentVariables.RedisPassword, redisPassword)
+                        .WithEnvironment(EnvironmentVariables.RedisCaCertificate, redisCaCertificate)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
@@ -446,7 +516,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
-                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
+                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)
                         .WithEnvironment(OperationsSqlConnectionStringSettingName, operationsSqlConnectionString)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure")
                         .WithOtlpExporter();
@@ -455,6 +525,9 @@ public partial class Program
                     Console.WriteLine("  - Azure Storage: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Cosmos: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Service Bus: using DefaultAzureCredential.");
+                    Console.WriteLine(string.IsNullOrWhiteSpace(redisHost)
+                        ? "  - Redis: using the local unauthenticated container."
+                        : "  - Redis: using the TLS-authenticated infrastructure lab endpoint.");
                     Console.WriteLine($"  - Operational facts processor subscription: {operationalFactsProcessorSubscription}.");
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");
@@ -486,6 +559,9 @@ public partial class Program
                 var graceEventSubscriptionName =
                     configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)]
                     ?? "grace-server";
+                var graceUsageCollectorSubscriptionName =
+                    configuration[getConfigKey(OperationalFactsProcessorSubscriptionSettingName)]
+                    ?? GraceUsageCollectorSubscriptionName;
                 _ = serviceBus.AddServiceBusTopic(GraceEventTopicResourceName, serviceBusTopicName)
                     .AddServiceBusSubscription(GraceEventSubscriptionResourceName, graceEventSubscriptionName);
                 _ = serviceBus.AddServiceBusTopic(
@@ -497,8 +573,8 @@ public partial class Program
                         topic.DuplicateDetectionHistoryTimeWindow = TimeSpan.FromMinutes(5);
                     })
                     .AddServiceBusSubscription(
-                        OperationalFactsProcessorSubscriptionResourceName,
-                        OperationalFactsProcessorSubscriptionName);
+                        GraceUsageCollectorSubscriptionResourceName,
+                        graceUsageCollectorSubscriptionName);
 
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
@@ -527,7 +603,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
-                    .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
+                    .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAuthority, configuration[EnvironmentVariables.GraceAuthOidcAuthority])
@@ -541,6 +617,17 @@ public partial class Program
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
+                var authorizationBootstrapSettings = ResolveAuthorizationBootstrapSettings(configuration, false);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers,
+                    authorizationBootstrapSettings.Users,
+                    forwardedAuthKeys);
+                AddOptionalEnvironment(
+                    graceServer,
+                    EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups,
+                    authorizationBootstrapSettings.Groups,
+                    forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 Console.WriteLine("Grace.Server publish/production environment configured (Azure resources with MI by default).");
@@ -576,7 +663,7 @@ public partial class Program
         }
     }
 
-    private static string? ResolveSetting(IConfiguration configuration, string name)
+    internal static string? ResolveSetting(IConfiguration configuration, string name)
     {
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value))
@@ -630,15 +717,6 @@ public partial class Program
         }
     }
 
-    private static void EnsureOperationalFactsProcessorSubscription(string? subscriptionName)
-    {
-        if (!OperationalFactsProcessorSubscriptionName.Equals(subscriptionName?.Trim(), StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"DebugAzure requires existing Azure Service Bus topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' to contain durable subscription '{OperationalFactsProcessorSubscriptionName}'. Set '{OperationalFactsProcessorSubscriptionSettingName}' to '{OperationalFactsProcessorSubscriptionName}' after creating that subscription.");
-        }
-    }
-
     internal static string BuildSqlTcpDataSource(object host, object port)
     {
         var hostValue = Convert.ToString(host)?.Trim();
@@ -673,12 +751,56 @@ public partial class Program
         string name,
         IList<string> forwardedKeys)
     {
-        var value = ResolveSetting(configuration, name);
+        AddOptionalEnvironment(resource, name, ResolveSetting(configuration, name), forwardedKeys);
+    }
+
+    private static void AddOptionalEnvironment(
+        IResourceBuilder<ProjectResource> resource,
+        string name,
+        string? value,
+        IList<string> forwardedKeys)
+    {
         if (!string.IsNullOrWhiteSpace(value))
         {
             resource.WithEnvironment(name, value);
             forwardedKeys?.Add(name);
         }
+    }
+
+    internal static AuthorizationBootstrapSettings ResolveAuthorizationBootstrapSettings(
+        IConfiguration configuration,
+        bool allowDebugAzureOverride)
+    {
+        if (allowDebugAzureOverride)
+        {
+            var mode = Environment.GetEnvironmentVariable(DebugAzureBootstrapModeEnvironmentVariable);
+
+            if (DebugAzureBootstrapModeSuppress.Equals(mode, StringComparison.Ordinal))
+            {
+                return new AuthorizationBootstrapSettings(null, null);
+            }
+
+            if (DebugAzureBootstrapModeExactUser.Equals(mode, StringComparison.Ordinal))
+            {
+                var exactUserId = Environment.GetEnvironmentVariable(DebugAzureBootstrapUserIdEnvironmentVariable);
+                if (string.IsNullOrWhiteSpace(exactUserId) || exactUserId.Contains(';'))
+                {
+                    throw new InvalidOperationException(
+                        $"{DebugAzureBootstrapModeExactUser} mode requires exactly one non-empty bootstrap user ID.");
+                }
+
+                return new AuthorizationBootstrapSettings(exactUserId, null);
+            }
+
+            if (!string.IsNullOrWhiteSpace(mode))
+            {
+                throw new InvalidOperationException($"Unsupported DebugAzure bootstrap mode '{mode}'.");
+            }
+        }
+
+        return new AuthorizationBootstrapSettings(
+            ResolveSetting(configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers),
+            ResolveSetting(configuration, EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups));
     }
 
     private static void LogForwardedSettings(string label, IList<string> forwardedKeys)
@@ -762,6 +884,9 @@ public partial class Program
         var subscriptionName =
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusSubscription)
             ?? "grace-server";
+        var graceUsageCollectorSubscriptionName =
+            ResolveSetting(configuration, OperationalFactsProcessorSubscriptionSettingName)
+            ?? GraceUsageCollectorSubscriptionName;
         var testSubscriptionName = $"{subscriptionName}-tests";
 
         var config = new
@@ -832,7 +957,7 @@ public partial class Program
                                 {
                                     new
                                     {
-                                        Name = OperationalFactsProcessorSubscriptionName,
+                                        Name = graceUsageCollectorSubscriptionName,
                                         Properties = new
                                         {
                                             DeadLetteringOnMessageExpiration = false,
