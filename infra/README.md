@@ -46,6 +46,7 @@ $registryName = "grace$($environmentName.Replace('-', ''))$($deploymentSuffix.Re
 $oidcAuthority = '<oidc-authority>'
 $oidcAudience = '<oidc-audience>'
 $oidcCliClientId = '<oidc-cli-client-id>'
+$bootstrapSystemAdminUsers = '<grace-user-id>'
 
 az account set --subscription $subscriptionId
 
@@ -95,7 +96,8 @@ az deployment group create `
         graceServerImage=$image `
         oidcAuthority=$oidcAuthority `
         oidcAudience=$oidcAudience `
-        oidcCliClientId=$oidcCliClientId
+        oidcCliClientId=$oidcCliClientId `
+        bootstrapSystemAdminUsers=$bootstrapSystemAdminUsers
 
 $fqdn = az deployment group show `
     --resource-group $resourceGroupName `
