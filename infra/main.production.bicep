@@ -43,6 +43,10 @@ param oidcAudience string
 @minLength(1)
 param oidcCliClientId string
 
+@description('Semicolon-delimited Grace user IDs allowed to bootstrap the first SystemAdmin.')
+@minLength(1)
+param bootstrapSystemAdminUsers string
+
 @description('Common environment tags.')
 param tags object = {
   environment: environmentName
@@ -176,6 +180,7 @@ module graceServer 'modules/container-app.bicep' = {
       : fail('graceServerImage must be hosted by the registry created by this deployment.')
     location: location
     name: containerAppName
+    bootstrapSystemAdminUsers: bootstrapSystemAdminUsers
     oidcAudience: oidcAudience
     oidcAuthority: oidcAuthority
     oidcCliClientId: oidcCliClientId
