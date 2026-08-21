@@ -349,11 +349,56 @@ module WorkingDirectoryUpdateTransitionTests =
                 (WorkingDirectoryUpdateTransition.Present observation)
             |> should equal WorkingDirectoryUpdateTransition.IdentityDrift
 
+    /// Proves exact path spelling is part of both accepted and final file identity.
+    [<Test>]
+    let ``transition classifier rejects accepted and final case-only path drift`` () =
+        let accepted = file "path" "sha-accepted" "blake-accepted"
+        let selected = file "path" "sha-final" "blake-final"
+        let replacement = WorkingDirectoryUpdateTransition.ReplaceFile(accepted, selected)
+
+        for observation in
+            [
+                fileIdentity "Path" "sha-accepted" "blake-accepted"
+                fileIdentity "Path" "sha-final" "blake-final"
+            ] do
+            WorkingDirectoryUpdateTransition.classify
+                WorkingDirectoryUpdateTransition.ExactAdoption
+                replacement
+                (WorkingDirectoryUpdateTransition.Present observation)
+            |> should equal WorkingDirectoryUpdateTransition.IdentityDrift
+
+    /// Proves ReplaceFile names a change instead of duplicating the Retain equality case.
+    [<Test>]
+    let ``transition classifier rejects replacement with equal complete file identities`` () =
+        let identity = file "path" "sha-accepted" "blake-accepted"
+        let replacement = WorkingDirectoryUpdateTransition.ReplaceFile(identity, identity)
+        let observation = WorkingDirectoryUpdateTransition.Present(WorkingDirectoryUpdateTransition.File identity)
+
+        for admission in
+            [
+                WorkingDirectoryUpdateTransition.Fresh
+                WorkingDirectoryUpdateTransition.ExactAdoption
+            ] do
+            WorkingDirectoryUpdateTransition.classify admission replacement observation
+            |> should equal WorkingDirectoryUpdateTransition.IdentityDrift
+
     /// Proves malformed inputs describing multiple exact paths reject instead of inventing a cross-path transition.
     [<Test>]
     let ``transition classifier rejects a transition whose identities name different paths`` () =
         let accepted = file "accepted-path" "sha-accepted" "blake-accepted"
         let selected = file "selected-path" "sha-final" "blake-final"
+
+        WorkingDirectoryUpdateTransition.classify
+            WorkingDirectoryUpdateTransition.ExactAdoption
+            (WorkingDirectoryUpdateTransition.ReplaceFile(accepted, selected))
+            (WorkingDirectoryUpdateTransition.Present(WorkingDirectoryUpdateTransition.File accepted))
+        |> should equal WorkingDirectoryUpdateTransition.IdentityDrift
+
+    /// Proves the single-path gate compares source and target path spelling with ordinal equality.
+    [<Test>]
+    let ``transition classifier rejects a binary transition whose paths differ only by case`` () =
+        let accepted = file "path" "sha-accepted" "blake-accepted"
+        let selected = file "Path" "sha-final" "blake-final"
 
         WorkingDirectoryUpdateTransition.classify
             WorkingDirectoryUpdateTransition.ExactAdoption

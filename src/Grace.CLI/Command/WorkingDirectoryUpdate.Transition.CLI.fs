@@ -74,7 +74,10 @@ module internal WorkingDirectoryUpdateTransition =
         | Remove identity -> true, path identity
         | ReplaceFile (accepted, selected) ->
             let acceptedPath = accepted.Path
-            acceptedPath = selected.Path, acceptedPath
+
+            acceptedPath = selected.Path
+            && accepted <> selected,
+            acceptedPath
         | FileToDirectory (accepted, selected) ->
             let acceptedPath = accepted.Path
             acceptedPath = selected, acceptedPath
