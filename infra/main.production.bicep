@@ -43,7 +43,7 @@ param oidcAudience string
 @minLength(1)
 param oidcCliClientId string
 
-@description('Comma-separated Grace user IDs allowed to bootstrap the first SystemAdmin.')
+@description('Semicolon-delimited Grace user IDs allowed to bootstrap the first SystemAdmin.')
 @minLength(1)
 param bootstrapSystemAdminUsers string
 

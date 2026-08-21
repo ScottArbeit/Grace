@@ -31,7 +31,7 @@ param oidcAudience string
 @description('Auth0 native application client ID used by the Grace CLI interactive login flow.')
 param oidcCliClientId string
 
-@description('Comma-separated Grace user IDs allowed to bootstrap the first SystemAdmin.')
+@description('Semicolon-delimited Grace user IDs allowed to bootstrap the first SystemAdmin.')
 param bootstrapSystemAdminUsers string
 
 @description('Azure Storage account name used by Orleans and Grace storage.')
