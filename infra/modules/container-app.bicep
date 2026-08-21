@@ -22,6 +22,15 @@ param registryServer string
 @description('Immutable Grace Server image reference, including its sha256 digest.')
 param image string
 
+@description('Auth0 issuer URL used to validate Grace CLI access tokens.')
+param oidcAuthority string
+
+@description('Auth0 API audience expected in Grace CLI access tokens.')
+param oidcAudience string
+
+@description('Auth0 native application client ID used by the Grace CLI interactive login flow.')
+param oidcCliClientId string
+
 @description('Azure Storage account name used by Orleans and Grace storage.')
 param storageAccountName string
 
@@ -95,6 +104,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_CLIENT_ID', value: identityClientId }
             { name: 'grace__debug_environment', value: 'Azure' }
             { name: 'grace__log_directory', value: '/tmp/grace-logs' }
+            { name: 'grace__auth__oidc__authority', value: oidcAuthority }
+            { name: 'grace__auth__oidc__audience', value: oidcAudience }
+            { name: 'grace__auth__oidc__cli_client_id', value: oidcCliClientId }
             { name: 'grace__pubsub__system', value: 'AzureServiceBus' }
             { name: 'grace__orleans__clusterid', value: 'production' }
             { name: 'grace__orleans__serviceid', value: 'grace-prod' }

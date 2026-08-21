@@ -43,6 +43,9 @@ $environmentName = 'development'
 $deploymentSuffix = '<stable-unique-suffix>'
 $identityName = "grace-server-$environmentName-$deploymentSuffix"
 $registryName = "grace$($environmentName.Replace('-', ''))$($deploymentSuffix.Replace('-', ''))acr".ToLowerInvariant()
+$oidcAuthority = '<oidc-authority>'
+$oidcAudience = '<oidc-audience>'
+$oidcCliClientId = '<oidc-cli-client-id>'
 
 az account set --subscription $subscriptionId
 
@@ -89,7 +92,10 @@ az deployment group create `
         developerPrincipalName='<developer-upn>' `
         cosmosProvisionedThroughput=1000 `
         redisSkuName='<managed-redis-sku>' `
-        graceServerImage=$image
+        graceServerImage=$image `
+        oidcAuthority=$oidcAuthority `
+        oidcAudience=$oidcAudience `
+        oidcCliClientId=$oidcCliClientId
 
 $fqdn = az deployment group show `
     --resource-group $resourceGroupName `
