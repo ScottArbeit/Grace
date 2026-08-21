@@ -31,6 +31,18 @@ param redisSkuName string
 @description('Immutable Grace Server image in this deployment registry, including its sha256 digest.')
 param graceServerImage string
 
+@description('Auth0 issuer URL used to validate Grace CLI access tokens.')
+@minLength(1)
+param oidcAuthority string
+
+@description('Auth0 API audience expected in Grace CLI access tokens.')
+@minLength(1)
+param oidcAudience string
+
+@description('Auth0 native application client ID used by the Grace CLI interactive login flow.')
+@minLength(1)
+param oidcCliClientId string
+
 @description('Common environment tags.')
 param tags object = {
   environment: environmentName
@@ -164,6 +176,9 @@ module graceServer 'modules/container-app.bicep' = {
       : fail('graceServerImage must be hosted by the registry created by this deployment.')
     location: location
     name: containerAppName
+    oidcAudience: oidcAudience
+    oidcAuthority: oidcAuthority
+    oidcCliClientId: oidcCliClientId
     registryServer: registry.outputs.loginServer
     redisHost: redis.outputs.hostName
     redisPort: redis.outputs.port
