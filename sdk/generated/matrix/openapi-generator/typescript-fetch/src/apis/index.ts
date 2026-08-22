@@ -2,6 +2,7 @@
 /* eslint-disable */
 export * from './ApprovalsApi';
 export * from './BranchesApi';
+export * from './CacheApi';
 export * from './DefaultApi';
 export * from './DiffsApi';
 export * from './DirectoriesApi';

@@ -169,6 +169,11 @@ paths:
     $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiffBySha256Hash'
   /diff/getDiffByBlake3Hash:
     $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiffByBlake3Hash'
+
+  /cache/prepareDirectoryVersionZip:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1prepareDirectoryVersionZip'
+  /cache/redeemDirectoryVersionZipFill:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1redeemDirectoryVersionZipFill'
   
   /directory/create:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1create'
@@ -404,6 +409,19 @@ components:
       $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffBySha256HashParameters'
     GetDiffByBlake3HashParameters:
       $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffByBlake3HashParameters'
+
+    CachePublicJwk:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CachePublicJwk'
+    CacheArtifactDescriptor:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheArtifactDescriptor'
+    PrepareDirectoryVersionZipParameters:
+      $ref: 'Cache.Components.OpenAPI.yaml#/PrepareDirectoryVersionZipParameters'
+    RedeemDirectoryVersionZipFillParameters:
+      $ref: 'Cache.Components.OpenAPI.yaml#/RedeemDirectoryVersionZipFillParameters'
+    DirectoryVersionZipPreparation:
+      $ref: 'Cache.Components.OpenAPI.yaml#/DirectoryVersionZipPreparation'
+    DirectoryVersionZipFillSource:
+      $ref: 'Cache.Components.OpenAPI.yaml#/DirectoryVersionZipFillSource'
     
     DirectoryParameters:
       $ref: 'Directory.Components.OpenAPI.yaml#/DirectoryParameters'

@@ -1683,6 +1683,49 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /cache/prepareDirectoryVersionZip:
+    post:
+      tags:
+        - Cache
+      summary: Prepare one Server-approved DirectoryVersion ZIP fill.
+      operationId: PrepareDirectoryVersionZip
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareDirectoryVersionZipParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectoryVersionZipPreparationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/redeemDirectoryVersionZipFill:
+    post:
+      tags:
+        - Cache
+      summary: Redeem one permit and Cache process signature for a read-only ZIP source.
+      operationId: RedeemDirectoryVersionZipFill
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeemDirectoryVersionZipFillParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/DirectoryVersionZipFillSourceResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
   /directory/create:
     post:
       tags:
@@ -4032,6 +4075,110 @@ components:
               $ref: '#/components/schemas/Blake3HashPrefix'
             Blake3Hash2:
               $ref: '#/components/schemas/Blake3HashPrefix'
+    CachePublicJwk:
+      type: object
+      required:
+        - Kty
+        - Crv
+        - X
+        - 'Y'
+      properties:
+        Kty:
+          type: string
+          const: EC
+        Crv:
+          type: string
+          const: P-256
+        X:
+          type: string
+        'Y':
+          type: string
+    CacheArtifactDescriptor:
+      type: object
+      required:
+        - RepositoryId
+        - DirectoryVersionId
+        - Kind
+        - Sha256
+        - Size
+      properties:
+        RepositoryId:
+          type: string
+          format: uuid
+        DirectoryVersionId:
+          type: string
+          format: uuid
+        Kind:
+          type: string
+          const: DirectoryVersionZip
+        Sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        Size:
+          type: integer
+          format: int64
+          minimum: 0
+    PrepareDirectoryVersionZipParameters:
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+        - type: object
+          required:
+            - RepositoryId
+            - DirectoryVersionId
+            - CachePublicKey
+          properties:
+            RepositoryId:
+              type: string
+              format: uuid
+            DirectoryVersionId:
+              type: string
+              format: uuid
+            CachePublicKey:
+              $ref: '#/components/schemas/CachePublicJwk'
+    RedeemDirectoryVersionZipFillParameters:
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+        - type: object
+          required:
+            - Permit
+            - Signature
+          properties:
+            Permit:
+              type: string
+            Signature:
+              type: string
+    DirectoryVersionZipPreparation:
+      type: object
+      required:
+        - Descriptor
+        - Permit
+        - PermitExpiresAt
+        - RedemptionBytes
+      properties:
+        Descriptor:
+          $ref: '#/components/schemas/CacheArtifactDescriptor'
+        Permit:
+          type: string
+        PermitExpiresAt:
+          type: string
+          format: date-time
+        RedemptionBytes:
+          type: string
+    DirectoryVersionZipFillSource:
+      type: object
+      required:
+        - Descriptor
+        - SourceUri
+        - SourceExpiresAt
+      properties:
+        Descriptor:
+          $ref: '#/components/schemas/CacheArtifactDescriptor'
+        SourceUri:
+          type: string
+          format: uri
+        SourceExpiresAt:
+          type: string
+          format: date-time
     DirectoryParameters:
       description: Parameters shared by public endpoints in the /directory route family.
       type: object
@@ -7828,6 +7975,16 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /owner/get
+    '403':
+      description: Forbidden
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            forbidden:
+              summary: Framework authorization failure
+              value: Forbidden.
     '500':
       description: Internal Server Error
       content:
@@ -8181,6 +8338,18 @@ components:
                 Properties:
                   DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
                   DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    DirectoryVersionZipPreparationResponse:
+      description: Prepared immutable artifact, permit, expiry, and exact redemption bytes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryVersionZipPreparation'
+    DirectoryVersionZipFillSourceResponse:
+      description: Exact descriptor and fresh read-only Blob source.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryVersionZipFillSource'
     DirectoryCommandResponse:
       description: OK
       content:

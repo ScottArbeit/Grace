@@ -79,6 +79,8 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**resolve_reference_event_boundary**](docs/BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**prepare_directory_version_zip**](docs/CacheApi.md#prepare_directory_version_zip) | **POST** /cache/prepareDirectoryVersionZip | Prepare one Server-approved DirectoryVersion ZIP fill.
+*CacheApi* | [**redeem_directory_version_zip_fill**](docs/CacheApi.md#redeem_directory_version_zip_fill) | **POST** /cache/redeemDirectoryVersionZipFill | Redeem one permit and Cache process signature for a read-only ZIP source.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirm_content_block_upload**](docs/DefaultApi.md#confirm_content_block_upload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discover_content_blocks**](docs/DefaultApi.md#discover_content_blocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -187,6 +189,8 @@ Class | Method | HTTP request | Description
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)
+ - [CacheArtifactDescriptor](docs/CacheArtifactDescriptor.md)
+ - [CachePublicJwk](docs/CachePublicJwk.md)
  - [ChangeType](docs/ChangeType.md)
  - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
  - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
@@ -231,6 +235,8 @@ Class | Method | HTTP request | Description
  - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
  - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
  - [DirectoryVersionSha256HashLookupReturnValue](docs/DirectoryVersionSha256HashLookupReturnValue.md)
+ - [DirectoryVersionZipFillSource](docs/DirectoryVersionZipFillSource.md)
+ - [DirectoryVersionZipPreparation](docs/DirectoryVersionZipPreparation.md)
  - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
  - [DiscoverContentBlocksResult](docs/DiscoverContentBlocksResult.md)
  - [DiscoverContentBlocksReturnValue](docs/DiscoverContentBlocksReturnValue.md)
@@ -307,11 +313,13 @@ Class | Method | HTTP request | Description
  - [OwnerReturnValue](docs/OwnerReturnValue.md)
  - [OwnerType](docs/OwnerType.md)
  - [PopulateParameters](docs/PopulateParameters.md)
+ - [PrepareDirectoryVersionZipParameters](docs/PrepareDirectoryVersionZipParameters.md)
  - [ProblemDetails](docs/ProblemDetails.md)
  - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)
  - [PromotionSetApprovalSummary](docs/PromotionSetApprovalSummary.md)
  - [RebaseParameters](docs/RebaseParameters.md)
  - [RecordSavesParameters](docs/RecordSavesParameters.md)
+ - [RedeemDirectoryVersionZipFillParameters](docs/RedeemDirectoryVersionZipFillParameters.md)
  - [ReferenceApiDto](docs/ReferenceApiDto.md)
  - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
  - [ReferenceDto](docs/ReferenceDto.md)
