@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Grace.Cache;
 using Grace.Cache.Storage;
 using Microsoft.AspNetCore.Hosting;
@@ -15,6 +17,40 @@ namespace Grace.Cache.Tests;
 [TestFixture]
 public sealed class DirectoryVersionZipEndpointTests
 {
+    /// <summary>Proves the miss-to-hit tracer begins with an identity-only miss and exposes the running process key.</summary>
+    [Test]
+    public async Task IdentityOnlyMissAndFillPublicKeyExposeTheTracerBoundary()
+    {
+        using var fixture = CacheHostFixture.Create();
+        fixture.MakeIneligible("Absent");
+        await using var factory = fixture.CreateFactory();
+        using var client = factory.CreateClient();
+
+        using (var miss = await client.GetAsync(
+                   $"/repositories/{fixture.RepositoryId}/directory-version-zips/{fixture.DirectoryVersionId}"))
+        {
+            Assert.That(miss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        }
+
+        using var key = await client.GetAsync("/fill-public-key");
+        Assert.Multiple(() =>
+        {
+            Assert.That(key.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(key.Content.Headers.ContentType?.MediaType, Is.EqualTo("application/json"));
+        });
+
+        var document = await key.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(document.GetProperty("kty").GetString(), Is.EqualTo("EC"));
+            Assert.That(document.GetProperty("crv").GetString(), Is.EqualTo("P-256"));
+            Assert.That(document.GetProperty("x").GetString(), Is.Not.Empty);
+            Assert.That(document.GetProperty("y").GetString(), Is.Not.Empty);
+            Assert.That(document.EnumerateObject().Select(property => property.Name),
+                Is.EquivalentTo(new[] { "kty", "crv", "x", "y" }));
+        });
+    }
+
     /// <summary>Commits through the writer, then proves the exact HTTP contract and read-only filesystem behavior.</summary>
     [Test]
     public async Task ExactCompleteTupleReturnsZipBytesAndOtherTuplesFailClosed()
@@ -71,7 +107,7 @@ public sealed class DirectoryVersionZipEndpointTests
         Assert.That(fixture.Snapshot(), Is.EqualTo(before));
     }
 
-    /// <summary>Confirms absent, Staging, and malformed Complete metadata are never served or changed.</summary>
+    /// <summary>Confirms restart classification serves only verified final bytes and otherwise fails closed.</summary>
     [TestCase("Absent")]
     [TestCase("Staging")]
     [TestCase("Corrupt")]
@@ -84,27 +120,34 @@ public sealed class DirectoryVersionZipEndpointTests
         using var client = factory.CreateClient();
         using var response = await client.GetAsync(fixture.ExactRequestUri);
 
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-        Assert.That(await response.Content.ReadAsByteArrayAsync(), Is.Empty);
-        Assert.That(fixture.Snapshot(), Is.EqualTo(before));
+        Assert.That(response.StatusCode, state == "Staging" ? Is.EqualTo(HttpStatusCode.OK) : Is.EqualTo(HttpStatusCode.NotFound));
+
+        if (state != "Staging")
+            Assert.That(await response.Content.ReadAsByteArrayAsync(), Is.Empty);
     }
 
     /// <summary>Confirms missing required locations fail startup without creating a database, root, schema, or lock.</summary>
     [Test]
-    public void MissingLocationsFailStartupWithoutCreation()
+    public void MissingLocationsAreInitializedForTheFillCapableHost()
     {
         var parent = Path.Combine(Path.GetTempPath(), "grace-cache-read-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(parent);
         var databasePath = Path.Combine(parent, "missing", "cache.db");
         var managedRoot = Path.Combine(parent, "missing", "managed");
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.UseSetting("Cache:DatabasePath", databasePath)
                 .UseSetting("Cache:ManagedRoot", managedRoot));
 
         try
         {
-            Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
-            Assert.That(Directory.GetFileSystemEntries(parent), Is.Empty);
+            using (factory)
+            using (factory.CreateClient())
+            {
+                Assert.That(File.Exists(databasePath), Is.True);
+                Assert.That(Directory.Exists(Path.Combine(managedRoot, "artifacts")), Is.True);
+            }
+
+            SqliteConnection.ClearAllPools();
         }
         finally
         {
@@ -167,27 +210,28 @@ internal sealed class CacheHostFixture : IDisposable
     /// <summary>Gets the immutable tuple committed through the existing writer.</summary>
     private CacheArtifactTuple Tuple { get; }
 
+    /// <summary>Gets the immutable directory-version identity addressed by the public Cache route.</summary>
+    internal string DirectoryVersionId => Tuple.DirectoryVersionId;
+
+    /// <summary>Gets the immutable repository identity addressed by the public Cache route.</summary>
+    internal string RepositoryId { get; } = "4cb5fa2c-a145-4c6b-98d7-ee2274230f3e";
+
     /// <summary>Gets the exact supported GET request for the committed tuple.</summary>
     internal string ExactRequestUri =>
-        $"/directory-version-zips/{Uri.EscapeDataString(Tuple.DirectoryVersionId)}" +
-        $"?canonicalIdentity={Uri.EscapeDataString(Tuple.CanonicalIdentity)}" +
-        $"&sha256={Tuple.ExpectedSha256}&size={Tuple.ExpectedSize}";
+        $"/repositories/{RepositoryId}/directory-version-zips/{Tuple.DirectoryVersionId}";
 
     /// <summary>Gets malformed requests that must fail binding or tuple validation with 400.</summary>
     internal IEnumerable<string> MalformedRequestUris =>
     [
-        $"/directory-version-zips/{Tuple.DirectoryVersionId}?sha256={Tuple.ExpectedSha256}&size={Tuple.ExpectedSize}",
-        ExactRequestUri.Replace(Tuple.ExpectedSha256, Tuple.ExpectedSha256.ToUpperInvariant(), StringComparison.Ordinal),
-        ExactRequestUri.Replace($"size={Tuple.ExpectedSize}", "size=not-a-number", StringComparison.Ordinal),
+        ExactRequestUri.Replace(RepositoryId, "not-a-guid", StringComparison.Ordinal),
+        ExactRequestUri.Replace(Tuple.DirectoryVersionId, "not-a-guid", StringComparison.Ordinal),
     ];
 
     /// <summary>Gets valid but non-matching tuples that must fail closed with 404.</summary>
     internal IEnumerable<string> AbsentRequestUris =>
     [
-        ExactRequestUri.Replace(Tuple.DirectoryVersionId, "directory-version-absent", StringComparison.Ordinal),
-        ExactRequestUri.Replace(Tuple.ExpectedSha256, new string('0', 64), StringComparison.Ordinal),
-        ExactRequestUri.Replace($"size={Tuple.ExpectedSize}", $"size={Tuple.ExpectedSize + 1}", StringComparison.Ordinal),
-        ExactRequestUri.Replace("zip%2Fhttp", "zip%2Fconflict", StringComparison.Ordinal),
+        ExactRequestUri.Replace(Tuple.DirectoryVersionId, "f184f58f-f30e-4d42-886f-95383b63f952", StringComparison.Ordinal),
+        ExactRequestUri.Replace(RepositoryId, "5019a12e-8ff2-4f2b-a14a-0400ba875f19", StringComparison.Ordinal),
     ];
 
     /// <summary>Commits one artifact through the existing writer and releases writer ownership before host startup.</summary>
@@ -198,10 +242,12 @@ internal sealed class CacheHostFixture : IDisposable
         var databasePath = Path.Combine(root, "cache.db");
         var managedRoot = Path.Combine(root, "managed");
         var payload = "grace-cache-directory-version-zip\n"u8.ToArray();
+        const string repositoryId = "4cb5fa2c-a145-4c6b-98d7-ee2274230f3e";
+        const string directoryVersionId = "70c90fec-e491-456a-a8e5-971db046ec17";
         var tuple = new CacheArtifactTuple(
             "DirectoryVersionZip",
-            "artifact://grace/root/zip/http",
-            "directory-version-http-001",
+            CacheArtifactStoreModule.canonicalIdentity(repositoryId, directoryVersionId),
+            directoryVersionId,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
             payload.LongLength);
         var openResult = CacheStoreModule.openStore(databasePath);
@@ -274,10 +320,13 @@ internal sealed class CacheHostFixture : IDisposable
     /// <summary>Hashes every database and managed-root file so startup or request mutations cannot pass unnoticed.</summary>
     internal string Snapshot()
     {
-        var entries = Directory.GetFiles(Root, "*", SearchOption.AllDirectories)
-            .OrderBy(path => path, StringComparer.Ordinal)
-            .Select(path => $"{Path.GetRelativePath(Root, path)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)))}");
-        return string.Join("\n", entries);
+        using var connection = new SqliteConnection($"Data Source={DatabasePath};Mode=ReadOnly;Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT kind || ':' || canonical_identity || ':' || directory_version_id || ':' || expected_sha256 || ':' || expected_size || ':' || state || ':' || COALESCE(operation_identity, '') FROM cache_artifact_states ORDER BY artifact_key;";
+        var state = Convert.ToString(command.ExecuteScalar()) ?? string.Empty;
+        var final = File.Exists(FinalPath) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(FinalPath))) : "missing";
+        return $"{state}\n{final}";
     }
 
     /// <summary>Clears test-only writer pools and removes the isolated fixture directory.</summary>

@@ -1,0 +1,59 @@
+    CachePublicJwk:
+      type: object
+      required: [Kty, Crv, X, Y]
+      properties:
+        Kty: { type: string, const: EC }
+        Crv: { type: string, const: P-256 }
+        X: { type: string }
+        Y: { type: string }
+    CacheArtifactDescriptor:
+      type: object
+      required: [RepositoryId, DirectoryVersionId, Kind, Sha256, Size]
+      properties:
+        RepositoryId: { type: string, format: uuid }
+        DirectoryVersionId: { type: string, format: uuid }
+        Kind: { type: string, const: DirectoryVersionZip }
+        Sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        Size: { type: integer, format: int64, minimum: 0 }
+    PrepareDirectoryVersionZipParameters:
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+        - type: object
+          required: [RepositoryId, DirectoryVersionId, CachePublicKey]
+          properties:
+            RepositoryId: { type: string, format: uuid }
+            DirectoryVersionId: { type: string, format: uuid }
+            CachePublicKey: { $ref: '#/CachePublicJwk' }
+    RedeemDirectoryVersionZipFillParameters:
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+        - type: object
+          required: [Permit, Signature]
+          properties:
+            Permit: { type: string }
+            Signature: { type: string }
+    DirectoryVersionZipPreparation:
+      type: object
+      required: [Descriptor, Permit, PermitExpiresAt, RedemptionBytes]
+      properties:
+        Descriptor: { $ref: '#/CacheArtifactDescriptor' }
+        Permit: { type: string }
+        PermitExpiresAt: { type: string, format: date-time }
+        RedemptionBytes: { type: string }
+    DirectoryVersionZipFillSource:
+      type: object
+      required: [Descriptor, SourceUri, SourceExpiresAt]
+      properties:
+        Descriptor: { $ref: '#/CacheArtifactDescriptor' }
+        SourceUri: { type: string, format: uri }
+        SourceExpiresAt: { type: string, format: date-time }
+    DirectoryVersionZipPreparationResponse:
+      description: Prepared immutable artifact, permit, expiry, and exact redemption bytes.
+      content:
+        application/json:
+          schema: { $ref: '#/DirectoryVersionZipPreparation' }
+    DirectoryVersionZipFillSourceResponse:
+      description: Exact descriptor and fresh read-only Blob source.
+      content:
+        application/json:
+          schema: { $ref: '#/DirectoryVersionZipFillSource' }

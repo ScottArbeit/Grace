@@ -37,6 +37,9 @@ docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
 docs/BranchesApi.md
+docs/CacheApi.md
+docs/CacheArtifactDescriptor.md
+docs/CachePublicJwk.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -84,6 +87,8 @@ docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
 docs/DirectoryVersionSha256HashLookupReturnValue.md
+docs/DirectoryVersionZipFillSource.md
+docs/DirectoryVersionZipPreparation.md
 docs/DiscoverContentBlocksParameters.md
 docs/DiscoverContentBlocksResult.md
 docs/DiscoverContentBlocksReturnValue.md
@@ -162,11 +167,13 @@ docs/OwnerReturnValue.md
 docs/OwnerType.md
 docs/OwnersApi.md
 docs/PopulateParameters.md
+docs/PrepareDirectoryVersionZipParameters.md
 docs/ProblemDetails.md
 docs/PromotionSetApprovalState.md
 docs/PromotionSetApprovalSummary.md
 docs/RebaseParameters.md
 docs/RecordSavesParameters.md
+docs/RedeemDirectoryVersionZipFillParameters.md
 docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
@@ -261,6 +268,7 @@ grace_generated_openapi_probe/__init__.py
 grace_generated_openapi_probe/api/__init__.py
 grace_generated_openapi_probe/api/approvals_api.py
 grace_generated_openapi_probe/api/branches_api.py
+grace_generated_openapi_probe/api/cache_api.py
 grace_generated_openapi_probe/api/default_api.py
 grace_generated_openapi_probe/api/diffs_api.py
 grace_generated_openapi_probe/api/directories_api.py
@@ -305,6 +313,8 @@ grace_generated_openapi_probe/models/branch_hash_query_parameters.py
 grace_generated_openapi_probe/models/branch_parameters.py
 grace_generated_openapi_probe/models/branch_query_parameters.py
 grace_generated_openapi_probe/models/branch_return_value.py
+grace_generated_openapi_probe/models/cache_artifact_descriptor.py
+grace_generated_openapi_probe/models/cache_public_jwk.py
 grace_generated_openapi_probe/models/change_type.py
 grace_generated_openapi_probe/models/claim_reuse_ranges_parameters.py
 grace_generated_openapi_probe/models/claimed_reuse_range.py
@@ -349,6 +359,8 @@ grace_generated_openapi_probe/models/directory_version_hash_lookup_return_value.
 grace_generated_openapi_probe/models/directory_version_list_return_value.py
 grace_generated_openapi_probe/models/directory_version_return_value.py
 grace_generated_openapi_probe/models/directory_version_sha256_hash_lookup_return_value.py
+grace_generated_openapi_probe/models/directory_version_zip_fill_source.py
+grace_generated_openapi_probe/models/directory_version_zip_preparation.py
 grace_generated_openapi_probe/models/discover_content_blocks_parameters.py
 grace_generated_openapi_probe/models/discover_content_blocks_result.py
 grace_generated_openapi_probe/models/discover_content_blocks_return_value.py
@@ -425,11 +437,13 @@ grace_generated_openapi_probe/models/owner_parameters.py
 grace_generated_openapi_probe/models/owner_return_value.py
 grace_generated_openapi_probe/models/owner_type.py
 grace_generated_openapi_probe/models/populate_parameters.py
+grace_generated_openapi_probe/models/prepare_directory_version_zip_parameters.py
 grace_generated_openapi_probe/models/problem_details.py
 grace_generated_openapi_probe/models/promotion_set_approval_state.py
 grace_generated_openapi_probe/models/promotion_set_approval_summary.py
 grace_generated_openapi_probe/models/rebase_parameters.py
 grace_generated_openapi_probe/models/record_saves_parameters.py
+grace_generated_openapi_probe/models/redeem_directory_version_zip_fill_parameters.py
 grace_generated_openapi_probe/models/reference_api_dto.py
 grace_generated_openapi_probe/models/reference_default_sentinel.py
 grace_generated_openapi_probe/models/reference_dto.py
@@ -557,6 +571,9 @@ test/test_branch_parameters.py
 test/test_branch_query_parameters.py
 test/test_branch_return_value.py
 test/test_branches_api.py
+test/test_cache_api.py
+test/test_cache_artifact_descriptor.py
+test/test_cache_public_jwk.py
 test/test_change_type.py
 test/test_claim_reuse_ranges_parameters.py
 test/test_claimed_reuse_range.py
@@ -604,6 +621,8 @@ test/test_directory_version_hash_lookup_return_value.py
 test/test_directory_version_list_return_value.py
 test/test_directory_version_return_value.py
 test/test_directory_version_sha256_hash_lookup_return_value.py
+test/test_directory_version_zip_fill_source.py
+test/test_directory_version_zip_preparation.py
 test/test_discover_content_blocks_parameters.py
 test/test_discover_content_blocks_result.py
 test/test_discover_content_blocks_return_value.py
@@ -682,11 +701,13 @@ test/test_owner_return_value.py
 test/test_owner_type.py
 test/test_owners_api.py
 test/test_populate_parameters.py
+test/test_prepare_directory_version_zip_parameters.py
 test/test_problem_details.py
 test/test_promotion_set_approval_state.py
 test/test_promotion_set_approval_summary.py
 test/test_rebase_parameters.py
 test/test_record_saves_parameters.py
+test/test_redeem_directory_version_zip_fill_parameters.py
 test/test_reference_api_dto.py
 test/test_reference_default_sentinel.py
 test/test_reference_dto.py

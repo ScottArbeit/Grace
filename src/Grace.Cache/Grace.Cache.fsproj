@@ -7,10 +7,12 @@
     <Description>Localhost-only read boundary for verified Grace Cache artifacts.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="CacheFill.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Update="FSharp.Core" Version="10.1.400" />
     <ProjectReference Include="..\Grace.Cache.Storage\Grace.Cache.Storage.fsproj" />
+    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
   </ItemGroup>
 </Project>
