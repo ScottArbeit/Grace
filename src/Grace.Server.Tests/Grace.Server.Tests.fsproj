@@ -33,6 +33,7 @@
     <Compile Include="Access.Server.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
     <Compile Include="DirectoryVersion.Server.Tests.fs" />
+    <Compile Include="Cache.Server.Tests.fs" />
     <Compile Include="Diff.Server.Tests.fs" />
     <Compile Include="Reminder.Server.Tests.fs" />
     <Compile Include="NotificationHub.Tests.fs" />
@@ -87,6 +88,7 @@
     <ProjectReference Include="..\Grace.CLI\Grace.CLI.fsproj" />
     <ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
     <ProjectReference Include="..\Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj" />
+    <ProjectReference Include="..\Grace.Cache\Grace.Cache.fsproj" />
     <ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
     <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />
   </ItemGroup>
