@@ -128,7 +128,8 @@ module Cache =
                || directory.DirectoryVersion.RepositoryId
                   <> repositoryId
                || directory.DirectoryVersion.RelativePath
-                  <> Constants.RootDirectoryPath then
+                  <> Constants.RootDirectoryPath
+                  && directory.DirectoryVersion.RelativePath <> "/" then
                 return Error "Repository or immutable root directory version was not found."
             else
                 return Ok(repository, directoryProxy)

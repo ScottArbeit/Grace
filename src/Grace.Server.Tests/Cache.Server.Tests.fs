@@ -239,6 +239,37 @@ type CacheServerIntegrationTests() =
             Assert.That(body, Does.Not.Contain("sourceUri"))
         }
 
+    /// Proves both established Grace root representations prepare and redeem through the shared root lookup.
+    [<TestCase(".")>]
+    [<TestCase("/")>]
+    member _.``supported root representation prepares and redeems``(relativePath: string) =
+        task {
+            let repositoryId = repositoryIds[2]
+            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId relativePath []
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync root
+            use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let preparationParameters = PrepareDirectoryVersionZipParameters()
+            preparationParameters.RepositoryId <- repositoryId
+            preparationParameters.DirectoryVersionId <- string root.DirectoryVersionId
+            preparationParameters.CachePublicKey <- publicJwk key
+            use! preparationResponse = Client.PostAsync("/cache/prepareDirectoryVersionZip", createJsonContent preparationParameters)
+            Assert.That(preparationResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! preparationEnvelope = deserializeContent<GraceReturnValue<DirectoryVersionZipPreparation>> preparationResponse
+            let preparation = preparationEnvelope.ReturnValue
+
+            let redemption = RedeemDirectoryVersionZipFillParameters()
+            redemption.Permit <- preparation.Permit
+
+            redemption.Signature <-
+                key.SignData(Encoding.UTF8.GetBytes(preparation.Permit), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)
+                |> encode
+
+            use! redemptionResponse = Client.PostAsync("/cache/redeemDirectoryVersionZipFill", createJsonContent redemption)
+            Assert.That(redemptionResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! redemptionEnvelope = deserializeContent<GraceReturnValue<DirectoryVersionZipFillSource>> redemptionResponse
+            Assert.That(Uri.IsWellFormedUriString(redemptionEnvelope.ReturnValue.SourceUri, UriKind.Absolute), Is.True)
+        }
+
     /// Proves access revoked after descriptor preparation still prevents the prepared SAS from leaving Server.
     [<Test>]
     member _.``redemption rechecks access after descriptor preparation before releasing source``() =
