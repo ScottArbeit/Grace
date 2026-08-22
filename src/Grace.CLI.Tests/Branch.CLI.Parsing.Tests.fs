@@ -386,6 +386,21 @@ module BranchCommandParsingTests =
         Branch.switchHashLocatorEvidence String.Empty blake3Hash
         |> should equal (String.Empty, blake3Hash)
 
+    /// Verifies that only one unambiguous hash selector enters the DirectoryVersion tracer.
+    [<TestCase(true, false, false, false, true)>]
+    [<TestCase(false, true, false, false, true)>]
+    [<TestCase(true, false, true, false, false)>]
+    [<TestCase(true, false, false, true, false)>]
+    [<TestCase(true, true, false, false, false)>]
+    let ``branch switch isolates hash-only tracer routing`` hasSha256 hasBlake3 hasBranch hasReference expected =
+        let sha256 = if hasSha256 then sha256Hash else String.Empty
+        let blake3 = if hasBlake3 then blake3Hash else String.Empty
+
+        Branch.classifyHashSelectedSwitch sha256 blake3 hasBranch hasReference
+        |> Result.map id
+        |> Result.defaultValue false
+        |> should equal expected
+
     /// Verifies that branch switch conflict comparison includes blake3 when both files have it.
     [<Test>]
     let ``branch switch conflict comparison includes BLAKE3 when both files have it`` () =

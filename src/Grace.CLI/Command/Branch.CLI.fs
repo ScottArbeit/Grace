@@ -552,6 +552,22 @@ module Branch =
         elif not <| String.IsNullOrEmpty(blake3Hash) then String.Empty, blake3Hash
         else String.Empty, String.Empty
 
+    /// Selects the hash-only Branch tracer only when exactly one hash and no competing selector was supplied.
+    let internal classifyHashSelectedSwitch sha256Hash blake3Hash hasBranchSelector hasReferenceSelector =
+        let hashCount =
+            [ sha256Hash; blake3Hash ]
+            |> List.filter (String.IsNullOrWhiteSpace >> not)
+            |> List.length
+
+        if hashCount = 0 then
+            Ok false
+        elif hashCount = 1
+             && not hasBranchSelector
+             && not hasReferenceSelector then
+            Ok true
+        else
+            Error "Branch switch accepts exactly one hash selector without a Branch or Reference selector."
+
     /// Checks whether file content hashes match is true for the parsed command input.
     let internal fileContentHashesMatch (left: LocalFileVersion) (right: LocalFileVersion) =
         let leftBlake3Hash = string left.Blake3Hash
@@ -4259,12 +4275,23 @@ module Branch =
             let sha256Hash = getSha256HashPrefix parseResult
             let blake3Hash = getBlake3HashPrefix parseResult
 
-            if
-                not (String.IsNullOrWhiteSpace sha256Hash)
-                || not (String.IsNullOrWhiteSpace blake3Hash)
-            then
-                hashSelectedDirectoryVersionHandler parseResult cancellationToken
-            else
+            let hasBranchSelector =
+                parseResult.GetValue(Options.toBranchId)
+                <> Guid.Empty
+                || not (String.IsNullOrWhiteSpace(parseResult.GetValue(Options.toBranchName)))
+
+            let hasReferenceSelector =
+                parseResult.GetValue(Options.referenceId)
+                <> Guid.Empty
+
+            match classifyHashSelectedSwitch sha256Hash blake3Hash hasBranchSelector hasReferenceSelector with
+            | Ok true -> hashSelectedDirectoryVersionHandler parseResult cancellationToken
+            | Error message ->
+                task {
+                    let error = GraceError.Create message (getCorrelationId parseResult)
+                    return renderOutput parseResult (GraceResult.Error error)
+                }
+            | Ok false ->
                 task {
                     let updateMarkerFileName = updateInProgressFileName ()
                     let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName

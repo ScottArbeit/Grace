@@ -296,7 +296,7 @@ module internal WorkingDirectoryUpdate =
             visit rootDirectory relativePath
 
         /// Classifies every target and removable tracked blocker without entering the asynchronous transaction workflow.
-        let private planSynchronously (currentStatus: GraceStatus) manifest =
+        let private planSynchronously allowExactAdoption (currentStatus: GraceStatus) manifest =
             let scanInput = currentScanInput ()
             let classifier = classifierInput scanInput
             let trackedRejection, trackedFiles, trackedDirectories = trackedTopology currentStatus
@@ -351,6 +351,14 @@ module internal WorkingDirectoryUpdate =
                             | Missing -> addCopy targetPath
                             | File ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetPath File with
+                                | Error value when
+                                    allowExactAdoption
+                                    && value.Classification = Untracked
+                                    ->
+                                    let targetSha256, targetBlake3, _ = targetFile
+
+                                    if not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3) then
+                                        rejection <- Some value
                                 | Error value -> rejection <- Some value
                                 | Ok "tracked-file" ->
                                     let targetSha256, targetBlake3, _ = targetFile
@@ -362,6 +370,11 @@ module internal WorkingDirectoryUpdate =
                                         || not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3)
                                     then
                                         addCopy targetPath
+                                | Ok _ when allowExactAdoption ->
+                                    let targetSha256, targetBlake3, _ = targetFile
+
+                                    if not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3) then
+                                        rejection <- Some { Path = targetPath; Classification = Untracked }
                                 | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
                             | Directory ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetPath Directory with
@@ -495,7 +508,10 @@ module internal WorkingDirectoryUpdate =
                     Planned(Plan(orderedRemovals @ orderedCreates @ orderedCopies))
 
         /// Produces one complete pre-mutation action list after classifying every target and removable tracked blocker.
-        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously currentStatus manifest }
+        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously false currentStatus manifest }
+
+        /// Reconciles exact target bytes produced by a retained exact-operation marker without weakening fresh admission.
+        let planExactAdoption (currentStatus: GraceStatus) manifest = task { return planSynchronously true currentStatus manifest }
 
     /// Executes the hash-selected Branch tracer after all remote content has been prepared and verified.
     module BranchDirectoryVersion =
@@ -785,7 +801,7 @@ module internal WorkingDirectoryUpdate =
             }
 
         /// Runs one complete DirectoryVersion-selected Branch update without changing Branch identity.
-        let runAtRevision
+        let private runAtRevisionCore
             (request: WorkingDirectoryUpdateContracts.Request)
             (currentStatus: GraceStatus)
             (targetStatus: GraceStatus)
@@ -808,11 +824,60 @@ module internal WorkingDirectoryUpdate =
                 try
                     match! LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation with
                     | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
-                        let receipt =
-                            WorkingDirectoryUpdateContracts.Receipt.create target operation false
-                            |> Result.defaultWith invalidOp
+                        match WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) root with
+                        | Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                        | Ok scope ->
+                            try
+                                use! lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
 
-                        return WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                                match! LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation with
+                                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                                    let! freshStatusResult =
+                                        LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                            dbPath
+                                            (Current().OwnerId)
+                                            (Current().OrganizationId)
+                                            (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+
+                                    match freshStatusResult with
+                                    | Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                                    | Ok freshStatus when
+                                        freshStatus.Index.Count
+                                        <> targetStatus.Index.Count
+                                        ->
+                                        return
+                                            WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                                failure "Terminal update facts no longer describe the complete local status."
+                                            )
+                                    | Ok freshStatus ->
+                                        let statusMatchesTarget =
+                                            targetStatus.Index
+                                            |> Seq.forall (fun pair ->
+                                                match freshStatus.Index.TryGetValue pair.Key with
+                                                | true, actual -> actual.DirectoryVersionId = pair.Value.DirectoryVersionId
+                                                | _ -> false)
+
+                                        if not statusMatchesTarget then
+                                            return
+                                                WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                                    failure "Terminal update facts no longer describe the complete local status."
+                                                )
+                                        else
+                                            match! verifyTarget root manifest with
+                                            | Some error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                                            | None ->
+                                                let receipt =
+                                                    WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                                                    |> Result.defaultWith invalidOp
+
+                                                return WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                                | _ ->
+                                    return
+                                        WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                            failure "Terminal update facts were superseded while waiting for the Working Directory Update lease."
+                                        )
+                            with
+                            | :? OperationCanceledException as ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
                     | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
                         return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure "DirectoryVersion selection cannot adopt pending finalization state.")
                     | None ->
@@ -899,7 +964,13 @@ module internal WorkingDirectoryUpdate =
 
                                     do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
 
-                                    match! Topology.plan freshStatus manifest with
+                                    let planning =
+                                        if admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch then
+                                            Topology.planExactAdoption freshStatus manifest
+                                        else
+                                            Topology.plan freshStatus manifest
+
+                                    match! planning with
                                     | Topology.Rejected rejection ->
                                         let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
 
@@ -952,7 +1023,9 @@ module internal WorkingDirectoryUpdate =
                                                         (WorkingDirectoryUpdateContracts.Target.canonical target)
                                                         failureInjection.DeleteMarker
 
-                                                let changed = not (Topology.Plan.actions plan |> List.isEmpty)
+                                                let changed =
+                                                    admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                                                    || not (Topology.Plan.actions plan |> List.isEmpty)
 
                                                 let receipt =
                                                     WorkingDirectoryUpdateContracts.Receipt.create target operation changed
@@ -983,6 +1056,26 @@ module internal WorkingDirectoryUpdate =
                                             return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
                 finally
                     WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+            }
+
+        /// Projects cancellation before lease admission as a non-mutating rejected Working Directory Update.
+        let runAtRevision request currentStatus targetStatus objectMetadata manifest root dbPath acceptedRevision cancellationToken failureInjection =
+            task {
+                try
+                    return!
+                        runAtRevisionCore
+                            request
+                            currentStatus
+                            targetStatus
+                            objectMetadata
+                            manifest
+                            root
+                            dbPath
+                            acceptedRevision
+                            cancellationToken
+                            failureInjection
+                with
+                | :? OperationCanceledException as ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
             }
 
         /// Runs a prepared update against the local-status revision current at direct invocation time.

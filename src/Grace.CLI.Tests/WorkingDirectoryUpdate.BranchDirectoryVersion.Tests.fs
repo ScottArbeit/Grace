@@ -249,6 +249,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
     [<Test>]
     let ``DirectoryVersion Branch mid-application failure returns UpdateIncomplete without completion`` () =
         withRepo (fun root configuration ->
+            let branchBefore = Current().BranchId
             let selectedBytes = Encoding.UTF8.GetBytes("selected hash version")
             let currentStatus, _ = status configuration (Guid.NewGuid()) None
             let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", selectedBytes))
@@ -282,7 +283,38 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | outcome -> Assert.Fail($"Expected UpdateIncomplete, got {outcome}.")
 
             File.Exists(Path.Combine(root, "selected.txt"))
-            |> should equal true)
+            |> should equal true
+
+            let retryRequest, retryManifest, retryMetadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                retryRequest
+                currentStatus
+                targetStatus
+                retryMetadata
+                retryManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected resumed Updated, got {outcome}.")
+
+            LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> fun status -> status.RootDirectoryId
+            |> should equal targetStatus.RootDirectoryId
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            Current().BranchId |> should equal branchBefore)
 
     /// Proves contradictory valid marker evidence is rejected and retained without working-tree mutation.
     [<Test>]
