@@ -79,3 +79,36 @@ never resumes a network stream.
 
 Persistent identity, enrollment, liveness, assignment, revocation, recursive metadata, complete-root publication,
 prefetch, scheduling, durable retry queues, reconciliation, and generalized recovery remain deferred.
+
+## GC-CAL-03 delivered HTTP tracer
+
+Issue #999, merged by PR #1001, delivered the Server-approved HTTP miss-to-hit path on `main`. The current Cache host
+now supports identity-only verified reads, ephemeral process-key publication, permit-only fill, Server redemption,
+independent integrity validation, bounded distinct fills, same-artifact coalescing, and a separate post-commit `GET`.
+Direct `directory/getZipFile` behavior and `grace connect` remain unchanged.
+
+## GC-CAL-04 readiness result
+
+The Cache-required Connect contract is Plan-ready, with these fixed integration choices:
+
+- Syntax: `grace connect <repository> --cache-required`; absence means Direct.
+- Selection: per invocation only. No configuration or environment value silently selects Cache, and no
+  `CachePreferred` mode exists.
+- URI precedence: `--cache-uri`, then `GRACE_CACHE_URI`, otherwise fail before effects. The accepted value is an
+  absolute loopback HTTP URI with an explicit port and is never persisted in repository configuration.
+- Failure: every Cache failure is terminal except the accepted 60-second retry for typed capacity backpressure. There
+  is no Direct fallback.
+- Local update: Cache-produced prepared content must enter the shared WDU transaction. GC-CAL-04 must not retain or
+  duplicate `Connect.extractZipEntries` as a mutation path.
+- Delivery: merge the WDU Connect path through Issue #835 to `main`, then run a fresh Issue #597 checkpoint and create
+  one GC-CAL-04 mainline child from that current revision.
+
+The current source still retrieves a Direct Blob SAS and mutates working and object files inside
+`Connect.extractZipEntries`. Issue #845 owns replacing that behavior with `WorkingDirectoryUpdate.run`, but the WDU
+epic currently selects Issue #960 as its only next child. Therefore GC-CAL-04 is not issue-ready today. Creating it now
+would either freeze a stale implementation seam or permit concurrent edits to `Connect.CLI.fs`.
+
+The post-WDU child should own only the Connect Cache HTTP client, the two new CLI options and URI validation, the
+Cache-required source sequence, typed capacity retry, and the adapter from verified Cache ZIP bytes into WDU prepared
+content. Direct behavior, WDU state and algorithms, CachePreferred, repository-persisted Cache location, and any second
+working-directory writer remain outside that child.

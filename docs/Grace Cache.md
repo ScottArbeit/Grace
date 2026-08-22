@@ -9,8 +9,9 @@ verified artifact over HTTP on `127.0.0.1`.
 ## Specification state
 
 - The local artifact lifecycle and loopback read path are implemented.
-- The next Product V1 miss-to-hit increment is Design-ready. Its accepted behavior and finite algorithm are specified
-  below; tracked implementation planning has not started.
+- The Server-approved Cache HTTP miss-to-hit path is implemented through Issue #999 and PR #1001.
+- The Cache-required `grace connect` increment is Plan-ready for a mainline slice after the WDU Connect path reaches
+  `main`. No Cache child is ready while that dependency remains on the WDU integration branch.
 
 ## Candidate miss-to-hit outcome
 
@@ -45,6 +46,45 @@ Deferred:
 - automatic retry other than bounded typed Cache-backpressure retry, reconciliation, and generalized recovery; and
 - persistent Cache identity, enrollment, assignment, liveness, key rotation, revocation, platform parity, HA/DR, and
   hostile-root defense.
+
+### Cache-required connect selection
+
+The explicit syntax is:
+
+```powershell
+grace connect <repository> --cache-required
+```
+
+`--cache-required` is a value-less per-invocation option. When it is absent, `grace connect` uses the unchanged Direct
+path. Grace configuration and environment variables cannot select Cache implicitly. There is no materialization-mode
+enum and no `CachePreferred` value.
+
+The selected Cache operation resolves its loopback base URI in this order:
+
+1. `--cache-uri <absolute-loopback-http-uri>` on the current command.
+1. `GRACE_CACHE_URI` in the current CLI process environment.
+1. No value. The command fails configuration validation before Server preparation, Cache fill, extraction, or local
+   mutation.
+
+`--cache-uri` without `--cache-required` is invalid. The URI is operational process input, not repository state, so it
+is never stored in `.grace/graceconfig.json`. The accepted URI is absolute HTTP with host `127.0.0.1`, `localhost`, or
+`[::1]`, an explicit port, and no user information, query, or fragment. Its path is empty or `/`. The local launcher or
+operator supplies the actual `grace-cache` HTTP endpoint through `GRACE_CACHE_URI`; `--cache-uri` is the explicit
+one-command override.
+
+Every Cache failure remains visible and terminal except typed `CacheFillCapacityExceeded`, which retains the existing
+bounded 60-second retry. There is no Direct fallback.
+
+### WDU delivery ordering
+
+GC-CAL-04 must start from current `main` only after the WDU epic has merged its Connect prepared-content adapter and
+exclusive `WorkingDirectoryUpdate.run` path to `main`. Cache selection then chooses the ZIP source and feeds the exact
+prepared content into that shared transaction. GC-CAL-04 does not call the current `extractZipEntries` mutation path,
+create a Cache-specific working-directory writer, or run concurrently with WDU work that edits `Connect.CLI.fs`.
+
+Issue #835 owns its internal child ordering and post-tracer checkpoints. For Cache, the delivery gate is the merged WDU
+Connect result on `main`, followed by a fresh Issue #597 checkpoint against that revision. GC-CAL-04 then targets
+`main`; no Cache integration branch is created.
 
 ### Fill admission
 
@@ -242,7 +282,7 @@ fails host startup.
 | Grace Cache HTTP | Replace the calibration exact-tuple `GET`; add public-key `GET` and permit-only fill `POST`. |
 | Grace Server HTTP | Add narrow ZIP preparation and permit-redemption operations; leave Direct `getZipFile` unchanged. |
 | ZIP Blob | Write lowercase SHA-256 and exact size as immutable metadata during upload. |
-| `grace connect` | Add explicit Cache-required selection, `GET -> prepare -> fill -> GET`, and 60-second typed retry. |
+| `grace connect` | Add `--cache-required`, optional `--cache-uri`, `GET -> prepare -> fill -> GET`, and 60-second typed retry through WDU. |
 | Grace SDK | Add typed calls for the two Server operations; expose neither SAS nor a caller-selected source to CLI code. |
 | OpenAPI and generated artifacts | Regenerate for the new Server contracts and routes; Cache remains a local host contract. |
 | Documentation | Update Cache, connect, configuration, and environment documentation for selection, routes, and failures. |
@@ -276,6 +316,9 @@ Those changes would add a product or state-machine decision that this specificat
 | CMT-11 | The process coordinator owns an admitted fill through completion. | Accepted | Client cancellation detaches waiters but cannot cancel shared immutable work. |
 | CMT-12 | Add narrow Cache preparation and redemption operations. | Accepted | Direct remains unchanged; the generic historical Materialization Plan API is not restored. |
 | CMT-13 | Replace the exact-tuple Cache `GET` with a repository-and-directory-version route. | Accepted | Hits avoid Server artifact preparation and callers supply no storage integrity fields. |
+| CMT-14 | Select Cache only with the value-less `--cache-required` connect option. | Accepted | Direct remains the default; no mode enum, Cache configuration default, or CachePreferred value is added. |
+| CMT-15 | Resolve the loopback URI from `--cache-uri`, then `GRACE_CACHE_URI`; reject a missing or non-loopback URI. | Accepted | Repository configuration never stores service location, and a selected Cache path fails before effects when location is unavailable. |
+| CMT-16 | Deliver WDU Connect to `main` before GC-CAL-04. | Accepted | Cache supplies prepared content to `WorkingDirectoryUpdate.run` instead of creating a second local mutation path. |
 
 ## Supported world
 
