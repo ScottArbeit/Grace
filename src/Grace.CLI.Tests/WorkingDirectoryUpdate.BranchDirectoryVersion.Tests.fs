@@ -998,6 +998,76 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             persisted.RootDirectoryId
             |> should equal newerStatus.RootDirectoryId)
 
+    /// Proves a post-publication marker replacement cannot use pre-publication admission to mutate the working tree.
+    [<Test>]
+    let ``post-publication marker drift rejects before working-tree mutation`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected object publication")
+            let acceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile acceptedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+
+            let target = WorkingDirectoryUpdateContracts.Request.target updateRequest
+            let operation = WorkingDirectoryUpdateContracts.Request.operation updateRequest
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterObjectPublication then
+                                let replacement =
+                                    WorkingDirectoryUpdateCoordination.Marker.create
+                                        scope
+                                        (WorkingDirectoryUpdateContracts.AttemptToken.create ())
+                                        target
+                                        operation
+                                    |> required
+
+                                WorkingDirectoryUpdateCoordination.Marker.write scope replacement
+                                |> fun task -> task.GetAwaiter().GetResult()
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                acceptedStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected post-publication marker-drift Rejected, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
+
+            let publishedFile = metadata[0].Files |> Seq.head
+
+            let objectPath =
+                Path.Combine(
+                    configuration.ObjectDirectory,
+                    string publishedFile.RelativePath,
+                    Services.getLocalObjectCacheFileName publishedFile.RelativePath publishedFile.Sha256Hash publishedFile.Blake3Hash
+                )
+
+            File.ReadAllBytes(objectPath)
+            |> should equal bytes
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal true)
+
     /// Proves a relevant path-kind drift after planning is detected by the complete prefix check before its action.
     [<Test>]
     let ``planned file path becoming a directory rejects before first mutation and cleans marker`` () =
