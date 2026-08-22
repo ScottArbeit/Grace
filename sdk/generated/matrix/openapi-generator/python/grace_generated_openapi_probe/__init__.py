@@ -21,6 +21,7 @@ __version__ = "0.0.0"
 __all__ = [
     "ApprovalsApi",
     "BranchesApi",
+    "CacheApi",
     "DiffsApi",
     "DirectoriesApi",
     "OrganizationsApi",
@@ -69,6 +70,8 @@ __all__ = [
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
+    "CacheArtifactDescriptor",
+    "CachePublicJwk",
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
@@ -113,6 +116,8 @@ __all__ = [
     "DirectoryVersionListReturnValue",
     "DirectoryVersionReturnValue",
     "DirectoryVersionSha256HashLookupReturnValue",
+    "DirectoryVersionZipFillSource",
+    "DirectoryVersionZipPreparation",
     "DiscoverContentBlocksParameters",
     "DiscoverContentBlocksResult",
     "DiscoverContentBlocksReturnValue",
@@ -189,11 +194,13 @@ __all__ = [
     "OwnerReturnValue",
     "OwnerType",
     "PopulateParameters",
+    "PrepareDirectoryVersionZipParameters",
     "ProblemDetails",
     "PromotionSetApprovalState",
     "PromotionSetApprovalSummary",
     "RebaseParameters",
     "RecordSavesParameters",
+    "RedeemDirectoryVersionZipFillParameters",
     "ReferenceApiDto",
     "ReferenceDefaultSentinel",
     "ReferenceDto",
@@ -285,6 +292,7 @@ __all__ = [
 # import apis into sdk package
 from grace_generated_openapi_probe.api.approvals_api import ApprovalsApi as ApprovalsApi
 from grace_generated_openapi_probe.api.branches_api import BranchesApi as BranchesApi
+from grace_generated_openapi_probe.api.cache_api import CacheApi as CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi as DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi as DirectoriesApi
 from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi as OrganizationsApi
@@ -337,6 +345,8 @@ from grace_generated_openapi_probe.models.branch_hash_query_parameters import Br
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
+from grace_generated_openapi_probe.models.cache_artifact_descriptor import CacheArtifactDescriptor as CacheArtifactDescriptor
+from grace_generated_openapi_probe.models.cache_public_jwk import CachePublicJwk as CachePublicJwk
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange
@@ -381,6 +391,8 @@ from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_v
 from grace_generated_openapi_probe.models.directory_version_list_return_value import DirectoryVersionListReturnValue as DirectoryVersionListReturnValue
 from grace_generated_openapi_probe.models.directory_version_return_value import DirectoryVersionReturnValue as DirectoryVersionReturnValue
 from grace_generated_openapi_probe.models.directory_version_sha256_hash_lookup_return_value import DirectoryVersionSha256HashLookupReturnValue as DirectoryVersionSha256HashLookupReturnValue
+from grace_generated_openapi_probe.models.directory_version_zip_fill_source import DirectoryVersionZipFillSource as DirectoryVersionZipFillSource
+from grace_generated_openapi_probe.models.directory_version_zip_preparation import DirectoryVersionZipPreparation as DirectoryVersionZipPreparation
 from grace_generated_openapi_probe.models.discover_content_blocks_parameters import DiscoverContentBlocksParameters as DiscoverContentBlocksParameters
 from grace_generated_openapi_probe.models.discover_content_blocks_result import DiscoverContentBlocksResult as DiscoverContentBlocksResult
 from grace_generated_openapi_probe.models.discover_content_blocks_return_value import DiscoverContentBlocksReturnValue as DiscoverContentBlocksReturnValue
@@ -457,11 +469,13 @@ from grace_generated_openapi_probe.models.owner_parameters import OwnerParameter
 from grace_generated_openapi_probe.models.owner_return_value import OwnerReturnValue as OwnerReturnValue
 from grace_generated_openapi_probe.models.owner_type import OwnerType as OwnerType
 from grace_generated_openapi_probe.models.populate_parameters import PopulateParameters as PopulateParameters
+from grace_generated_openapi_probe.models.prepare_directory_version_zip_parameters import PrepareDirectoryVersionZipParameters as PrepareDirectoryVersionZipParameters
 from grace_generated_openapi_probe.models.problem_details import ProblemDetails as ProblemDetails
 from grace_generated_openapi_probe.models.promotion_set_approval_state import PromotionSetApprovalState as PromotionSetApprovalState
 from grace_generated_openapi_probe.models.promotion_set_approval_summary import PromotionSetApprovalSummary as PromotionSetApprovalSummary
 from grace_generated_openapi_probe.models.rebase_parameters import RebaseParameters as RebaseParameters
 from grace_generated_openapi_probe.models.record_saves_parameters import RecordSavesParameters as RecordSavesParameters
+from grace_generated_openapi_probe.models.redeem_directory_version_zip_fill_parameters import RedeemDirectoryVersionZipFillParameters as RedeemDirectoryVersionZipFillParameters
 from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiDto as ReferenceApiDto
 from grace_generated_openapi_probe.models.reference_default_sentinel import ReferenceDefaultSentinel as ReferenceDefaultSentinel
 from grace_generated_openapi_probe.models.reference_dto import ReferenceDto as ReferenceDto

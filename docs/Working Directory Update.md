@@ -1,9 +1,9 @@
 # Working Directory Update
 
-**Status:** Plan-ready for the Issue #960 hash-selected Branch tracer
+**Status:** Plan-ready for the Issue #922 selection-neutral `VerifiedLocalRoot` extraction
 **Quality contract:** Product V1
-**Canonical source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-21, `origin/main` `685f5af9`, epic base `17c50479`
+**Specification source:** `docs/Working Directory Update.md`
+**Evidence current through:** 2026-08-22, `origin/main` `87848ad1`, refreshed epic candidate `670161fa`
 
 ## 1. Outcome and scope
 
@@ -11,11 +11,12 @@ Working Directory Update is the bounded local transaction used by `grace branch 
 directory and local SQLite state match one exact selected root. It verifies prepared objects, applies only the tracked
 plan, proves the complete final root, commits local completion, and completes typed Branch finalization.
 
-This replacement contract is Branch-only. Issue #960 is the first public tracer: hash selection resolves one exact
-`DirectoryVersion`, updates the working directory, retains the current Branch identity, and records terminal completion
-atomically with verified local status. Reference selection retains pending finalization for later work. Watch and Connect
-consume the completed transaction later through #843–#845. Migration, rollback, journals, automatic recovery, and
-multi-platform parity remain out of scope.
+This replacement contract is Branch-only. Merged Issue #960 supplies the first public tracer: hash selection resolves
+one exact `DirectoryVersion`, updates the working directory, retains the current Branch identity, and records terminal
+completion atomically with verified local status. Issue #922 now extracts the selection-neutral local-application stage
+through `VerifiedLocalRoot`; Reference completion remains deferred. Watch and Connect consume the completed transaction
+later through #843–#845. Migration, rollback, journals, automatic recovery, and multi-platform parity remain out of
+scope.
 
 Working-directory mutation is currently distributed across caller implementations, so cleanup, finalization, and
 failure behavior can drift apart. One lifecycle contract prevents Grace from publishing a selected Branch after marker
@@ -37,9 +38,18 @@ when lower-level details are incomplete.
 | DEC-009 | #868 and PR #873 are superseded planning evidence. | Their review findings inform this table but their commits and competing prose are not implementation authority. | #881 |
 | DEC-010 | `DirectoryVersion` completion is terminal in the verified-status SQLite transaction. | Hash-selected switching cannot create pending finalization; exact marker cleanup follows the terminal commit and cannot downgrade success. | #960 |
 
-No product decision remains open for the hash-selected tracer. Issue #960 is the only selected next child. Reference
-publication, Save-enabled Reference switching, Doctor recovery, Watch, and Connect remain deferred until the fresh
-post-tracer checkpoint.
+The post-tracer checkpoint makes two planning selections without changing the ten compiled lifecycle decisions above:
+
+- Final local-application admission occurs after prepared-object publication. No revision, status, completion, marker,
+  topology snapshot, or plan computed before publication may authorize the first working-tree mutation or zero-action
+  `VerifiedLocalRoot`.
+- The extracted local-application stage is selection-neutral, while Reference completion is not. Issue #922 ends at
+  opaque `VerifiedLocalRoot`; Issue #923 is deferred and may compose only Reference pending completion without reopening
+  DirectoryVersion terminal behavior.
+
+No product decision remains open for Issue #922. It is the only selected next Product V1 child. Issue #923 is deferred
+as a Reference-only completion slice. Reference publication, Save-enabled Reference switching, Doctor recovery, Watch,
+and Connect remain deferred.
 
 ## 3. Domain facts and interface
 
@@ -59,6 +69,12 @@ The module derives canonical configuration and paths, fresh scan input, operatio
 and typed Branch finalization facts. It accepts no caller finalizer, callback, progress observer in place of correlation,
 status graph, path or reader bundle, generic context bag, mutation plan, filesystem writer, or database handle. Retry
 reconstructs solely from persisted typed operation facts.
+
+Issue #922 extracts one private stage behind this interface. Its inputs are the held lease, exact owned marker attempt,
+sealed phase and selection facts, exact target graph, and immutable prepared content already validated against the
+manifest. It publishes required object-cache copies, performs final admission from freshly read local facts, derives one
+fresh plan, applies it, verifies the complete relevant root, and returns only `Rejected`, `UpdateIncomplete`, or opaque
+non-durable `VerifiedLocalRoot`. It neither writes SQLite completion nor decides Branch finalization.
 
 The first working-tree mutation and SQLite local completion are distinct boundaries. For `Reference`, local completion
 atomically writes verified status, object metadata, and a pending Branch operation. For `DirectoryVersion`, the same
@@ -279,10 +295,11 @@ dependency, checklist, assignment, or primary-delivery role. Issue #960 replaces
 | Lifecycle correction, relevant-topology definition, and assignment packet | #928 | DEC-005, exact-adoption reconciliation, zero-action routing, and verified-root failure classification. |
 | Per-path transition algebra | #959 | The merged pure classifier remains the one transition table. |
 | Hash-selected public tracer | #960 | Compose topology, apply under the WDU lease, verify the exact root, atomically record terminal SQLite completion, clean exact marker residue, and project `grace branch switch`. |
-| Generic Reference application and pending composition | #922 and #923 | Deferred until the post-tracer checkpoint; they may reuse Issue #960 seams but do not block the tracer. |
+| Selection-neutral local application | #922 | Extract the merged tracer's object publication, final admission, prefix-checked application, and verified-root transition without changing public behavior. |
+| Reference pending composition | #923 | Deferred; compose Reference-only pending completion after `VerifiedLocalRoot` without changing DirectoryVersion terminal behavior. |
 | DirectoryVersion terminalization and hash wiring | #900 and #901 | Superseded by Issue #960 because terminalization is part of the verified-status transaction and the public command is the tracer boundary. |
 
-The compiler result is the sole primary-requirement mapping. Issue #960 is the only selected next child.
+The compiler result is the sole primary-requirement mapping. Issue #922 is the only selected next child.
 
 ### Selected Product V1 boundaries
 
@@ -301,6 +318,14 @@ into `NeedsApply` or `AlreadySatisfied`: a file is satisfied only by exact SHA-2
 already-removed tracked entry or already-created target directory may also be satisfied. A mixed partial update skips
 only satisfied requirements. Before the first action and every later action, the complete relevant topology must match
 the prefix-advanced expected state. The final capture-to-filesystem-call race remains deferred Product V1 hardening.
+
+The merged Issue #960 tracer validates revision, complete status, completion, and marker facts and derives its plan
+before publishing prepared bytes into the object cache. Its per-action prefix checks prevent topology drift from winning,
+but object publication can outlive the global facts used for admission. Issue #922 therefore makes publication a strict
+barrier: publish and dual-hash verify every required object-cache copy, then reread the accepted SQLite revision,
+complete-status fingerprint, completion state, and exact marker attempt under the same lease. Derive the only applicable
+plan from those fresh facts. A mismatch is `Rejected` before mutation and cleans only the marker attempt owned by the
+invocation. No pre-publication global snapshot or plan may cross this barrier.
 
 `VerifiedLocalRoot` is opaque and non-durable. Cancellation controls through the transition into it, including a
 zero-action plan. After that transition cancellation is non-controlling through SQLite completion. A failure after a
@@ -336,7 +361,7 @@ sleeps, and impossible hand-built states are insufficient.
 
 <!-- grace:wdu-lifecycle-projection-plan:start -->
 ```json
-{"schema":"grace.wdu.lifecycle-projection-plan/v1","compilerInput":"docs/Working Directory Update.md#normative-branch-lifecycle-table","publicationState":"issue-960-design-pass"}
+{"schema":"grace.wdu.lifecycle-projection-plan/v1","compilerInput":"docs/Working Directory Update.md#normative-branch-lifecycle-table","publicationState":"issue-922-readiness-pass"}
 ```
 <!-- grace:wdu-lifecycle-projection-plan:end -->
 
@@ -346,8 +371,9 @@ The following consumers carry generated projections rather than competing lifecy
 - #898 proves collision-safe planning without mutation.
 - #928 supplies the compiled lifecycle and machine metadata.
 - #959 supplies the finite per-path transition algebra.
-- #960 owns the hash-selected public tracer through terminal DirectoryVersion completion.
-- #922 and #923 are deferred generic Reference seams pending the post-tracer checkpoint.
+- #960 owns the merged hash-selected public tracer through terminal DirectoryVersion completion.
+- #922 owns the selected selection-neutral extraction through `VerifiedLocalRoot`.
+- #923 is deferred and owns only later Reference pending completion.
 - #900 and #901 are superseded by #960.
 - #871 proves Reference and retry row families.
 - #872 proves Save/no-Save admission reaches the same initial rows.

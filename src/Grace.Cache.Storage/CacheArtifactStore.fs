@@ -1,6 +1,7 @@
 namespace Grace.Cache.Storage
 
 open System
+open System.Collections.Concurrent
 open System.IO
 open System.Security.Cryptography
 open Microsoft.Data.Sqlite
@@ -42,6 +43,12 @@ exception internal CacheArtifactInjectedFailure of CacheArtifactEffect * CacheAr
 /// Holds one managed artifact root coupled to the already-owned private storage database.
 type CacheArtifactStore = private { Store: CacheStore; ManagedRoot: string }
 
+/// Holds independently verified same-root staged bytes until the short serialized publication section.
+type CacheStagedArtifact internal (tuple: CacheArtifactTuple, operationIdentity: string, path: string) =
+    member internal _.Tuple = tuple
+    member internal _.OperationIdentity = operationIdentity
+    member internal _.Path = path
+
 /// Holds pre-existing Cache locations without opening the writer store or taking its process lock.
 type CacheArtifactReader internal (databasePath: string, managedRoot: string) =
     member internal _.DatabasePath = databasePath
@@ -50,10 +57,15 @@ type CacheArtifactReader internal (databasePath: string, managedRoot: string) =
 /// Owns exact-tuple local artifact publication and finite restart classification.
 module CacheArtifactStore =
 
+    let private activeStagingDirectories = ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase)
+
     type private DurableState =
         | DurableAbsent
         | DurableStaging of CacheArtifactTuple * string
         | DurableComplete of CacheArtifactTuple
+
+    /// Builds the one internal identity for a repository's immutable DirectoryVersion ZIP.
+    let canonicalIdentity repositoryId directoryVersionId = $"artifact://grace/repositories/{repositoryId}/directory-version-zips/{directoryVersionId}"
 
     /// Returns the lowercase SHA-256 digest of a byte sequence used only for opaque managed filenames.
     let private sha256 (bytes: byte array) =
@@ -220,9 +232,15 @@ module CacheArtifactStore =
     let private clearStaging store =
         let root = stagingRoot store
 
-        if Directory.Exists root then Directory.Delete(root, true)
-
-        Directory.CreateDirectory(root) |> ignore
+        if Directory.Exists root then
+            for entry in Directory.EnumerateFileSystemEntries(root) do
+                if not (activeStagingDirectories.ContainsKey(entry)) then
+                    if Directory.Exists(entry) then
+                        Directory.Delete(entry, true)
+                    else
+                        File.Delete(entry)
+        else
+            Directory.CreateDirectory(root) |> ignore
 
     /// Deletes only the exact Staging row after its incomplete owned residue has been handled.
     let private deleteExactStaging (connection: SqliteConnection) tuple =
@@ -432,6 +450,37 @@ module CacheArtifactStore =
         | Error message -> Rejected message
         | Ok () -> classify store tuple
 
+    /// Resolves and verifies one identity-only hit from the stored immutable descriptor.
+    let inspectByIdentity store repositoryId directoryVersionId =
+        if String.IsNullOrWhiteSpace repositoryId
+           || String.IsNullOrWhiteSpace directoryVersionId then
+            Rejected "Repository and directory version identities are required."
+        else
+            let identity = canonicalIdentity repositoryId directoryVersionId
+
+            let key =
+                {
+                    Kind = "DirectoryVersionZip"
+                    CanonicalIdentity = identity
+                    DirectoryVersionId = directoryVersionId
+                    ExpectedSha256 = String.replicate 64 "0"
+                    ExpectedSize = 0L
+                }
+                |> artifactKey
+
+            try
+                CacheStore.withStoreOperation store.Store (fun databasePath ->
+                    CacheStore.withBusyRetry (fun () ->
+                        use connection = CacheStore.openConnection databasePath
+                        ensureArtifactSchema connection
+
+                        match readState connection key with
+                        | DurableComplete tuple
+                        | DurableStaging (tuple, _) -> classifyWithConnection store tuple connection
+                        | DurableAbsent -> Absent))
+            with
+            | :? InvalidOperationException -> RecoveryRequired "Cache artifact metadata is invalid; explicit local reset is required."
+
     /// Opens only pre-existing readable Cache locations and fails without creating a database, root, lock, or schema.
     let createReader databasePath managedRoot =
         if String.IsNullOrWhiteSpace databasePath then
@@ -548,6 +597,98 @@ module CacheArtifactStore =
 
     /// Commits one immutable stream without exposing the test-only failure injector to production callers.
     let commit store tuple source = commitInternal store tuple source None
+
+    /// Streams and verifies source bytes on the managed filesystem without holding the global store-operation lock.
+    let stage store tuple (source: Stream) =
+        match validateTuple tuple with
+        | Error message -> Error message
+        | Ok () ->
+            let operationIdentity = Guid.NewGuid().ToString("N")
+            let operationDirectory = Path.Combine(stagingRoot store, operationIdentity)
+
+            let stagedPath =
+                Path.Combine(
+                    operationDirectory,
+                    artifactKey tuple
+                    + "."
+                    + operationIdentity
+                    + ".part"
+                )
+
+            if not (activeStagingDirectories.TryAdd(operationDirectory, 0uy)) then
+                invalidOp "A generated Cache staging identity was already active."
+
+            try
+                Directory.CreateDirectory(operationDirectory)
+                |> ignore
+
+                use _created = new FileStream(stagedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+                _created.Dispose()
+                let observedLength, observedSha256 = writeAndHash stagedPath source
+
+                if
+                    observedLength <> tuple.ExpectedSize
+                    || observedSha256 <> tuple.ExpectedSha256
+                    || not (verifyFile stagedPath tuple)
+                then
+                    Error "Staged bytes failed exact size and lowercase SHA-256 verification."
+                else
+                    Ok(CacheStagedArtifact(tuple, operationIdentity, stagedPath))
+            with
+            | _ ->
+                activeStagingDirectories.TryRemove(operationDirectory)
+                |> ignore
+
+                if Directory.Exists(operationDirectory) then
+                    Directory.Delete(operationDirectory, true)
+
+                reraise ()
+            |> function
+                | Ok staged -> Ok staged
+                | Error message ->
+                    activeStagingDirectories.TryRemove(operationDirectory)
+                    |> ignore
+
+                    if Directory.Exists(operationDirectory) then
+                        Directory.Delete(operationDirectory, true)
+
+                    Error message
+
+    /// Reclassifies and publishes independently verified staged bytes inside the short serialized section.
+    let publishStaged store (staged: CacheStagedArtifact) =
+        let tuple = staged.Tuple
+        let operationDirectory = Path.GetDirectoryName(staged.Path)
+
+        try
+            CacheStore.withStoreOperation store.Store (fun databasePath ->
+                CacheStore.withBusyRetry (fun () ->
+                    use connection = CacheStore.openConnection databasePath
+
+                    match classifyWithConnection store tuple connection with
+                    | Hit path -> Hit path
+                    | Conflict message -> Conflict message
+                    | RecoveryRequired message -> RecoveryRequired message
+                    | Rejected message -> Rejected message
+                    | Filled -> invalidOp "Artifact classification cannot report Filled before publication."
+                    | Absent ->
+                        if not (verifyFile staged.Path tuple) then
+                            Rejected "Staged bytes changed after integrity verification."
+                        else
+                            let final = finalPath store tuple
+                            insertStaging connection tuple staged.OperationIdentity
+                            File.Move(staged.Path, final, false)
+                            markComplete connection tuple staged.OperationIdentity
+
+                            if verifyFile final tuple then
+                                Filled
+                            else
+                                invalidOp "Terminal success requires verified final bytes."))
+        finally
+            activeStagingDirectories.TryRemove(operationDirectory)
+            |> ignore
+
+            if Directory.Exists(operationDirectory) then
+                Directory.Delete(operationDirectory, true)
 
     /// Commits one immutable stream with one focused GC-CAL-00 failure injection for production proof.
     let internal commitWithFailure store tuple source failurePoint = commitInternal store tuple source (Some failurePoint)

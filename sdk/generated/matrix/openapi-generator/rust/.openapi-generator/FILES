@@ -36,6 +36,9 @@ docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
 docs/BranchesApi.md
+docs/CacheApi.md
+docs/CacheArtifactDescriptor.md
+docs/CachePublicJwk.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -83,6 +86,8 @@ docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
 docs/DirectoryVersionSha256HashLookupReturnValue.md
+docs/DirectoryVersionZipFillSource.md
+docs/DirectoryVersionZipPreparation.md
 docs/DiscoverContentBlocksParameters.md
 docs/DiscoverContentBlocksResult.md
 docs/DiscoverContentBlocksReturnValue.md
@@ -161,11 +166,13 @@ docs/OwnerReturnValue.md
 docs/OwnerType.md
 docs/OwnersApi.md
 docs/PopulateParameters.md
+docs/PrepareDirectoryVersionZipParameters.md
 docs/ProblemDetails.md
 docs/PromotionSetApprovalState.md
 docs/PromotionSetApprovalSummary.md
 docs/RebaseParameters.md
 docs/RecordSavesParameters.md
+docs/RedeemDirectoryVersionZipFillParameters.md
 docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
@@ -258,6 +265,7 @@ docs/WorkItemsApi.md
 git_push.sh
 src/apis/approvals_api.rs
 src/apis/branches_api.rs
+src/apis/cache_api.rs
 src/apis/configuration.rs
 src/apis/default_api.rs
 src/apis/diffs_api.rs
@@ -300,6 +308,8 @@ src/models/branch_hash_query_parameters.rs
 src/models/branch_parameters.rs
 src/models/branch_query_parameters.rs
 src/models/branch_return_value.rs
+src/models/cache_artifact_descriptor.rs
+src/models/cache_public_jwk.rs
 src/models/change_type.rs
 src/models/claim_reuse_ranges_parameters.rs
 src/models/claimed_reuse_range.rs
@@ -344,6 +354,8 @@ src/models/directory_version_hash_lookup_return_value.rs
 src/models/directory_version_list_return_value.rs
 src/models/directory_version_return_value.rs
 src/models/directory_version_sha256_hash_lookup_return_value.rs
+src/models/directory_version_zip_fill_source.rs
+src/models/directory_version_zip_preparation.rs
 src/models/discover_content_blocks_parameters.rs
 src/models/discover_content_blocks_result.rs
 src/models/discover_content_blocks_return_value.rs
@@ -421,11 +433,13 @@ src/models/owner_parameters.rs
 src/models/owner_return_value.rs
 src/models/owner_type.rs
 src/models/populate_parameters.rs
+src/models/prepare_directory_version_zip_parameters.rs
 src/models/problem_details.rs
 src/models/promotion_set_approval_state.rs
 src/models/promotion_set_approval_summary.rs
 src/models/rebase_parameters.rs
 src/models/record_saves_parameters.rs
+src/models/redeem_directory_version_zip_fill_parameters.rs
 src/models/reference_api_dto.rs
 src/models/reference_default_sentinel.rs
 src/models/reference_dto.rs
