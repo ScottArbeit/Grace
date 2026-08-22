@@ -32,6 +32,13 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             member _.OpenReadAsync(_, _) = Task.FromResult(new MemoryStream(bytes, writable = false) :> Stream)
             member _.Dispose() = ()
 
+    /// Supplies prepared content for a target graph containing directories but no files.
+    type private EmptyReader() =
+        interface WorkingDirectoryUpdateContracts.IPreparedContentReader with
+            member _.FilePaths = Seq.empty
+            member _.OpenReadAsync(_, _) = Task.FromException<Stream>(InvalidOperationException("Directory-only content has no file stream."))
+            member _.Dispose() = ()
+
     /// Computes both supported content hashes for deterministic fixture bytes.
     let private hashes (bytes: byte array) =
         let sha256 =
@@ -94,6 +101,60 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             RootDirectoryBlake3Hash = root.Blake3Hash
         },
         root
+
+    /// Creates a production-valid root graph containing one empty nested directory.
+    let private nestedDirectoryStatus (configuration: GraceConfiguration) (directoryPath: string) =
+        let childId = DirectoryVersionId.NewGuid()
+        let childEntries = Array.empty<Services.DirectoryVersionPreimageEntry>
+
+        let child =
+            LocalDirectoryVersion.CreateWithHashes
+                childId
+                configuration.OwnerId
+                configuration.OrganizationId
+                configuration.RepositoryId
+                (RelativePath directoryPath)
+                (Services.computeSha256ForDirectoryEntries (RelativePath directoryPath) childEntries)
+                (Services.computeBlake3ForDirectory (RelativePath directoryPath) childEntries)
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>())
+                0L
+                DateTime.UtcNow
+
+        let rootId = DirectoryVersionId.NewGuid()
+        let rootPath = RelativePath RootDirectoryPath
+
+        let rootEntries =
+            [|
+                Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+            |]
+
+        let root =
+            LocalDirectoryVersion.CreateWithHashes
+                rootId
+                configuration.OwnerId
+                configuration.OrganizationId
+                configuration.RepositoryId
+                rootPath
+                (Services.computeSha256ForDirectoryEntries rootPath rootEntries)
+                (Services.computeBlake3ForDirectory rootPath rootEntries)
+                (List<DirectoryVersionId>([| childId |]))
+                (List<LocalFileVersion>())
+                0L
+                DateTime.UtcNow
+
+        let index = GraceIndex()
+        index[rootId] <- root
+        index[childId] <- child
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        },
+        root,
+        child
 
     /// Configures one disposable Product V1 repository and restores process-global configuration afterward.
     let private withRepo action =
@@ -169,6 +230,40 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         |> required,
         manifest,
         [| targetRoot |]
+
+    /// Creates a fully prepared request for one directory-only target graph.
+    let private directoryRequest (configuration: GraceConfiguration) (targetStatus: GraceStatus) metadata (directoryPath: string) =
+        let manifest =
+            WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(
+                                                                          RelativePath directoryPath
+                                                                      ) ]
+            |> required
+
+        let prepared =
+            WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new EmptyReader()) CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> required
+
+        let target =
+            WorkingDirectoryUpdateContracts.Target.create
+                configuration.RepositoryId
+                configuration.BranchId
+                targetStatus.RootDirectoryId
+                targetStatus.RootDirectorySha256Hash
+                targetStatus.RootDirectoryBlake3Hash
+            |> required
+
+        let operation =
+            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection
+                configuration.BranchId
+                WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+                target
+            |> required
+
+        WorkingDirectoryUpdateContracts.Request.create target operation prepared $"{Guid.NewGuid():N}"
+        |> required,
+        manifest,
+        metadata
 
     /// Proves success commits exact bytes and replay returns Unchanged without changing Branch identity.
     [<Test>]
@@ -305,6 +400,98 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
             |> fun task -> task.GetAwaiter().GetResult()
             |> fun status -> status.RootDirectoryId
+            |> should equal targetStatus.RootDirectoryId
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            Current().BranchId |> should equal branchBefore)
+
+    /// Proves exact-marker adoption resumes a nested target directory created before an interrupted application.
+    [<Test>]
+    let ``exact adoption resumes previously created nested target directory`` () =
+        withRepo (fun root configuration ->
+            let branchBefore = Current().BranchId
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot, targetChild = nestedDirectoryStatus configuration "nested"
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            Directory.CreateDirectory(Path.Combine(root, "nested"))
+            |> ignore
+
+            let freshRequest, freshManifest, freshMetadata = directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested"
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                freshRequest
+                currentStatus
+                targetStatus
+                freshMetadata
+                freshManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected fresh untracked-directory Rejected, got {outcome}.")
+
+            Directory.Delete(Path.Combine(root, "nested"))
+
+            let updateRequest, manifest, metadata = directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested"
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.DuringApplication then
+                                raise (IOException("interrupt after nested directory creation"))
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+                | outcome -> Assert.Fail($"Expected interrupted UpdateIncomplete, got {outcome}.")
+
+            Directory.Exists(Path.Combine(root, "nested"))
+            |> should equal true
+
+            let retryRequest, retryManifest, retryMetadata = directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested"
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                retryRequest
+                currentStatus
+                targetStatus
+                retryMetadata
+                retryManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected resumed Updated, got {outcome}.")
+
+            LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> fun persisted -> persisted.RootDirectoryId
             |> should equal targetStatus.RootDirectoryId
 
             let scope =

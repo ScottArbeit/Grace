@@ -333,6 +333,13 @@ module internal WorkingDirectoryUpdate =
                                 | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
                             | Directory ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory Directory with
+                                | Error value when
+                                    allowExactAdoption
+                                    && value.Classification = Untracked
+                                    ->
+                                    match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory with
+                                    | Some descendant -> rejection <- Some descendant
+                                    | None -> ()
                                 | Error value -> rejection <- Some value
                                 | Ok "tracked-directory" ->
                                     match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory with
