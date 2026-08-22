@@ -896,7 +896,11 @@ module internal WorkingDirectoryUpdate =
                         Error $"Published object '{path}' failed dual-hash verification."
 
             /// Publishes every required prepared object before any mutable local admission fact can authorize application.
-            let private publishObjects (preparedContent: WorkingDirectoryUpdateContracts.PreparedContent) (objectMetadata: LocalDirectoryVersion array) =
+            let private publishObjects
+                (preparedContent: WorkingDirectoryUpdateContracts.PreparedContent)
+                (objectMetadata: LocalDirectoryVersion array)
+                (failureInjection: FailureInjection)
+                =
                 task {
                     let mutable error = None
                     let mutable directoryIndex = 0
@@ -919,6 +923,7 @@ module internal WorkingDirectoryUpdate =
 
                             try
                                 do! publishPreparedFile preparedContent file.RelativePath objectPath
+                                failureInjection.ThrowAt AfterObjectPublication
 
                                 match verifyPublishedObject objectPath file.Sha256Hash file.Blake3Hash with
                                 | Ok () -> ()
@@ -970,10 +975,9 @@ module internal WorkingDirectoryUpdate =
                     let mutable mutationStarted = false
 
                     try
-                        match! publishObjects preparedContent objectMetadata with
+                        match! publishObjects preparedContent objectMetadata failureInjection with
                         | Some publishError -> return! rejectAndClean scope attemptToken publishError
                         | None ->
-                            failureInjection.ThrowAt AfterObjectPublication
                             let! revisionBefore = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
 
                             let! freshStatusResult =
@@ -1064,6 +1068,8 @@ module internal WorkingDirectoryUpdate =
                 let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent request
                 let attemptToken = WorkingDirectoryUpdateContracts.AttemptToken.create ()
                 let mutable mutationStarted = false
+                let mutable verifiedRoot = false
+                let mutable verifiedBytesChanged = false
                 let mutable committed = false
 
                 try
@@ -1230,7 +1236,8 @@ module internal WorkingDirectoryUpdate =
                                     | LocalApplication.Rejected error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected error
                                     | LocalApplication.UpdateIncomplete error -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete error
                                     | LocalApplication.Verified localRoot ->
-                                        mutationStarted <- true
+                                        verifiedRoot <- true
+                                        verifiedBytesChanged <- LocalApplication.VerifiedLocalRoot.bytesChanged localRoot
 
                                         let! _ =
                                             LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
@@ -1272,14 +1279,15 @@ module internal WorkingDirectoryUpdate =
                 with
                 | ex when committed ->
                     let receipt =
-                        WorkingDirectoryUpdateContracts.Receipt.create target operation mutationStarted
+                        WorkingDirectoryUpdateContracts.Receipt.create target operation verifiedBytesChanged
                         |> Result.defaultWith invalidOp
 
                     return
-                        if mutationStarted then
+                        if verifiedBytesChanged then
                             WorkingDirectoryUpdateContracts.Outcome.Updated receipt
                         else
                             WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                | ex when verifiedRoot -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete(failure ex.Message)
                 | ex when mutationStarted -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete(failure ex.Message)
                 | ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
             }
