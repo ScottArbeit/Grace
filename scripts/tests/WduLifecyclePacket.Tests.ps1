@@ -26,7 +26,7 @@ function Invoke-WduExportProcess {
     param([string] $Artifact)
 
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = (Get-Command pwsh -CommandType Application).Source
+    $startInfo.FileName = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true

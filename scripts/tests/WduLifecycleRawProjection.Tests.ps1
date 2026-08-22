@@ -190,12 +190,12 @@ Invoke-Case 'exports only the raw compiler and validator' {
 }
 
 Invoke-Case 'compiles all fifteen artifacts deterministically and validates raw tokens' {
-    Assert-True ($script:Compiled.Counts.rowCount -eq 70) 'compiler row count is 70'
-    Assert-True ($script:Compiled.Counts.applicabilityKeyCount -eq 260) 'compiler applicability count is 260'
+    Assert-True ($script:Compiled.Counts.rowCount -eq 66) 'compiler row count is 66'
+    Assert-True ($script:Compiled.Counts.applicabilityKeyCount -eq 244) 'compiler applicability count is 244'
     Assert-True ($script:Compiled.Requirements.Count -eq 19) 'compiler requirement count is 19'
     Assert-True ($script:Compiled.Artifacts.Count -eq 15) 'compiler artifact count is 15'
-    Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.Digest, 'ae3a77e28886485b49361d8836f040691e9f99228919cef87fac19b42e989d73')) 'compiler digest is exact'
-    Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.AssignmentDigest, '20e329bd3aa4459a01f4ed3c6ec12cf365c86df3538b0323400639b90eeee877')) 'assignment digest is exact'
+    Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.Digest, 'ccd29ba6b55dde396be5c1c9244958999e7cc8173c0e5e8243f1b57fe4bc3c92')) 'compiler digest is exact'
+    Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.AssignmentDigest, 'fb20589eaffb4c7a7c8db2b1c215fe751bef3d41145fef925f07d7648f501053')) 'assignment digest is exact'
     foreach ($binding in $script:ProjectionBindings) {
         $expectedArtifact = $binding.ExpectedArtifact
         $projection = $binding.Projection
@@ -233,7 +233,7 @@ Invoke-Case 'rejects root array and scalar raw values' {
 Invoke-Case 'rejects duplicate and case-equivalent root and nested properties' {
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2",' '"schema":"grace.wdu.lifecycle-projection/v2","schema":"grace.wdu.lifecycle-projection/v2",' } 'duplicate case-equivalent'
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2",' '"schema":"grace.wdu.lifecycle-projection/v2","Schema":"grace.wdu.lifecycle-projection/v2",' } 'duplicate case-equivalent'
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#923"' '"id":"REQ-001","Id":"REQ-001","owner":"#923"' } 'duplicate case-equivalent'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#960"' '"id":"REQ-001","Id":"REQ-001","owner":"#960"' } 'duplicate case-equivalent'
 }
 
 Invoke-Case 'rejects missing extra genuinely reordered and incorrectly cased properties' {
@@ -261,7 +261,7 @@ Invoke-Case 'rejects missing extra genuinely reordered and incorrectly cased pro
         $baselineDocument.Dispose()
     }
     Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $rootPairSwap) } "WDU raw lifecycle projection '$': property at ordinal 0 must be 'schema'"
-    $nestedPairSwap = Replace-Once (Get-Json $baseline) '"id":"REQ-001","owner":"#923"' '"owner":"#923","id":"REQ-001"'
+    $nestedPairSwap = Replace-Once (Get-Json $baseline) '"id":"REQ-001","owner":"#960"' '"owner":"#960","id":"REQ-001"'
     $nestedBaselineDocument = [Text.Json.JsonDocument]::Parse((Get-Json $baseline))
     $nestedDocument = [Text.Json.JsonDocument]::Parse($nestedPairSwap)
     try {
@@ -274,7 +274,7 @@ Invoke-Case 'rejects missing extra genuinely reordered and incorrectly cased pro
             Assert-True ($nestedProperty.Value.GetRawText() -ceq $nestedBaselineProperty[0].Value.GetRawText()) "nested pair swap retains exact $($nestedProperty.Name) value"
         }
         Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Name, 'owner')) 'nested pair swap moves complete owner pair first'
-        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Value.GetString(), '#923')) 'nested pair swap retains owner value'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Value.GetString(), '#960')) 'nested pair swap retains owner value'
         Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[1].Name, 'id')) 'nested pair swap moves complete ID pair second'
         Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[1].Value.GetString(), 'REQ-001')) 'nested pair swap retains ID value'
     }
@@ -289,8 +289,8 @@ Invoke-Case 'rejects missing extra genuinely reordered and incorrectly cased pro
 }
 
 Invoke-Case 'rejects count coercion token kinds and values' {
-    foreach ($replacement in @('"70"', '70.0', '7e1', 'null', '71')) {
-        Invoke-Mutation $baseline { param($json) Replace-Once $json '"rowCount":70' ('"rowCount":' + $replacement) } 'rowCount'
+    foreach ($replacement in @('"66"', '66.0', '6.6e1', 'null', '67')) {
+        Invoke-Mutation $baseline { param($json) Replace-Once $json '"rowCount":66' ('"rowCount":' + $replacement) } 'rowCount'
     }
 }
 
@@ -306,11 +306,11 @@ Invoke-Case 'rejects scalar object and null where every required array belongs' 
 }
 
 Invoke-Case 'rejects requirement and artifact vector drift' {
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#923"},' '' } 'requirements'
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#923"},{"id":"REQ-002","owner":"#869"}' '{"id":"REQ-002","owner":"#869"},{"id":"REQ-001","owner":"#923"}' } 'requirements[0].id'
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#923"},' '{"id":"REQ-001","owner":"#923"},{"id":"REQ-001","owner":"#923"},' } 'requirements'
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#923"' '"id":"REQ-001","owner":"#999"' } 'requirements[0].owner'
-    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#923"' '"id":"REQ-001","owner":"#923","extra":true' } 'ordered properties'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#960"},' '' } 'requirements'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#960"},{"id":"REQ-002","owner":"#869"}' '{"id":"REQ-002","owner":"#869"},{"id":"REQ-001","owner":"#960"}' } 'requirements[0].id'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#960"},' '{"id":"REQ-001","owner":"#960"},{"id":"REQ-001","owner":"#960"},' } 'requirements'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#960"' '"id":"REQ-001","owner":"#999"' } 'requirements[0].owner'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#960"' '"id":"REQ-001","owner":"#960","extra":true' } 'ordered properties'
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"REQ-001"' '"req-001"' } 'requirements[0].id'
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"adr-0011","epic-835"' '"epic-835","adr-0011"' } 'artifactIds[0]'
     Invoke-Mutation $baseline { param($json) Replace-Once $json '"artifactIds":["adr-0011",' '"artifactIds":[' } 'artifactIds'
@@ -344,9 +344,9 @@ Invoke-Case 'rejects raw shapes PowerShell can coerce into apparent equality' {
     $array = "[$json]" | ConvertFrom-Json
     Assert-True ([StringComparer]::Ordinal.Equals($array.schema, 'grace.wdu.lifecycle-projection/v2')) 'PowerShell unwraps one element array property access'
     Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 "[$json]") } 'JSON object'
-    $stringCountJson = Replace-Once $json '"rowCount":70' '"rowCount":"70"'
+    $stringCountJson = Replace-Once $json '"rowCount":66' '"rowCount":"66"'
     $stringCount = $stringCountJson | ConvertFrom-Json
-    Assert-True ($stringCount.rowCount -eq 70) 'PowerShell coerces the string count in comparison'
+    Assert-True ($stringCount.rowCount -eq 66) 'PowerShell coerces the string count in comparison'
     Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $stringCountJson) } 'rowCount'
     $scalarArrayJson = Replace-ArrayValue $json 'artifactIds' '"adr-0011,epic-835"'
     $scalarArray = $scalarArrayJson | ConvertFrom-Json
