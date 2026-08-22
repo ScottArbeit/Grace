@@ -2191,18 +2191,57 @@ module Application =
                 let redisHost = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.RedisHost)
 
                 let redisPort = configuration.GetValue<int>(getConfigKey Constants.EnvironmentVariables.RedisPort)
+                let redisTls = configuration.GetValue<bool>(getConfigKey Constants.EnvironmentVariables.RedisTls)
+                let redisAuthenticationMode = configuration[getConfigKey Constants.EnvironmentVariables.RedisAuthenticationMode]
 
                 if String.IsNullOrWhiteSpace redisHost then
                     RepositoryCounterRecentResult.UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
                 else
                     let effectivePort = if redisPort > 0 then redisPort else 6379
 
-                    let redisLog =
-                        serviceProvider
-                            .GetRequiredService<ILoggerFactory>()
-                            .CreateLogger("RepositoryCounterRecentResult.Server")
+                    let loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>()
+                    let redisLog = loggerFactory.CreateLogger("RepositoryCounterRecentResult.Server")
 
-                    new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog) :> IRepositoryCounterRecentResult)
+                    match RepositoryCounterRecentResult.selectAuthenticationMode redisAuthenticationMode redisTls with
+                    | RepositoryCounterRecentResult.RedisAuthenticationMode.MicrosoftEntra ->
+                        new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(
+                            redisHost,
+                            effectivePort,
+                            defaultAzureCredential.Value,
+                            loggerFactory,
+                            redisLog
+                        )
+                        :> IRepositoryCounterRecentResult
+                    | RepositoryCounterRecentResult.RedisAuthenticationMode.AclTls ->
+                        let redisUsername = configuration[getConfigKey Constants.EnvironmentVariables.RedisUsername]
+                        let redisPassword = configuration[getConfigKey Constants.EnvironmentVariables.RedisPassword]
+                        let encodedCaCertificate = configuration[getConfigKey Constants.EnvironmentVariables.RedisCaCertificate]
+
+                        if String.IsNullOrWhiteSpace redisUsername
+                           || String.IsNullOrWhiteSpace redisPassword
+                           || String.IsNullOrWhiteSpace encodedCaCertificate then
+                            invalidOp "Redis TLS requires an ACL username, password, and custom CA certificate."
+
+                        let caCertificatePem =
+                            encodedCaCertificate
+                            |> Convert.FromBase64String
+                            |> Encoding.UTF8.GetString
+
+                        new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(
+                            redisHost,
+                            effectivePort,
+                            redisUsername,
+                            redisPassword,
+                            caCertificatePem,
+                            redisLog
+                        )
+                        :> IRepositoryCounterRecentResult
+                    | RepositoryCounterRecentResult.RedisAuthenticationMode.Unauthenticated ->
+                        new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog)
+                        :> IRepositoryCounterRecentResult)
+            |> ignore
+
+            services.AddHostedService<RepositoryCounterRecentResult.RedisRepositoryCounterRecentResultWarmup>()
             |> ignore
 
             services.AddSingleton<IExactRelationshipStore> (fun _ ->

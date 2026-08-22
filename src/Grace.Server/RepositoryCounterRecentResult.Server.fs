@@ -4,17 +4,37 @@ open Grace.Shared
 open Grace.Actors
 open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
+open Azure.Core
+open Microsoft.Azure.StackExchangeRedis
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
+open Microsoft.Extensions.Hosting
 open StackExchange.Redis
 open System
 open System.Globalization
+open System.Net.Security
+open System.Security.Cryptography.X509Certificates
 open System.Text
 open System.Threading
 open System.Threading.Tasks
 
 /// Provides a nonauthoritative Redis accelerator for recently completed repository counter operations.
 module RepositoryCounterRecentResult =
+
+    /// Identifies the one Redis credential contract Grace will use for the configured endpoint.
+    type RedisAuthenticationMode =
+        | Unauthenticated
+        | AclTls
+        | MicrosoftEntra
+
+    /// Selects an explicit hosted authentication mode while retaining the established local and lab defaults.
+    let selectAuthenticationMode (configuredMode: string) tls =
+        if String.IsNullOrWhiteSpace configuredMode then
+            if tls then AclTls else Unauthenticated
+        elif String.Equals(configuredMode, "MicrosoftEntra", StringComparison.OrdinalIgnoreCase) then
+            MicrosoftEntra
+        else
+            invalidOp $"Unsupported Redis authentication mode '{configuredMode}'."
 
     /// Defines the exact ten-minute lifetime required for recent counter results.
     let expiry = TimeSpan.FromMinutes 10.0
@@ -36,6 +56,44 @@ module RepositoryCounterRecentResult =
             )
 
         configuration.EndPoints.Add(host, port)
+        configuration
+
+    /// Builds certificate-validated Redis TLS configuration for the disposable Azure infrastructure lab.
+    let configurationForSecureEndpoint (host: string) (port: int) (username: string) (password: string) (caCertificatePem: string) =
+        let configuration = configurationForEndpoint host port
+        let trustedRoot = X509Certificate2.CreateFromPem caCertificatePem
+
+        configuration.Ssl <- true
+        configuration.SslHost <- host
+        configuration.User <- username
+        configuration.Password <- password
+
+        configuration.add_CertificateValidation (
+            RemoteCertificateValidationCallback (fun _ certificate _ policyErrors ->
+                if isNull certificate
+                   || policyErrors.HasFlag SslPolicyErrors.RemoteCertificateNameMismatch then
+                    false
+                else
+                    use serverCertificate = new X509Certificate2(certificate)
+                    use chain = new X509Chain()
+                    chain.ChainPolicy.TrustMode <- X509ChainTrustMode.CustomRootTrust
+
+                    chain.ChainPolicy.CustomTrustStore.Add trustedRoot
+                    |> ignore
+
+                    chain.ChainPolicy.RevocationMode <- X509RevocationMode.NoCheck
+                    chain.Build serverCertificate)
+        )
+
+        configuration
+
+    /// Builds the secret-free TLS and RESP3 baseline required before the Microsoft extension supplies an Entra token.
+    let configurationForAzureManagedRedis (host: string) (port: int) (loggerFactory: ILoggerFactory) =
+        let configuration = configurationForEndpoint host port
+        configuration.Ssl <- true
+        configuration.SslHost <- host
+        configuration.Protocol <- RedisProtocol.Resp3
+        configuration.LoggerFactory <- loggerFactory
         configuration
 
     /// Requires an explicit readiness probe when StackExchange.Redis returns its reconnecting multiplexer before a socket is connected.
@@ -112,11 +170,19 @@ module RepositoryCounterRecentResult =
                 Task.FromResult false
 
     /// Uses one lazy StackExchange.Redis connection with native reconnect, readiness proof, bounded commands, and structured failure evidence.
-    type RedisRepositoryCounterRecentResult(host: string, port: int, log: ILogger) =
+    type RedisRepositoryCounterRecentResult private (configuration: ConfigurationOptions, credential: TokenCredential option, log: ILogger) =
 
-        let configuration = configurationForEndpoint host port
+        let connection =
+            lazy
+                (task {
+                    match credential with
+                    | Some tokenCredential ->
+                        let! _ = configuration.ConfigureForAzureWithTokenCredentialAsync tokenCredential
+                        ()
+                    | None -> ()
 
-        let connection = lazy (task { return! ConnectionMultiplexer.ConnectAsync configuration })
+                    return! ConnectionMultiplexer.ConnectAsync configuration
+                })
 
         let database (cancellationToken: CancellationToken) : Task<IDatabase> =
             task {
@@ -138,7 +204,31 @@ module RepositoryCounterRecentResult =
             log.LogWarning(error, "Redis repository counter recent-result {Operation} failed; using nonauthoritative fallback {Fallback}.", operation, fallback)
 
         /// Creates the Redis accelerator with a no-op logger for focused callers that intentionally omit structured diagnostics.
-        new(host: string, port: int) = new RedisRepositoryCounterRecentResult(host, port, NullLogger.Instance)
+        new(host: string, port: int) = new RedisRepositoryCounterRecentResult(configurationForEndpoint host port, None, NullLogger.Instance)
+
+        /// Creates the Redis accelerator for the existing unauthenticated local development endpoint.
+        new(host: string, port: int, log: ILogger) = new RedisRepositoryCounterRecentResult(configurationForEndpoint host port, None, log)
+
+        /// Creates the Redis accelerator for the TLS-only lab endpoint with its generated ACL credential and custom root.
+        new(host: string, port: int, username: string, password: string, caCertificatePem: string, log: ILogger) =
+            new RedisRepositoryCounterRecentResult(configurationForSecureEndpoint host port username password caCertificatePem, None, log)
+
+        /// Creates the Azure Managed Redis accelerator whose Entra token is acquired and refreshed by the Microsoft extension.
+        new(host: string, port: int, credential: TokenCredential, loggerFactory: ILoggerFactory, log: ILogger) =
+            new RedisRepositoryCounterRecentResult(configurationForAzureManagedRedis host port loggerFactory, Some credential, log)
+
+        /// Completes an explicit authenticated PING before Grace reports the configured Redis integration ready.
+        member _.PingAsync(cancellationToken: CancellationToken) =
+            task {
+                let! redisDatabase = database cancellationToken
+
+                let! _ =
+                    redisDatabase
+                        .PingAsync()
+                        .WaitAsync(connectionTimeout, cancellationToken)
+
+                return ()
+            }
 
         interface IRepositoryCounterRecentResult with
             member _.TryGetAsync(repositoryId, storagePoolId, manifestAddress, operationId, (cancellationToken: CancellationToken)) =
@@ -201,3 +291,15 @@ module RepositoryCounterRecentResult =
                 if connection.IsValueCreated
                    && connection.Value.IsCompletedSuccessfully then
                     connection.Value.Result.Dispose()
+
+    /// Requires the configured Redis endpoint to complete PING during Grace host startup.
+    type RedisRepositoryCounterRecentResultWarmup(recentResult: IRepositoryCounterRecentResult) =
+        interface IHostedService with
+            /// Waits for Redis only when the configured recent-result implementation uses the Redis accelerator.
+            member _.StartAsync(cancellationToken: CancellationToken) : Task =
+                match recentResult with
+                | :? RedisRepositoryCounterRecentResult as redis -> redis.PingAsync cancellationToken
+                | _ -> Task.CompletedTask
+
+            /// Adds no shutdown work because the registered recent-result singleton owns its multiplexer lifetime.
+            member _.StopAsync(_: CancellationToken) = Task.CompletedTask

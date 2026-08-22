@@ -1,134 +1,142 @@
-
 # Pull Request
 
-## Linked issue
+## Linked issue, outcome, and delivery mode
 
-Closes #
+- Related issue:
+- Parent epic, if any:
+- User-visible or value-bearing outcome:
+- Why this matters for Grace:
+- Delivery mode: mainline slice | epic integration branch | final epic release
 
-## Summary
+For PRs targeting `main`, use `Closes #123` when merge should close the issue. For PRs targeting an epic integration
+branch, use non-closing wording such as `Related to #123` or `Part of #597`.
 
-## Touched paths
+## Baseline admissibility
 
-## Owned-path compliance
+- Base branch and exact SHA:
+- Eventual delivery target:
+- Restore, build, and integration baseline proof:
+- Semantic merge or rebase conflicts: none | owner decision link
+- Prior lineage used as salvage, or explicit ancestry requirement:
+- Baseline Admissibility verdict:
 
-- [ ] My changed paths match the linked issue's owned paths.
-- [ ] Any sensitive/shared path edits are explicitly allowed by the issue.
-- [ ] I did not create or edit alternate task ledgers outside the issue/PR workflow.
+## Supported world and quality contract
 
-## Validation profile and public-boundary evidence
+- Baseline and overrides:
+- Supported actor or client:
+- Environment and topology:
+- Supported producer paths:
+- Explicit non-goals and deferred capabilities:
 
-- Validation profile:
-- Public behavior or docs-only validation target:
-- RED evidence or docs-only waiver:
-- Focused validation:
+## Primary invariant and algorithm readiness
 
-## Minimum detail gate evidence
+- Primary invariant:
+- Authoritative source and commit point:
+- Algorithm witness and verdict, or justified N/A:
+- Required effect-order, residue, restart, retry, cleanup, or concurrency rules:
 
-- Product decisions accepted/assumed, deferred, or waived:
-- Invariant tuple proved or docs-only waiver:
-- Contract propagation map updated or waived:
-- Stale-authority/revalidation proof or N/A:
-- Forbidden implementation shapes avoided:
-- Positive / negative / regression / boundary tests or waivers:
-- High-risk adversarial examples covered or waived:
-- Selected risk-surface traps addressed or waived:
+## Scope and delivery delta
 
-## Test coverage changes
+- Changed paths in this PR:
+- Owned-path compliance:
+- Owner-approved expansion, or none:
+- Three-dot issue delta checked:
+- Eventual delivery delta against `main` checked:
+- Deferred or half-active capability inherited from the base: none | owner disposition
+- Accidental or unrelated changes checked:
 
-Choose one:
+## Contract and persistence propagation
 
-- [ ] Tests added or updated; list the test files and covered behavior below.
-- [ ] No tests added; explain why new tests were not required for this change.
+List only surfaces this PR changes or must prove unchanged.
 
-Details:
+| Surface | Updated, unchanged, deferred, or N/A | Proof or reason |
+| --- | --- | --- |
+| Public DTO, route, CLI, SDK, event, or error contract | | |
+| Persisted state or filesystem layout | | |
+| OpenAPI or generated artifacts | | |
+| Runtime or Aspire topology | | |
+| Docs and examples | | |
+| Tests and validation | | |
 
-## Reviewer pass
+## Proof
 
-- [ ] Owned paths and forbidden paths reviewed against the issue.
-- [ ] Sensitive surfaces reviewed and marked below.
-- [ ] README, CONTRIBUTING, AGENTS, and docs drift checked.
-- [ ] Any genuinely required validation that was not run is explicitly listed with a reason.
+- Focused failing proof or prior regression evidence:
+- Positive, negative, and boundary proof:
+- Failure-injection, restart, replay, or concurrency proof when included:
+- Formatting, linting, generated-artifact, freshness, or syntax checks:
+- Manual or runtime evidence:
+- Optional local Fast or Full, with reason:
+- Validation not run and reason:
 
-## Risk surfaces
+## Factory run
 
-- [ ] Auth, authorization, tenant, or secrets
-- [ ] Storage, Cosmos DB, Service Bus, Redis, or Aspire
-- [ ] CLI public contract
-- [ ] Server or API contract
-- [ ] Orleans actor behavior
-- [ ] SDK or client contract
-- [ ] Deployment, Docker, or GitHub Actions
-- [ ] Docs or workflow
-- [ ] None of the above
+- Execution mode: direct single-agent | controller/worker
+- Root issue session:
+- Implementation owner: root | worker thread
+- Child context policy: `fork_turns = "none"` | recorded read-only scout exception
+- Diagnostic scout used: no | yes, question and result
+- Replacement worker used: N/A in direct mode | no | yes, reason
+- Owner stop encountered: no | link and disposition
 
-## Docs impact
+## Current-head CI
 
-Choose one:
-
-- [ ] Required; updated relevant docs.
-- [ ] Docs impact: None - reason
-- [ ] Not applicable; no user-facing, contributor-facing, or agent-facing behavior changed.
-
-## Local focused evidence
-
-- [ ] Focused proof: command and result
-- [ ] Formatting/linting: command and result
-- [ ] Generated-file/freshness or syntax checks: command and result
-- [ ] Manual validation: command, steps, or N/A
-
-## Optional local broad preflight
-
-- [ ] Fast, Full, or neither: result and reason when run
-
-## Required CI evidence
-
-- Current head SHA:
+- Final head SHA:
 - GitHub `Validate` state:
 - GitHub Actions run link:
-- [ ] The result was triggered by and remains associated with the latest PR revision.
+- Result applies to final head: yes/no
 
-## Validation not run
+## R1 discovery review
 
-List only required proof that was omitted. Normal omission of local Fast or Full after focused proof is not skipped
-validation.
+- Reviewer configuration: read-only, no inherited implementation turns
+- Candidate head SHA:
+- `dev-process/CODE_REVIEW.md` mode: Discovery review
+- Verdict: PASS | PASS WITH ACCEPTED RISK | REPAIR | OWNER DECISION | SUPERSEDE OR SPLIT
+- Review Discovery Ledger link or summary:
+- Rejected, deferred, accepted-risk, or owner-decision dispositions:
 
-## Residual risks
+If R1 passed without accepted repairs and final-head CI is green, R2 is not required.
 
-## Review Status
+## Repair pass
 
-- Current head SHA:
-- Fresh review subagent: `gpt-5.6-terra`, `reasoning_effort: high`, `fork_turns: none`
-- `dev-process/CODE_REVIEW.md` followed:
-- Review verdict for current head:
-- Required PR checks for current head:
-- [ ] Review and required checks both completed successfully for the same head SHA.
-- Finding dispositions and detailed review/fix comments:
+Complete only when R1 produced accepted findings.
 
-## Review/fix prevention
+- Same implementation owner continued or resumed:
+- Consolidated repair commits:
+- Ledger status map:
+- Focused regression proof:
+- Scope, delivery mode, delivery delta, and non-goals preserved:
 
-For each fresh review-subagent or GitHub review finding fixed in this PR, include:
+## R2 closure review
 
-- Root-cause class:
-- Current issue, sibling issues, template, or agent docs update needed:
+Complete only when accepted repairs were made.
 
-Root-cause classes:
+- Reviewer: resumed R1 | fresh read-only reviewer because R1 unavailable
+- Final head SHA:
+- `dev-process/CODE_REVIEW.md` mode: Closure review
+- Verdict: VERIFIED | NOT VERIFIED | DISCOVERY ESCAPE | OWNER DECISION | SUPERSEDE OR SPLIT
+- Ledger items verified:
+- Direct repair regressions:
+- Final-head proof and CI verified:
 
-- product-decision gap
-- acceptance-criteria / negative-proof gap
-- contract-propagation gap
-- authority-source gap
-- stale-snapshot / interleaving gap
-- lifecycle / retry gap
-- CLI mode / side-effect interaction
-- auth / materialization / traversal ordering gap
-- algorithm adversarial-case gap
-- validation / stale-evidence gap
-- slice-boundary gap
-- ordinary implementation mistake
+There is no automatic R3. A new material invariant, authority boundary, state machine, product semantic, scope expansion,
+or delivery-base defect stops the run for owner disposition.
 
-If this PR reaches three substantive review cycles, or two cycles in the same invariant family, post a stabilization
-ledger and update the linked issue or sibling issues before requesting another ordinary review.
+## Residual risk, skipped proof, and recovery
 
-## Rollback or recovery notes
+- Residual risk:
+- Skipped proof:
+- Rollback, repair, or cleanup notes:
+- Follow-up issues that are real and explicitly out of scope:
 
-## Docs follow-up required
+## Merge readiness
+
+- [ ] The linked issue still describes the implemented outcome and supported world.
+- [ ] Baseline Admissibility is current and no semantic conflict remains unresolved.
+- [ ] The eventual delivery delta against `main` fits the capability budget.
+- [ ] Explicit non-goals remain absent and no half-active capability was introduced.
+- [ ] Focused proof and final-head GitHub `Validate` pass.
+- [ ] R1 discovery review is complete.
+- [ ] Accepted R1 ledger items, if any, are closed by R2.
+- [ ] Public, persisted, generated, runtime, and documentation surfaces are current or explicitly waived.
+- [ ] Residual risk and skipped proof are visible.
+- [ ] No owner stop condition remains unresolved.

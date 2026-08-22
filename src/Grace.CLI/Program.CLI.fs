@@ -1506,7 +1506,19 @@ module GraceCommand =
                                 && (commandLineage
                                     |> Seq.exists (fun cmd -> cmd.Name.Equals("bootstrap", comparison)))
 
+                            let isSystemAuthorizationCheck =
+                                (commandLineage
+                                 |> Seq.exists (fun cmd -> cmd.Name.Equals("authorize", comparison)))
+                                && (commandLineage
+                                    |> Seq.exists (fun cmd -> cmd.Name.Equals("check", comparison)))
+                                && String.Equals(
+                                    parseResult.GetValue<string>(OptionName.ResourceKind),
+                                    "system",
+                                    comparison
+                                )
+
                             isAgentBootstrap
+                            || isSystemAuthorizationCheck
                             || (commandLineage
                                 |> Seq.exists (fun cmd ->
                                     allowedCommands

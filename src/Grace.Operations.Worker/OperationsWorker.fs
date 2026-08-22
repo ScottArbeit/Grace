@@ -98,9 +98,9 @@ type OperationsWorkerSettings =
 [<RequireQualifiedAccess>]
 module OperationsWorkerSettings =
 
-    /// The durable subscription used by the operations worker for the operational facts topic.
+    /// The default durable subscription used by the operations worker to collect Grace usage facts.
     [<Literal>]
-    let DefaultProcessorSubscriptionName = "operational-facts-processor"
+    let DefaultProcessorSubscriptionName = "grace-usage-collector"
 
     /// The environment variable that confirms the durable operational facts processor subscription name.
     [<Literal>]
@@ -190,12 +190,6 @@ module OperationsWorkerSettings =
 
         if String.IsNullOrWhiteSpace topicName then
             errors.Add($"{Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic} is required.")
-
-        if subscriptionName
-           <> DefaultProcessorSubscriptionName then
-            errors.Add(
-                $"{ProcessorSubscriptionEnvironmentVariable} must be '{DefaultProcessorSubscriptionName}' so the worker uses the durable operational facts processor subscription."
-            )
 
         if sqlConnectionString.IsNone then
             errors.Add($"{SqlConnectionStringEnvironmentVariable} is required.")
