@@ -234,6 +234,15 @@ module internal WorkingDirectoryUpdateContracts =
         /// Returns the branch selected by this target.
         let branchId (Target (_, branchId, _, _, _, _)) = branchId
 
+        /// Returns the root DirectoryVersion selected by this target.
+        let rootDirectoryVersionId (Target (_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
+
+        /// Returns the complete SHA-256 root selected by this target.
+        let sha256Hash (Target (_, _, _, sha256Hash, _, _)) = sha256Hash
+
+        /// Returns the complete BLAKE3 root selected by this target.
+        let blake3Hash (Target (_, _, _, _, blake3Hash, _)) = blake3Hash
+
         /// Returns the canonical target encoding included in caller operation tuples.
         let canonical (Target (_, _, _, _, _, canonical)) = canonical
 
@@ -538,6 +547,9 @@ module internal WorkingDirectoryUpdateContracts =
                 | true, bytes -> Ok(new MemoryStream(bytes, writable = false) :> Stream)
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
+        /// Returns the immutable manifest whose exact bytes this prepared content owns.
+        let manifest (PreparedContent (manifest, _, _)) = manifest
+
         /// Clears verified bytes when the owning update operation reaches a terminal path.
         let dispose (PreparedContent (_, bytesByPath, disposed)) =
             if not !disposed then
@@ -561,6 +573,15 @@ module internal WorkingDirectoryUpdateContracts =
         /// Returns the logical operation independently of diagnostic correlation.
         let operation (Request (_, operation, _, _)) = operation
 
+        /// Returns the exact selected target admitted by this request.
+        let target (Request (target, _, _, _)) = target
+
+        /// Returns the dual-hash-verified prepared bytes owned by this request.
+        let preparedContent (Request (_, _, preparedContent, _)) = preparedContent
+
+        /// Returns the diagnostic correlation without making it part of replay identity.
+        let correlationId (Request (_, _, _, correlationId)) = correlationId
+
     /// Supplies construction and access functions for completed update receipts.
     module Receipt =
         /// Creates a receipt only when the operation belongs to the selected target scope.
@@ -581,3 +602,6 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update failure reason must not be empty."
             else
                 Ok(Failure reason)
+
+        /// Returns the classified terminal reason for truthful CLI projection.
+        let reason (Failure reason) = reason

@@ -3,6 +3,8 @@ namespace Grace.CLI.Command
 open System
 open System.Collections.Generic
 open System.IO
+open System.Security.Cryptography
+open System.Threading
 open System.Threading.Tasks
 open Grace.CLI
 open Grace.Shared
@@ -293,8 +295,53 @@ module internal WorkingDirectoryUpdate =
 
             visit rootDirectory relativePath
 
+        /// Finds the first descendant that is not an exact prepared target entry during retained-operation adoption.
+        let private firstUnsafeExactTargetDescendant
+            classifierInput
+            (targetFiles: Dictionary<string, Sha256Hash * Blake3Hash * RelativePath>)
+            (targetDirectories: Dictionary<string, RelativePath>)
+            localRoot
+            rootDirectory
+            =
+            let rec visit fullPath =
+                let children =
+                    DirectoryInfo(fullPath).GetFileSystemInfos()
+                    |> Array.sortWith (fun left right -> StringComparer.OrdinalIgnoreCase.Compare(left.FullName, right.FullName))
+
+                let mutable conflict = None
+                let mutable index = 0
+
+                while index < children.Length && Option.isNone conflict do
+                    let child = children[index]
+
+                    let childRelative =
+                        Path.GetRelativePath(localRoot, child.FullName)
+                        |> Grace.Shared.Utilities.normalizeFilePath
+                        |> RelativePath
+
+                    let key = pathKey childRelative
+
+                    if child :? DirectoryInfo then
+                        match Services.classifyRepositoryPath classifierInput Services.RepositoryPathKind.DirectoryPath child.FullName with
+                        | Services.RepositoryPathClassification.Eligible when targetDirectories.ContainsKey key -> conflict <- visit child.FullName
+                        | Services.RepositoryPathClassification.Eligible -> conflict <- Some { Path = childRelative; Classification = Untracked }
+                        | _ -> conflict <- Some { Path = childRelative; Classification = Ignored }
+                    else
+                        match Services.classifyRepositoryPath classifierInput Services.RepositoryPathKind.FilePath child.FullName with
+                        | Services.RepositoryPathClassification.Eligible ->
+                            match targetFiles.TryGetValue key with
+                            | true, (sha256Hash, blake3Hash, _) when hasVerifiedTargetBytes child.FullName sha256Hash blake3Hash -> ()
+                            | _ -> conflict <- Some { Path = childRelative; Classification = Untracked }
+                        | _ -> conflict <- Some { Path = childRelative; Classification = Ignored }
+
+                    index <- index + 1
+
+                conflict
+
+            visit rootDirectory
+
         /// Classifies every target and removable tracked blocker without entering the asynchronous transaction workflow.
-        let private planSynchronously (currentStatus: GraceStatus) manifest =
+        let private planSynchronously allowExactAdoption (currentStatus: GraceStatus) manifest =
             let scanInput = currentScanInput ()
             let classifier = classifierInput scanInput
             let trackedRejection, trackedFiles, trackedDirectories = trackedTopology currentStatus
@@ -331,6 +378,13 @@ module internal WorkingDirectoryUpdate =
                                 | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
                             | Directory ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory Directory with
+                                | Error value when
+                                    allowExactAdoption
+                                    && value.Classification = Untracked
+                                    ->
+                                    match firstUnsafeExactTargetDescendant classifier targetFiles targetDirectories scanInput.RootDirectory fullPath with
+                                    | Some descendant -> rejection <- Some descendant
+                                    | None -> ()
                                 | Error value -> rejection <- Some value
                                 | Ok "tracked-directory" ->
                                     match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory with
@@ -349,6 +403,14 @@ module internal WorkingDirectoryUpdate =
                             | Missing -> addCopy targetPath
                             | File ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetPath File with
+                                | Error value when
+                                    allowExactAdoption
+                                    && value.Classification = Untracked
+                                    ->
+                                    let targetSha256, targetBlake3, _ = targetFile
+
+                                    if not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3) then
+                                        rejection <- Some value
                                 | Error value -> rejection <- Some value
                                 | Ok "tracked-file" ->
                                     let targetSha256, targetBlake3, _ = targetFile
@@ -360,6 +422,11 @@ module internal WorkingDirectoryUpdate =
                                         || not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3)
                                     then
                                         addCopy targetPath
+                                | Ok _ when allowExactAdoption ->
+                                    let targetSha256, targetBlake3, _ = targetFile
+
+                                    if not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3) then
+                                        rejection <- Some { Path = targetPath; Classification = Untracked }
                                 | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
                             | Directory ->
                                 match localClassification classifier trackedFiles trackedDirectories fullPath targetPath Directory with
@@ -493,4 +560,580 @@ module internal WorkingDirectoryUpdate =
                     Planned(Plan(orderedRemovals @ orderedCreates @ orderedCopies))
 
         /// Produces one complete pre-mutation action list after classifying every target and removable tracked blocker.
-        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously currentStatus manifest }
+        let plan (currentStatus: GraceStatus) manifest = task { return planSynchronously false currentStatus manifest }
+
+        /// Reconciles exact target bytes produced by a retained exact-operation marker without weakening fresh admission.
+        let planExactAdoption (currentStatus: GraceStatus) manifest = task { return planSynchronously true currentStatus manifest }
+
+    /// Executes the hash-selected Branch tracer after all remote content has been prepared and verified.
+    module BranchDirectoryVersion =
+        /// Injects deterministic failures at the finite effect boundaries owned by the tracer tests.
+        type FailurePoint =
+            | BeforeMutation
+            | DuringApplication
+            | BeforeCommit
+            | AfterCommit
+            | MarkerCleanup
+
+        /// Supplies only deterministic test controls; production uses `none`.
+        type FailureInjection = { ThrowAt: FailurePoint -> unit; DeleteMarker: string -> unit; BeforeAction: int -> unit }
+
+        /// Uses normal production effects without injected failures.
+        let none = { ThrowAt = ignore; DeleteMarker = File.Delete; BeforeAction = ignore }
+
+        /// Converts a non-empty reason into the private failure contract.
+        let private failure reason =
+            WorkingDirectoryUpdateContracts.Failure.create reason
+            |> function
+                | Ok value -> value
+                | Error error -> invalidOp error
+
+        /// Maps a normalized repository-relative path beneath the configured working root.
+        let private workingPath root (relativePath: RelativePath) =
+            Path.Combine(
+                root,
+                (string relativePath)
+                    .Replace('/', Path.DirectorySeparatorChar)
+            )
+
+        /// Atomically publishes verified prepared bytes at one destination.
+        let private publishPreparedFile preparedContent relativePath (destination: string) =
+            task {
+                match WorkingDirectoryUpdateContracts.PreparedContent.openRead preparedContent relativePath with
+                | Error error -> return invalidOp error
+                | Ok source ->
+                    use source = source
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination))
+                    |> ignore
+
+                    let temporary = destination + $".wdu-{Guid.NewGuid():N}.tmp"
+
+                    try
+                        do!
+                            task {
+                                use output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+                                do! source.CopyToAsync(output)
+                                do! output.FlushAsync()
+                                output.Flush(true)
+                            }
+
+                        File.Move(temporary, destination, true)
+                    finally
+                        if File.Exists(temporary) then File.Delete(temporary)
+            }
+
+        /// Verifies every target path and dual-hashed file against the complete prepared manifest.
+        let private verifyTarget root manifest =
+            task {
+                let mutable error = None
+
+                for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
+                    if Option.isNone error then
+                        match entry with
+                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory path ->
+                            if not (Directory.Exists(workingPath root path)) then
+                                error <- Some $"Target directory '{path}' is missing after application."
+                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
+                            let fullPath = workingPath root path
+
+                            if not (File.Exists(fullPath)) then
+                                error <- Some $"Target file '{path}' is missing after application."
+                            else
+                                let bytes = File.ReadAllBytes(fullPath)
+
+                                let actualSha256 =
+                                    SHA256.HashData(bytes)
+                                    |> Convert.ToHexString
+                                    |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+                                let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+                                if actualSha256 <> sha256Hash
+                                   || actualBlake3 <> blake3Hash then
+                                    error <- Some $"Target file '{path}' failed final dual-hash verification."
+
+                return error
+            }
+
+        /// Verifies the complete relevant topology expected at one prefix of the ordered action sequence.
+        let private verifyPlanPrefix root manifest (acceptedStatus: GraceStatus) plan completedCount =
+            let actions = Topology.Plan.actions plan |> List.toArray
+            let mutable error = None
+
+            let verifyFile path sha256Hash blake3Hash =
+                let fullPath = workingPath root path
+
+                if
+                    not (File.Exists(fullPath))
+                    || Directory.Exists(fullPath)
+                then
+                    Some $"Expected verified file '{path}' is not present."
+                else
+                    let bytes = File.ReadAllBytes(fullPath)
+
+                    let actualSha256 =
+                        SHA256.HashData(bytes)
+                        |> Convert.ToHexString
+                        |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+                    let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+                    if actualSha256 = sha256Hash
+                       && actualBlake3 = blake3Hash then
+                        None
+                    else
+                        Some $"Expected verified file '{path}' changed during application."
+
+            let targetFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
+            let acceptedFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
+            let actionPaths = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+            for directory in acceptedStatus.Index.Values do
+                for file in directory.Files do
+                    acceptedFiles[string file.RelativePath] <- file.Sha256Hash, file.Blake3Hash
+
+            for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
+                match entry with
+                | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
+                    targetFiles[string path] <- sha256Hash, blake3Hash
+                | _ -> ()
+
+            actions
+            |> Array.iter (function
+                | Topology.RemoveTrackedFile path
+                | Topology.RemoveTrackedDirectory path
+                | Topology.EnsureDirectory path
+                | Topology.CopyVerifiedFile path -> actionPaths.Add(string path) |> ignore)
+
+            for index = 0 to actions.Length - 1 do
+                if Option.isNone error then
+                    let completed = index < completedCount
+
+                    let pathOf =
+                        function
+                        | Topology.RemoveTrackedFile path
+                        | Topology.RemoveTrackedDirectory path
+                        | Topology.EnsureDirectory path
+                        | Topology.CopyVerifiedFile path -> path
+
+                    let supersededByCompletedAction path =
+                        actions
+                        |> Array.mapi (fun candidateIndex candidate -> candidateIndex, candidate)
+                        |> Array.exists (fun (candidateIndex, candidate) ->
+                            candidateIndex > index
+                            && candidateIndex < completedCount
+                            && String.Equals(string (pathOf candidate), string path, StringComparison.OrdinalIgnoreCase))
+
+                    match actions[index] with
+                    | Topology.RemoveTrackedFile path ->
+                        let fullPath = workingPath root path
+
+                        if completed
+                           && not (supersededByCompletedAction path)
+                           && (File.Exists(fullPath)
+                               || Directory.Exists(fullPath)) then
+                            error <- Some $"Removed predecessor '{path}' reappeared."
+                        elif not completed
+                             && (not (File.Exists(fullPath))
+                                 || Directory.Exists(fullPath)) then
+                            error <- Some $"Tracked file '{path}' changed before removal."
+                        elif not completed then
+                            let sha256Hash, blake3Hash = acceptedFiles[string path]
+                            error <- verifyFile path sha256Hash blake3Hash
+                    | Topology.RemoveTrackedDirectory path ->
+                        let fullPath = workingPath root path
+
+                        if completed
+                           && not (supersededByCompletedAction path)
+                           && (File.Exists(fullPath)
+                               || Directory.Exists(fullPath)) then
+                            error <- Some $"Removed predecessor '{path}' reappeared."
+                        elif not completed
+                             && (not (Directory.Exists(fullPath))
+                                 || File.Exists(fullPath)) then
+                            error <- Some $"Tracked directory '{path}' changed before removal."
+                    | Topology.EnsureDirectory path ->
+                        let fullPath = workingPath root path
+
+                        if completed
+                           && (not (Directory.Exists(fullPath))
+                               || File.Exists(fullPath)) then
+                            error <- Some $"Created directory '{path}' changed during application."
+                        elif not completed && File.Exists(fullPath) then
+                            error <- Some $"Directory target '{path}' became a file before creation."
+                    | Topology.CopyVerifiedFile path ->
+                        let fullPath = workingPath root path
+
+                        if completed then
+                            let sha256Hash, blake3Hash = targetFiles[string path]
+                            error <- verifyFile path sha256Hash blake3Hash
+                        elif Directory.Exists(fullPath) then
+                            error <- Some $"File target '{path}' became a directory before copy."
+                        elif
+                            File.Exists(fullPath)
+                            && acceptedFiles.ContainsKey(string path)
+                        then
+                            let sha256Hash, blake3Hash = acceptedFiles[string path]
+                            error <- verifyFile path sha256Hash blake3Hash
+
+            for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
+                if Option.isNone error then
+                    match entry with
+                    | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory path when not (actionPaths.Contains(string path)) ->
+                        let fullPath = workingPath root path
+
+                        if
+                            not (Directory.Exists(fullPath))
+                            || File.Exists(fullPath)
+                        then
+                            error <- Some $"Retained target directory '{path}' changed during application."
+                    | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) when not (actionPaths.Contains(string path)) ->
+                        error <- verifyFile path sha256Hash blake3Hash
+                    | _ -> ()
+
+            error
+
+        /// Applies one already ordered topology plan while checking the expected path kind before each effect.
+        let private applyPlan root preparedContent acceptedStatus failureInjection beginMutation plan =
+            task {
+                let mutable actionIndex = 0
+
+                for action in Topology.Plan.actions plan do
+                    failureInjection.BeforeAction actionIndex
+
+                    match verifyPlanPrefix root (WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent) acceptedStatus plan actionIndex with
+                    | Some error -> invalidOp error
+                    | None -> ()
+
+                    beginMutation ()
+
+                    match action with
+                    | Topology.RemoveTrackedFile path ->
+                        let fullPath = workingPath root path
+
+                        if
+                            not (File.Exists(fullPath))
+                            || Directory.Exists(fullPath)
+                        then
+                            invalidOp $"Expected tracked file '{path}' changed before removal."
+
+                        File.Delete(fullPath)
+                    | Topology.RemoveTrackedDirectory path ->
+                        let fullPath = workingPath root path
+
+                        if
+                            not (Directory.Exists(fullPath))
+                            || File.Exists(fullPath)
+                        then
+                            invalidOp $"Expected tracked directory '{path}' changed before removal."
+
+                        Directory.Delete(fullPath, false)
+                    | Topology.EnsureDirectory path ->
+                        let fullPath = workingPath root path
+
+                        if File.Exists(fullPath) then
+                            invalidOp $"Expected directory path '{path}' became a file before creation."
+
+                        Directory.CreateDirectory(fullPath) |> ignore
+                    | Topology.CopyVerifiedFile path ->
+                        let fullPath = workingPath root path
+
+                        if Directory.Exists(fullPath) then
+                            invalidOp $"Expected file path '{path}' became a directory before copy."
+
+                        do! publishPreparedFile preparedContent path fullPath
+
+                    actionIndex <- actionIndex + 1
+                    failureInjection.ThrowAt DuringApplication
+
+                match verifyPlanPrefix root (WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent) acceptedStatus plan actionIndex with
+                | Some error -> invalidOp error
+                | None -> ()
+            }
+
+        /// Runs one complete DirectoryVersion-selected Branch update without changing Branch identity.
+        let private runAtRevisionCore
+            (request: WorkingDirectoryUpdateContracts.Request)
+            (currentStatus: GraceStatus)
+            (targetStatus: GraceStatus)
+            (objectMetadata: LocalDirectoryVersion array)
+            (manifest: WorkingDirectoryUpdateContracts.PreparedManifest)
+            (root: string)
+            (dbPath: string)
+            (acceptedRevision: int64)
+            (cancellationToken: CancellationToken)
+            (failureInjection: FailureInjection)
+            =
+            task {
+                let target = WorkingDirectoryUpdateContracts.Request.target request
+                let operation = WorkingDirectoryUpdateContracts.Request.operation request
+                let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent request
+                let attemptToken = WorkingDirectoryUpdateContracts.AttemptToken.create ()
+                let mutable mutationStarted = false
+                let mutable committed = false
+
+                try
+                    match! LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation with
+                    | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                        match WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) root with
+                        | Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                        | Ok scope ->
+                            try
+                                use! lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+
+                                match! LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation with
+                                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                                    let! freshStatusResult =
+                                        LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                            dbPath
+                                            (Current().OwnerId)
+                                            (Current().OrganizationId)
+                                            (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+
+                                    match freshStatusResult with
+                                    | Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                                    | Ok freshStatus when
+                                        freshStatus.Index.Count
+                                        <> targetStatus.Index.Count
+                                        ->
+                                        return
+                                            WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                                failure "Terminal update facts no longer describe the complete local status."
+                                            )
+                                    | Ok freshStatus ->
+                                        let statusMatchesTarget =
+                                            targetStatus.Index
+                                            |> Seq.forall (fun pair ->
+                                                match freshStatus.Index.TryGetValue pair.Key with
+                                                | true, actual -> actual.DirectoryVersionId = pair.Value.DirectoryVersionId
+                                                | _ -> false)
+
+                                        if not statusMatchesTarget then
+                                            return
+                                                WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                                    failure "Terminal update facts no longer describe the complete local status."
+                                                )
+                                        else
+                                            match! verifyTarget root manifest with
+                                            | Some error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                                            | None ->
+                                                let receipt =
+                                                    WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                                                    |> Result.defaultWith invalidOp
+
+                                                return WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                                | _ ->
+                                    return
+                                        WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                            failure "Terminal update facts were superseded while waiting for the Working Directory Update lease."
+                                        )
+                            with
+                            | :? OperationCanceledException as ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
+                    | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                        return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure "DirectoryVersion selection cannot adopt pending finalization state.")
+                    | None ->
+                        match WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) root with
+                        | Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                        | Ok scope ->
+                            use! lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+                            let! revisionBeforeRead = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                            let! freshStatusResult =
+                                LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                    dbPath
+                                    (Current().OwnerId)
+                                    (Current().OrganizationId)
+                                    (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+
+                            let! revisionAfterRead = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                            let gateError =
+                                if revisionBeforeRead <> acceptedRevision
+                                   || revisionAfterRead <> acceptedRevision then
+                                    Some "Local status changed while the selected DirectoryVersion was being prepared."
+                                else
+                                    match freshStatusResult with
+                                    | Ok _ -> None
+                                    | Error error -> Some error
+
+                            let freshStatus =
+                                freshStatusResult
+                                |> Result.defaultValue currentStatus
+
+                            let! markerInspection =
+                                match gateError with
+                                | Some _ -> Task.FromResult WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                | None -> WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                            let! admittedMarkerInspection =
+                                task {
+                                    match markerInspection with
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                        match! WorkingDirectoryUpdateCoordination.Marker.readEvidence scope with
+                                        | Some evidence ->
+                                            let! isTerminal = LocalStateDb.hasTerminalWorkingDirectoryUpdateEvidence dbPath evidence.OperationId evidence.Target
+
+                                            if isTerminal then
+                                                let! cleanup =
+                                                    WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
+                                                        scope
+                                                        evidence.OperationId
+                                                        evidence.Target
+                                                        File.Delete
+
+                                                return
+                                                    if cleanup = WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned then
+                                                        WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                                                    else
+                                                        markerInspection
+                                            else
+                                                return markerInspection
+                                        | None -> return markerInspection
+                                    | _ -> return markerInspection
+                                }
+
+                            match admittedMarkerInspection with
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                return
+                                    WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                        failure (
+                                            gateError
+                                            |> Option.defaultValue $"Working Directory Update marker evidence is {markerInspection}."
+                                        )
+                                    )
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                match LocalStateDb.validateCompleteStatusTree freshStatus, LocalStateDb.validateCompleteStatusTree targetStatus with
+                                | Error error, _
+                                | _, Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
+                                | Ok (), Ok () ->
+                                    let marker =
+                                        WorkingDirectoryUpdateCoordination.Marker.create scope attemptToken target operation
+                                        |> Result.defaultWith invalidOp
+
+                                    do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
+
+                                    let planning =
+                                        if admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch then
+                                            Topology.planExactAdoption freshStatus manifest
+                                        else
+                                            Topology.plan freshStatus manifest
+
+                                    match! planning with
+                                    | Topology.Rejected rejection ->
+                                        let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
+
+                                        return
+                                            WorkingDirectoryUpdateContracts.Outcome.Rejected(
+                                                failure $"Path '{Topology.Rejection.path rejection}' is {Topology.Rejection.classification rejection}."
+                                            )
+                                    | Topology.Planned plan ->
+                                        try
+                                            failureInjection.ThrowAt BeforeMutation
+                                            cancellationToken.ThrowIfCancellationRequested()
+
+                                            for directory in objectMetadata do
+                                                for file in directory.Files do
+                                                    let objectPath =
+                                                        Path.Combine(
+                                                            Current().ObjectDirectory,
+                                                            string file.RelativePath,
+                                                            Services.getLocalObjectCacheFileName file.RelativePath file.Sha256Hash file.Blake3Hash
+                                                        )
+
+                                                    do! publishPreparedFile preparedContent file.RelativePath objectPath
+
+                                            do! applyPlan root preparedContent freshStatus failureInjection (fun () -> mutationStarted <- true) plan
+
+                                            match! verifyTarget root manifest with
+                                            | Some error -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete(failure error)
+                                            | None ->
+                                                let! _ =
+                                                    LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
+                                                        dbPath
+                                                        targetStatus
+                                                        objectMetadata
+                                                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization(
+                                                            WorkingDirectoryUpdateContracts.Target.branchId target
+                                                        ))
+                                                        target
+                                                        operation
+                                                        (fun () -> failureInjection.ThrowAt BeforeCommit)
+
+                                                committed <- true
+                                                failureInjection.ThrowAt AfterCommit
+                                                do! WorkingDirectoryUpdateCoordination.Sidecar.write scope operation
+                                                failureInjection.ThrowAt MarkerCleanup
+
+                                                let! _ =
+                                                    WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
+                                                        scope
+                                                        (WorkingDirectoryUpdateContracts.Operation.value operation)
+                                                        (WorkingDirectoryUpdateContracts.Target.canonical target)
+                                                        failureInjection.DeleteMarker
+
+                                                let changed =
+                                                    admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                                                    || not (Topology.Plan.actions plan |> List.isEmpty)
+
+                                                let receipt =
+                                                    WorkingDirectoryUpdateContracts.Receipt.create target operation changed
+                                                    |> Result.defaultWith invalidOp
+
+                                                return
+                                                    if changed then
+                                                        WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                                                    else
+                                                        WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                                        with
+                                        | :? OperationCanceledException as ex when not mutationStarted ->
+                                            let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
+                                            return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
+                                        | ex when committed ->
+                                            let receipt =
+                                                WorkingDirectoryUpdateContracts.Receipt.create target operation mutationStarted
+                                                |> Result.defaultWith invalidOp
+
+                                            return
+                                                if mutationStarted then
+                                                    WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                                                else
+                                                    WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                                        | ex when mutationStarted -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete(failure ex.Message)
+                                        | ex ->
+                                            let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
+                                            return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
+                finally
+                    WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+            }
+
+        /// Projects cancellation before lease admission as a non-mutating rejected Working Directory Update.
+        let runAtRevision request currentStatus targetStatus objectMetadata manifest root dbPath acceptedRevision cancellationToken failureInjection =
+            task {
+                try
+                    return!
+                        runAtRevisionCore
+                            request
+                            currentStatus
+                            targetStatus
+                            objectMetadata
+                            manifest
+                            root
+                            dbPath
+                            acceptedRevision
+                            cancellationToken
+                            failureInjection
+                with
+                | :? OperationCanceledException as ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure ex.Message)
+            }
+
+        /// Runs a prepared update against the local-status revision current at direct invocation time.
+        let run request currentStatus targetStatus objectMetadata manifest root dbPath cancellationToken failureInjection =
+            task {
+                let! acceptedRevision = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+
+                return! runAtRevision request currentStatus targetStatus objectMetadata manifest root dbPath acceptedRevision cancellationToken failureInjection
+            }
