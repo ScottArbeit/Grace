@@ -215,7 +215,8 @@ function Assert-VerifiedRootCorrection {
     $preTransition = Get-CorrectionRow 'WDU-LC-209'
     $mutation = Get-CorrectionRow 'WDU-LC-210'
     $mutationFailure = Get-CorrectionRow 'WDU-LC-002'
-    $completion = Get-CorrectionRow 'WDU-LC-006'
+    $referenceCompletion = Get-CorrectionRow 'WDU-LC-006'
+    $directoryVersionCompletion = Get-CorrectionRow 'WDU-LC-008'
     $completionFailure = Get-CorrectionRow 'WDU-LC-007'
 
     Assert-CorrectionAction $fresh 'WDU-LC-200' 'reconcileFreshAdmissionAsNeedsApplyOnly'
@@ -223,16 +224,18 @@ function Assert-VerifiedRootCorrection {
     Assert-CorrectionAction $preTransition 'WDU-LC-209' 'compareCompleteRelevantTopologyWithPrefixAdvancedExpectedState'
     Assert-CorrectionAction $preTransition 'WDU-LC-209' 'checkCancellationImmediatelyBeforeVerifiedLocalRootOrFirstMutation'
     Assert-CorrectionAction $preTransition 'WDU-LC-209' 'routeZeroActionToVerifiedLocalRootOrMutatingPlanToFirstAction'
-    foreach ($target in @('WDU-LC-207', 'WDU-LC-208', 'WDU-LC-210', 'WDU-LC-006', 'WDU-LC-007')) { Assert-CorrectionNextRow $preTransition 'WDU-LC-209' $target }
+    foreach ($target in @('WDU-LC-207', 'WDU-LC-208', 'WDU-LC-210', 'WDU-LC-006', 'WDU-LC-008', 'WDU-LC-007')) { Assert-CorrectionNextRow $preTransition 'WDU-LC-209' $target }
     Assert-CorrectionAction $mutation 'WDU-LC-210' 'compareCompleteRelevantTopologyWithPrefixAdvancedExpectedStateBeforeEveryLaterAction'
     Assert-CorrectionAction $mutation 'WDU-LC-210' 'transitionToVerifiedLocalRoot'
-    foreach ($target in @('WDU-LC-002', 'WDU-LC-006', 'WDU-LC-007')) { Assert-CorrectionNextRow $mutation 'WDU-LC-210' $target }
+    foreach ($target in @('WDU-LC-002', 'WDU-LC-006', 'WDU-LC-008', 'WDU-LC-007')) { Assert-CorrectionNextRow $mutation 'WDU-LC-210' $target }
 
     if (-not (Test-OrdinalStringEquals $mutationFailure['match']['trigger']['value'] 'failureAfterFirstWorkingTreeMutationBeforeVerifiedLocalRoot')) {
         Fail-Contract $SourcePath "row 'WDU-LC-002' must be limited to post-mutation pre-VerifiedLocalRoot failure"
     }
-    Assert-CorrectionAction $completion 'WDU-LC-006' 'ignoreCancellation'
-    Assert-CorrectionAction $completion 'WDU-LC-006' 'returnLocalCompletionWithEphemeralBytesChanged'
+    Assert-CorrectionAction $referenceCompletion 'WDU-LC-006' 'ignoreCancellation'
+    Assert-CorrectionAction $referenceCompletion 'WDU-LC-006' 'recordSqlitePendingLocalCompletion'
+    Assert-CorrectionAction $directoryVersionCompletion 'WDU-LC-008' 'ignoreCancellation'
+    Assert-CorrectionAction $directoryVersionCompletion 'WDU-LC-008' 'recordVerifiedStatusObjectMetadataAndTerminalCompletionAtomically'
     if (-not (Test-OrdinalStringEquals $completionFailure['match']['trigger']['value'] 'failureAfterVerifiedLocalRootBeforeSqliteLocalCompletion') -or
         -not (Test-OrdinalStringEquals $completionFailure['outcome'] 'UpdateIncomplete') -or
         -not (Test-OrdinalStringEquals $completionFailure['durableResult'] 'noCompletion')) {
@@ -262,8 +265,8 @@ function Assert-EphemeralBytesChangedTerminalization {
             -not (Test-OrdinalStringEquals $Row['outcome'] $Outcome)) {
             Fail-Contract $SourcePath "row '$RowId' must be the DirectoryVersion '$Trigger' '$Marker' terminal with outcome '$Outcome'"
         }
-        if (-not (Test-OrdinalStringInCollection @($Row['requiredActions']) 'recordTerminal')) {
-            Fail-Contract $SourcePath "row '$RowId' must require 'recordTerminal'"
+        if (-not (Test-OrdinalStringEquals $Row['durableResult'] 'terminal')) {
+            Fail-Contract $SourcePath "row '$RowId' must retain terminal SQLite truth"
         }
     }
 
@@ -276,10 +279,13 @@ function Assert-EphemeralBytesChangedTerminalization {
     Assert-BytesChangedTerminal $changedExact 'WDU-LC-036' 'afterSqliteLocalCompletionBytesChanged' 'exact' 'Updated'
     Assert-BytesChangedTerminal $unchangedExact 'WDU-LC-038' 'afterSqliteLocalCompletionBytesUnchanged' 'exact' 'Unchanged'
 
-    $completion = Get-BytesChangedRow 'WDU-LC-006'
-    foreach ($target in @('WDU-LC-026', 'WDU-LC-028', 'WDU-LC-036', 'WDU-LC-038')) {
+    $completion = Get-BytesChangedRow 'WDU-LC-008'
+    if (-not (Test-OrdinalStringInCollection @($completion['requiredActions']) 'recordVerifiedStatusObjectMetadataAndTerminalCompletionAtomically')) {
+        Fail-Contract $SourcePath "row 'WDU-LC-008' must record terminal completion atomically"
+    }
+    foreach ($target in @('WDU-LC-026', 'WDU-LC-027', 'WDU-LC-028', 'WDU-LC-036', 'WDU-LC-037', 'WDU-LC-038')) {
         if (-not (Test-OrdinalStringInCollection @($completion['nextRows']) $target)) {
-            Fail-Contract $SourcePath "row 'WDU-LC-006' must route to '$target'"
+            Fail-Contract $SourcePath "row 'WDU-LC-008' must route to '$target'"
         }
     }
 
@@ -391,7 +397,7 @@ function Read-WduLifecycleContract {
     Assert-ExactObject $grammar['terminalReplay'] @('row', 'selectionExpansion', 'markerExpansion', 'effects') 'machineGrammar.terminalReplay' $sourcePath
     $expectedRowIds = @(Assert-StringArray $grammar['rowVector'] 'machineGrammar.rowVector' $sourcePath)
     Assert-UniqueStrings $expectedRowIds 'machineGrammar.rowVector' $sourcePath
-    if ($expectedRowIds.Count -ne 70) { Fail-Contract $sourcePath 'machineGrammar.rowVector must contain exactly 70 row IDs' }
+    if ($expectedRowIds.Count -ne 66) { Fail-Contract $sourcePath 'machineGrammar.rowVector must contain exactly 66 row IDs' }
     foreach ($name in $grammar['expansion'].Keys) { Assert-StringValue $grammar['expansion'][$name] "machineGrammar.expansion.$name" $sourcePath }
     foreach ($name in @('rule', 'routing')) { Assert-StringValue $grammar['overlap'][$name] "machineGrammar.overlap.$name" $sourcePath }
     foreach ($name in $grammar['terminalReplay'].Keys) { Assert-StringValue $grammar['terminalReplay'][$name] "machineGrammar.terminalReplay.$name" $sourcePath }
@@ -400,7 +406,7 @@ function Read-WduLifecycleContract {
     Assert-ExactObject $metadata @('decisionIds', 'requirements', 'artifacts', 'expectedCounts') 'machineMetadata' $sourcePath
     $decisionIds = @(Assert-StringArray $metadata['decisionIds'] 'machineMetadata.decisionIds' $sourcePath)
     Assert-UniqueStrings $decisionIds 'machineMetadata.decisionIds' $sourcePath
-    if ($decisionIds.Count -ne 9) { Fail-Contract $sourcePath 'machineMetadata.decisionIds must contain exactly 9 decision IDs' }
+    if ($decisionIds.Count -ne 10) { Fail-Contract $sourcePath 'machineMetadata.decisionIds must contain exactly 10 decision IDs' }
     foreach ($decisionId in $decisionIds) {
         if ($decisionId -notmatch '^DEC-[0-9]{3}$') { Fail-Contract $sourcePath "machineMetadata.decisionIds has invalid ID '$decisionId'" }
     }

@@ -41,7 +41,9 @@ justify three local-integrity implementations.
   selected root. Unrelated ignored or untracked content remains preserved and excluded unless it is a destructive
   required-path, case-alias, or replaced-subtree collision.
 - SQLite local completion is the irreversible point. One transaction records matching status, required object-cache
-  metadata, Connect's initial cursor when present, and a bounded update completion row.
+  metadata, Connect's initial cursor when present, and a bounded update completion row. `DirectoryVersion` selection
+  records terminal completion in that transaction; `Reference` selection records pending completion for later Branch
+  publication or verification.
 - SQLite stores no running operation. It retains the latest terminal row per caller and one unresolved pending
   finalization.
 - The completion sidecar is derived Watch notification evidence. It cannot override SQLite completion truth.
@@ -53,36 +55,34 @@ justify three local-integrity implementations.
 - The same deterministic operation may adopt a known orphaned marker only after acquiring the lease and performing
   complete revalidation and replanning. Exact adoption reconciles each requirement as `NeedsApply` or
   `AlreadySatisfied` from real dual-hash evidence; mixed partial progress is not rewritten. Different or unrecognized
-  markers require Doctor.
+  markers require Doctor, except for one exact terminal-owned residue case. A later operation may replace that residue
+  only when SQLite matches the marker operation and target and current status still names the same target root.
 - Doctor first attempts a filesystem-free retry of recorded finalization, then may use exact local-state reconstruction.
   Doctor never rolls back or guesses working-directory content.
 - Connect keeps its zip download. It stages and validates the zip before lease acquisition, performs no network reads
   under the lease, verifies objects before populating the working directory, and limits `--force` to conflicting target
   paths.
 
-## Serial delivery and proof boundary
+## Serial delivery and test boundary
 
-The active exact-root packet is serial. #928 owns the lifecycle compiler correction; after PR #930 merges, #929 owns
-the exact projection and tracker packet. The live projection packet and the #921 implementation gate remain pending
-issue #929. #921 owns reconciliation; #922 owns
-held-lease application through opaque `VerifiedLocalRoot`; #923 owns the real five-input transaction through pending
-SQLite completion; #900 owns DirectoryVersion terminalization and filesystem-free retry; and #901 owns hash-selected
-Branch wiring. #898 remains the collision-safe topology predecessor. Closed predecessor records and PR #895 are
-historical evidence, not active delivery, dependency, or projection artifacts.
+Issue #960 is the next public tracer. It consumes the merged Issue #959 transition classifier and crosses topology
+composition, held-lease application, `VerifiedLocalRoot`, terminal SQLite completion, marker cleanup, and
+`grace branch switch --sha256-hash` or `--blake3-hash`. Issue #900 and Issue #901 are superseded by that tracer. Generic
+Reference application and pending-completion work in Issue #922 and Issue #923 waits for the post-tracer checkpoint.
 
 Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
 legacy materialization, or WDU leases. Only the WDU transaction holds its local lease for fresh reread, mutation,
 `VerifiedLocalRoot`, SQLite completion, and terminal outcome. Cancellation controls through the transition into
-`VerifiedLocalRoot`, including zero-action reconciliation; it is non-controlling during pending completion. Markers and
+`VerifiedLocalRoot`, including zero-action reconciliation; it is non-controlling during SQLite completion. Markers and
 sidecars are evidence, not leases.
 
 SQLite terminal completion is decisive durable truth. Marker and sidecar evidence cannot manufacture, downgrade, or
-replace it. For DirectoryVersion retry, fresh evidence selects exact-marker cleanup when an exact marker exists or
-terminal SQLite recording when it is missing; cancellation is observed immediately before that selected first write
-only. After it begins, durable evidence determines the result. Direct production-runtime proof uses the five-input
-operation and persisted retry entry with real filesystem and SQLite facts. For DirectoryVersion, ephemeral
-`bytesChanged` selects distinct changed and unchanged terminal rows; Reference remains on its ordinary
-post-completion row without inferring that DirectoryVersion-only discriminator.
+replace it. For DirectoryVersion, the verified-status transaction also records terminal completion. Exact marker
+cleanup follows that transaction and cannot downgrade success. Exact replay returns `Unchanged`; safe replacement of
+terminal-owned marker residue uses the matching SQLite operation, target, and status root. Runtime tests use the
+five-input operation with real filesystem and SQLite facts. Ephemeral `bytesChanged` selects distinct changed and
+unchanged terminal rows; Reference remains on its ordinary post-completion row without inferring that
+DirectoryVersion-only discriminator.
 
 The complete requirements, state model, propagation map, and proof contract are in
 [Working Directory Update](../Working%20Directory%20Update.md).
@@ -94,7 +94,7 @@ Issue #929 rewrites and compares all fifteen exact projection blocks from the co
 
 <!-- grace:wdu-lifecycle-projection:adr-0011:start -->
 ```json
-{"schema":"grace.wdu.lifecycle-projection/v2","artifact":"adr-0011","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"ae3a77e28886485b49361d8836f040691e9f99228919cef87fac19b42e989d73","assignmentDigest":"20e329bd3aa4459a01f4ed3c6ec12cf365c86df3538b0323400639b90eeee877","rowCount":70,"applicabilityKeyCount":260,"requirementCount":19,"artifactCount":15,"requirements":[{"id":"REQ-001","owner":"#923"},{"id":"REQ-002","owner":"#869"},{"id":"REQ-003","owner":"#837"},{"id":"REQ-004","owner":"#839"},{"id":"REQ-005","owner":"#869"},{"id":"REQ-006","owner":"#898"},{"id":"REQ-007","owner":"#922"},{"id":"REQ-008","owner":"#922"},{"id":"REQ-009","owner":"#838"},{"id":"REQ-010","owner":"#838"},{"id":"REQ-011","owner":"#871"},{"id":"REQ-012","owner":"#871"},{"id":"REQ-013","owner":"#900"},{"id":"REQ-014","owner":"#921"},{"id":"REQ-015","owner":"#842"},{"id":"REQ-016","owner":"#871"},{"id":"REQ-017","owner":"#846"},{"id":"REQ-018","owner":"#928"},{"id":"REQ-019","owner":"#923"}],"artifactIds":["adr-0011","epic-835","issue-842","issue-843","issue-846","issue-869","issue-898","issue-928","issue-921","issue-922","issue-923","issue-900","issue-901","issue-871","issue-872"],"assignment":{"rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-007","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-023","WDU-LC-025","WDU-LC-026","WDU-LC-028","WDU-LC-030","WDU-LC-033","WDU-LC-035","WDU-LC-036","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-140","WDU-LC-143","WDU-LC-003"]}}
+{"schema":"grace.wdu.lifecycle-projection/v2","artifact":"adr-0011","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"ccd29ba6b55dde396be5c1c9244958999e7cc8173c0e5e8243f1b57fe4bc3c92","assignmentDigest":"fb20589eaffb4c7a7c8db2b1c215fe751bef3d41145fef925f07d7648f501053","rowCount":66,"applicabilityKeyCount":244,"requirementCount":19,"artifactCount":15,"requirements":[{"id":"REQ-001","owner":"#960"},{"id":"REQ-002","owner":"#869"},{"id":"REQ-003","owner":"#837"},{"id":"REQ-004","owner":"#839"},{"id":"REQ-005","owner":"#869"},{"id":"REQ-006","owner":"#898"},{"id":"REQ-007","owner":"#960"},{"id":"REQ-008","owner":"#960"},{"id":"REQ-009","owner":"#838"},{"id":"REQ-010","owner":"#838"},{"id":"REQ-011","owner":"#871"},{"id":"REQ-012","owner":"#871"},{"id":"REQ-013","owner":"#960"},{"id":"REQ-014","owner":"#960"},{"id":"REQ-015","owner":"#842"},{"id":"REQ-016","owner":"#871"},{"id":"REQ-017","owner":"#846"},{"id":"REQ-018","owner":"#928"},{"id":"REQ-019","owner":"#960"}],"artifactIds":["adr-0011","epic-835","issue-842","issue-843","issue-846","issue-869","issue-898","issue-928","issue-960","issue-922","issue-923","issue-900","issue-901","issue-871","issue-872"],"assignment":{"rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-008","WDU-LC-007","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-023","WDU-LC-025","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-030","WDU-LC-033","WDU-LC-035","WDU-LC-036","WDU-LC-037","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-003"]}}
 ```
 <!-- grace:wdu-lifecycle-projection:adr-0011:end -->
 
