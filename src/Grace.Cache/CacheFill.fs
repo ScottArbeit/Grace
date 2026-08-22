@@ -136,17 +136,22 @@ type CacheFillCoordinator(store: CacheArtifactStore, processKey: CacheProcessKey
         }
 
     /// Joins one exact process-owned fill or starts it when distinct-fill capacity is available.
-    member _.Fill(repositoryId: string, directoryVersionId: string, permit: string) =
+    member _.Fill(repositoryId: string, directoryVersionId: string, permit: string, waiterCancellation: CancellationToken) =
         task {
             let key = $"{repositoryId}/{directoryVersionId}"
 
             let operation = fills.GetOrAdd(key, (fun _ -> Lazy<Task<Result<unit, CacheFillError>>>(fun () -> execute repositoryId directoryVersionId permit)))
+            let fill = operation.Value
 
             try
-                return! operation.Value
+                return! fill.WaitAsync(waiterCancellation)
             finally
-                fills.TryRemove(key) |> ignore
+                if fill.IsCompleted then fills.TryRemove(key) |> ignore
         }
+
+    /// Joins one exact process-owned fill without a detachable waiter token.
+    member this.Fill(repositoryId: string, directoryVersionId: string, permit: string) =
+        this.Fill(repositoryId, directoryVersionId, permit, CancellationToken.None)
 
     interface IDisposable with
         member _.Dispose() = capacity.Dispose()

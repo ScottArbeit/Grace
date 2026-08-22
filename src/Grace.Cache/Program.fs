@@ -113,7 +113,7 @@ module Host =
 
         app.MapPost(
             "/repositories/{repositoryId}/directory-version-zips/{directoryVersionId}/fill",
-            Func<string, string, CacheFillRequest, Threading.Tasks.Task<IResult>> (fun repositoryId directoryVersionId request ->
+            Func<string, string, CacheFillRequest, HttpContext, Threading.Tasks.Task<IResult>> (fun repositoryId directoryVersionId request context ->
                 task {
                     if
                         not (fst (Guid.TryParse repositoryId))
@@ -133,7 +133,7 @@ module Host =
                         | Conflict _ ->
                             return problem StatusCodes.Status409Conflict "CacheArtifactConflict" "A conflicting immutable tuple already owns this artifact."
                         | _ ->
-                            match! coordinator.Fill(repositoryId, directoryVersionId, request.Permit) with
+                            match! coordinator.Fill(repositoryId, directoryVersionId, request.Permit, context.RequestAborted) with
                             | Ok () ->
                                 match CacheArtifactStore.inspectByIdentity artifacts repositoryId directoryVersionId with
                                 | Hit _ -> return Results.NoContent()

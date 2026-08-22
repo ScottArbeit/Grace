@@ -48,6 +48,31 @@ public sealed class CacheFillCoordinatorTests
         fixture.Handler.ReleaseSource.TrySetResult();
         Assert.That((await leader).IsOk, Is.True);
     }
+
+    /// <summary>Confirms a canceled follower detaches while the process-owned exact fill continues to completion.</summary>
+    [Test]
+    public async Task CanceledFollowerDetachesWithoutCancelingSharedFill()
+    {
+        using var fixture = FillCoordinatorFixture.Create(maxConcurrentFills: 1);
+        var leader = fixture.Coordinator.Fill(fixture.RepositoryId, fixture.DirectoryVersionId, "opaque-permit");
+        await fixture.Handler.SourceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var cancellation = new CancellationTokenSource();
+        var follower = fixture.Coordinator.Fill(
+            fixture.RepositoryId,
+            fixture.DirectoryVersionId,
+            "opaque-permit",
+            cancellation.Token);
+
+        cancellation.Cancel();
+        Assert.ThrowsAsync<TaskCanceledException>(async () => await follower);
+        fixture.Handler.ReleaseSource.TrySetResult();
+        Assert.That((await leader).IsOk, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(fixture.Handler.RedemptionCount, Is.EqualTo(1));
+            Assert.That(fixture.Handler.SourceCount, Is.EqualTo(1));
+        });
+    }
 }
 
 /// <summary>Owns one isolated writer store and deterministic fake Server/source transport.</summary>
