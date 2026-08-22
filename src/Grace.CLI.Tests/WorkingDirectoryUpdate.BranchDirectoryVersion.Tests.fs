@@ -998,6 +998,101 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             persisted.RootDirectoryId
             |> should equal newerStatus.RootDirectoryId)
 
+    /// Proves every exact-marker identity drift after publication rejects without removing another invocation's marker.
+    [<TestCase("attempt")>]
+    [<TestCase("operation")>]
+    [<TestCase("target")>]
+    let ``post-publication marker drift rejects before working-tree mutation`` markerDrift =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected object publication")
+            let acceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile acceptedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+
+            let target = WorkingDirectoryUpdateContracts.Request.target updateRequest
+            let operation = WorkingDirectoryUpdateContracts.Request.operation updateRequest
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterObjectPublication then
+                                let replacementTarget, replacementOperation, replacementAttempt =
+                                    match markerDrift with
+                                    | "attempt" -> target, operation, WorkingDirectoryUpdateContracts.AttemptToken.create ()
+                                    | "operation" ->
+                                        target,
+                                        (WorkingDirectoryUpdateContracts.Operation.branchSwitch configuration.BranchId (Guid.NewGuid()) target
+                                         |> required),
+                                        WorkingDirectoryUpdateContracts.AttemptToken.create ()
+                                    | "target" ->
+                                        let differentTarget =
+                                            WorkingDirectoryUpdateContracts.Target.create
+                                                configuration.RepositoryId
+                                                configuration.BranchId
+                                                (Guid.NewGuid())
+                                                targetStatus.RootDirectorySha256Hash
+                                                targetStatus.RootDirectoryBlake3Hash
+                                            |> required
+
+                                        differentTarget,
+                                        (WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection
+                                            configuration.BranchId
+                                            WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+                                            differentTarget
+                                         |> required),
+                                        WorkingDirectoryUpdateContracts.AttemptToken.create ()
+                                    | value -> invalidArg (nameof markerDrift) $"Unsupported marker drift '{value}'."
+
+                                let replacement =
+                                    WorkingDirectoryUpdateCoordination.Marker.create scope replacementAttempt replacementTarget replacementOperation
+                                    |> required
+
+                                WorkingDirectoryUpdateCoordination.Marker.write scope replacement
+                                |> fun task -> task.GetAwaiter().GetResult()
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                acceptedStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected post-publication marker-drift Rejected, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
+
+            let publishedFile = metadata[0].Files |> Seq.head
+
+            let objectPath =
+                Path.Combine(
+                    configuration.ObjectDirectory,
+                    string publishedFile.RelativePath,
+                    Services.getLocalObjectCacheFileName publishedFile.RelativePath publishedFile.Sha256Hash publishedFile.Blake3Hash
+                )
+
+            File.ReadAllBytes(objectPath)
+            |> should equal bytes
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal true)
+
     /// Proves a relevant path-kind drift after planning is detected by the complete prefix check before its action.
     [<Test>]
     let ``planned file path becoming a directory rejects before first mutation and cleans marker`` () =
@@ -1190,3 +1285,194 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> fun persisted -> persisted.RootDirectoryId
             |> should equal currentStatus.RootDirectoryId)
+
+    /// Proves post-publication accepted revision and complete-status changes cannot reach the first working-tree mutation.
+    [<TestCase("revision")>]
+    [<TestCase("status")>]
+    let ``post-publication accepted local facts reject before working-tree mutation`` drift =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("post-publication accepted local facts")
+            let acceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile acceptedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+            let changedStatus, _ = status configuration (Guid.NewGuid()) None
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterObjectPublication then
+                                let replacement = if drift = "revision" then acceptedStatus else changedStatus
+
+                                LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile replacement
+                                |> fun task -> task.GetAwaiter().GetResult()
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                acceptedStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected post-publication {drift} rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
+
+    /// Proves completion created while objects publish blocks local application before its first filesystem mutation.
+    [<Test>]
+    let ``post-publication completion drift rejects before working-tree mutation`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("post-publication completion")
+            let acceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile acceptedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+            let target = WorkingDirectoryUpdateContracts.Request.target updateRequest
+            let operation = WorkingDirectoryUpdateContracts.Request.operation updateRequest
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterObjectPublication then
+                                LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                                    configuration.GraceStatusFile
+                                    targetStatus
+                                    metadata
+                                    (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization(configuration.BranchId))
+                                    target
+                                    operation
+                                |> fun task -> task.GetAwaiter().GetResult() |> ignore
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                acceptedStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected post-publication completion rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
+
+    /// Proves corruption after atomic object publication is detected before final admission can mutate the working tree.
+    [<Test>]
+    let ``post-publication object corruption rejects before working-tree mutation`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("post-publication object corruption")
+            let acceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile acceptedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+            let publishedFile = metadata[0].Files |> Seq.head
+
+            let objectPath =
+                Path.Combine(
+                    configuration.ObjectDirectory,
+                    string publishedFile.RelativePath,
+                    Services.getLocalObjectCacheFileName publishedFile.RelativePath publishedFile.Sha256Hash publishedFile.Blake3Hash
+                )
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterObjectPublication then
+                                File.WriteAllBytes(objectPath, Encoding.UTF8.GetBytes("corrupt"))
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                acceptedStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected published-object corruption rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
+
+    /// Proves a committed zero-action update retains the truthful Unchanged outcome when its response is lost.
+    [<Test>]
+    let ``zero-action committed lost response preserves Unchanged`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("zero action selected root")
+            let currentStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), bytes)
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration currentStatus targetRoot "selected.txt" bytes
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterCommit then
+                                invalidOp "lost zero-action response"
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                currentStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> ()
+                | outcome -> Assert.Fail($"Expected lost zero-action response Unchanged, got {outcome}.")
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                currentStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> ()
+                | outcome -> Assert.Fail($"Expected zero-action replay Unchanged, got {outcome}."))
