@@ -534,6 +534,147 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(Path.Combine(root, "selected.txt"))
             |> should equal false)
 
+    /// Proves same-kind tracked byte drift is rejected by accepted dual-hash prefix identity before overwrite.
+    [<Test>]
+    let ``tracked file byte drift rejects before overwrite and cleans marker`` () =
+        withRepo (fun root configuration ->
+            let acceptedBytes = Encoding.UTF8.GetBytes("accepted tracked bytes")
+            let selectedBytes = Encoding.UTF8.GetBytes("selected target bytes")
+            let driftBytes = Encoding.UTF8.GetBytes("drifted tracked bytes")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) (Some("selected.txt", acceptedBytes))
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", selectedBytes))
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), acceptedBytes)
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    BeforeAction =
+                        fun index ->
+                            if index = 0 then
+                                File.WriteAllBytes(Path.Combine(root, "selected.txt"), driftBytes)
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected same-kind byte-drift Rejected, got {outcome}.")
+
+            File.ReadAllBytes(Path.Combine(root, "selected.txt"))
+            |> should equal driftBytes
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false)
+
+    /// Proves a lost response after commit preserves terminal truth and exact replay changes neither completion nor marker evidence.
+    [<Test>]
+    let ``AfterCommit lost response returns success and exact replay is residue-preserving Unchanged`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected hash version")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+            let target = WorkingDirectoryUpdateContracts.Request.target updateRequest
+            let operation = WorkingDirectoryUpdateContracts.Request.operation updateRequest
+
+            let lostResponse =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterCommit then
+                                raise (IOException("injected lost response"))
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                lostResponse
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected truthful committed Updated, got {outcome}.")
+
+            let persisted =
+                LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            persisted.RootDirectoryId
+            |> should equal targetStatus.RootDirectoryId
+
+            LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile targetStatus.RootDirectoryId
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal true
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let markerBeforeReplay = File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            use connection = new SqliteConnection($"Data Source={configuration.GraceStatusFile}")
+            connection.Open()
+            use timestampCommand = connection.CreateCommand()
+            timestampCommand.CommandText <- "SELECT completed_at_unix_ticks FROM working_directory_update_completions WHERE operation_value = $operation;"
+
+            timestampCommand.Parameters.AddWithValue("$operation", WorkingDirectoryUpdateContracts.Operation.value operation)
+            |> ignore
+
+            let completedBeforeReplay = timestampCommand.ExecuteScalar() :?> int64
+            let replayRequest, replayManifest, replayMetadata = request configuration targetStatus targetRoot "selected.txt" bytes
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                replayRequest
+                targetStatus
+                targetStatus
+                replayMetadata
+                replayManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> ()
+                | outcome -> Assert.Fail($"Expected lost-response replay Unchanged, got {outcome}.")
+
+            let completedAfterReplay = timestampCommand.ExecuteScalar() :?> int64
+
+            completedAfterReplay
+            |> should equal completedBeforeReplay
+
+            File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal markerBeforeReplay)
+
     /// Proves preparation against an older local-status revision cannot plan or mutate after the lease is acquired.
     [<Test>]
     let ``stale accepted status revision rejects before marker and mutation`` () =
@@ -587,7 +728,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
     /// Proves a relevant path-kind drift after planning is detected by the complete prefix check before its action.
     [<Test>]
-    let ``planned file path becoming a directory returns UpdateIncomplete before copy`` () =
+    let ``planned file path becoming a directory rejects before first mutation and cleans marker`` () =
         withRepo (fun root configuration ->
             let bytes = Encoding.UTF8.GetBytes("selected hash version")
             let currentStatus, _ = status configuration (Guid.NewGuid()) None
@@ -619,8 +760,15 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 injection
             |> fun task -> task.GetAwaiter().GetResult()
             |> function
-                | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
-                | outcome -> Assert.Fail($"Expected prefix-drift UpdateIncomplete, got {outcome}.")
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected pre-mutation prefix-drift Rejected, got {outcome}.")
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
 
             Directory.Exists(Path.Combine(root, "selected.txt"))
             |> should equal true

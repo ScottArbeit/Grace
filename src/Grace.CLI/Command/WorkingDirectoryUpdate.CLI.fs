@@ -589,7 +589,7 @@ module internal WorkingDirectoryUpdate =
             }
 
         /// Verifies the complete relevant topology expected at one prefix of the ordered action sequence.
-        let private verifyPlanPrefix root manifest plan completedCount =
+        let private verifyPlanPrefix root manifest (acceptedStatus: GraceStatus) plan completedCount =
             let actions = Topology.Plan.actions plan |> List.toArray
             let mutable error = None
 
@@ -618,7 +618,12 @@ module internal WorkingDirectoryUpdate =
                         Some $"Expected verified file '{path}' changed during application."
 
             let targetFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
+            let acceptedFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
             let actionPaths = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+            for directory in acceptedStatus.Index.Values do
+                for file in directory.Files do
+                    acceptedFiles[string file.RelativePath] <- file.Sha256Hash, file.Blake3Hash
 
             for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
                 match entry with
@@ -665,6 +670,9 @@ module internal WorkingDirectoryUpdate =
                              && (not (File.Exists(fullPath))
                                  || Directory.Exists(fullPath)) then
                             error <- Some $"Tracked file '{path}' changed before removal."
+                        elif not completed then
+                            let sha256Hash, blake3Hash = acceptedFiles[string path]
+                            error <- verifyFile path sha256Hash blake3Hash
                     | Topology.RemoveTrackedDirectory path ->
                         let fullPath = workingPath root path
 
@@ -694,6 +702,12 @@ module internal WorkingDirectoryUpdate =
                             error <- verifyFile path sha256Hash blake3Hash
                         elif Directory.Exists(fullPath) then
                             error <- Some $"File target '{path}' became a directory before copy."
+                        elif
+                            File.Exists(fullPath)
+                            && acceptedFiles.ContainsKey(string path)
+                        then
+                            let sha256Hash, blake3Hash = acceptedFiles[string path]
+                            error <- verifyFile path sha256Hash blake3Hash
 
             for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
                 if Option.isNone error then
@@ -713,16 +727,18 @@ module internal WorkingDirectoryUpdate =
             error
 
         /// Applies one already ordered topology plan while checking the expected path kind before each effect.
-        let private applyPlan root preparedContent failureInjection plan =
+        let private applyPlan root preparedContent acceptedStatus failureInjection beginMutation plan =
             task {
                 let mutable actionIndex = 0
 
                 for action in Topology.Plan.actions plan do
                     failureInjection.BeforeAction actionIndex
 
-                    match verifyPlanPrefix root (WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent) plan actionIndex with
+                    match verifyPlanPrefix root (WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent) acceptedStatus plan actionIndex with
                     | Some error -> invalidOp error
                     | None -> ()
+
+                    beginMutation ()
 
                     match action with
                     | Topology.RemoveTrackedFile path ->
@@ -763,7 +779,7 @@ module internal WorkingDirectoryUpdate =
                     actionIndex <- actionIndex + 1
                     failureInjection.ThrowAt DuringApplication
 
-                match verifyPlanPrefix root (WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent) plan actionIndex with
+                match verifyPlanPrefix root (WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent) acceptedStatus plan actionIndex with
                 | Some error -> invalidOp error
                 | None -> ()
             }
@@ -907,8 +923,7 @@ module internal WorkingDirectoryUpdate =
 
                                                     do! publishPreparedFile preparedContent file.RelativePath objectPath
 
-                                            if not (Topology.Plan.actions plan |> List.isEmpty) then mutationStarted <- true
-                                            do! applyPlan root preparedContent failureInjection plan
+                                            do! applyPlan root preparedContent freshStatus failureInjection (fun () -> mutationStarted <- true) plan
 
                                             match! verifyTarget root manifest with
                                             | Some error -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete(failure error)
