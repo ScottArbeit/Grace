@@ -41,6 +41,11 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
         sha256, Blake3Hash(ContentAddress.computeBlake3Hex bytes)
 
+    /// Reads the sealed local-status revision accepted by one prepared test request.
+    let private revision (configuration: GraceConfiguration) =
+        LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
+        |> fun task -> task.GetAwaiter().GetResult()
+
     /// Creates one complete root status, optionally containing a single direct file.
     let private status (configuration: GraceConfiguration) (rootId: DirectoryVersionId) (file: (string * byte array) option) =
         let files =
@@ -211,6 +216,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal true
 
+            let markerBeforeReplay = File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+
             let replayRequest, replayManifest, replayMetadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
@@ -231,7 +238,10 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | outcome -> Assert.Fail($"Expected replay Unchanged, got {outcome}.")
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
-            |> should equal false
+            |> should equal true
+
+            File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal markerBeforeReplay
 
             Current().BranchId |> should equal branchBefore)
 
@@ -390,3 +400,230 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
             persisted.RootDirectoryId
             |> should equal currentStatus.RootDirectoryId)
+
+    /// Proves a later hash switch replaces only the prior terminal Branch row and adopts its owned marker residue.
+    [<Test>]
+    let ``later DirectoryVersion Branch operation replaces prior terminal row and marker residue`` () =
+        withRepo (fun root configuration ->
+            let firstBytes = Encoding.UTF8.GetBytes("first selected hash version")
+            let secondBytes = Encoding.UTF8.GetBytes("second selected hash version")
+            let initialStatus, _ = status configuration (Guid.NewGuid()) None
+            let firstStatus, firstRoot = status configuration (Guid.NewGuid()) (Some("first.txt", firstBytes))
+            let secondStatus, secondRoot = status configuration (Guid.NewGuid()) (Some("second.txt", secondBytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile initialStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let firstRequest, firstManifest, firstMetadata = request configuration firstStatus firstRoot "first.txt" firstBytes
+            let firstTarget = WorkingDirectoryUpdateContracts.Request.target firstRequest
+            let firstOperation = WorkingDirectoryUpdateContracts.Request.operation firstRequest
+
+            let cleanupFailure =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with DeleteMarker = fun _ -> raise (IOException("retain first terminal marker")) }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                firstRequest
+                initialStatus
+                firstStatus
+                firstMetadata
+                firstManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                cleanupFailure
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected first Updated, got {outcome}.")
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal true
+
+            let secondRequest, secondManifest, secondMetadata = request configuration secondStatus secondRoot "second.txt" secondBytes
+            let secondTarget = WorkingDirectoryUpdateContracts.Request.target secondRequest
+            let secondOperation = WorkingDirectoryUpdateContracts.Request.operation secondRequest
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                secondRequest
+                firstStatus
+                secondStatus
+                secondMetadata
+                secondManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected later Updated, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "first.txt"))
+            |> should equal false
+
+            File.ReadAllBytes(Path.Combine(root, "second.txt"))
+            |> should equal secondBytes
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile firstTarget firstOperation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal None
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile secondTarget secondOperation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
+    /// Proves exact incomplete-operation evidence is retokened and cleaned by a pre-mutation cancellation.
+    [<Test>]
+    let ``exact marker adoption retokens and cleans pre-mutation cancellation`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected hash version")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+            let target = WorkingDirectoryUpdateContracts.Request.target updateRequest
+            let operation = WorkingDirectoryUpdateContracts.Request.operation updateRequest
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let oldMarker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdateContracts.AttemptToken.create ()) target operation
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope oldMarker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = WorkingDirectoryUpdate.BranchDirectoryVersion.BeforeMutation then
+                                raise (OperationCanceledException("injected pre-mutation cancellation"))
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected pre-mutation Rejected, got {outcome}.")
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
+
+    /// Proves preparation against an older local-status revision cannot plan or mutate after the lease is acquired.
+    [<Test>]
+    let ``stale accepted status revision rejects before marker and mutation`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected hash version")
+            let acceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile acceptedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let acceptedRevision = revision configuration
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+            let newerStatus, _ = status configuration (Guid.NewGuid()) None
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile newerStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.runAtRevision
+                updateRequest
+                acceptedStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                acceptedRevision
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected stale-status Rejected, got {outcome}.")
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
+
+            let persisted =
+                LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            persisted.RootDirectoryId
+            |> should equal newerStatus.RootDirectoryId)
+
+    /// Proves a relevant path-kind drift after planning is detected by the complete prefix check before its action.
+    [<Test>]
+    let ``planned file path becoming a directory returns UpdateIncomplete before copy`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected hash version")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    BeforeAction =
+                        fun index ->
+                            if index = 0 then
+                                Directory.CreateDirectory(Path.Combine(root, "selected.txt"))
+                                |> ignore
+                }
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                updateRequest
+                currentStatus
+                targetStatus
+                metadata
+                manifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+                | outcome -> Assert.Fail($"Expected prefix-drift UpdateIncomplete, got {outcome}.")
+
+            Directory.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal true
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)

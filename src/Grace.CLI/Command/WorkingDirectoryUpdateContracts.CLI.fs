@@ -547,6 +547,9 @@ module internal WorkingDirectoryUpdateContracts =
                 | true, bytes -> Ok(new MemoryStream(bytes, writable = false) :> Stream)
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
+        /// Returns the immutable manifest whose exact bytes this prepared content owns.
+        let manifest (PreparedContent (manifest, _, _)) = manifest
+
         /// Clears verified bytes when the owning update operation reaches a terminal path.
         let dispose (PreparedContent (_, bytesByPath, disposed)) =
             if not !disposed then

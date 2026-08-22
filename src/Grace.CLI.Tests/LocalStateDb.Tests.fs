@@ -3963,9 +3963,9 @@ module LocalStateDbTests =
                 |> ignore
             })
 
-    /// Proves reopening a hash-selected Branch finalization retains its typed no-Reference selector.
+    /// Proves reopening a hash-selected Branch completion retains terminal state without a pending finalizer.
     [<Test>]
-    let ``working directory update pending finalization reconstructs DirectoryVersion Branch selection after restart`` () =
+    let ``working directory update terminal DirectoryVersion Branch completion has no pending finalizer after restart`` () =
         withTempDir (fun _ configuration ->
             task {
                 let rootId = Guid.NewGuid()
@@ -3997,26 +3997,17 @@ module LocalStateDbTests =
                 do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
 
                 let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile
+                pending |> should equal None
 
-                match pending with
-                | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
-                                                                                                          persistedOperation,
-                                                                                                          persistedPreviousBranchId,
-                                                                                                          WorkingDirectoryUpdate.BranchSelection.DirectoryVersion)) ->
-                    persistedPreviousBranchId
-                    |> should equal previousBranchId
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
 
-                    WorkingDirectoryUpdate.Target.canonical persistedTarget
-                    |> should equal (WorkingDirectoryUpdate.Target.canonical target)
-
-                    WorkingDirectoryUpdate.Operation.value persistedOperation
-                    |> should equal (WorkingDirectoryUpdate.Operation.value operation)
-                | _ -> failwith "Expected the persisted hash-selected Branch finalizer after restart."
+                completion
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
             })
 
-    /// Proves persisted DirectoryVersion selections reject when their previous Branch no longer matches the exact target Branch.
+    /// Proves persisted Reference selections reject when their previous Branch no longer matches the operation identity.
     [<Test>]
-    let ``working directory update pending DirectoryVersion Branch corruption rejects on reopen`` () =
+    let ``working directory update pending Reference Branch corruption rejects on reopen`` () =
         withTempDir (fun _ configuration ->
             task {
                 let rootId = Guid.NewGuid()
@@ -4028,11 +4019,10 @@ module LocalStateDbTests =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
                     |> requiredWorkingDirectoryUpdate
 
+                let selectedReferenceId = Guid.NewGuid()
+
                 let operation =
-                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection
-                        configuration.BranchId
-                        WorkingDirectoryUpdate.BranchSelection.DirectoryVersion
-                        target
+                    WorkingDirectoryUpdate.Operation.branchSwitch configuration.BranchId selectedReferenceId target
                     |> requiredWorkingDirectoryUpdate
 
                 let! _ =
@@ -4040,7 +4030,7 @@ module LocalStateDbTests =
                         configuration.GraceStatusFile
                         status
                         [ rootDirectory ]
-                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization configuration.BranchId)
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(configuration.BranchId, selectedReferenceId))
                         target
                         operation
 
@@ -4053,7 +4043,7 @@ module LocalStateDbTests =
 
                 assertPendingFinalizationReopenRejects
                     configuration
-                    "Pending Branch finalization is invalid: DirectoryVersion Branch selection must retain the current Branch."
+                    "Pending Working Directory Update finalization facts do not match their operation identity."
             })
 
     /// Proves impossible persisted selector and Reference combinations reject during strict pending-row reconstruction.
@@ -4118,11 +4108,10 @@ module LocalStateDbTests =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
                     |> requiredWorkingDirectoryUpdate
 
+                let selectedReferenceId = Guid.NewGuid()
+
                 let operation =
-                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection
-                        configuration.BranchId
-                        WorkingDirectoryUpdate.BranchSelection.DirectoryVersion
-                        target
+                    WorkingDirectoryUpdate.Operation.branchSwitch configuration.BranchId selectedReferenceId target
                     |> requiredWorkingDirectoryUpdate
 
                 let! _ =
@@ -4130,7 +4119,7 @@ module LocalStateDbTests =
                         configuration.GraceStatusFile
                         status
                         [ rootDirectory ]
-                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization configuration.BranchId)
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(configuration.BranchId, selectedReferenceId))
                         target
                         operation
 

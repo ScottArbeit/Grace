@@ -3429,7 +3429,7 @@ module LocalStateDb =
                                 | BranchDirectoryVersionFinalization _
                                 | WatchFinalization _ -> ()
 
-                                if operationCallerKind = WorkingDirectoryUpdate.CallerKind.Connect then
+                                if finalizationState = "Terminal" then
                                     executeNonQueryWithParams
                                         connection
                                         "DELETE FROM working_directory_update_completions WHERE caller_kind = $caller_kind AND finalization_state = 'Terminal';"

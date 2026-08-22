@@ -3275,6 +3275,7 @@ module Branch =
                     | Ok branchResult ->
                         let currentBranch = branchResult.ReturnValue
                         let! currentStatus = readGraceStatusFile ()
+                        let! acceptedRevision = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
                         let locatorSha256, locatorBlake3 = switchHashLocatorEvidence sha256Hash blake3Hash
 
                         let versionParameters =
@@ -3431,7 +3432,7 @@ module Branch =
                                                         |> Result.defaultWith invalidOp
 
                                                     let! outcome =
-                                                        WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                                                        WorkingDirectoryUpdate.BranchDirectoryVersion.runAtRevision
                                                             request
                                                             currentStatus
                                                             targetStatus
@@ -3439,6 +3440,7 @@ module Branch =
                                                             manifest
                                                             configuration.RootDirectory
                                                             configuration.GraceStatusFile
+                                                            acceptedRevision
                                                             cancellationToken
                                                             WorkingDirectoryUpdate.BranchDirectoryVersion.none
 
