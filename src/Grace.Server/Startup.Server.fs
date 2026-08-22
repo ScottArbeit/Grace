@@ -1417,6 +1417,16 @@ module Application =
                                |> addMetadata typeof<Diff.PopulateParameters> ]
                     ]
                 subRoute
+                    "/cache"
+                    [
+                        POST [ route "/prepareDirectoryVersionZip" Cache.PrepareDirectoryVersionZip
+                               |> addMetadata typeof<Grace.Shared.Parameters.Cache.PrepareDirectoryVersionZipParameters>
+
+                               route "/redeemDirectoryVersionZipFill" Cache.RedeemDirectoryVersionZipFill
+                               |> addMetadata typeof<Grace.Shared.Parameters.Cache.RedeemDirectoryVersionZipFillParameters>
+                               |> addMetadata (AllowAnonymousAttribute()) ]
+                    ]
+                subRoute
                     "/directory"
                     [
                         POST [ route "/create" (composeHandlers requireRepositoryWriteOrAdmin DirectoryVersion.Create)

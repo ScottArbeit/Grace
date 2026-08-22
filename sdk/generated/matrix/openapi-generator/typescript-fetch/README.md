@@ -95,6 +95,8 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**resolveReferenceEventBoundary**](docs/BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**prepareDirectoryVersionZip**](docs/CacheApi.md#preparedirectoryversionzip) | **POST** /cache/prepareDirectoryVersionZip | Prepare one Server-approved DirectoryVersion ZIP fill.
+*CacheApi* | [**redeemDirectoryVersionZipFill**](docs/CacheApi.md#redeemdirectoryversionzipfill) | **POST** /cache/redeemDirectoryVersionZipFill | Redeem one permit and Cache process signature for a read-only ZIP source.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirmContentBlockUpload**](docs/DefaultApi.md#confirmcontentblockupload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discoverContentBlocks**](docs/DefaultApi.md#discovercontentblocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -203,6 +205,8 @@ All URIs are relative to *http://localhost:5000*
 - [BranchParameters](docs/BranchParameters.md)
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
+- [CacheArtifactDescriptor](docs/CacheArtifactDescriptor.md)
+- [CachePublicJwk](docs/CachePublicJwk.md)
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
@@ -247,6 +251,8 @@ All URIs are relative to *http://localhost:5000*
 - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
 - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
 - [DirectoryVersionSha256HashLookupReturnValue](docs/DirectoryVersionSha256HashLookupReturnValue.md)
+- [DirectoryVersionZipFillSource](docs/DirectoryVersionZipFillSource.md)
+- [DirectoryVersionZipPreparation](docs/DirectoryVersionZipPreparation.md)
 - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
 - [DiscoverContentBlocksResult](docs/DiscoverContentBlocksResult.md)
 - [DiscoverContentBlocksReturnValue](docs/DiscoverContentBlocksReturnValue.md)
@@ -323,11 +329,13 @@ All URIs are relative to *http://localhost:5000*
 - [OwnerReturnValue](docs/OwnerReturnValue.md)
 - [OwnerType](docs/OwnerType.md)
 - [PopulateParameters](docs/PopulateParameters.md)
+- [PrepareDirectoryVersionZipParameters](docs/PrepareDirectoryVersionZipParameters.md)
 - [ProblemDetails](docs/ProblemDetails.md)
 - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)
 - [PromotionSetApprovalSummary](docs/PromotionSetApprovalSummary.md)
 - [RebaseParameters](docs/RebaseParameters.md)
 - [RecordSavesParameters](docs/RecordSavesParameters.md)
+- [RedeemDirectoryVersionZipFillParameters](docs/RedeemDirectoryVersionZipFillParameters.md)
 - [ReferenceApiDto](docs/ReferenceApiDto.md)
 - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
 - [ReferenceDto](docs/ReferenceDto.md)

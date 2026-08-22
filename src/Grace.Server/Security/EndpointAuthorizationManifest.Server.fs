@@ -156,6 +156,8 @@ module EndpointAuthorizationManifest =
                 (AnyOf [ Authorized(BranchAdmin, Branch)
                          Authorized(BranchWrite, Branch) ])
             endpoint "POST" "/branch/updateParentBranch" Authenticated
+            endpoint "POST" "/cache/prepareDirectoryVersionZip" Authenticated
+            endpoint "POST" "/cache/redeemDirectoryVersionZipFill" AllowAnonymous
             endpoint
                 "POST"
                 "/promotion-set/create"

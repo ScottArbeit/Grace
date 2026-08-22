@@ -121,6 +121,7 @@ public partial class Program
                 var forwardedCacheKeys = new List<string>();
                 AddOptionalEnvironment(graceCache, configuration, "Cache__DatabasePath", forwardedCacheKeys);
                 AddOptionalEnvironment(graceCache, configuration, "Cache__ManagedRoot", forwardedCacheKeys);
+                AddOptionalEnvironment(graceCache, configuration, "GRACE_CACHE_MAX_CONCURRENT_FILLS", forwardedCacheKeys);
                 LogForwardedSettings("Grace.Cache local settings", forwardedCacheKeys);
 
                 // These get set in both Local and Azure-debug runs.
@@ -149,6 +150,10 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .AsHttp2Service()
                     .WithOtlpExporter();
+
+                graceCache
+                    .WithReference(graceServer)
+                    .WithEnvironment("GRACE_SERVER_URI", graceServer.GetEndpoint("http"));
 
                 var forwardedAuthKeys = new List<string>();
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);

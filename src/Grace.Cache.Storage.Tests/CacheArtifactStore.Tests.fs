@@ -53,6 +53,14 @@ module CacheArtifactStoreTestSupport =
     /// Requires the expected artifact result while preserving a useful diagnostic for a changed state transition.
     let requireOutcome (expected: CacheArtifactOutcome) (actual: CacheArtifactOutcome) = Assert.That(actual, Is.EqualTo(expected))
 
+    /// Returns verified staged bytes or fails the focused test with the storage rejection.
+    let requireStaged result =
+        match result with
+        | Ok staged -> staged
+        | Error message ->
+            Assert.Fail($"Expected verified staged bytes, got: {message}")
+            Unchecked.defaultof<CacheStagedArtifact>
+
     /// Maps test-case names to the internal effect seam without making that seam part of the test fixture API.
     let internal failurePoint effectName momentName =
         let effect =
@@ -92,6 +100,72 @@ type private ConflictControlExpectation =
 /// Verifies the one-ZIP artifact state machine and finite restart classification table.
 [<TestFixture>]
 type CacheArtifactStoreTests() =
+
+    /// Confirms two network-stage equivalents may overlap before short serialized publication.
+    [<Test>]
+    member _.``independent staging overlaps and publication serializes exact commits``() =
+        let databasePath, _, store, artifacts = CacheArtifactStoreTestSupport.createSession ()
+
+        let first =
+            CacheArtifactStoreTestSupport.createTuple
+                "artifact://grace/repositories/11111111-1111-1111-1111-111111111111/directory-version-zips/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                CacheArtifactStoreTestSupport.payload
+
+        let second =
+            CacheArtifactStoreTestSupport.createTuple
+                "artifact://grace/repositories/11111111-1111-1111-1111-111111111111/directory-version-zips/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+                CacheArtifactStoreTestSupport.payload
+
+        try
+            use firstSource = CacheArtifactStoreTestSupport.source CacheArtifactStoreTestSupport.payload
+            use secondSource = CacheArtifactStoreTestSupport.source CacheArtifactStoreTestSupport.payload
+
+            let firstStaged =
+                CacheArtifactStore.stage artifacts first firstSource
+                |> CacheArtifactStoreTestSupport.requireStaged
+
+            let secondStaged =
+                CacheArtifactStore.stage artifacts second secondSource
+                |> CacheArtifactStoreTestSupport.requireStaged
+
+            CacheArtifactStore.publishStaged artifacts firstStaged
+            |> CacheArtifactStoreTestSupport.requireOutcome Filled
+
+            CacheArtifactStore.publishStaged artifacts secondStaged
+            |> CacheArtifactStoreTestSupport.requireOutcome Filled
+        finally
+            CacheArtifactStoreTestSupport.closeSession databasePath store
+
+    /// Confirms overlapping exact downloads converge when another publisher commits first.
+    [<Test>]
+    member _.``duplicate exact staging reports success without replacement``() =
+        let databasePath, _, store, artifacts = CacheArtifactStoreTestSupport.createSession ()
+
+        let tuple =
+            CacheArtifactStoreTestSupport.createTuple
+                "artifact://grace/repositories/11111111-1111-1111-1111-111111111111/directory-version-zips/cccccccc-cccc-cccc-cccc-cccccccccccc"
+                CacheArtifactStoreTestSupport.payload
+
+        try
+            use firstSource = CacheArtifactStoreTestSupport.source CacheArtifactStoreTestSupport.payload
+            use secondSource = CacheArtifactStoreTestSupport.source CacheArtifactStoreTestSupport.payload
+
+            let firstStaged =
+                CacheArtifactStore.stage artifacts tuple firstSource
+                |> CacheArtifactStoreTestSupport.requireStaged
+
+            let secondStaged =
+                CacheArtifactStore.stage artifacts tuple secondSource
+                |> CacheArtifactStoreTestSupport.requireStaged
+
+            CacheArtifactStore.publishStaged artifacts firstStaged
+            |> CacheArtifactStoreTestSupport.requireOutcome Filled
+
+            match CacheArtifactStore.publishStaged artifacts secondStaged with
+            | Hit _ -> ()
+            | outcome -> Assert.Fail($"Expected the duplicate publisher to converge on the exact hit, got {outcome}.")
+        finally
+            CacheArtifactStoreTestSupport.closeSession databasePath store
 
     /// Enumerates each before-and-after interruption at the eight calibrated durable effect boundaries.
     static member FailureCases =
