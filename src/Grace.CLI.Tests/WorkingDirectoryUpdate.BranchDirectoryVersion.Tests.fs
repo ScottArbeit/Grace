@@ -807,3 +807,146 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
             File.Exists(Path.Combine(root, "selected.txt"))
             |> should equal false)
+
+    /// Proves terminal replay waits for an active mutation and cannot return stale terminal facts after the lease advances.
+    [<Test>]
+    let ``terminal replay serializes behind active DirectoryVersion mutation`` () =
+        withRepo (fun root configuration ->
+            let firstBytes = Encoding.UTF8.GetBytes("first selected hash version")
+            let secondBytes = Encoding.UTF8.GetBytes("second selected hash version")
+            let initialStatus, _ = status configuration (Guid.NewGuid()) None
+            let firstStatus, firstRoot = status configuration (Guid.NewGuid()) (Some("first.txt", firstBytes))
+            let secondStatus, secondRoot = status configuration (Guid.NewGuid()) (Some("second.txt", secondBytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile initialStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let firstRequest, firstManifest, firstMetadata = request configuration firstStatus firstRoot "first.txt" firstBytes
+
+            WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                firstRequest
+                initialStatus
+                firstStatus
+                firstMetadata
+                firstManifest
+                root
+                configuration.GraceStatusFile
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected first Updated, got {outcome}.")
+
+            let secondRequest, secondManifest, secondMetadata = request configuration secondStatus secondRoot "second.txt" secondBytes
+            use mutationBlocked = new ManualResetEventSlim(false)
+            use releaseMutation = new ManualResetEventSlim(false)
+
+            let injection =
+                { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    BeforeAction =
+                        fun index ->
+                            if index = 1 then
+                                mutationBlocked.Set()
+                                releaseMutation.Wait()
+                }
+
+            let secondTask =
+                WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                    secondRequest
+                    firstStatus
+                    secondStatus
+                    secondMetadata
+                    secondManifest
+                    root
+                    configuration.GraceStatusFile
+                    CancellationToken.None
+                    injection
+
+            mutationBlocked.Wait(TimeSpan.FromSeconds(5.0))
+            |> should equal true
+
+            let replayRequest, replayManifest, replayMetadata = request configuration firstStatus firstRoot "first.txt" firstBytes
+
+            let replayTask =
+                WorkingDirectoryUpdate.BranchDirectoryVersion.run
+                    replayRequest
+                    firstStatus
+                    firstStatus
+                    replayMetadata
+                    replayManifest
+                    root
+                    configuration.GraceStatusFile
+                    CancellationToken.None
+                    WorkingDirectoryUpdate.BranchDirectoryVersion.none
+
+            replayTask.Wait(200) |> should equal false
+            releaseMutation.Set()
+
+            secondTask.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | outcome -> Assert.Fail($"Expected second Updated, got {outcome}.")
+
+            replayTask.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> Assert.Fail("Replay returned Unchanged from stale terminal facts.")
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected superseded replay Rejected, got {outcome}."))
+
+    /// Proves cancellation while waiting on the real WDU lease is a non-mutating Rejected outcome with no marker evidence.
+    [<Test>]
+    let ``lease-wait cancellation rejects without files SQLite or marker`` () =
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("selected hash version")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", bytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let acceptedRevision = revision configuration
+            let updateRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" bytes
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            use heldLease =
+                WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            use cancellation = new CancellationTokenSource()
+
+            let updateTask =
+                WorkingDirectoryUpdate.BranchDirectoryVersion.runAtRevision
+                    updateRequest
+                    currentStatus
+                    targetStatus
+                    metadata
+                    manifest
+                    root
+                    configuration.GraceStatusFile
+                    acceptedRevision
+                    cancellation.Token
+                    WorkingDirectoryUpdate.BranchDirectoryVersion.none
+
+            Thread.Sleep(100)
+            updateTask.IsCompleted |> should equal false
+            cancellation.Cancel()
+
+            updateTask.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected lease-wait Rejected, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> fun persisted -> persisted.RootDirectoryId
+            |> should equal currentStatus.RootDirectoryId)

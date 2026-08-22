@@ -568,6 +568,16 @@ module Branch =
         else
             Error "Branch switch accepts exactly one hash selector without a Branch or Reference selector."
 
+    /// Projects one WDU outcome into the public outcome name, message, and process exit status shared by human and JSON output.
+    let internal projectHashSwitchOutcome outcome =
+        match outcome with
+        | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> "Updated", String.Empty, 0
+        | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> "Unchanged", String.Empty, 0
+        | WorkingDirectoryUpdateContracts.Outcome.Rejected failure -> "Rejected", WorkingDirectoryUpdateContracts.Failure.reason failure, -1
+        | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure -> "UpdateIncomplete", WorkingDirectoryUpdateContracts.Failure.reason failure, -1
+        | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure) ->
+            "FinalizationIncomplete", WorkingDirectoryUpdateContracts.Failure.reason failure, -1
+
     /// Checks whether file content hashes match is true for the parsed command input.
     let internal fileContentHashesMatch (left: LocalFileVersion) (right: LocalFileVersion) =
         let leftBlake3Hash = string left.Blake3Hash
@@ -3460,16 +3470,7 @@ module Branch =
                                                             cancellationToken
                                                             WorkingDirectoryUpdate.BranchDirectoryVersion.none
 
-                                                    let outcomeName, message, exitCode =
-                                                        match outcome with
-                                                        | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> "Updated", String.Empty, 0
-                                                        | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> "Unchanged", String.Empty, 0
-                                                        | WorkingDirectoryUpdateContracts.Outcome.Rejected failure ->
-                                                            "Rejected", WorkingDirectoryUpdateContracts.Failure.reason failure, -1
-                                                        | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure ->
-                                                            "UpdateIncomplete", WorkingDirectoryUpdateContracts.Failure.reason failure, -1
-                                                        | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure) ->
-                                                            "FinalizationIncomplete", WorkingDirectoryUpdateContracts.Failure.reason failure, -1
+                                                    let outcomeName, message, exitCode = projectHashSwitchOutcome outcome
 
                                                     let output =
                                                         {|

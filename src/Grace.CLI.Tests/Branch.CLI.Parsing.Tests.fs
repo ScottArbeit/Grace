@@ -401,6 +401,16 @@ module BranchCommandParsingTests =
         |> Result.defaultValue false
         |> should equal expected
 
+    /// Verifies lease-wait cancellation projects truthfully through the public human and JSON outcome fields.
+    [<Test>]
+    let ``branch hash switch projects cancellation as Rejected with nonzero exit`` () =
+        let failure =
+            WorkingDirectoryUpdateContracts.Failure.create "The operation was canceled."
+            |> Result.defaultWith invalidOp
+
+        Branch.projectHashSwitchOutcome (WorkingDirectoryUpdateContracts.Outcome.Rejected failure)
+        |> should equal ("Rejected", "The operation was canceled.", -1)
+
     /// Verifies that branch switch conflict comparison includes blake3 when both files have it.
     [<Test>]
     let ``branch switch conflict comparison includes BLAKE3 when both files have it`` () =
