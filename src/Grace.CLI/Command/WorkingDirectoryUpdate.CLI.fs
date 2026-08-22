@@ -565,8 +565,8 @@ module internal WorkingDirectoryUpdate =
         /// Reconciles exact target bytes produced by a retained exact-operation marker without weakening fresh admission.
         let planExactAdoption (currentStatus: GraceStatus) manifest = task { return planSynchronously true currentStatus manifest }
 
-    /// Executes the hash-selected Branch tracer after all remote content has been prepared and verified.
-    module BranchDirectoryVersion =
+    /// Applies immutable prepared content through an opaque verified root without deciding selection finalization.
+    module internal LocalApplication =
         /// Injects deterministic failures at the finite effect boundaries owned by the tracer tests.
         type FailurePoint =
             | BeforeMutation
@@ -583,7 +583,7 @@ module internal WorkingDirectoryUpdate =
         let none = { ThrowAt = ignore; DeleteMarker = File.Delete; BeforeAction = ignore }
 
         /// Converts a non-empty reason into the private failure contract.
-        let private failure reason =
+        let failure reason =
             WorkingDirectoryUpdateContracts.Failure.create reason
             |> function
                 | Ok value -> value
@@ -625,7 +625,7 @@ module internal WorkingDirectoryUpdate =
             }
 
         /// Verifies every target path and dual-hashed file against the complete prepared manifest.
-        let private verifyTarget root manifest =
+        let verifyTarget root manifest =
             task {
                 let mutable error = None
 
@@ -853,201 +853,259 @@ module internal WorkingDirectoryUpdate =
                 | None -> ()
             }
 
-        /// Applies prepared content only after publication and final local admission have established one verified root.
-        module private LocalApplication =
-            /// Carries the terminal SQLite inputs after the working tree has been fully verified under the held lease.
-            type VerifiedLocalRoot = private VerifiedLocalRoot of targetStatus: GraceStatus * objectMetadata: LocalDirectoryVersion array * bytesChanged: bool
+        /// Carries the terminal SQLite inputs after the working tree has been fully verified under the held lease.
+        type VerifiedLocalRoot = private VerifiedLocalRoot of targetStatus: GraceStatus * objectMetadata: LocalDirectoryVersion array * bytesChanged: bool
 
-            /// Names the only outcomes permitted before caller-specific SQLite completion.
-            type Outcome =
-                | Rejected of WorkingDirectoryUpdateContracts.Failure
-                | UpdateIncomplete of WorkingDirectoryUpdateContracts.Failure
-                | Verified of VerifiedLocalRoot
+        /// Names the only outcomes permitted before caller-specific SQLite completion.
+        type Outcome =
+            | Rejected of WorkingDirectoryUpdateContracts.Failure
+            | UpdateIncomplete of WorkingDirectoryUpdateContracts.Failure
+            | Verified of VerifiedLocalRoot
 
-            /// Exposes verified-root facts only to the caller that retains the matching WDU lease.
-            module VerifiedLocalRoot =
-                /// Gets the complete target status accepted for the caller's later local completion transaction.
-                let targetStatus (VerifiedLocalRoot (targetStatus, _, _)) = targetStatus
+        /// Exposes verified-root facts only to the caller that retains the matching WDU lease.
+        module VerifiedLocalRoot =
+            /// Gets the complete target status accepted for the caller's later local completion transaction.
+            let targetStatus (VerifiedLocalRoot (targetStatus, _, _)) = targetStatus
 
-                /// Gets the verified object metadata for the caller's later local completion transaction.
-                let objectMetadata (VerifiedLocalRoot (_, objectMetadata, _)) = objectMetadata
+            /// Gets the verified object metadata for the caller's later local completion transaction.
+            let objectMetadata (VerifiedLocalRoot (_, objectMetadata, _)) = objectMetadata
 
-                /// Gets whether application changed bytes or adopted a retained exact operation.
-                let bytesChanged (VerifiedLocalRoot (_, _, bytesChanged)) = bytesChanged
+            /// Gets whether application changed bytes or adopted a retained exact operation.
+            let bytesChanged (VerifiedLocalRoot (_, _, bytesChanged)) = bytesChanged
 
-            /// Verifies one atomically published object-cache file against its exact declared hashes.
-            let private verifyPublishedObject path sha256Hash blake3Hash =
-                if not (File.Exists(path)) || Directory.Exists(path) then
-                    Error $"Published object '{path}' is missing or is not a file."
+        /// Verifies one atomically published object-cache file against its exact declared hashes.
+        let private verifyPublishedObject path sha256Hash blake3Hash =
+            if not (File.Exists(path)) || Directory.Exists(path) then
+                Error $"Published object '{path}' is missing or is not a file."
+            else
+                let bytes = File.ReadAllBytes(path)
+
+                let actualSha256 =
+                    SHA256.HashData(bytes)
+                    |> Convert.ToHexString
+                    |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+                let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+                if actualSha256 = sha256Hash
+                   && actualBlake3 = blake3Hash then
+                    Ok()
                 else
-                    let bytes = File.ReadAllBytes(path)
+                    Error $"Published object '{path}' failed dual-hash verification."
 
-                    let actualSha256 =
-                        SHA256.HashData(bytes)
-                        |> Convert.ToHexString
-                        |> fun value -> Sha256Hash(value.ToLowerInvariant())
+        /// Publishes every required prepared object before any mutable local admission fact can authorize application.
+        let private publishObjects
+            (preparedContent: WorkingDirectoryUpdateContracts.PreparedContent)
+            (objectMetadata: LocalDirectoryVersion array)
+            (failureInjection: FailureInjection)
+            =
+            task {
+                let mutable error = None
+                let mutable directoryIndex = 0
 
-                    let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+                while directoryIndex < objectMetadata.Length
+                      && Option.isNone error do
+                    let directory = objectMetadata[directoryIndex]
+                    let files = directory.Files |> Seq.toArray
+                    let mutable fileIndex = 0
 
-                    if actualSha256 = sha256Hash
-                       && actualBlake3 = blake3Hash then
-                        Ok()
-                    else
-                        Error $"Published object '{path}' failed dual-hash verification."
+                    while fileIndex < files.Length && Option.isNone error do
+                        let file = files[fileIndex]
 
-            /// Publishes every required prepared object before any mutable local admission fact can authorize application.
-            let private publishObjects
-                (preparedContent: WorkingDirectoryUpdateContracts.PreparedContent)
-                (objectMetadata: LocalDirectoryVersion array)
-                (failureInjection: FailureInjection)
-                =
-                task {
-                    let mutable error = None
-                    let mutable directoryIndex = 0
+                        let objectPath =
+                            Path.Combine(
+                                Current().ObjectDirectory,
+                                string file.RelativePath,
+                                Services.getLocalObjectCacheFileName file.RelativePath file.Sha256Hash file.Blake3Hash
+                            )
 
-                    while directoryIndex < objectMetadata.Length
-                          && Option.isNone error do
-                        let directory = objectMetadata[directoryIndex]
-                        let files = directory.Files |> Seq.toArray
-                        let mutable fileIndex = 0
+                        try
+                            do! publishPreparedFile preparedContent file.RelativePath objectPath
+                            failureInjection.ThrowAt AfterObjectPublication
 
-                        while fileIndex < files.Length && Option.isNone error do
-                            let file = files[fileIndex]
+                            match verifyPublishedObject objectPath file.Sha256Hash file.Blake3Hash with
+                            | Ok () -> ()
+                            | Error publishError -> error <- Some publishError
+                        with
+                        | ex -> error <- Some ex.Message
 
-                            let objectPath =
-                                Path.Combine(
-                                    Current().ObjectDirectory,
-                                    string file.RelativePath,
-                                    Services.getLocalObjectCacheFileName file.RelativePath file.Sha256Hash file.Blake3Hash
-                                )
+                        fileIndex <- fileIndex + 1
 
-                            try
-                                do! publishPreparedFile preparedContent file.RelativePath objectPath
-                                failureInjection.ThrowAt AfterObjectPublication
+                    directoryIndex <- directoryIndex + 1
 
-                                match verifyPublishedObject objectPath file.Sha256Hash file.Blake3Hash with
-                                | Ok () -> ()
-                                | Error publishError -> error <- Some publishError
-                            with
-                            | ex -> error <- Some ex.Message
+                return error
+            }
 
-                            fileIndex <- fileIndex + 1
+        /// Compares the full rooted status identity used to reject stale post-publication planning facts.
+        let private statusFingerprintMatches (accepted: GraceStatus) (fresh: GraceStatus) =
+            let fileMatches (left: LocalFileVersion) (right: LocalFileVersion) =
+                left.RelativePath = right.RelativePath
+                && left.Sha256Hash = right.Sha256Hash
+                && left.Blake3Hash = right.Blake3Hash
+                && left.IsBinary = right.IsBinary
+                && left.Size = right.Size
+                && left.UploadedToObjectStorage = right.UploadedToObjectStorage
 
-                        directoryIndex <- directoryIndex + 1
+            let directoryMatches (left: LocalDirectoryVersion) (right: LocalDirectoryVersion) =
+                left.DirectoryVersionId = right.DirectoryVersionId
+                && left.OwnerId = right.OwnerId
+                && left.OrganizationId = right.OrganizationId
+                && left.RepositoryId = right.RepositoryId
+                && left.RelativePath = right.RelativePath
+                && left.Sha256Hash = right.Sha256Hash
+                && left.Blake3Hash = right.Blake3Hash
+                && left.Size = right.Size
+                && Seq.forall2 (=) left.Directories right.Directories
+                && left.Files.Count = right.Files.Count
+                && Seq.forall2 fileMatches left.Files right.Files
 
-                    return error
-                }
+            accepted.RootDirectoryId = fresh.RootDirectoryId
+            && accepted.RootDirectorySha256Hash = fresh.RootDirectorySha256Hash
+            && accepted.RootDirectoryBlake3Hash = fresh.RootDirectoryBlake3Hash
+            && accepted.Index.Count = fresh.Index.Count
+            && (accepted.Index
+                |> Seq.forall (fun entry ->
+                    match fresh.Index.TryGetValue entry.Key with
+                    | true, directory -> directoryMatches entry.Value directory
+                    | false, _ -> false))
 
-            /// Compares the full rooted status identity used to reject stale post-publication planning facts.
-            let private statusFingerprintMatches (accepted: GraceStatus) (fresh: GraceStatus) =
-                accepted.RootDirectoryId = fresh.RootDirectoryId
-                && accepted.RootDirectorySha256Hash = fresh.RootDirectorySha256Hash
-                && accepted.RootDirectoryBlake3Hash = fresh.RootDirectoryBlake3Hash
-                && accepted.Index.Count = fresh.Index.Count
+        /// Removes only the marker token created for this invocation before any verified-root transition.
+        let private rejectAndClean scope attemptToken reason =
+            task {
+                let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
+                return Rejected(failure reason)
+            }
 
-            /// Removes only the marker token created for this invocation before any verified-root transition.
-            let private rejectAndClean scope attemptToken reason =
-                task {
-                    let! _ = WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
-                    return Rejected(failure reason)
-                }
+        /// Performs final admission and application from only facts reread after object publication.
+        let run
+            request
+            acceptedStatus
+            targetStatus
+            (objectMetadata: LocalDirectoryVersion array)
+            (manifest: WorkingDirectoryUpdateContracts.PreparedManifest)
+            (root: string)
+            (dbPath: string)
+            (acceptedRevision: int64)
+            (scope: WorkingDirectoryUpdateCoordination.Scope)
+            (attemptToken: WorkingDirectoryUpdateContracts.AttemptToken)
+            (exactAdoption: bool)
+            (cancellationToken: CancellationToken)
+            (failureInjection: FailureInjection)
+            =
+            task {
+                let target = WorkingDirectoryUpdateContracts.Request.target request
+                let operation = WorkingDirectoryUpdateContracts.Request.operation request
+                let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent request
+                let mutable mutationStarted = false
 
-            /// Performs final admission and application from only facts reread after object publication.
-            let run
-                request
-                acceptedStatus
-                targetStatus
-                (objectMetadata: LocalDirectoryVersion array)
-                (manifest: WorkingDirectoryUpdateContracts.PreparedManifest)
-                (root: string)
-                (dbPath: string)
-                (acceptedRevision: int64)
-                (scope: WorkingDirectoryUpdateCoordination.Scope)
-                (attemptToken: WorkingDirectoryUpdateContracts.AttemptToken)
-                (exactAdoption: bool)
-                (cancellationToken: CancellationToken)
-                (failureInjection: FailureInjection)
-                =
-                task {
-                    let target = WorkingDirectoryUpdateContracts.Request.target request
-                    let operation = WorkingDirectoryUpdateContracts.Request.operation request
-                    let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent request
-                    let mutable mutationStarted = false
+                try
+                    match! publishObjects preparedContent objectMetadata failureInjection with
+                    | Some publishError -> return! rejectAndClean scope attemptToken publishError
+                    | None ->
+                        let! revisionBefore = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
 
-                    try
-                        match! publishObjects preparedContent objectMetadata failureInjection with
-                        | Some publishError -> return! rejectAndClean scope attemptToken publishError
-                        | None ->
-                            let! revisionBefore = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+                        let! freshStatusResult =
+                            LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                dbPath
+                                (Current().OwnerId)
+                                (Current().OrganizationId)
+                                (WorkingDirectoryUpdateContracts.Target.repositoryId target)
 
-                            let! freshStatusResult =
-                                LocalStateDb.readCompleteStatusSnapshotReadOnly
-                                    dbPath
-                                    (Current().OwnerId)
-                                    (Current().OrganizationId)
-                                    (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                        let! revisionAfter = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
+                        let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation
+                        let! markerInspection = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+                        let! markerEvidence = WorkingDirectoryUpdateCoordination.Marker.readEvidence scope
 
-                            let! revisionAfter = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
-                            let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation
-                            let! markerInspection = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
-                            let! markerEvidence = WorkingDirectoryUpdateCoordination.Marker.readEvidence scope
+                        let markerMatchesAttempt =
+                            match markerInspection, markerEvidence with
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch, Some evidence ->
+                                evidence.AttemptToken = WorkingDirectoryUpdateContracts.AttemptToken.value attemptToken
+                            | _ -> false
 
-                            let markerMatchesAttempt =
-                                match markerInspection, markerEvidence with
-                                | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch, Some evidence ->
-                                    evidence.AttemptToken = WorkingDirectoryUpdateContracts.AttemptToken.value attemptToken
-                                | _ -> false
+                        match freshStatusResult with
+                        | Error error -> return! rejectAndClean scope attemptToken error
+                        | Ok freshStatus when
+                            revisionBefore <> acceptedRevision
+                            || revisionAfter <> acceptedRevision
+                            ->
+                            return! rejectAndClean scope attemptToken "Local status changed while prepared objects were being published."
+                        | Ok freshStatus when not (statusFingerprintMatches acceptedStatus freshStatus) ->
+                            return! rejectAndClean scope attemptToken "Local status fingerprint changed while prepared objects were being published."
+                        | Ok _ when completion.IsSome ->
+                            return! rejectAndClean scope attemptToken "Working Directory Update completion changed while prepared objects were being published."
+                        | Ok _ when not markerMatchesAttempt ->
+                            return!
+                                rejectAndClean
+                                    scope
+                                    attemptToken
+                                    "Working Directory Update marker evidence changed while prepared objects were being published."
+                        | Ok freshStatus ->
+                            let planning =
+                                if exactAdoption then
+                                    Topology.planExactAdoption freshStatus manifest
+                                else
+                                    Topology.plan freshStatus manifest
 
-                            match freshStatusResult with
-                            | Error error -> return! rejectAndClean scope attemptToken error
-                            | Ok freshStatus when
-                                revisionBefore <> acceptedRevision
-                                || revisionAfter <> acceptedRevision
-                                ->
-                                return! rejectAndClean scope attemptToken "Local status changed while prepared objects were being published."
-                            | Ok freshStatus when not (statusFingerprintMatches acceptedStatus freshStatus) ->
-                                return! rejectAndClean scope attemptToken "Local status fingerprint changed while prepared objects were being published."
-                            | Ok _ when completion.IsSome ->
-                                return!
-                                    rejectAndClean scope attemptToken "Working Directory Update completion changed while prepared objects were being published."
-                            | Ok _ when not markerMatchesAttempt ->
+                            match! planning with
+                            | Topology.Rejected rejection ->
                                 return!
                                     rejectAndClean
                                         scope
                                         attemptToken
-                                        "Working Directory Update marker evidence changed while prepared objects were being published."
-                            | Ok freshStatus ->
-                                let planning =
-                                    if exactAdoption then
-                                        Topology.planExactAdoption freshStatus manifest
-                                    else
-                                        Topology.plan freshStatus manifest
+                                        $"Path '{Topology.Rejection.path rejection}' is {Topology.Rejection.classification rejection}."
+                            | Topology.Planned plan ->
+                                failureInjection.ThrowAt BeforeMutation
+                                cancellationToken.ThrowIfCancellationRequested()
+                                do! applyPlan root preparedContent freshStatus failureInjection (fun () -> mutationStarted <- true) plan
 
-                                match! planning with
-                                | Topology.Rejected rejection ->
-                                    return!
-                                        rejectAndClean
-                                            scope
-                                            attemptToken
-                                            $"Path '{Topology.Rejection.path rejection}' is {Topology.Rejection.classification rejection}."
-                                | Topology.Planned plan ->
-                                    failureInjection.ThrowAt BeforeMutation
-                                    cancellationToken.ThrowIfCancellationRequested()
-                                    do! applyPlan root preparedContent freshStatus failureInjection (fun () -> mutationStarted <- true) plan
+                                match! verifyTarget root manifest with
+                                | Some verifyError -> return UpdateIncomplete(failure verifyError)
+                                | None ->
+                                    let changed =
+                                        exactAdoption
+                                        || not (Topology.Plan.actions plan |> List.isEmpty)
 
-                                    match! verifyTarget root manifest with
-                                    | Some verifyError -> return UpdateIncomplete(failure verifyError)
-                                    | None ->
-                                        let changed =
-                                            exactAdoption
-                                            || not (Topology.Plan.actions plan |> List.isEmpty)
+                                    return Verified(VerifiedLocalRoot(targetStatus, objectMetadata, changed))
+                with
+                | :? OperationCanceledException as ex when not mutationStarted -> return! rejectAndClean scope attemptToken ex.Message
+                | ex when mutationStarted -> return UpdateIncomplete(failure ex.Message)
+                | ex -> return! rejectAndClean scope attemptToken ex.Message
+            }
 
-                                        return Verified(VerifiedLocalRoot(targetStatus, objectMetadata, changed))
-                    with
-                    | :? OperationCanceledException as ex when not mutationStarted -> return! rejectAndClean scope attemptToken ex.Message
-                    | ex when mutationStarted -> return UpdateIncomplete(failure ex.Message)
-                    | ex -> return! rejectAndClean scope attemptToken ex.Message
-                }
+    /// Executes the hash-selected Branch tracer after the selection-neutral application stage returns a verified root.
+    module BranchDirectoryVersion =
+        /// Preserves the existing Branch test-facing effect-boundary type while the application stage remains private.
+        type FailurePoint = LocalApplication.FailurePoint
+
+        /// Preserves the existing Branch test-facing deterministic effect controls.
+        type FailureInjection = LocalApplication.FailureInjection
+
+        /// Uses normal effects while retaining the Branch test-facing injection name.
+        let none = LocalApplication.none
+
+        /// Preserves existing Branch test-facing failure-point names.
+        let BeforeMutation = LocalApplication.BeforeMutation
+
+        /// Preserves existing Branch test-facing failure-point names.
+        let AfterObjectPublication = LocalApplication.AfterObjectPublication
+
+        /// Preserves existing Branch test-facing failure-point names.
+        let DuringApplication = LocalApplication.DuringApplication
+
+        /// Preserves existing Branch test-facing failure-point names.
+        let BeforeCommit = LocalApplication.BeforeCommit
+
+        /// Preserves existing Branch test-facing failure-point names.
+        let AfterCommit = LocalApplication.AfterCommit
+
+        /// Preserves existing Branch test-facing failure-point names.
+        let MarkerCleanup = LocalApplication.MarkerCleanup
+
+        /// Creates the private outcome failure consumed by the preserved DirectoryVersion terminal behavior.
+        let private failure = LocalApplication.failure
+
+        /// Reuses complete target verification for terminal exact replay without changing its public outcome.
+        let private verifyTarget = LocalApplication.verifyTarget
 
         /// Runs one complete DirectoryVersion-selected Branch update without changing Branch identity.
         let private runAtRevisionCoreImpl
