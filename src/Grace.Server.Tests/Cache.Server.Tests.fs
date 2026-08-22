@@ -8,6 +8,7 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Net.Sockets
 open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 open Grace.Server.Tests.Services
 open Grace.Shared
@@ -29,11 +30,15 @@ type CacheServerIntegrationTests() =
             .Replace('+', '-')
             .Replace('/', '_')
 
+    /// Projects a generated P-256 key into the public JWK preparation contract.
+    let publicJwk (key: ECDsa) =
+        let parameters = key.ExportParameters(false)
+        { Kty = "EC"; Crv = "P-256"; X = encode parameters.Q.X; Y = encode parameters.Q.Y }
+
     /// Creates a valid P-256 public JWK for preparation-only integration cases.
     let createPublicJwk () =
         use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
-        let parameters = key.ExportParameters(false)
-        { Kty = "EC"; Crv = "P-256"; X = encode parameters.Q.X; Y = encode parameters.Q.Y }
+        publicJwk key
 
     /// Creates a Server client for the caller whose access is bound into the permit.
     let createCallerClient (userId: string) =
@@ -116,7 +121,7 @@ type CacheServerIntegrationTests() =
     member _.``stale access fails before source and fresh permit fills through Cache``() =
         task {
             let repositoryId = repositoryIds[0]
-            let directoryVersion = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId "/cache-tracer/" []
+            let directoryVersion = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath []
 
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync directoryVersion
 
@@ -189,7 +194,7 @@ type CacheServerIntegrationTests() =
         task {
             let repositoryId = repositoryIds[1]
 
-            let directoryVersion = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId "/cache-metadata-negative/" []
+            let directoryVersion = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath []
 
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync directoryVersion
 
@@ -213,4 +218,95 @@ type CacheServerIntegrationTests() =
             Assert.That(body, Does.Contain("descriptor metadata is unavailable"))
             Assert.That(body, Does.Not.Contain("sig="))
             Assert.That(body, Does.Not.Contain("SharedAccessSignature"))
+        }
+
+    /// Proves a repository-owned non-root DirectoryVersion cannot prepare a permit through the shared artifact lookup.
+    [<Test>]
+    member _.``preparation rejects a repository child directory version``() =
+        task {
+            let repositoryId = repositoryIds[2]
+            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId "/cache-child/" []
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync child
+
+            let parameters = PrepareDirectoryVersionZipParameters()
+            parameters.RepositoryId <- repositoryId
+            parameters.DirectoryVersionId <- string child.DirectoryVersionId
+            parameters.CachePublicKey <- createPublicJwk ()
+            use! response = Client.PostAsync("/cache/prepareDirectoryVersionZip", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Not.Contain("\"permit\""))
+            Assert.That(body, Does.Not.Contain("sourceUri"))
+        }
+
+    /// Proves access revoked after descriptor preparation still prevents the prepared SAS from leaving Server.
+    [<Test>]
+    member _.``redemption rechecks access after descriptor preparation before releasing source``() =
+        task {
+            let repositoryId = repositoryIds[2]
+
+            let rootDirectory = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath []
+
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync rootDirectory
+            let callerId = string (Guid.NewGuid())
+            do! changeReaderRole true callerId repositoryId
+            use caller = createCallerClient callerId
+            use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let preparationParameters = PrepareDirectoryVersionZipParameters()
+            preparationParameters.RepositoryId <- repositoryId
+            preparationParameters.DirectoryVersionId <- string rootDirectory.DirectoryVersionId
+            preparationParameters.CachePublicKey <- publicJwk key
+            use! preparationResponse = caller.PostAsync("/cache/prepareDirectoryVersionZip", createJsonContent preparationParameters)
+            Assert.That(preparationResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! preparationEnvelope = deserializeContent<GraceReturnValue<DirectoryVersionZipPreparation>> preparationResponse
+            let preparation = preparationEnvelope.ReturnValue
+
+            let signature =
+                key.SignData(Encoding.UTF8.GetBytes(preparation.Permit), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)
+                |> encode
+
+            let redemption = RedeemDirectoryVersionZipFillParameters()
+            redemption.Permit <- preparation.Permit
+            redemption.Signature <- signature
+            let gatePort, listener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
+            let cacheRoot = Path.Combine(Path.GetTempPath(), "grace-cache-late-revoke-tests", Guid.NewGuid().ToString("N"))
+            Directory.CreateDirectory(cacheRoot) |> ignore
+            let cachePort = reservePort ()
+            use cache = startCache cacheRoot cachePort
+            use cacheClient = new HttpClient(BaseAddress = Uri($"http://127.0.0.1:{cachePort}"))
+
+            try
+                do! waitForCache cacheClient
+                let artifactPath = $"/repositories/{repositoryId}/directory-version-zips/{rootDirectory.DirectoryVersionId}"
+                use! initialMiss = cacheClient.GetAsync(artifactPath)
+                Assert.That(initialMiss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+                use request = new HttpRequestMessage(HttpMethod.Post, "/cache/redeemDirectoryVersionZipFill")
+                request.Headers.Add("X-Grace-Test-Cache-Redemption-Gate-Port", string gatePort)
+                request.Content <- createJsonContent redemption
+                let responseTask = caller.SendAsync(request)
+                use timeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+                use! serverGate = listener.AcceptTcpClientAsync(timeout.Token)
+                use stream = serverGate.GetStream()
+                use reader = new StreamReader(stream, Encoding.UTF8, false, 1024, true)
+                use writer = new StreamWriter(stream, Encoding.UTF8, 1024, true)
+                let! ready = reader.ReadLineAsync(timeout.Token)
+                Assert.That(ready, Is.EqualTo("cache-descriptor-ready"))
+                do! changeReaderRole false callerId repositoryId
+                do! writer.WriteLineAsync("release".AsMemory(), timeout.Token)
+                do! writer.FlushAsync(timeout.Token)
+                use! response = responseTask
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), body)
+                Assert.That(body, Does.Not.Contain("sourceUri"))
+                Assert.That(body, Does.Not.Contain("sig="))
+                Assert.That(body, Does.Not.Contain("SharedAccessSignature"))
+                use! finalMiss = cacheClient.GetAsync(artifactPath)
+                Assert.That(finalMiss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+            finally
+                AspireTestHost.releaseDescriptionClearPreAppendTestGate listener
+
+                if not cache.HasExited then cache.Kill(true)
+
+                cache.WaitForExit()
+                Directory.Delete(cacheRoot, true)
         }

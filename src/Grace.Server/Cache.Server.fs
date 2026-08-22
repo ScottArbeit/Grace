@@ -1,6 +1,8 @@
 namespace Grace.Server
 
 open System
+open System.IO
+open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -124,8 +126,10 @@ module Cache =
 
             if repository.RepositoryId <> repositoryId
                || directory.DirectoryVersion.RepositoryId
-                  <> repositoryId then
-                return Error "Repository or immutable directory version was not found."
+                  <> repositoryId
+               || directory.DirectoryVersion.RelativePath
+                  <> Constants.RootDirectoryPath then
+                return Error "Repository or immutable root directory version was not found."
             else
                 return Ok(repository, directoryProxy)
         }
@@ -149,6 +153,38 @@ module Cache =
     let private forbidden detail : HttpHandler =
         setStatusCode StatusCodes.Status403Forbidden
         >=> json { Code = "CachePermitRedemptionFailed"; Detail = detail }
+
+    /// Returns true only for the explicit Grace integration-test process mode.
+    let private isGraceTestingEnabled () = String.Equals(Environment.GetEnvironmentVariable("GRACE_TESTING"), "1", StringComparison.Ordinal)
+
+    /// Pauses only a selected GRACE_TESTING redemption after descriptor preparation and before final access revalidation.
+    let private enterPostDescriptorTestGate (context: HttpContext) =
+        task {
+            match Environment.GetEnvironmentVariable("GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"),
+                  context.Request.Headers.TryGetValue("X-Grace-Test-Cache-Redemption-Gate-Port")
+                with
+            | configuredPort, (true, requestedPort) when
+                isGraceTestingEnabled ()
+                && not (String.IsNullOrWhiteSpace configuredPort)
+                && String.Equals(configuredPort, string requestedPort, StringComparison.Ordinal)
+                ->
+                match Int32.TryParse configuredPort with
+                | true, port when port > 0 && port <= 65535 ->
+                    use client = new TcpClient(AddressFamily.InterNetwork)
+                    use timeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+                    do! client.ConnectAsync("127.0.0.1", port, timeout.Token)
+                    use stream = client.GetStream()
+                    use reader = new StreamReader(stream, Encoding.UTF8, false, 1024, true)
+                    use writer = new StreamWriter(stream, Encoding.UTF8, 1024, true)
+                    do! writer.WriteLineAsync("cache-descriptor-ready".AsMemory(), timeout.Token)
+                    do! writer.FlushAsync(timeout.Token)
+                    let! release = reader.ReadLineAsync(timeout.Token)
+
+                    if release <> "release" then
+                        invalidOp "The Cache redemption test gate received an invalid release."
+                | _ -> ()
+            | _ -> ()
+        }
 
     /// Reads the immutable descriptor metadata from the exact ZIP Blob without returning its SAS.
     let private readDescriptor repositoryId directoryVersionId (sourceUri: Uri) =
@@ -305,12 +341,21 @@ module Cache =
 
                                         match! readDescriptor repositoryId directoryVersionId sourceUri with
                                         | Ok current when current = payload.Descriptor ->
-                                            let source =
-                                                { Descriptor = current; SourceUri = string sourceUri; SourceExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15.0) }
+                                            do! enterPostDescriptorTestGate context
 
-                                            return!
-                                                context
-                                                |> result200Ok (GraceReturnValue.Create source (getCorrelationId context))
+                                            match! revalidateUserAccess context payload.UserId repository with
+                                            | Denied _ -> return! forbidden "Repository access changed." next context
+                                            | Allowed _ ->
+                                                let source =
+                                                    {
+                                                        Descriptor = current
+                                                        SourceUri = string sourceUri
+                                                        SourceExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15.0)
+                                                    }
+
+                                                return!
+                                                    context
+                                                    |> result200Ok (GraceReturnValue.Create source (getCorrelationId context))
                                         | _ -> return! forbidden "Artifact binding changed." next context
                     | _ -> return! forbidden "Permit validation failed." next context
                 with
