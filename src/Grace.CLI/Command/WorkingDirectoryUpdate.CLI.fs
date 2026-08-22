@@ -295,6 +295,51 @@ module internal WorkingDirectoryUpdate =
 
             visit rootDirectory relativePath
 
+        /// Finds the first descendant that is not an exact prepared target entry during retained-operation adoption.
+        let private firstUnsafeExactTargetDescendant
+            classifierInput
+            (targetFiles: Dictionary<string, Sha256Hash * Blake3Hash * RelativePath>)
+            (targetDirectories: Dictionary<string, RelativePath>)
+            localRoot
+            rootDirectory
+            =
+            let rec visit fullPath =
+                let children =
+                    DirectoryInfo(fullPath).GetFileSystemInfos()
+                    |> Array.sortWith (fun left right -> StringComparer.OrdinalIgnoreCase.Compare(left.FullName, right.FullName))
+
+                let mutable conflict = None
+                let mutable index = 0
+
+                while index < children.Length && Option.isNone conflict do
+                    let child = children[index]
+
+                    let childRelative =
+                        Path.GetRelativePath(localRoot, child.FullName)
+                        |> Grace.Shared.Utilities.normalizeFilePath
+                        |> RelativePath
+
+                    let key = pathKey childRelative
+
+                    if child :? DirectoryInfo then
+                        match Services.classifyRepositoryPath classifierInput Services.RepositoryPathKind.DirectoryPath child.FullName with
+                        | Services.RepositoryPathClassification.Eligible when targetDirectories.ContainsKey key -> conflict <- visit child.FullName
+                        | Services.RepositoryPathClassification.Eligible -> conflict <- Some { Path = childRelative; Classification = Untracked }
+                        | _ -> conflict <- Some { Path = childRelative; Classification = Ignored }
+                    else
+                        match Services.classifyRepositoryPath classifierInput Services.RepositoryPathKind.FilePath child.FullName with
+                        | Services.RepositoryPathClassification.Eligible ->
+                            match targetFiles.TryGetValue key with
+                            | true, (sha256Hash, blake3Hash, _) when hasVerifiedTargetBytes child.FullName sha256Hash blake3Hash -> ()
+                            | _ -> conflict <- Some { Path = childRelative; Classification = Untracked }
+                        | _ -> conflict <- Some { Path = childRelative; Classification = Ignored }
+
+                    index <- index + 1
+
+                conflict
+
+            visit rootDirectory
+
         /// Classifies every target and removable tracked blocker without entering the asynchronous transaction workflow.
         let private planSynchronously allowExactAdoption (currentStatus: GraceStatus) manifest =
             let scanInput = currentScanInput ()
@@ -337,7 +382,7 @@ module internal WorkingDirectoryUpdate =
                                     allowExactAdoption
                                     && value.Classification = Untracked
                                     ->
-                                    match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory with
+                                    match firstUnsafeExactTargetDescendant classifier targetFiles targetDirectories scanInput.RootDirectory fullPath with
                                     | Some descendant -> rejection <- Some descendant
                                     | None -> ()
                                 | Error value -> rejection <- Some value

@@ -102,10 +102,26 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         },
         root
 
-    /// Creates a production-valid root graph containing one empty nested directory.
-    let private nestedDirectoryStatus (configuration: GraceConfiguration) (directoryPath: string) =
+    /// Creates a production-valid root graph containing one nested directory and file.
+    let private nestedDirectoryStatus (configuration: GraceConfiguration) (directoryPath: string) (filePath: string) (bytes: byte array) =
         let childId = DirectoryVersionId.NewGuid()
-        let childEntries = Array.empty<Services.DirectoryVersionPreimageEntry>
+        let sha256, blake3 = hashes bytes
+
+        let file =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath filePath)
+                sha256
+                blake3
+                false
+                (int64 bytes.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let childEntries =
+            [|
+                Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+            |]
 
         let child =
             LocalDirectoryVersion.CreateWithHashes
@@ -117,8 +133,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 (Services.computeSha256ForDirectoryEntries (RelativePath directoryPath) childEntries)
                 (Services.computeBlake3ForDirectory (RelativePath directoryPath) childEntries)
                 (List<DirectoryVersionId>())
-                (List<LocalFileVersion>())
-                0L
+                (List<LocalFileVersion>([| file |]))
+                file.Size
                 DateTime.UtcNow
 
         let rootId = DirectoryVersionId.NewGuid()
@@ -140,7 +156,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 (Services.computeBlake3ForDirectory rootPath rootEntries)
                 (List<DirectoryVersionId>([| childId |]))
                 (List<LocalFileVersion>())
-                0L
+                child.Size
                 DateTime.UtcNow
 
         let index = GraceIndex()
@@ -231,16 +247,23 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         manifest,
         [| targetRoot |]
 
-    /// Creates a fully prepared request for one directory-only target graph.
-    let private directoryRequest (configuration: GraceConfiguration) (targetStatus: GraceStatus) metadata (directoryPath: string) =
+    /// Creates a fully prepared request for one nested directory-and-file target graph.
+    let private directoryRequest (configuration: GraceConfiguration) (targetStatus: GraceStatus) metadata (directoryPath: string) (filePath: string) bytes =
+        let sha256, blake3 = hashes bytes
+
         let manifest =
             WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(
                                                                           RelativePath directoryPath
+                                                                      )
+                                                                      WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                          RelativePath filePath,
+                                                                          sha256,
+                                                                          blake3
                                                                       ) ]
             |> required
 
         let prepared =
-            WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new EmptyReader()) CancellationToken.None
+            WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new ByteReader(filePath, bytes)) CancellationToken.None
             |> fun task -> task.GetAwaiter().GetResult()
             |> required
 
@@ -416,8 +439,9 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
     let ``exact adoption resumes previously created nested target directory`` () =
         withRepo (fun root configuration ->
             let branchBefore = Current().BranchId
+            let targetBytes = Encoding.UTF8.GetBytes("nested target bytes")
             let currentStatus, _ = status configuration (Guid.NewGuid()) None
-            let targetStatus, targetRoot, targetChild = nestedDirectoryStatus configuration "nested"
+            let targetStatus, targetRoot, targetChild = nestedDirectoryStatus configuration "nested" "nested/file.txt" targetBytes
 
             LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
             |> fun task -> task.GetAwaiter().GetResult() |> ignore
@@ -425,7 +449,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             Directory.CreateDirectory(Path.Combine(root, "nested"))
             |> ignore
 
-            let freshRequest, freshManifest, freshMetadata = directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested"
+            let freshRequest, freshManifest, freshMetadata =
+                directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested" "nested/file.txt" targetBytes
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 freshRequest
@@ -442,16 +467,40 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected fresh untracked-directory Rejected, got {outcome}.")
 
-            Directory.Delete(Path.Combine(root, "nested"))
+            File.WriteAllBytes(Path.Combine(root, "nested", "file.txt"), targetBytes)
+            File.WriteAllText(Path.Combine(root, "nested", "extra.txt"), "not in target")
 
-            let updateRequest, manifest, metadata = directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested"
+            WorkingDirectoryUpdate.Topology.planExactAdoption currentStatus freshManifest
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdate.Topology.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected non-target descendant rejection, got {outcome}.")
+
+            File.Delete(Path.Combine(root, "nested", "extra.txt"))
+            File.WriteAllText(Path.Combine(root, "nested", "file.txt"), "wrong target bytes")
+
+            WorkingDirectoryUpdate.Topology.planExactAdoption currentStatus freshManifest
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdate.Topology.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected wrong target hash rejection, got {outcome}.")
+
+            Directory.Delete(Path.Combine(root, "nested"), true)
+
+            let updateRequest, manifest, metadata =
+                directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested" "nested/file.txt" targetBytes
+
+            let mutable completedActions = 0
 
             let injection =
                 { WorkingDirectoryUpdate.BranchDirectoryVersion.none with
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.DuringApplication then
-                                raise (IOException("interrupt after nested directory creation"))
+                                completedActions <- completedActions + 1
+
+                                if completedActions = 2 then
+                                    raise (IOException("interrupt after nested target file creation"))
                 }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
@@ -472,7 +521,11 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             Directory.Exists(Path.Combine(root, "nested"))
             |> should equal true
 
-            let retryRequest, retryManifest, retryMetadata = directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested"
+            File.ReadAllBytes(Path.Combine(root, "nested", "file.txt"))
+            |> should equal targetBytes
+
+            let retryRequest, retryManifest, retryMetadata =
+                directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested" "nested/file.txt" targetBytes
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 retryRequest
