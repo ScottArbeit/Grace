@@ -3361,9 +3361,11 @@ module LocalStateDb =
                                 let callerKind = workingDirectoryUpdateCallerKindValue operationCallerKind
 
                                 let finalizationState =
-                                    match operationCallerKind with
-                                    | WorkingDirectoryUpdate.CallerKind.Connect -> "Terminal"
-                                    | _ -> "Pending"
+                                    match completionDetails with
+                                    | BranchDirectoryVersionFinalization _
+                                    | ConnectCompletion _ -> "Terminal"
+                                    | BranchFinalization _
+                                    | WatchFinalization _ -> "Pending"
 
                                 let targetCanonical = WorkingDirectoryUpdate.Target.canonical target
 
@@ -3985,6 +3987,25 @@ module LocalStateDb =
             | :? string as "Terminal" -> return Some WorkingDirectoryUpdateCompletion.Terminal
             | null -> return None
             | value -> return invalidOp $"Invalid Working Directory Update completion state '{value}'."
+        }
+
+    /// Confirms a marker's exact operation and target belong to a terminal completion whose root is still the committed status root.
+    let internal hasTerminalWorkingDirectoryUpdateEvidence (dbPath: string) (operationValue: string) (targetCanonical: string) =
+        task {
+            do! ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT 1 FROM working_directory_update_completions AS completion JOIN status_meta AS status ON status.id = 1 WHERE completion.operation_value = $operation_value AND completion.target_canonical = $target_canonical AND completion.finalization_state = 'Terminal' AND completion.target_root_directory_version_id = status.root_directory_version_id AND completion.target_root_directory_sha256_hash = status.root_directory_sha256_hash AND completion.target_root_directory_blake3_hash = status.root_directory_blake3_hash LIMIT 1;"
+
+            command.Parameters.AddWithValue("$operation_value", operationValue)
+            |> ignore
+
+            command.Parameters.AddWithValue("$target_canonical", targetCanonical)
+            |> ignore
+
+            return not (isNull (command.ExecuteScalar()))
         }
 
     /// Marks one exact pending completion terminal while retaining only the latest terminal result for its caller kind.

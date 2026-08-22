@@ -61,6 +61,9 @@ module internal WorkingDirectoryUpdateCoordination =
             ProcessId: int
         }
 
+    /// Carries the exact logical facts from one structurally valid marker without granting mutation ownership.
+    type internal MarkerEvidence = { AttemptToken: string; OperationId: string; Target: string }
+
     /// Holds the derived completion evidence later consumers may use after marker cleanup.
     type private SidecarDocument = { SchemaVersion: int; OperationId: string; CompletedUtc: string }
 
@@ -300,6 +303,23 @@ module internal WorkingDirectoryUpdateCoordination =
 
     /// Supplies versioned marker serialization, inspection, and exact-token cleanup.
     module Marker =
+        /// Reads exact logical evidence only from a current, structurally valid marker in this scope.
+        let readEvidence scope =
+            task {
+                let path = Scope.markerPath scope
+
+                if not (File.Exists(path)) then
+                    return None
+                else
+                    try
+                        match tryReadMarkerDocument scope (File.ReadAllText(path)) with
+                        | Ok marker -> return Some { AttemptToken = marker.AttemptToken; OperationId = marker.OperationId; Target = marker.Target }
+                        | Error _ -> return None
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return None
+            }
+
         /// Creates an owned marker only when its target, operation, and repository facts bind to the same scope.
         let create scope attemptToken target operation =
             if WorkingDirectoryUpdate.Target.repositoryId target
@@ -411,6 +431,25 @@ module internal WorkingDirectoryUpdateCoordination =
 
         /// Removes a marker only after its currently persisted token exactly matches this attempt and reports every refusal distinctly.
         let tryRemoveOwned scope attemptToken = tryRemoveOwnedWithDelete scope attemptToken File.Delete
+
+        /// Removes a structurally valid marker only when its operation and target match committed terminal evidence.
+        let tryRemoveTerminalEvidenceWithDelete scope operationId target deleteMarker =
+            task {
+                match! readEvidence scope with
+                | Some evidence when
+                    evidence.OperationId = operationId
+                    && evidence.Target = target
+                    ->
+                    try
+                        deleteMarker (Scope.markerPath scope)
+                        return ExactMatchCleaned
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return ExactCleanupFailed
+                | Some _ -> return DifferentOperationEvidence
+                | None when File.Exists(Scope.markerPath scope) -> return MalformedOrUnsupportedEvidence
+                | None -> return NoMarker
+            }
 
     /// Supplies derived sidecar creation without changing or deleting marker evidence.
     module Sidecar =
