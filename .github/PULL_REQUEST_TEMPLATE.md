@@ -74,6 +74,7 @@ List only surfaces this PR changes or must prove unchanged.
 - Root issue session:
 - Implementation owner: root | worker thread
 - Child context policy: `fork_turns = "none"` | recorded read-only scout exception
+- Shape Reviewer: GPT-5.6-Luna XHigh read-only subagent | root fallback
 - Diagnostic scout used: no | yes, question and result
 - Replacement worker used: N/A in direct mode | no | yes, reason
 - Owner stop encountered: no | link and disposition
@@ -84,6 +85,23 @@ List only surfaces this PR changes or must prove unchanged.
 - GitHub `Validate` state:
 - GitHub Actions run link:
 - Result applies to final head: yes/no
+
+## Shape Review
+
+- Shape Review started before R1: yes/no
+- Reviewer configuration: GPT-5.6-Luna High, read-only, `fork_turns = "none"` | root fallback
+- Reviewed head SHA:
+- HTML artifact or handoff location:
+- Material shape delta: yes/no
+- Owner-attention items:
+- Repairs after the reviewed head: none | shape-neutral comparison | regenerated at head SHA
+- Final-head shape coverage: exact-head report | shape-equivalent through `<comparison>`
+- Owner Shape Review approval: pending | included in final PR approval
+
+The automated R1/repair/R2 cycle does not wait for owner Shape Review approval. When a repair changes types, persisted or
+wire shape, identity, ownership, cardinality, lifecycle representation, or correlated data structures, regenerate the
+Shape Review for the repaired head before continuing closure. Final merge still requires explicit owner PR approval,
+which includes approval of the current Shape Review.
 
 ## R1 discovery review
 
@@ -104,6 +122,8 @@ Complete only when R1 produced accepted findings.
 - Consolidated repair commits:
 - Ledger status map:
 - Focused regression proof:
+- Repair shape classification: shape-neutral | shape-affecting
+- Shape Review regeneration, when shape-affecting:
 - Scope, delivery mode, delivery delta, and non-goals preserved:
 
 ## R2 closure review
@@ -135,8 +155,10 @@ or delivery-base defect stops the run for owner disposition.
 - [ ] The eventual delivery delta against `main` fits the capability budget.
 - [ ] Explicit non-goals remain absent and no half-active capability was introduced.
 - [ ] Focused proof and final-head GitHub `Validate` pass.
+- [ ] Shape Review is complete and covers the final head or has explicit shape-equivalence evidence.
 - [ ] R1 discovery review is complete.
 - [ ] Accepted R1 ledger items, if any, are closed by R2.
 - [ ] Public, persisted, generated, runtime, and documentation surfaces are current or explicitly waived.
 - [ ] Residual risk and skipped proof are visible.
 - [ ] No owner stop condition remains unresolved.
+- [ ] Scott has explicitly approved the final PR; that approval includes the current Shape Review.
