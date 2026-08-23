@@ -3,7 +3,6 @@ namespace Grace.CLI.Command
 open System
 open System.Collections.Generic
 open System.IO
-open System.Security.Cryptography
 open System.Threading
 open System.Threading.Tasks
 open Grace.CLI
@@ -152,13 +151,12 @@ module internal WorkingDirectoryUpdate =
                 PathComparison = StringComparison.OrdinalIgnoreCase
             }
 
-        /// Returns whether a tracked file already contains the exact selected target bytes.
-        let private hasVerifiedTargetBytes fullPath targetSha256 targetBlake3 =
-            Services.createLocalFileVersion (FileInfo(fullPath))
-            |> fun task -> task.GetAwaiter().GetResult()
-            |> Option.exists (fun actual ->
-                actual.Sha256Hash = targetSha256
-                && actual.Blake3Hash = targetBlake3)
+        /// Returns whether one existing file has the prepared BLAKE3 bytes without recomputing SHA-256 metadata.
+        let private hasVerifiedTargetBytes fullPath targetBlake3 =
+            File.ReadAllBytes(fullPath)
+            |> ContentAddress.computeBlake3Hex
+            |> Blake3Hash
+            |> (=) targetBlake3
 
         /// Builds the complete tracked file and directory maps from one status snapshot while rejecting Windows collisions.
         let private trackedTopology (status: GraceStatus) =
@@ -330,7 +328,7 @@ module internal WorkingDirectoryUpdate =
                         match Services.classifyRepositoryPath classifierInput Services.RepositoryPathKind.FilePath child.FullName with
                         | Services.RepositoryPathClassification.Eligible ->
                             match targetFiles.TryGetValue key with
-                            | true, (sha256Hash, blake3Hash, _) when hasVerifiedTargetBytes child.FullName sha256Hash blake3Hash -> ()
+                            | true, (_, blake3Hash, _) when hasVerifiedTargetBytes child.FullName blake3Hash -> ()
                             | _ -> conflict <- Some { Path = childRelative; Classification = Untracked }
                         | _ -> conflict <- Some { Path = childRelative; Classification = Ignored }
 
@@ -407,9 +405,9 @@ module internal WorkingDirectoryUpdate =
                                     allowExactAdoption
                                     && value.Classification = Untracked
                                     ->
-                                    let targetSha256, targetBlake3, _ = targetFile
+                                    let _, targetBlake3, _ = targetFile
 
-                                    if not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3) then
+                                    if not (hasVerifiedTargetBytes fullPath targetBlake3) then
                                         rejection <- Some value
                                 | Error value -> rejection <- Some value
                                 | Ok "tracked-file" ->
@@ -419,13 +417,13 @@ module internal WorkingDirectoryUpdate =
                                     if
                                         tracked.Sha256Hash <> targetSha256
                                         || tracked.Blake3Hash <> targetBlake3
-                                        || not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3)
+                                        || not (hasVerifiedTargetBytes fullPath targetBlake3)
                                     then
                                         addCopy targetPath
                                 | Ok _ when allowExactAdoption ->
-                                    let targetSha256, targetBlake3, _ = targetFile
+                                    let _, targetBlake3, _ = targetFile
 
-                                    if not (hasVerifiedTargetBytes fullPath targetSha256 targetBlake3) then
+                                    if not (hasVerifiedTargetBytes fullPath targetBlake3) then
                                         rejection <- Some { Path = targetPath; Classification = Untracked }
                                 | Ok _ -> rejection <- Some { Path = targetPath; Classification = Untracked }
                             | Directory ->
@@ -624,7 +622,7 @@ module internal WorkingDirectoryUpdate =
                         if File.Exists(temporary) then File.Delete(temporary)
             }
 
-        /// Verifies every target path and dual-hashed file against the complete prepared manifest.
+        /// Verifies every target path and file BLAKE3 against the complete prepared manifest.
         let verifyTarget root manifest =
             task {
                 let mutable error = None
@@ -635,7 +633,7 @@ module internal WorkingDirectoryUpdate =
                         | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory path ->
                             if not (Directory.Exists(workingPath root path)) then
                                 error <- Some $"Target directory '{path}' is missing after application."
-                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
+                        | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, _, blake3Hash) ->
                             let fullPath = workingPath root path
 
                             if not (File.Exists(fullPath)) then
@@ -643,16 +641,10 @@ module internal WorkingDirectoryUpdate =
                             else
                                 let bytes = File.ReadAllBytes(fullPath)
 
-                                let actualSha256 =
-                                    SHA256.HashData(bytes)
-                                    |> Convert.ToHexString
-                                    |> fun value -> Sha256Hash(value.ToLowerInvariant())
-
                                 let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
 
-                                if actualSha256 <> sha256Hash
-                                   || actualBlake3 <> blake3Hash then
-                                    error <- Some $"Target file '{path}' failed final dual-hash verification."
+                                if actualBlake3 <> blake3Hash then
+                                    error <- Some $"Target file '{path}' failed final BLAKE3 verification."
 
                 return error
             }
@@ -662,7 +654,7 @@ module internal WorkingDirectoryUpdate =
             let actions = Topology.Plan.actions plan |> List.toArray
             let mutable error = None
 
-            let verifyFile path sha256Hash blake3Hash =
+            let verifyFile path blake3Hash =
                 let fullPath = workingPath root path
 
                 if
@@ -673,31 +665,24 @@ module internal WorkingDirectoryUpdate =
                 else
                     let bytes = File.ReadAllBytes(fullPath)
 
-                    let actualSha256 =
-                        SHA256.HashData(bytes)
-                        |> Convert.ToHexString
-                        |> fun value -> Sha256Hash(value.ToLowerInvariant())
-
                     let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
 
-                    if actualSha256 = sha256Hash
-                       && actualBlake3 = blake3Hash then
+                    if actualBlake3 = blake3Hash then
                         None
                     else
                         Some $"Expected verified file '{path}' changed during application."
 
-            let targetFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
-            let acceptedFiles = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
+            let targetFiles = Dictionary<string, Blake3Hash>(StringComparer.OrdinalIgnoreCase)
+            let acceptedFiles = Dictionary<string, Blake3Hash>(StringComparer.OrdinalIgnoreCase)
             let actionPaths = HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
             for directory in acceptedStatus.Index.Values do
                 for file in directory.Files do
-                    acceptedFiles[string file.RelativePath] <- file.Sha256Hash, file.Blake3Hash
+                    acceptedFiles[string file.RelativePath] <- file.Blake3Hash
 
             for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
                 match entry with
-                | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
-                    targetFiles[string path] <- sha256Hash, blake3Hash
+                | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, _, blake3Hash) -> targetFiles[string path] <- blake3Hash
                 | _ -> ()
 
             actions
@@ -740,8 +725,7 @@ module internal WorkingDirectoryUpdate =
                                  || Directory.Exists(fullPath)) then
                             error <- Some $"Tracked file '{path}' changed before removal."
                         elif not completed then
-                            let sha256Hash, blake3Hash = acceptedFiles[string path]
-                            error <- verifyFile path sha256Hash blake3Hash
+                            error <- verifyFile path acceptedFiles[string path]
                     | Topology.RemoveTrackedDirectory path ->
                         let fullPath = workingPath root path
 
@@ -767,16 +751,14 @@ module internal WorkingDirectoryUpdate =
                         let fullPath = workingPath root path
 
                         if completed then
-                            let sha256Hash, blake3Hash = targetFiles[string path]
-                            error <- verifyFile path sha256Hash blake3Hash
+                            error <- verifyFile path targetFiles[string path]
                         elif Directory.Exists(fullPath) then
                             error <- Some $"File target '{path}' became a directory before copy."
                         elif
                             File.Exists(fullPath)
                             && acceptedFiles.ContainsKey(string path)
                         then
-                            let sha256Hash, blake3Hash = acceptedFiles[string path]
-                            error <- verifyFile path sha256Hash blake3Hash
+                            error <- verifyFile path acceptedFiles[string path]
 
             for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
                 if Option.isNone error then
@@ -789,8 +771,8 @@ module internal WorkingDirectoryUpdate =
                             || File.Exists(fullPath)
                         then
                             error <- Some $"Retained target directory '{path}' changed during application."
-                    | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) when not (actionPaths.Contains(string path)) ->
-                        error <- verifyFile path sha256Hash blake3Hash
+                    | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, _, blake3Hash) when not (actionPaths.Contains(string path)) ->
+                        error <- verifyFile path blake3Hash
                     | _ -> ()
 
             error
@@ -873,25 +855,19 @@ module internal WorkingDirectoryUpdate =
             /// Gets whether application changed bytes or adopted a retained exact operation.
             let bytesChanged (VerifiedLocalRoot (_, _, bytesChanged)) = bytesChanged
 
-        /// Verifies one atomically published object-cache file against its exact declared hashes.
-        let private verifyPublishedObject path sha256Hash blake3Hash =
+        /// Verifies one atomically published object-cache file against its prepared BLAKE3 bytes.
+        let private verifyPublishedObject path blake3Hash =
             if not (File.Exists(path)) || Directory.Exists(path) then
                 Error $"Published object '{path}' is missing or is not a file."
             else
                 let bytes = File.ReadAllBytes(path)
 
-                let actualSha256 =
-                    SHA256.HashData(bytes)
-                    |> Convert.ToHexString
-                    |> fun value -> Sha256Hash(value.ToLowerInvariant())
-
                 let actualBlake3 = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
 
-                if actualSha256 = sha256Hash
-                   && actualBlake3 = blake3Hash then
+                if actualBlake3 = blake3Hash then
                     Ok()
                 else
-                    Error $"Published object '{path}' failed dual-hash verification."
+                    Error $"Published object '{path}' failed BLAKE3 verification."
 
         /// Publishes every required prepared object before any mutable local admission fact can authorize application.
         let private publishObjects
@@ -923,7 +899,7 @@ module internal WorkingDirectoryUpdate =
                             do! publishPreparedFile preparedContent file.RelativePath objectPath
                             failureInjection.ThrowAt AfterObjectPublication
 
-                            match verifyPublishedObject objectPath file.Sha256Hash file.Blake3Hash with
+                            match verifyPublishedObject objectPath file.Blake3Hash with
                             | Ok () -> ()
                             | Error publishError -> error <- Some publishError
                         with

@@ -314,8 +314,9 @@ ambiguous target shapes reject. Only tracked blockers named by the immutable pla
 
 Fresh marker admission classifies every selected requirement as `NeedsApply`; it does not accept unexpected target
 bytes in place of accepted tracked identity. Exact same-operation adoption reconciles the current real relevant topology
-into `NeedsApply` or `AlreadySatisfied`: a file is satisfied only by exact SHA-256 and BLAKE3 identity, while an
-already-removed tracked entry or already-created target directory may also be satisfied. A mixed partial update skips
+into `NeedsApply` or `AlreadySatisfied`: a file is satisfied only when its bytes match the prepared BLAKE3 value.
+SHA-256 remains retained metadata for selected snapshot comparisons rather than WDU byte equality. An already-removed
+tracked entry or already-created target directory may also be satisfied. A mixed partial update skips
 only satisfied requirements. Before the first action and every later action, the complete relevant topology must match
 the prefix-advanced expected state. The final capture-to-filesystem-call race remains deferred Product V1 hardening.
 
