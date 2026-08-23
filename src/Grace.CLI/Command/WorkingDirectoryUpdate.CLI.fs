@@ -573,6 +573,7 @@ module internal WorkingDirectoryUpdate =
             | BeforeCommit
             | AfterCommit
             | MarkerCleanup
+            | BeforeTerminalRecording
 
         /// Supplies only deterministic test controls; production uses `none`.
         type FailureInjection = { ThrowAt: FailurePoint -> unit; DeleteMarker: string -> unit; BeforeAction: int -> unit }
@@ -1076,6 +1077,9 @@ module internal WorkingDirectoryUpdate =
 
         /// Preserves existing Branch test-facing failure-point names.
         let MarkerCleanup = LocalApplication.MarkerCleanup
+
+        /// Injects a failure immediately before the existing SQLite terminal-recording operation in Reference tests.
+        let BeforeTerminalRecording = LocalApplication.BeforeTerminalRecording
 
         /// Creates the private outcome failure consumed by the preserved DirectoryVersion terminal behavior.
         let private failure = LocalApplication.failure
@@ -1812,7 +1816,10 @@ module internal WorkingDirectoryUpdate =
                                 try
                                     match! runReference acceptedPhase selection resolvedTargetGraph request cancellationToken failureInjection with
                                     | Completed (ReferencePending (receipt, target, operation)) ->
-                                        let! outcome = finalizeReferenceCompletion receipt target operation cancellationToken ignore
+                                        let! outcome =
+                                            finalizeReferenceCompletion receipt target operation cancellationToken (fun () ->
+                                                failureInjection.ThrowAt BranchTransaction.BeforeTerminalRecording)
+
                                         return Finalized outcome
                                     | outcome -> return outcome
                                 finally
@@ -1847,6 +1854,9 @@ module internal WorkingDirectoryUpdate =
 
         /// Preserves existing DirectoryVersion test-facing failure-point names.
         let MarkerCleanup = BranchTransaction.MarkerCleanup
+
+        /// Preserves the Reference terminal-recording test seam for focused five-input transaction tests.
+        let BeforeTerminalRecording = BranchTransaction.BeforeTerminalRecording
 
         /// Converts the private five-input outcome back to the preserved DirectoryVersion outcome shape.
         let private project =

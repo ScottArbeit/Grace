@@ -2129,6 +2129,94 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
 
+    /// Proves a terminal-recording failure after publication leaves the selected Branch and pending row recoverable by a restarted invocation.
+    [<Test>]
+    let ``Reference finalization restart terminalizes after terminal recording failure`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("reference finalization terminal recording failure")
+            let currentStatus, _ = status configuration (DirectoryVersionId.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let _, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+            let selectedBranchId = BranchId.NewGuid()
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    configuration.RepositoryId
+                    selectedBranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> required
+
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference(ReferenceId.NewGuid())
+
+            let acceptedPhase =
+                WorkingDirectoryUpdateContracts.AcceptedBranchPhase.noSave currentStatus (revision configuration) configuration.BranchId
+                |> required
+
+            let resolvedTargetGraph =
+                WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus metadata manifest
+                |> required
+
+            let preparedContent =
+                WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new ByteReader("selected.txt", selectedBytes)) CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> required
+
+            let injection =
+                { Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.BeforeTerminalRecording then
+                                raise (IOException("injected terminal recording failure"))
+                }
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.run
+                acceptedPhase
+                selection
+                resolvedTargetGraph
+                preparedContent
+                "reference-terminal-recording-failure"
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Grace.CLI.Command.WorkingDirectoryUpdate.Finalized (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)) ->
+                    WorkingDirectoryUpdateContracts.Failure.reason failure
+                    |> should contain "injected terminal recording failure"
+                | outcome -> Assert.Fail($"Expected terminal-recording Reference finalization failure, got {outcome}.")
+
+            File.ReadAllBytes(Path.Combine(root, "selected.txt"))
+            |> should equal selectedBytes
+
+            Current().BranchId
+            |> should equal selectedBranchId
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection configuration.BranchId selection target
+                |> required
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+
+            resetConfiguration ()
+            SqliteConnection.ClearAllPools()
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.Updated _) -> ()
+                | outcome -> Assert.Fail($"Expected resumed terminal recording, got {outcome}.")
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
     /// Proves cancellation before the first retry write leaves a persisted Reference completion and its verified files intact.
     [<Test>]
     let ``Reference finalization cancellation before publication retains pending state`` () =
