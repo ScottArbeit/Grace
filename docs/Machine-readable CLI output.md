@@ -231,20 +231,35 @@ grace --output Json doctor --select Status
 grace watch --check --select Mode
 ```
 
-## Planned Working Directory Update outcomes
+## Branch Reference finalization retry output
 
-The Plan-ready [Working Directory Update specification](Working%20Directory%20Update.md) defines a typed local-update
-outcome for Branch switching, Connect retrieval, and Watch diagnostics. `Unchanged` and `Updated` return exit code `0`;
-`Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` return nonzero. `FinalizationIncomplete` states that the
-working directory was updated and includes `grace doctor --repair-local-state` as the recommended command.
+Merged Issue #923 / PR #1009 records a typed Reference completion only after the working directory and SQLite status are
+verified. Issue #871 consumes that pending row during a later `branch switch` invocation before the legacy switch
+pipeline begins. The retry has a small JSON projection so automation receives the same outcome, message, and exit class
+as human output.
 
-When implemented, Connect output will distinguish successful repository configuration from its optional update result.
-`branch.switch` will leave the V2 deferral list only when its stable outcome DTO, schema, example, selection behavior,
-and exit-code proof are complete. Foreground Watch remains a continuous command; its existing check projection and
-human diagnostics will report blocked update state without emitting a second JSON document.
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `Outcome` | string | `Updated`, `Unchanged`, `Rejected`, `UpdateIncomplete`, or `FinalizationIncomplete`. |
+| `Message` | string | Empty for success; otherwise the human repair guidance. |
+| `BranchId` | GUID | The durable selected Branch when it can be reread; otherwise the invocation's last readable Branch identity. |
 
-This is an accepted future contract. The inventory and deferral counts above remain the current executable inventory
-until implementation changes the command registry.
+Example after a restart finds a selected Branch and terminalizes its matching pending row:
+
+```json
+{
+  "Outcome": "Updated",
+  "Message": "",
+  "BranchId": "5b2653ac-0d57-45da-8f1a-e5a3f8131a40"
+}
+```
+
+`Updated` and `Unchanged` return exit code `0`. `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` return a
+nonzero exit code. `FinalizationIncomplete` keeps the pending row and includes `grace doctor --repair-local-state` in
+`Message`. It does not rewrite working files or republish an already selected Branch.
+
+This limited retry projection does not remove `branch.switch` from the broader V2 routed-success deferral list. Connect,
+Watch, and Doctor implementation remain deferred.
 
 ## V2 Deferrals
 

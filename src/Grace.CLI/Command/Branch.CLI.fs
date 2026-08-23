@@ -4294,55 +4294,87 @@ module Branch =
                 }
             | Ok false ->
                 task {
-                    let updateMarkerFileName = updateInProgressFileName ()
-                    let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
-                    let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+                    let branchIdBeforeFinalization = Current().BranchId
 
-                    if parseResult |> verbose then printParseResult parseResult
+                    /// Runs the existing legacy Branch switch workflow unchanged when no Reference finalization is pending.
+                    let runLegacySwitchWorkflow () =
+                        task {
+                            let updateMarkerFileName = updateInProgressFileName ()
+                            let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
+                            let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
 
-                    let preflightOperations =
-                        {
-                            UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
-                            InspectWatchStatus = inspectGraceWatchStatus
-                            ReadPendingJournalSummary =
-                                fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+                            if parseResult |> verbose then printParseResult parseResult
+
+                            let preflightOperations =
+                                {
+                                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
+                                    InspectWatchStatus = inspectGraceWatchStatus
+                                    ReadPendingJournalSummary =
+                                        fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+                                }
+
+                            let! switchResult =
+                                runBranchSwitchWorkflowWithLease
+                                    preflightOperations
+                                    (getCorrelationId parseResult)
+                                    switchLeaseFileName
+                                    switchLeaseText
+                                    (fun () ->
+                                        task {
+                                            let switchParameters = SwitchParameters()
+
+                                            let toBranchId = parseResult.GetValue(Options.toBranchId)
+                                            if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+
+                                            let toBranchName = parseResult.GetValue(Options.toBranchName)
+                                            switchParameters.ToBranchName <- toBranchName
+
+                                            let referenceId = parseResult.GetValue(Options.referenceId)
+
+                                            if referenceId <> Guid.Empty then
+                                                switchParameters.ReferenceId <- $"{referenceId}"
+
+                                            let sha256Hash = getSha256HashPrefix parseResult
+                                            switchParameters.Sha256Hash <- sha256Hash
+
+                                            let blake3Hash = getBlake3HashPrefix parseResult
+                                            switchParameters.Blake3Hash <- blake3Hash
+
+                                            let! result = switchHandler parseResult switchParameters
+                                            return result
+                                        })
+
+                            match switchResult with
+                            | Error error ->
+                                if parseResult |> verbose then
+                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
+                                else
+                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+
+                                return -1
+                            | Ok result -> return result
                         }
 
-                    let! switchResult =
-                        runBranchSwitchWorkflowWithLease preflightOperations (getCorrelationId parseResult) switchLeaseFileName switchLeaseText (fun () ->
-                            task {
-                                let switchParameters = SwitchParameters()
+                    match! WorkingDirectoryUpdate.resumePendingReferenceFinalization cancellationToken with
+                    | Some outcome ->
+                        let outcomeName, message, exitCode = projectHashSwitchOutcome outcome
 
-                                let toBranchId = parseResult.GetValue(Options.toBranchId)
-                                if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+                        let branchId =
+                            try
+                                Current().BranchId
+                            with
+                            | _ -> branchIdBeforeFinalization
 
-                                let toBranchName = parseResult.GetValue(Options.toBranchName)
-                                switchParameters.ToBranchName <- toBranchName
+                        let output = {| Outcome = outcomeName; Message = message; BranchId = branchId |}
 
-                                let referenceId = parseResult.GetValue(Options.referenceId)
-
-                                if referenceId <> Guid.Empty then
-                                    switchParameters.ReferenceId <- $"{referenceId}"
-
-                                let sha256Hash = getSha256HashPrefix parseResult
-                                switchParameters.Sha256Hash <- sha256Hash
-
-                                let blake3Hash = getBlake3HashPrefix parseResult
-                                switchParameters.Blake3Hash <- blake3Hash
-
-                                let! result = switchHandler parseResult switchParameters
-                                return result
-                            })
-
-                    match switchResult with
-                    | Error error ->
-                        if parseResult |> verbose then
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
+                        if parseResult |> isOutputFormat OutputFormat.Json then
+                            AnsiConsole.Write(JsonText(serialize output))
                         else
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+                            let suffix = if String.IsNullOrWhiteSpace message then String.Empty else $" {message}"
+                            logToConsole $"Branch working directory {outcomeName}: persisted Reference finalization.{suffix}"
 
-                        return -1
-                    | Ok result -> return result
+                        return exitCode
+                    | None -> return! runLegacySwitchWorkflow ()
                 }
 
     /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.

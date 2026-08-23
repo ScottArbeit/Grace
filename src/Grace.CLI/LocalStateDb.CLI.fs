@@ -4009,10 +4009,11 @@ module LocalStateDb =
         }
 
     /// Marks one exact pending completion terminal while retaining only the latest terminal result for its caller kind.
-    let internal finalizeWorkingDirectoryUpdateCompletion
+    let private finalizeWorkingDirectoryUpdateCompletionCore
         (dbPath: string)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
+        (beforeTerminalRecording: unit -> unit)
         =
         task {
             if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
@@ -4054,6 +4055,8 @@ module LocalStateDb =
                                 executeNonQuery connection "COMMIT;"
                                 return ()
                             | :? string as "Pending" ->
+                                beforeTerminalRecording ()
+
                                 executeNonQueryWithParams
                                     connection
                                     "DELETE FROM working_directory_update_completions WHERE caller_kind = $caller_kind AND finalization_state = 'Terminal';"
@@ -4090,6 +4093,23 @@ module LocalStateDb =
                             return raise ex
                     })
         }
+
+    /// Marks one exact pending completion terminal while retaining only the latest terminal result for its caller kind.
+    let internal finalizeWorkingDirectoryUpdateCompletion
+        (dbPath: string)
+        (target: WorkingDirectoryUpdate.Target)
+        (operation: WorkingDirectoryUpdate.Operation)
+        =
+        finalizeWorkingDirectoryUpdateCompletionCore dbPath target operation ignore
+
+    /// Exposes the terminal-recording boundary so focused finalization tests can retain pending facts after a deterministic SQLite failure.
+    let internal finalizeWorkingDirectoryUpdateCompletionWithBeforeTerminalRecording
+        (dbPath: string)
+        (target: WorkingDirectoryUpdate.Target)
+        (operation: WorkingDirectoryUpdate.Operation)
+        (beforeTerminalRecording: unit -> unit)
+        =
+        finalizeWorkingDirectoryUpdateCompletionCore dbPath target operation beforeTerminalRecording
 
     /// Persists upsert object cache changes in the local SQLite state database.
     let upsertObjectCache (dbPath: string) (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
