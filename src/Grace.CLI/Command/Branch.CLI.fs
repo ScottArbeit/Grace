@@ -48,6 +48,16 @@ open System.CommandLine.Completions
 /// Groups the branch command parser, handlers, and output helpers.
 module Branch =
 
+    /// Marks a configuration write failure so branch commands can preserve their existing error result shape without stack output.
+    exception private ConfigurationWriteFailure of exn
+
+    /// Updates configuration data while retaining the original exception for command-level projection.
+    let private updateConfigurationForCommand configuration =
+        try
+            updateConfiguration configuration
+        with
+        | ex -> raise (ConfigurationWriteFailure ex)
+
     /// Derives the retry-stable child Rebase identity owned by one caller-selected Promotion identity.
     let internal buildPromotionRebaseReferenceId (promotionReferenceId: ReferenceId) =
         let seed = $"grace.branch.promote-rebase-reference.v1|{promotionReferenceId:N}"
@@ -743,7 +753,7 @@ module Branch =
                                 let newConfig = Current()
                                 newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
                                 newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
-                                updateConfiguration newConfig
+                                updateConfigurationForCommand newConfig
 
                             return result |> renderOutput parseResult
                         | Error _ -> return result |> renderOutput parseResult
@@ -752,6 +762,10 @@ module Branch =
                             GraceResult.Error error
                             |> renderOutput parseResult
                 with
+                | ConfigurationWriteFailure ex ->
+                    let graceError = GraceError.Create ex.Message (parseResult |> getCorrelationId)
+
+                    return renderOutput parseResult (GraceResult.Error graceError)
                 | ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
@@ -4145,7 +4159,7 @@ module Branch =
                                                                 let configuration = Current()
                                                                 configuration.BranchId <- newBranch.BranchId
                                                                 configuration.BranchName <- newBranch.BranchName
-                                                                updateConfiguration configuration)
+                                                                updateConfigurationForCommand configuration)
                                                             (fun () -> upsertObjectCache graceStatusWithNewDirectoryVersionsFromServer.Index.Values)
 
                                                     t |> setProgressTaskValue showOutput 100.0
@@ -4264,6 +4278,8 @@ module Branch =
                                               emptyTask
                                               emptyTask |]
                 with
+                | ConfigurationWriteFailure ex ->
+                    return renderOutput parseResult (GraceResult.Error(GraceError.Create ex.Message (parseResult |> getCorrelationId)))
                 | ex ->
                     logToConsole $"{ExceptionResponse.Create ex}"
                     logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))

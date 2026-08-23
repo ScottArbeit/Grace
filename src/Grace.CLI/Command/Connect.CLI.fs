@@ -33,6 +33,23 @@ open Grace.CLI
 /// Groups the connect command parser, handlers, and output helpers.
 module Connect =
 
+    /// Marks a configuration write failure so Connect can preserve its existing error result shape without stack output.
+    exception private ConfigurationWriteFailure of exn
+
+    /// Writes configuration data while retaining the original exception for command-level projection.
+    let private saveConfigurationFileForCommand path configuration =
+        try
+            saveConfigFile path configuration
+        with
+        | ex -> raise (ConfigurationWriteFailure ex)
+
+    /// Updates configuration data while retaining the original exception for command-level projection.
+    let private updateConfigurationForCommand configuration =
+        try
+            updateConfiguration configuration
+        with
+        | ex -> raise (ConfigurationWriteFailure ex)
+
     /// Executes the common parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type CommonParameters() =
         inherit ParameterBase()
@@ -546,7 +563,7 @@ module Connect =
 
             if not <| File.Exists(graceConfigPath) then
                 GraceConfiguration()
-                |> saveConfigFile graceConfigPath
+                |> saveConfigurationFileForCommand graceConfigPath
 
     /// Reads reload configuration data needed by the command workflow without changing remote state.
     let private reloadConfiguration () =
@@ -559,7 +576,7 @@ module Connect =
         | Some serverAddress ->
             let newConfig = Current()
             newConfig.ServerUri <- serverAddress
-            updateConfiguration newConfig
+            updateConfigurationForCommand newConfig
             reloadConfiguration ()
         | None -> ()
 
@@ -958,7 +975,7 @@ module Connect =
                                 newConfig.BranchName <- branchDto.BranchName
                                 newConfig.DefaultBranchName <- repositoryDto.DefaultBranchName
                                 newConfig.ObjectStorageProvider <- repositoryDto.ObjectStorageProvider
-                                updateConfiguration newConfig
+                                updateConfigurationForCommand newConfig
                                 reloadConfiguration ()
                                 writeHumanLine parseResult $"[{Colors.Important}]Wrote new Grace configuration file.[/]"
 
@@ -998,6 +1015,10 @@ module Connect =
                 try
                     return! connectImpl parseResult cancellationToken
                 with
+                | ConfigurationWriteFailure ex ->
+                    return
+                        Error(GraceError.Create ex.Message (getCorrelationId parseResult))
+                        |> renderOutput parseResult
                 | :? OperationCanceledException -> return -1
                 | ex ->
                     let error = GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult)
