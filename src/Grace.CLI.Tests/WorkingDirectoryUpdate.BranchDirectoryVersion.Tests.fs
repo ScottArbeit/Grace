@@ -1611,3 +1611,136 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false)
+
+    /// Proves a sealed phase whose complete status differs from the current SQLite baseline cannot enter local application.
+    [<Test>]
+    let ``Reference five-input transaction rejects a mismatched accepted status fingerprint before mutation`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("reference pending accepted-status mismatch")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let mismatchedAcceptedStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", selectedBytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let preparedRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+            let target = WorkingDirectoryUpdateContracts.Request.target preparedRequest
+            let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent preparedRequest
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference(Guid.NewGuid())
+
+            let acceptedPhase =
+                WorkingDirectoryUpdateContracts.AcceptedBranchPhase.noSave
+                    mismatchedAcceptedStatus
+                    (LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
+                     |> fun task -> task.GetAwaiter().GetResult())
+                    configuration.BranchId
+                |> required
+
+            let resolvedTargetGraph =
+                WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus metadata manifest
+                |> required
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.run
+                acceptedPhase
+                selection
+                resolvedTargetGraph
+                preparedContent
+                "reference-pending-accepted-status-mismatch"
+                CancellationToken.None
+                Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Grace.CLI.Command.WorkingDirectoryUpdate.Rejected failure ->
+                    WorkingDirectoryUpdateContracts.Failure.reason failure
+                    |> should equal "Local status changed while the selected Reference was being prepared."
+                | outcome -> Assert.Fail($"Expected accepted-status rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+
+            WorkingDirectoryUpdateContracts.PreparedContent.openRead preparedContent (RelativePath "selected.txt")
+            |> Result.isError
+            |> should equal true)
+
+    /// Proves a pending Branch completion written while this Reference waits for the lease blocks admission before mutation.
+    [<Test>]
+    let ``Reference five-input transaction rechecks pending finalization after lease acquisition`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("reference pending lease revalidation")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", selectedBytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let preparedRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+            let target = WorkingDirectoryUpdateContracts.Request.target preparedRequest
+            let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent preparedRequest
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference(Guid.NewGuid())
+
+            let acceptedPhase =
+                WorkingDirectoryUpdateContracts.AcceptedBranchPhase.noSave
+                    currentStatus
+                    (LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
+                     |> fun task -> task.GetAwaiter().GetResult())
+                    configuration.BranchId
+                |> required
+
+            let resolvedTargetGraph =
+                WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus metadata manifest
+                |> required
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let heldLease =
+                WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            try
+                let waitingRun =
+                    Grace.CLI.Command.WorkingDirectoryUpdate.run
+                        acceptedPhase
+                        selection
+                        resolvedTargetGraph
+                        preparedContent
+                        "reference-pending-lease-revalidation"
+                        CancellationToken.None
+                        Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.none
+
+                let pendingReferenceId = Guid.NewGuid()
+                let pendingSelection = WorkingDirectoryUpdateContracts.BranchSelection.Reference pendingReferenceId
+
+                let pendingOperation =
+                    WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection configuration.BranchId pendingSelection target
+                    |> required
+
+                LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                    configuration.GraceStatusFile
+                    targetStatus
+                    metadata
+                    (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(configuration.BranchId, pendingReferenceId))
+                    target
+                    pendingOperation
+                |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+                WorkingDirectoryUpdateCoordination.Lease.dispose heldLease
+
+                waitingRun
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> function
+                    | Grace.CLI.Command.WorkingDirectoryUpdate.Rejected failure ->
+                        WorkingDirectoryUpdateContracts.Failure.reason failure
+                        |> should
+                            equal
+                            "Reference selection cannot begin while a Branch finalization is pending after acquiring the Working Directory Update lease."
+                    | outcome -> Assert.Fail($"Expected pending-finalization rejection, got {outcome}.")
+            finally
+                WorkingDirectoryUpdateCoordination.Lease.dispose heldLease
+
+            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+
+            WorkingDirectoryUpdateContracts.PreparedContent.openRead preparedContent (RelativePath "selected.txt")
+            |> Result.isError
+            |> should equal true)

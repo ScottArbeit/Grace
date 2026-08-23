@@ -851,7 +851,7 @@ module internal WorkingDirectoryUpdate =
             }
 
         /// Compares the full rooted status identity used to reject stale post-publication planning facts.
-        let private statusFingerprintMatches (accepted: GraceStatus) (fresh: GraceStatus) =
+        let internal statusFingerprintMatches (accepted: GraceStatus) (fresh: GraceStatus) =
             let fileMatches (left: LocalFileVersion) (right: LocalFileVersion) =
                 left.RelativePath = right.RelativePath
                 && left.Sha256Hash = right.Sha256Hash
@@ -1349,153 +1349,179 @@ module internal WorkingDirectoryUpdate =
             let mutable verifiedRoot = false
 
             try
-                match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
-                | Some _ -> return Rejected(transactionFailure "Reference selection cannot replace an existing Working Directory Update completion.")
-                | None ->
-                    match
-                        WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) (Current().RootDirectory)
-                    with
-                    | Error error -> return Rejected(transactionFailure error)
-                    | Ok scope ->
-                        use! lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
-                        let! revisionBeforeRead = LocalStateDb.readLocalStatusRevisionReadOnly (Current().GraceStatusFile)
+                match
+                    WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) (Current().RootDirectory)
+                with
+                | Error error -> return Rejected(transactionFailure error)
+                | Ok scope ->
+                    use! lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
 
-                        let! freshStatusResult =
-                            LocalStateDb.readCompleteStatusSnapshotReadOnly
-                                (Current().GraceStatusFile)
-                                (Current().OwnerId)
-                                (Current().OrganizationId)
-                                (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                    match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
+                    | Some _ ->
+                        return
+                            Rejected(
+                                transactionFailure
+                                    "Reference selection cannot replace an existing Working Directory Update completion after acquiring the Working Directory Update lease."
+                            )
+                    | None ->
+                        let! pendingFinalization = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization (Current().GraceStatusFile)
 
-                        let! revisionAfterRead = LocalStateDb.readLocalStatusRevisionReadOnly (Current().GraceStatusFile)
-
-                        let gateError =
-                            if
-                                revisionBeforeRead
-                                <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase
-                                || revisionAfterRead
-                                   <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase
-                            then
-                                Some "Local status changed while the selected Reference was being prepared."
-                            else
-                                match freshStatusResult with
-                                | Ok _ -> None
-                                | Error error -> Some error
-
-                        let freshStatus =
-                            freshStatusResult
-                            |> Result.defaultValue (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedStatus acceptedPhase)
-
-                        let! markerInspection =
-                            match gateError with
-                            | Some _ -> Task.FromResult WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
-                            | None -> WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
-
-                        let! admittedMarkerInspection =
-                            task {
-                                match markerInspection with
-                                | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
-                                    match! WorkingDirectoryUpdateCoordination.Marker.readEvidence scope with
-                                    | Some evidence ->
-                                        let! isTerminal =
-                                            LocalStateDb.hasTerminalWorkingDirectoryUpdateEvidence
-                                                (Current().GraceStatusFile)
-                                                evidence.OperationId
-                                                evidence.Target
-
-                                        if isTerminal then
-                                            let! cleanup =
-                                                WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
-                                                    scope
-                                                    evidence.OperationId
-                                                    evidence.Target
-                                                    File.Delete
-
-                                            return
-                                                if cleanup = WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned then
-                                                    WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
-                                                else
-                                                    markerInspection
-                                        else
-                                            return markerInspection
-                                    | None -> return markerInspection
-                                | _ -> return markerInspection
-                            }
-
-                        match admittedMarkerInspection with
-                        | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
-                        | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable
-                        | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                        match pendingFinalization with
+                        | Some _ ->
                             return
                                 Rejected(
-                                    transactionFailure (
-                                        gateError
-                                        |> Option.defaultValue $"Working Directory Update marker evidence is {markerInspection}."
-                                    )
+                                    transactionFailure
+                                        "Reference selection cannot begin while a Branch finalization is pending after acquiring the Working Directory Update lease."
                                 )
-                        | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
-                        | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
-                            match
-                                LocalStateDb.validateCompleteStatusTree freshStatus,
-                                LocalStateDb.validateCompleteStatusTree (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.targetStatus resolvedTargetGraph)
-                            with
-                            | Error error, _
-                            | _, Error error -> return Rejected(transactionFailure error)
-                            | Ok(), Ok() ->
-                                let marker =
-                                    WorkingDirectoryUpdateCoordination.Marker.create scope attemptToken target operation
-                                    |> Result.defaultWith invalidOp
+                        | None ->
+                            let! revisionBeforeRead = LocalStateDb.readLocalStatusRevisionReadOnly (Current().GraceStatusFile)
 
-                                do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
+                            let! freshStatusResult =
+                                LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                    (Current().GraceStatusFile)
+                                    (Current().OwnerId)
+                                    (Current().OrganizationId)
+                                    (WorkingDirectoryUpdateContracts.Target.repositoryId target)
 
-                                let exactAdoption = admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+                            let! revisionAfterRead = LocalStateDb.readLocalStatusRevisionReadOnly (Current().GraceStatusFile)
 
-                                match!
-                                    LocalApplication.run
-                                        request
-                                        freshStatus
-                                        (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.targetStatus resolvedTargetGraph)
-                                        (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.objectMetadata resolvedTargetGraph)
-                                        (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.manifest resolvedTargetGraph)
-                                        (Current().RootDirectory)
-                                        (Current().GraceStatusFile)
-                                        (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase)
-                                        scope
-                                        attemptToken
-                                        exactAdoption
-                                        cancellationToken
-                                        failureInjection
+                            let gateError =
+                                if
+                                    revisionBeforeRead
+                                    <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase
+                                    || revisionAfterRead
+                                       <> WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase
+                                then
+                                    Some "Local status changed while the selected Reference was being prepared."
+                                else
+                                    match freshStatusResult with
+                                    | Ok freshStatus when
+                                        not (
+                                            LocalApplication.statusFingerprintMatches
+                                                (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedStatus acceptedPhase)
+                                                freshStatus
+                                        )
+                                        ->
+                                        Some "Local status changed while the selected Reference was being prepared."
+                                    | Ok _ -> None
+                                    | Error error -> Some error
+
+                            let freshStatus =
+                                freshStatusResult
+                                |> Result.defaultValue (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedStatus acceptedPhase)
+
+                            let! markerInspection =
+                                match gateError with
+                                | Some _ -> Task.FromResult WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                | None -> WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                            let! admittedMarkerInspection =
+                                task {
+                                    match markerInspection with
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                        match! WorkingDirectoryUpdateCoordination.Marker.readEvidence scope with
+                                        | Some evidence ->
+                                            let! isTerminal =
+                                                LocalStateDb.hasTerminalWorkingDirectoryUpdateEvidence
+                                                    (Current().GraceStatusFile)
+                                                    evidence.OperationId
+                                                    evidence.Target
+
+                                            if isTerminal then
+                                                let! cleanup =
+                                                    WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
+                                                        scope
+                                                        evidence.OperationId
+                                                        evidence.Target
+                                                        File.Delete
+
+                                                return
+                                                    if cleanup = WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned then
+                                                        WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                                                    else
+                                                        markerInspection
+                                            else
+                                                return markerInspection
+                                        | None -> return markerInspection
+                                    | _ -> return markerInspection
+                                }
+
+                            match admittedMarkerInspection with
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                return
+                                    Rejected(
+                                        transactionFailure (
+                                            gateError
+                                            |> Option.defaultValue $"Working Directory Update marker evidence is {markerInspection}."
+                                        )
+                                    )
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                            | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                match
+                                    LocalStateDb.validateCompleteStatusTree freshStatus,
+                                    LocalStateDb.validateCompleteStatusTree (
+                                        WorkingDirectoryUpdateContracts.ResolvedTargetGraph.targetStatus resolvedTargetGraph
+                                    )
                                 with
-                                | LocalApplication.Rejected error -> return Rejected error
-                                | LocalApplication.UpdateIncomplete error -> return UpdateIncomplete error
-                                | LocalApplication.Verified localRoot ->
-                                    verifiedRoot <- true
+                                | Error error, _
+                                | _, Error error -> return Rejected(transactionFailure error)
+                                | Ok(), Ok() ->
+                                    let marker =
+                                        WorkingDirectoryUpdateCoordination.Marker.create scope attemptToken target operation
+                                        |> Result.defaultWith invalidOp
 
-                                    match selection with
-                                    | WorkingDirectoryUpdateContracts.BranchSelection.Reference selectedReferenceId ->
-                                        let! _ =
-                                            LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
-                                                (Current().GraceStatusFile)
-                                                (LocalApplication.VerifiedLocalRoot.targetStatus localRoot)
-                                                (LocalApplication.VerifiedLocalRoot.objectMetadata localRoot)
-                                                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(
-                                                    WorkingDirectoryUpdateContracts.AcceptedBranchPhase.previousBranchId acceptedPhase,
-                                                    selectedReferenceId
-                                                ))
-                                                target
-                                                operation
-                                                (fun () -> failureInjection.ThrowAt BranchTransaction.BeforeCommit)
+                                    do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
 
-                                        let receipt =
-                                            WorkingDirectoryUpdateContracts.Receipt.create
-                                                target
-                                                operation
-                                                (LocalApplication.VerifiedLocalRoot.bytesChanged localRoot)
-                                            |> Result.defaultWith invalidOp
+                                    let exactAdoption = admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
 
-                                        return Completed(ReferencePending receipt)
-                                    | WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion ->
-                                        return Rejected(transactionFailure "Reference completion received DirectoryVersion selection.")
+                                    match!
+                                        LocalApplication.run
+                                            request
+                                            (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedStatus acceptedPhase)
+                                            (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.targetStatus resolvedTargetGraph)
+                                            (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.objectMetadata resolvedTargetGraph)
+                                            (WorkingDirectoryUpdateContracts.ResolvedTargetGraph.manifest resolvedTargetGraph)
+                                            (Current().RootDirectory)
+                                            (Current().GraceStatusFile)
+                                            (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase)
+                                            scope
+                                            attemptToken
+                                            exactAdoption
+                                            cancellationToken
+                                            failureInjection
+                                    with
+                                    | LocalApplication.Rejected error -> return Rejected error
+                                    | LocalApplication.UpdateIncomplete error -> return UpdateIncomplete error
+                                    | LocalApplication.Verified localRoot ->
+                                        verifiedRoot <- true
+
+                                        match selection with
+                                        | WorkingDirectoryUpdateContracts.BranchSelection.Reference selectedReferenceId ->
+                                            let! _ =
+                                                LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
+                                                    (Current().GraceStatusFile)
+                                                    (LocalApplication.VerifiedLocalRoot.targetStatus localRoot)
+                                                    (LocalApplication.VerifiedLocalRoot.objectMetadata localRoot)
+                                                    (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(
+                                                        WorkingDirectoryUpdateContracts.AcceptedBranchPhase.previousBranchId acceptedPhase,
+                                                        selectedReferenceId
+                                                    ))
+                                                    target
+                                                    operation
+                                                    (fun () -> failureInjection.ThrowAt BranchTransaction.BeforeCommit)
+
+                                            let receipt =
+                                                WorkingDirectoryUpdateContracts.Receipt.create
+                                                    target
+                                                    operation
+                                                    (LocalApplication.VerifiedLocalRoot.bytesChanged localRoot)
+                                                |> Result.defaultWith invalidOp
+
+                                            return Completed(ReferencePending receipt)
+                                        | WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion ->
+                                            return Rejected(transactionFailure "Reference completion received DirectoryVersion selection.")
             with
             | ex when verifiedRoot -> return UpdateIncomplete(transactionFailure ex.Message)
             | :? OperationCanceledException as ex -> return Rejected(transactionFailure ex.Message)
