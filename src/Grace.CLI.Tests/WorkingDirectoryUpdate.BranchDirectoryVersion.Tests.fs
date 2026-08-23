@@ -269,6 +269,127 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         manifest,
         metadata
 
+    /// Verifies that graph construction rejects a partial or altered target without leaving working-tree or SQLite residue.
+    [<Test>]
+    let ``Resolved target graph rejects partial manifest and altered metadata without residue`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("resolved graph structural equality")
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let targetStatus, targetRoot, targetChild = nestedDirectoryStatus configuration "selected" "selected/content.txt" selectedBytes
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    configuration.RepositoryId
+                    configuration.BranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> required
+
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference(Guid.NewGuid())
+
+            let acceptedPhase =
+                WorkingDirectoryUpdateContracts.AcceptedBranchPhase.noSave currentStatus (revision configuration) configuration.BranchId
+                |> required
+
+            let _, matchingManifest, matchingMetadata =
+                directoryRequest configuration targetStatus [| targetRoot; targetChild |] "selected" "selected/content.txt" selectedBytes
+
+            let missingFileManifest =
+                WorkingDirectoryUpdateContracts.PreparedManifest.create
+                    [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "selected") ]
+                |> required
+
+            let sha256, blake3 = hashes selectedBytes
+
+            let extraFileManifest =
+                WorkingDirectoryUpdateContracts.PreparedManifest.create
+                    [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "selected")
+                      WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath "selected/content.txt", sha256, blake3)
+                      WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath "unexpected.txt", sha256, blake3) ]
+                |> required
+
+            let alteredChild =
+                LocalDirectoryVersion.CreateWithHashes
+                    targetChild.DirectoryVersionId
+                    targetChild.OwnerId
+                    targetChild.OrganizationId
+                    targetChild.RepositoryId
+                    targetChild.RelativePath
+                    targetChild.Sha256Hash
+                    targetChild.Blake3Hash
+                    (List<DirectoryVersionId>(targetChild.Directories))
+                    (List<LocalFileVersion>(targetChild.Files))
+                    targetChild.Size
+                    (targetChild.LastWriteTimeUtc.AddSeconds(1.0))
+
+            let alteredFile = { targetChild.Files[0] with LastWriteTimeUtc = targetChild.Files[0].LastWriteTimeUtc.AddSeconds(1.0) }
+
+            let childWithAlteredFile =
+                LocalDirectoryVersion.CreateWithHashes
+                    targetChild.DirectoryVersionId
+                    targetChild.OwnerId
+                    targetChild.OrganizationId
+                    targetChild.RepositoryId
+                    targetChild.RelativePath
+                    targetChild.Sha256Hash
+                    targetChild.Blake3Hash
+                    (List<DirectoryVersionId>(targetChild.Directories))
+                    (List<LocalFileVersion>([| alteredFile |]))
+                    targetChild.Size
+                    targetChild.LastWriteTimeUtc
+
+            let rejected graph =
+                WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus graph matchingManifest
+                |> Result.isError
+                |> should equal true
+
+            rejected [| targetRoot; alteredChild |]
+            rejected [| targetRoot; childWithAlteredFile |]
+
+            WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus matchingMetadata missingFileManifest
+            |> Result.isError
+            |> should equal true
+
+            WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus matchingMetadata extraFileManifest
+            |> Result.isError
+            |> should equal true
+
+            WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus matchingMetadata matchingManifest
+            |> Result.isOk
+            |> should equal true
+
+            File.Exists(Path.Combine(root, "selected", "content.txt")) |> should equal false
+
+            LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> fun persisted -> persisted.RootDirectoryId
+            |> should equal currentStatus.RootDirectoryId
+
+            revision configuration |> should equal 1L
+
+            LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile targetStatus.RootDirectoryId
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal false
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection configuration.BranchId selection target
+                |> required
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal None
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false)
+
     /// Proves success commits exact bytes and replay returns Unchanged without changing Branch identity.
     [<Test>]
     let ``DirectoryVersion Branch update commits Updated then replays Unchanged without changing Branch identity`` () =

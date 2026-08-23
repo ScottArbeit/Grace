@@ -39,12 +39,8 @@ module internal WorkingDirectoryUpdateContracts =
         | Reference of ReferenceId
         | DirectoryVersion
 
-    /// Identifies one accepted Branch admission without participating in durable retry identity.
-    type ActionToken = private ActionToken of Guid
-
     /// Preserves the accepted no-Save Branch baseline until the WDU transaction performs its fresh admission.
-    type AcceptedBranchPhase =
-        private | AcceptedBranchPhase of acceptedStatus: GraceStatus * acceptedRevision: int64 * previousBranchId: BranchId * actionToken: ActionToken
+    type AcceptedBranchPhase = private { AcceptedStatus: GraceStatus; AcceptedRevision: int64; PreviousBranchId: BranchId; SealedIdentity: Guid }
 
     /// Represents one deterministic caller-specific logical update identity.
     type Operation = private Operation of callerKind: CallerKind * target: Target option * repositoryId: RepositoryId * branchId: BranchId * value: string
@@ -78,12 +74,7 @@ module internal WorkingDirectoryUpdateContracts =
 
     /// Binds one selected target graph to the accepted Branch admission that prepared it.
     type ResolvedTargetGraph =
-        private | ResolvedTargetGraph of
-            actionToken: ActionToken *
-            target: Target *
-            targetStatus: GraceStatus *
-            objectMetadata: LocalDirectoryVersion array *
-            manifest: PreparedManifest
+        private { SealedIdentity: Guid; Target: Target; TargetStatus: GraceStatus; ObjectMetadata: LocalDirectoryVersion array; Manifest: PreparedManifest }
 
     /// Holds validated update inputs without exposing a mutation plan, writer, or transaction callback.
     type Request = private Request of Target * Operation * PreparedContent * CorrelationId
@@ -262,19 +253,24 @@ module internal WorkingDirectoryUpdateContracts =
             match requireId "PreviousBranchId" previousBranchId with
             | Error error -> Error error
             | Ok previousBranchId when acceptedRevision < 0L -> Error "Accepted Branch phase requires a non-negative local status revision."
-            | Ok previousBranchId -> Ok(AcceptedBranchPhase(acceptedStatus, acceptedRevision, previousBranchId, ActionToken(Guid.NewGuid())))
+            | Ok previousBranchId ->
+                Ok
+                    { AcceptedStatus = acceptedStatus
+                      AcceptedRevision = acceptedRevision
+                      PreviousBranchId = previousBranchId
+                      SealedIdentity = Guid.NewGuid() }
 
         /// Returns the accepted status used only for the transaction's post-publication freshness comparison.
-        let acceptedStatus (AcceptedBranchPhase(acceptedStatus, _, _, _)) = acceptedStatus
+        let acceptedStatus (acceptedPhase: AcceptedBranchPhase) = acceptedPhase.AcceptedStatus
 
         /// Returns the SQLite revision that must still be current before local mutation begins.
-        let acceptedRevision (AcceptedBranchPhase(_, acceptedRevision, _, _)) = acceptedRevision
+        let acceptedRevision (acceptedPhase: AcceptedBranchPhase) = acceptedPhase.AcceptedRevision
 
         /// Returns the Branch identity that DirectoryVersion selection must retain.
-        let previousBranchId (AcceptedBranchPhase(_, _, previousBranchId, _)) = previousBranchId
+        let previousBranchId (acceptedPhase: AcceptedBranchPhase) = acceptedPhase.PreviousBranchId
 
-        /// Returns the opaque token that binds target preparation to this exact admission.
-        let actionToken (AcceptedBranchPhase(_, _, _, actionToken)) = actionToken
+        /// Returns the private admission identity that binds target preparation to this exact phase.
+        let sealedIdentity (acceptedPhase: AcceptedBranchPhase) = acceptedPhase.SealedIdentity
 
     /// Supplies construction and access functions for local-root scopes.
     module LocalRootScope =
@@ -577,6 +573,59 @@ module internal WorkingDirectoryUpdateContracts =
 
     /// Supplies construction and access functions for one exact prepared target graph.
     module ResolvedTargetGraph =
+        /// Compares every persisted LocalFileVersion fact needed by the selected target graph.
+        let private fileMatches (expected: LocalFileVersion) (actual: LocalFileVersion) =
+            expected.Class = actual.Class
+            && expected.RelativePath = actual.RelativePath
+            && expected.Sha256Hash = actual.Sha256Hash
+            && expected.Blake3Hash = actual.Blake3Hash
+            && expected.IsBinary = actual.IsBinary
+            && expected.Size = actual.Size
+            && expected.CreatedAt = actual.CreatedAt
+            && expected.UploadedToObjectStorage = actual.UploadedToObjectStorage
+            && expected.LastWriteTimeUtc = actual.LastWriteTimeUtc
+
+        /// Compares every persisted LocalDirectoryVersion fact and its exact child facts.
+        let private directoryMatches (expected: LocalDirectoryVersion) (actual: LocalDirectoryVersion) =
+            expected.Class = actual.Class
+            && expected.DirectoryVersionId = actual.DirectoryVersionId
+            && expected.OwnerId = actual.OwnerId
+            && expected.OrganizationId = actual.OrganizationId
+            && expected.RepositoryId = actual.RepositoryId
+            && expected.RelativePath = actual.RelativePath
+            && expected.Sha256Hash = actual.Sha256Hash
+            && expected.Blake3Hash = actual.Blake3Hash
+            && expected.Directories.Count = actual.Directories.Count
+            && Seq.forall2 (=) expected.Directories actual.Directories
+            && expected.Files.Count = actual.Files.Count
+            && Seq.forall2 fileMatches expected.Files actual.Files
+            && expected.Size = actual.Size
+            && expected.CreatedAt = actual.CreatedAt
+            && expected.LastWriteTimeUtc = actual.LastWriteTimeUtc
+
+        /// Produces the complete manifest that the selected target status requires, excluding only its synthetic root directory.
+        let private requiredManifestEntries (targetStatus: GraceStatus) =
+            targetStatus.Index
+            |> Seq.collect (fun pair ->
+                seq {
+                    let directory = pair.Value
+
+                    if directory.DirectoryVersionId <> targetStatus.RootDirectoryId then
+                        yield Directory directory.RelativePath
+
+                    for file in directory.Files do
+                        yield File(file.RelativePath, file.Sha256Hash, file.Blake3Hash)
+                })
+            |> Seq.toArray
+
+        /// Requires a manifest to contain exactly the selected status directories and dual-hashed files.
+        let private manifestMatchesStatus targetStatus manifest =
+            let expected = requiredManifestEntries targetStatus
+            let actual = PreparedManifest.entries manifest |> Seq.toArray
+
+            expected.Length = actual.Length
+            && expected |> Array.forall (fun entry -> actual |> Array.exists ((=) entry))
+
         /// Creates a graph only when its target root, selection, metadata, and sealed admission agree.
         let create acceptedPhase selection target targetStatus (objectMetadata: LocalDirectoryVersion array) manifest =
             if isNull (box objectMetadata) then
@@ -600,30 +649,35 @@ module internal WorkingDirectoryUpdateContracts =
                 targetStatus.Index
                 |> Seq.exists (fun pair ->
                     objectMetadata
-                    |> Array.exists (fun directory ->
-                        directory.DirectoryVersionId = pair.Value.DirectoryVersionId
-                        && directory.Sha256Hash = pair.Value.Sha256Hash
-                        && directory.Blake3Hash = pair.Value.Blake3Hash)
+                    |> Array.exists (fun directory -> directoryMatches pair.Value directory)
                     |> not)
             then
                 Error "Resolved target graph object metadata does not match the selected status."
+            elif not (manifestMatchesStatus targetStatus manifest) then
+                Error "Resolved target graph manifest does not exactly match the selected status."
             else
-                Ok(ResolvedTargetGraph(AcceptedBranchPhase.actionToken acceptedPhase, target, targetStatus, Array.copy objectMetadata, manifest))
+                Ok
+                    { SealedIdentity = AcceptedBranchPhase.sealedIdentity acceptedPhase
+                      Target = target
+                      TargetStatus = targetStatus
+                      ObjectMetadata = Array.copy objectMetadata
+                      Manifest = manifest }
 
         /// Returns whether this graph was prepared from the exact sealed admission supplied to the transaction.
-        let belongsTo acceptedPhase (ResolvedTargetGraph(actionToken, _, _, _, _)) = actionToken = AcceptedBranchPhase.actionToken acceptedPhase
+        let belongsTo (acceptedPhase: AcceptedBranchPhase) (resolvedTargetGraph: ResolvedTargetGraph) =
+            resolvedTargetGraph.SealedIdentity = AcceptedBranchPhase.sealedIdentity acceptedPhase
 
         /// Returns the selected target whose graph and prepared content must remain identical.
-        let target (ResolvedTargetGraph(_, target, _, _, _)) = target
+        let target (resolvedTargetGraph: ResolvedTargetGraph) = resolvedTargetGraph.Target
 
         /// Returns the complete target status accepted by the graph resolver.
-        let targetStatus (ResolvedTargetGraph(_, _, targetStatus, _, _)) = targetStatus
+        let targetStatus (resolvedTargetGraph: ResolvedTargetGraph) = resolvedTargetGraph.TargetStatus
 
         /// Returns a defensive copy of the exact object metadata required by local completion.
-        let objectMetadata (ResolvedTargetGraph(_, _, _, objectMetadata, _)) = Array.copy objectMetadata
+        let objectMetadata (resolvedTargetGraph: ResolvedTargetGraph) = Array.copy resolvedTargetGraph.ObjectMetadata
 
         /// Returns the manifest identity that immutable prepared content must match.
-        let manifest (ResolvedTargetGraph(_, _, _, _, manifest)) = manifest
+        let manifest (resolvedTargetGraph: ResolvedTargetGraph) = resolvedTargetGraph.Manifest
 
     /// Supplies construction and access functions for private update requests.
     module Request =
