@@ -323,7 +323,7 @@ the prefix-advanced expected state. The final capture-to-filesystem-call race re
 The merged Issue #960 tracer validates revision, complete status, completion, and marker facts and derives its plan
 before publishing prepared bytes into the object cache. Its per-action prefix checks prevent topology drift from winning,
 but object publication can outlive the global facts used for admission. Issue #922 therefore makes publication a strict
-barrier: publish and dual-hash verify every required object-cache copy, then reread the accepted SQLite revision,
+barrier: publish and BLAKE3-verify every required object-cache copy, then reread the accepted SQLite revision,
 complete-status fingerprint, completion state, and exact marker attempt under the same lease. Derive the only applicable
 plan from those fresh facts. A mismatch is `Rejected` before mutation and cleans only the marker attempt owned by the
 invocation. No pre-publication global snapshot or plan may cross this barrier.

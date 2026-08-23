@@ -806,7 +806,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(Path.Combine(root, "selected.txt"))
             |> should equal false)
 
-    /// Proves same-kind tracked byte drift is rejected by accepted dual-hash prefix identity before overwrite.
+    /// Proves same-kind tracked byte drift is rejected by accepted BLAKE3 prefix identity before overwrite.
     [<Test>]
     let ``tracked file byte drift rejects before overwrite and cleans marker`` () =
         withRepo (fun root configuration ->
