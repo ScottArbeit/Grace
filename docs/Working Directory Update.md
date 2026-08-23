@@ -314,15 +314,16 @@ ambiguous target shapes reject. Only tracked blockers named by the immutable pla
 
 Fresh marker admission classifies every selected requirement as `NeedsApply`; it does not accept unexpected target
 bytes in place of accepted tracked identity. Exact same-operation adoption reconciles the current real relevant topology
-into `NeedsApply` or `AlreadySatisfied`: a file is satisfied only by exact SHA-256 and BLAKE3 identity, while an
-already-removed tracked entry or already-created target directory may also be satisfied. A mixed partial update skips
+into `NeedsApply` or `AlreadySatisfied`: a file is satisfied only when its bytes match the prepared BLAKE3 value.
+SHA-256 remains retained metadata for selected snapshot comparisons rather than WDU byte equality. An already-removed
+tracked entry or already-created target directory may also be satisfied. A mixed partial update skips
 only satisfied requirements. Before the first action and every later action, the complete relevant topology must match
 the prefix-advanced expected state. The final capture-to-filesystem-call race remains deferred Product V1 hardening.
 
 The merged Issue #960 tracer validates revision, complete status, completion, and marker facts and derives its plan
 before publishing prepared bytes into the object cache. Its per-action prefix checks prevent topology drift from winning,
 but object publication can outlive the global facts used for admission. Issue #922 therefore makes publication a strict
-barrier: publish and dual-hash verify every required object-cache copy, then reread the accepted SQLite revision,
+barrier: publish and BLAKE3-verify every required object-cache copy, then reread the accepted SQLite revision,
 complete-status fingerprint, completion state, and exact marker attempt under the same lease. Derive the only applicable
 plan from those fresh facts. A mismatch is `Rejected` before mutation and cleans only the marker attempt owned by the
 invocation. No pre-publication global snapshot or plan may cross this barrier.

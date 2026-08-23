@@ -1,5 +1,6 @@
 namespace Grace.CLI.Command
 
+open Grace.Shared
 open Grace.Shared.Services
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
@@ -65,7 +66,7 @@ module internal WorkingDirectoryUpdateContracts =
         /// Opens uncompressed bytes for a normalized manifest file path.
         abstract member OpenReadAsync: RelativePath * CancellationToken -> Task<Stream>
 
-    /// Represents immutable dual-hash-verified bytes for a future update engine.
+    /// Represents immutable bytes verified by the prepared manifest's BLAKE3 value for a future update engine.
     type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref
 
     /// Holds validated update inputs without exposing a mutation plan, writer, or transaction callback.
@@ -455,7 +456,7 @@ module internal WorkingDirectoryUpdateContracts =
 
     /// Supplies actual-byte validation and lifetime functions for prepared content.
     module PreparedContent =
-        /// Validates exact reader coverage and actual dual-hash bytes before a future lease can be acquired.
+        /// Validates exact reader coverage and BLAKE3 bytes before a future lease can be acquired.
         let create manifest (reader: IPreparedContentReader) (cancellationToken: CancellationToken) =
             task {
                 if isNull (box reader) then
@@ -463,11 +464,11 @@ module internal WorkingDirectoryUpdateContracts =
                 else
                     try
                         let files = PreparedManifest.filePaths manifest |> Seq.toArray
-                        let declaredHashes = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
+                        let declaredBlake3Hashes = Dictionary<string, Blake3Hash>(StringComparer.Ordinal)
 
                         PreparedManifest.entries manifest
                         |> Seq.iter (function
-                            | File (path, sha256Hash, blake3Hash) -> declaredHashes[windowsPathKey path] <- (sha256Hash, blake3Hash)
+                            | File (path, _, blake3Hash) -> declaredBlake3Hashes[windowsPathKey path] <- blake3Hash
                             | Directory _ -> ())
 
                         let readerPaths = reader.FilePaths |> Seq.toArray
@@ -515,13 +516,10 @@ module internal WorkingDirectoryUpdateContracts =
                                         use copy = new MemoryStream()
                                         do! stream.CopyToAsync(copy, cancellationToken)
                                         let bytes = copy.ToArray()
-                                        use hashStream = new MemoryStream(bytes, writable = false)
-                                        let! sha256Hash, blake3Hash = computeHashesForFile hashStream path
-                                        let expectedSha256Hash, expectedBlake3Hash = declaredHashes[windowsPathKey path]
+                                        let blake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+                                        let expectedBlake3Hash = declaredBlake3Hashes[windowsPathKey path]
 
-                                        if sha256Hash <> expectedSha256Hash then
-                                            byteError <- Some $"Prepared-content bytes do not match declared SHA-256 for '{path}'."
-                                        elif blake3Hash <> expectedBlake3Hash then
+                                        if blake3Hash <> expectedBlake3Hash then
                                             byteError <- Some $"Prepared-content bytes do not match declared BLAKE3 for '{path}'."
                                         else
                                             bytesByPath[windowsPathKey path] <- bytes
@@ -576,7 +574,7 @@ module internal WorkingDirectoryUpdateContracts =
         /// Returns the exact selected target admitted by this request.
         let target (Request (target, _, _, _)) = target
 
-        /// Returns the dual-hash-verified prepared bytes owned by this request.
+        /// Returns the BLAKE3-verified prepared bytes owned by this request.
         let preparedContent (Request (_, _, preparedContent, _)) = preparedContent
 
         /// Returns the diagnostic correlation without making it part of replay identity.

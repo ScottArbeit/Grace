@@ -293,41 +293,47 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
             reader.Disposed |> should equal true)
 
-    /// Verifies a declared hash cannot substitute for byte-level dual-hash validation.
+    /// Verifies prepared bytes use BLAKE3 equality without revalidating retained SHA-256 metadata.
     [<Test>]
-    let ``prepared content rejects bytes that mismatch either declared hash`` () =
-        let declaredBytes = Encoding.UTF8.GetBytes("declared bytes")
-        let corruptBytes = Encoding.UTF8.GetBytes("corrupt bytes")
-        let sha256, blake3 = hashes declaredBytes
-        let corruptSha256, corruptBlake3 = hashes corruptBytes
+    let ``prepared content accepts BLAKE3-matching bytes when SHA-256 metadata differs`` () =
+        let bytes = Encoding.UTF8.GetBytes("prepared bytes")
+        let _, blake3 = hashes bytes
 
-        let shaMismatch =
+        let preparedManifest =
             manifest [ WorkingDirectoryUpdate.PreparedManifestEntry.File(
                            RelativePath "content.txt",
                            Sha256Hash "0000000000000000000000000000000000000000000000000000000000000000",
-                           corruptBlake3
+                           blake3
                        ) ]
 
-        let blakeMismatch =
+        let reader = new TrackingReader([ "content.txt" ], [ "content.txt", bytes ])
+
+        prepare preparedManifest reader
+        |> Result.isOk
+        |> should equal true
+
+        reader.Disposed |> should equal true
+
+    /// Verifies prepared bytes reject when their declared BLAKE3 does not describe the single reader pass.
+    [<Test>]
+    let ``prepared content rejects bytes that mismatch declared BLAKE3`` () =
+        let bytes = Encoding.UTF8.GetBytes("prepared bytes")
+        let sha256, _ = hashes bytes
+
+        let preparedManifest =
             manifest [ WorkingDirectoryUpdate.PreparedManifestEntry.File(
                            RelativePath "content.txt",
-                           corruptSha256,
+                           sha256,
                            Blake3Hash "0000000000000000000000000000000000000000000000000000000000000000"
                        ) ]
 
-        [
-            shaMismatch
-            blakeMismatch
-            manifest [ WorkingDirectoryUpdate.PreparedManifestEntry.File(RelativePath "content.txt", sha256, blake3) ]
-        ]
-        |> List.iter (fun preparedManifest ->
-            let reader = new TrackingReader([ "content.txt" ], [ "content.txt", corruptBytes ])
+        let reader = new TrackingReader([ "content.txt" ], [ "content.txt", bytes ])
 
-            prepare preparedManifest reader
-            |> Result.isError
-            |> should equal true
+        prepare preparedManifest reader
+        |> Result.isError
+        |> should equal true
 
-            reader.Disposed |> should equal true)
+        reader.Disposed |> should equal true
 
     /// Verifies diagnostic correlations cannot redefine or merge Watch operation identities.
     [<Test>]
