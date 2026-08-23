@@ -2057,6 +2057,78 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
 
+    /// Proves an exact marker cleanup failure leaves both the owned evidence and pending Reference completion available for repair.
+    [<Test>]
+    let ``Reference finalization retains pending state when exact marker cleanup fails`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("reference finalization cleanup failure")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+            let scope = writeExactReferenceMarker configuration root target operation
+            let markerPath = WorkingDirectoryUpdateCoordination.Scope.markerPath scope
+
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), selectedBytes)
+
+            use markerLock = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)) ->
+                    WorkingDirectoryUpdateContracts.Failure.reason failure
+                    |> should contain "could not clean its exact marker evidence"
+                | outcome -> Assert.Fail($"Expected cleanup-failure Reference finalization, got {outcome}.")
+
+            File.Exists(markerPath) |> should equal true
+
+            File.ReadAllBytes(Path.Combine(root, "selected.txt"))
+            |> should equal selectedBytes
+
+            Current().BranchId
+            |> should equal configuration.BranchId
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
+
+    /// Proves a configuration publication failure retains the pending Reference completion without changing verified files.
+    [<Test>]
+    let ``Reference finalization retains pending state when Branch publication fails`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("reference finalization publication failure")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+            let configurationFile = Path.Combine(configuration.ConfigurationDirectory, GraceConfigFileName)
+
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), selectedBytes)
+            File.SetAttributes(configurationFile, FileAttributes.ReadOnly)
+
+            try
+                Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> function
+                    | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)) ->
+                        WorkingDirectoryUpdateContracts.Failure.reason failure
+                        |> should contain "could not publish the selected Branch"
+                    | outcome -> Assert.Fail($"Expected publication-failure Reference finalization, got {outcome}.")
+            finally
+                Directory.GetFiles(configuration.ConfigurationDirectory, "graceconfig.json*")
+                |> Array.iter (fun path -> File.SetAttributes(path, FileAttributes.Normal))
+
+                resetConfiguration ()
+
+            File.ReadAllBytes(Path.Combine(root, "selected.txt"))
+            |> should equal selectedBytes
+
+            Current().BranchId
+            |> should equal configuration.BranchId
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
+
     /// Proves cancellation before the first retry write leaves a persisted Reference completion and its verified files intact.
     [<Test>]
     let ``Reference finalization cancellation before publication retains pending state`` () =
