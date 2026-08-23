@@ -6,18 +6,57 @@ authoritative.
 
 Every independent review must declare one mode:
 
+- **Shape review:** one human-oriented read-only HTML review of changed representations and relationships.
 - **R1 discovery review:** one broad supported-world review that produces a finite ledger.
 - **R2 closure review:** one targeted verification of accepted repairs, direct repair regressions, and final-head proof.
 
-Do not perform an R1-style whole-diff search during R2.
+Do not perform an R1-style whole-diff search during R2. Shape Review does not replace R1 and does not produce the Review
+Discovery Ledger.
 
 ## Review priority
 
-Favor supported-path correctness, contract alignment, authority and effect ordering, and proof truth over style nits. Do
-not comment on formatting that Fantomas, MarkdownLint, compiler warnings, or required validation already enforce.
+Favor supported-path correctness, contract alignment, authority and effect ordering, representation quality, and proof
+truth over style nits. Do not comment on formatting that Fantomas, MarkdownLint, compiler warnings, or required
+validation already enforce.
 
 Review is not product authority. A concern requiring a new product semantic, state machine, authority, public lifecycle,
 retry policy, or capability is an owner-decision result, not an ordinary finding.
+
+## Shape-first pass
+
+For R1, read the diff as a change to the set of representable worlds before tracing implementation detail. Perform this
+analysis independently even when a separate human Shape Review HTML artifact exists.
+
+Inspect material changes to:
+
+- records, discriminated unions, classes, structs, enums, interfaces, tuples, aliases, private wrappers, fields, cases,
+  optionality, defaults, sentinel values, and mutability;
+- arrays, lists, sets, maps, dictionaries, indexes, ordering, duplicate policy, cardinality, and relationships between
+  multiple structures;
+- identity, equality, canonicalization, ownership, containment, scope, authority, and lifecycle state;
+- public DTOs, events, Orleans/JSON serialization, OpenAPI/generated clients, persisted schemas, SQL nullability and
+  constraints, and filesystem identities; and
+- code-level relationships that introduce no named type, especially parallel arrays or lists, positional `zip`, multiple
+  mutable stores that must stay synchronized, or functions that return only half of a logical relationship.
+
+Ask whether the candidate:
+
+1. makes an invalid supported-domain state representable;
+2. stores two facts independently when one should be derived from the other;
+3. separates values that must vary together and reconstructs their relationship by position or convention;
+4. uses sentinel/default/null/Boolean combinations for states that deserve explicit cases;
+5. hides identity, ownership, or cardinality rules in caller convention;
+6. duplicates canonical truth across state and projection without an explicit rebuild or synchronization contract;
+7. weakens an invariant that was previously encoded by private construction or an opaque type;
+8. changes in-memory shape without matching wire or persistence propagation; or
+9. introduces type machinery that does not buy a real invariant and exceeds the Product V1 capability budget.
+
+Multiple coordinated structures are not automatically wrong. A dictionary plus a linked list, index plus cache, or
+state plus projection is reasonable when one bounded owner maintains them under one stable key and synchronization or
+transaction boundary and callers cannot mutate one side independently.
+
+Shape taste alone is not a review finding. Open an R1 finding only when the concern also has a supported producer,
+contract basis, material impact, and concrete closure proof.
 
 ## Product V1 realistic-producer gate
 
