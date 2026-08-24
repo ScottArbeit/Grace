@@ -10,11 +10,13 @@ open Microsoft.Data.Sqlite
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Generic
 open System.IO
 open System.Net
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 open Grace.Types.Common
 
@@ -162,6 +164,278 @@ module DoctorCliTests =
 
     /// Builds local state db path test data used to exercise CLI doctor behavior.
     let private localStateDbPath root = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+    /// Returns a private Working Directory Update contract value or fails at its construction boundary.
+    let private required =
+        function
+        | Ok value -> value
+        | Error error -> invalidOp error
+
+    /// Computes the dual content identity stored by one deterministic pending-Reference fixture.
+    let private contentHashes (bytes: byte array) =
+        let sha256 =
+            SHA256.HashData(bytes)
+            |> Convert.ToHexString
+            |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+        sha256, Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+    /// Builds one exact Reference repair fixture, optionally leaving its pending completion for a concurrent producer.
+    let private seedPendingReferenceRepair root bytes persistInitially =
+        writeGraceConfig root "http://127.0.0.1:5000"
+        |> ignore
+
+        Configuration.resetConfiguration ()
+        let configuration = Configuration.Current()
+        let previousBranchId = configuration.BranchId
+        let selectedBranchId = BranchId.NewGuid()
+        let rootDirectoryId = DirectoryVersionId.NewGuid()
+        let relativePath = RelativePath "selected.txt"
+        let sha256, blake3 = contentHashes bytes
+
+        let file =
+            LocalFileVersion.CreateWithHashes
+                relativePath
+                sha256
+                blake3
+                false
+                (int64 bytes.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let entries =
+            [|
+                Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+            |]
+
+        let rootDirectory =
+            LocalDirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                configuration.OwnerId
+                configuration.OrganizationId
+                configuration.RepositoryId
+                (RelativePath Constants.RootDirectoryPath)
+                (Services.computeSha256ForDirectoryEntries (RelativePath Constants.RootDirectoryPath) entries)
+                (Services.computeBlake3ForDirectory (RelativePath Constants.RootDirectoryPath) entries)
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| file |]))
+                file.Size
+                DateTime.UtcNow
+
+        let index = GraceIndex()
+        index[rootDirectoryId] <- rootDirectory
+
+        let targetStatus =
+            { GraceStatus.Default with
+                Index = index
+                RootDirectoryId = rootDirectoryId
+                RootDirectorySha256Hash = rootDirectory.Sha256Hash
+                RootDirectoryBlake3Hash = rootDirectory.Blake3Hash
+            }
+
+        let target =
+            WorkingDirectoryUpdateContracts.Target.create
+                configuration.RepositoryId
+                selectedBranchId
+                targetStatus.RootDirectoryId
+                targetStatus.RootDirectorySha256Hash
+                targetStatus.RootDirectoryBlake3Hash
+            |> required
+
+        let referenceId = ReferenceId.NewGuid()
+
+        let operation =
+            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection
+                previousBranchId
+                (WorkingDirectoryUpdateContracts.BranchSelection.Reference referenceId)
+                target
+            |> required
+
+        LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile targetStatus
+        |> fun replacement -> replacement.GetAwaiter().GetResult()
+
+        let persistPending () =
+            LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                configuration.GraceStatusFile
+                targetStatus
+                [| rootDirectory |]
+                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, referenceId))
+                target
+                operation
+            |> fun pending -> pending.GetAwaiter().GetResult()
+            |> ignore
+
+        if persistInitially then persistPending ()
+
+        let selectedPath = Path.Combine(root, string relativePath)
+        File.WriteAllBytes(selectedPath, bytes)
+        File.SetLastWriteTimeUtc(selectedPath, file.LastWriteTimeUtc)
+        configuration, previousBranchId, selectedBranchId, target, operation, file.LastWriteTimeUtc, persistPending
+
+    /// Verifies explicit Doctor repair completes the recorded Reference without entering server reconstruction.
+    [<Test>]
+    let ``doctor repair resumes pending Reference finalization without rewriting working bytes`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                let repositoryRoot = Path.Combine(root, "repository")
+
+                Directory.CreateDirectory(repositoryRoot)
+                |> ignore
+
+                Environment.CurrentDirectory <- repositoryRoot
+                let bytes = Encoding.UTF8.GetBytes("doctor pending Reference completion")
+                let configuration, _, selectedBranchId, target, operation, expectedLastWriteTimeUtc, _ = seedPendingReferenceRepair repositoryRoot bytes true
+
+                let selectedPath = Path.Combine(repositoryRoot, "selected.txt")
+
+                try
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--repair-local-state" |]
+
+                    exitCode |> should equal 0
+                    standardError |> should equal String.Empty
+
+                    standardOut
+                    |> should contain "Completed pending Reference finalization"
+
+                    Configuration.resetConfiguration ()
+
+                    Configuration.Current().BranchId
+                    |> should equal selectedBranchId
+
+                    File.ReadAllBytes(selectedPath)
+                    |> should equal bytes
+
+                    File.GetLastWriteTimeUtc(selectedPath)
+                    |> should equal expectedLastWriteTimeUtc
+
+                    LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+                    |> fun completion -> completion.GetAwaiter().GetResult()
+                    |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+                finally
+                    Configuration.resetConfiguration ()
+                    SqliteConnection.ClearAllPools()))
+
+    /// Verifies Doctor refuses changed working bytes before Reference completion effects and retains restartability.
+    [<Test>]
+    let ``doctor repair retains pending Reference finalization when working bytes changed`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                let repositoryRoot = Path.Combine(root, "repository")
+
+                Directory.CreateDirectory(repositoryRoot)
+                |> ignore
+
+                Environment.CurrentDirectory <- repositoryRoot
+                let expectedBytes = Encoding.UTF8.GetBytes("doctor expected Reference bytes")
+                let changedBytes = Encoding.UTF8.GetBytes("doctor changed Reference bytes")
+
+                let configuration, previousBranchId, _, target, operation, expectedLastWriteTimeUtc, _ =
+                    seedPendingReferenceRepair repositoryRoot expectedBytes true
+
+                let selectedPath = Path.Combine(repositoryRoot, "selected.txt")
+                File.WriteAllBytes(selectedPath, changedBytes)
+                File.SetLastWriteTimeUtc(selectedPath, expectedLastWriteTimeUtc)
+
+                File.GetLastWriteTimeUtc(selectedPath)
+                |> should equal expectedLastWriteTimeUtc
+
+                try
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--repair-local-state" |]
+
+                    exitCode |> should equal -1
+                    standardError |> should equal String.Empty
+
+                    standardOut
+                    |> should contain "working-tree bytes or paths do not match"
+
+                    Configuration.resetConfiguration ()
+
+                    Configuration.Current().BranchId
+                    |> should equal previousBranchId
+
+                    File.ReadAllBytes(selectedPath)
+                    |> should equal changedBytes
+
+                    LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+                    |> fun completion -> completion.GetAwaiter().GetResult()
+                    |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+                finally
+                    Configuration.resetConfiguration ()
+                    SqliteConnection.ClearAllPools()))
+
+    /// Verifies Doctor waits for the WDU owner and decides pending recovery only after acquiring the shared lease.
+    [<Test>]
+    let ``doctor repair waits for pending Reference produced by the current WDU lease owner`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                let repositoryRoot = Path.Combine(root, "repository")
+
+                Directory.CreateDirectory(repositoryRoot)
+                |> ignore
+
+                Environment.CurrentDirectory <- repositoryRoot
+                let bytes = Encoding.UTF8.GetBytes("doctor lease-held pending Reference")
+
+                let configuration, previousBranchId, selectedBranchId, target, operation, _, persistPending =
+                    seedPendingReferenceRepair repositoryRoot bytes false
+
+                let scope =
+                    WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                    |> required
+
+                let lease =
+                    WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                    |> fun pendingLease -> pendingLease.GetAwaiter().GetResult()
+
+                let mutable leaseDisposed = false
+
+                try
+                    let repair = WorkingDirectoryUpdate.repairPendingReferenceFinalization CancellationToken.None
+
+                    repair.IsCompleted |> should equal false
+
+                    Configuration.resetConfiguration ()
+
+                    Configuration.Current().BranchId
+                    |> should equal previousBranchId
+
+                    LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+                    |> fun completion -> completion.GetAwaiter().GetResult()
+                    |> should equal None
+
+                    persistPending ()
+
+                    repair.IsCompleted |> should equal false
+
+                    WorkingDirectoryUpdateCoordination.Lease.dispose lease
+                    leaseDisposed <- true
+
+                    match repair.GetAwaiter().GetResult() with
+                    | Some (WorkingDirectoryUpdateContracts.Outcome.Updated _) -> ()
+                    | outcome -> Assert.Fail($"Expected lease-held pending Reference completion, received {outcome}.")
+
+                    Configuration.resetConfiguration ()
+
+                    Configuration.Current().BranchId
+                    |> should equal selectedBranchId
+
+                    LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+                    |> fun completion -> completion.GetAwaiter().GetResult()
+                    |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+                finally
+                    if not leaseDisposed then WorkingDirectoryUpdateCoordination.Lease.dispose lease
+
+                    Configuration.resetConfiguration ()
+                    SqliteConnection.ClearAllPools()))
 
     /// Verifies repair rejects a persisted rewrite after cached configuration acquisition before server or SQLite work.
     [<Test; Category("OperationalConfigurationSnapshotRace")>]

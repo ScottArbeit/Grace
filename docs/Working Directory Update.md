@@ -17,7 +17,8 @@ completion atomically with verified local status. Merged Issue #922 extracts the
 stage through opaque `VerifiedLocalRoot`. Merged Issue #1005 makes BLAKE3 the sole WDU byte-equality check while retaining
 SHA-256 selectors and metadata. Merged Issue #923 / PR #1009 supplies the five-input composition and persists a typed
 Reference pending completion after verified local completion. Merged Issue #871 consumes that pending fact to publish the
-selected Branch identity and record terminal completion. Issue #872 now adds Save-enabled phase construction. Watch, Connect, and Doctor remain deferred. Migration, rollback, journals,
+selected Branch identity and record terminal completion. Merged Issue #872 adds Save-enabled phase construction. Issue #842
+routes explicit Doctor repair through the same completion algorithm. Watch and Connect remain deferred. Migration, rollback, journals,
 automatic recovery, and multi-platform parity remain out of scope.
 
 Working-directory mutation is currently distributed across caller implementations, so cleanup, finalization, and
@@ -57,9 +58,9 @@ The post-Issue #1005 checkpoint makes these planning selections without changing
 - Merged Issue #871 consumes only the persisted typed Reference pending fact. It does not expose `VerifiedLocalRoot`, local
   paths, status snapshots, database handles, mutation plans, finalizers, or callbacks.
 
-No product or architecture decision remains open for the delivered Issue #871 slice. Issue #872 is the current bounded
-Save-admission slice: it constructs the same phase from the exact reread post-Save SQLite graph before target preparation. Doctor
-recovery, Watch, and Connect remain deferred.
+No product or architecture decision remains open for the delivered Issue #871 and Issue #872 slices. Issue #842 adds
+explicit Doctor completion for an applicable pending Reference while retaining exact reconstruction as the no-pending
+fallback. Watch and Connect remain deferred.
 
 ## 3. Domain facts and interface
 
@@ -418,8 +419,8 @@ The following consumers carry generated projections rather than competing lifecy
 - #923 / PR #1009 provide the merged five-input composition and Reference pending-completion slice.
 - #900 and #901 are superseded by #960.
 - #871 completed Reference pending-completion consumption during the original invocation and after restart.
-- #872 is the current Save/no-Save admission slice and reaches the same initial rows.
-- #842 proves Branch-only retry rows without working-file mutation.
+- #872 completed Save/no-Save admission and reaches the same initial rows.
+- #842 completes Branch-only retry rows through explicit Doctor repair without working-file mutation.
 - #843–#845 later consume the transaction contract for Watch and Connect.
 - #846 audits public output, Doctor guidance, row references, and absence of retired paths.
 
@@ -442,12 +443,13 @@ Merged Issue #871 fit the Product V1 budget by consuming, but not extending, the
 - No new durable lifecycle: the existing SQLite `Pending` and `Terminal` states and lifecycle rows remain unchanged.
 - One source for each decision: SQLite selects the pending completion; disk Branch configuration classifies previous,
   selected, third, or unreadable identity; the lease serializes the completion effects.
-- Existing algorithm evidence: Issues #960, #922, merged Issue #923 / PR #1009, and merged Issue #871 / PR #1014 establish local application,
-  completion, pending facts, bounded publication, and terminal recording. Issue #872 adds only Save-enabled phase construction.
+- Existing algorithm evidence: Issues #960, #922, merged Issue #923 / PR #1009, merged Issue #871 / PR #1014, and merged
+  Issue #872 / PR #1015 establish local application, completion, pending facts, bounded publication, terminal recording,
+  and Save-enabled phase construction.
 
 Issue #871 retains pending state with `FinalizationIncomplete` and Doctor guidance for disallowed marker evidence,
 configuration read failure, third Branch identity, publication failure, or terminal-recording failure. Cancellation is
-invocation control only until cleanup, publication, or terminal recording starts. Issue #872 is responsible for
-Save-enabled construction; Watch, Connect, and Doctor implementation remain deferred. Stop if delivery needs a new
+invocation control only until cleanup, publication, or terminal recording starts. Issue #842 routes explicit Doctor
+repair through that completion algorithm after lease-held status and byte validation. Watch and Connect remain deferred. Stop if delivery needs a new
 persisted state, schema, configuration-write interface, retry file mutation, another lease, a caller finalizer, a second
 transaction interface, changed Save behavior, or a DirectoryVersion semantic change.

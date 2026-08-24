@@ -1479,8 +1479,8 @@ module internal WorkingDirectoryUpdate =
         with
         | ex -> Error ex.Message
 
-    /// Finalizes one Reference pending row under the WDU lease without writing any working-tree path.
-    let private finalizeReferenceCompletion receipt (cancellationToken: CancellationToken) beforeTerminalRecording =
+    /// Finalizes one Reference pending row while its caller retains the matching WDU lease.
+    let private finalizeReferenceCompletionUnderLease scope receipt (cancellationToken: CancellationToken) beforeTerminalRecording =
         task {
             let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
             let operation = WorkingDirectoryUpdateContracts.Receipt.operation receipt
@@ -1497,95 +1497,261 @@ module internal WorkingDirectoryUpdate =
                 match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
                 | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> return unchangedTerminal ()
                 | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
-                    match WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) (Current().RootDirectory)
-                        with
-                    | Error error -> return referenceIncomplete receipt error
-                    | Ok scope ->
-                        use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+                    match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization (Current().GraceStatusFile) with
+                    | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
+                                                                                                              persistedOperation,
+                                                                                                              previousBranchId,
+                                                                                                              WorkingDirectoryUpdateContracts.BranchSelection.Reference _)) when
+                        WorkingDirectoryUpdateContracts.Target.canonical persistedTarget = WorkingDirectoryUpdateContracts.Target.canonical target
+                        && WorkingDirectoryUpdateContracts.Operation.value persistedOperation = WorkingDirectoryUpdateContracts.Operation.value operation
+                        ->
+                        let! marker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
 
-                        match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization (Current().GraceStatusFile) with
-                        | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
-                                                                                                                  persistedOperation,
-                                                                                                                  previousBranchId,
-                                                                                                                  WorkingDirectoryUpdateContracts.BranchSelection.Reference _)) when
-                            WorkingDirectoryUpdateContracts.Target.canonical persistedTarget = WorkingDirectoryUpdateContracts.Target.canonical target
-                            && WorkingDirectoryUpdateContracts.Operation.value persistedOperation = WorkingDirectoryUpdateContracts.Operation.value operation
-                            ->
-                            let! marker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+                        let! markerResult =
+                            task {
+                                match marker with
+                                | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
+                                | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
+                                    return Error $"Reference finalization retained marker evidence: {marker}."
+                                | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                    throwIfCancellationStillControls ()
+                                    firstWriteStarted <- true
 
-                            let! markerResult =
-                                task {
-                                    match marker with
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
-                                        return Error $"Reference finalization retained marker evidence: {marker}."
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
-                                        throwIfCancellationStillControls ()
-                                        firstWriteStarted <- true
+                                    let! cleanup =
+                                        WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
+                                            scope
+                                            (WorkingDirectoryUpdateContracts.Operation.value operation)
+                                            (WorkingDirectoryUpdateContracts.Target.canonical target)
+                                            File.Delete
 
-                                        let! cleanup =
-                                            WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
-                                                scope
-                                                (WorkingDirectoryUpdateContracts.Operation.value operation)
-                                                (WorkingDirectoryUpdateContracts.Target.canonical target)
-                                                File.Delete
+                                    match cleanup with
+                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                    | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> return Ok()
+                                    | result -> return Error $"Reference finalization could not clean its exact marker evidence: {result}."
+                                | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing -> return Ok()
+                            }
 
-                                        match cleanup with
-                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
-                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> return Ok()
-                                        | result -> return Error $"Reference finalization could not clean its exact marker evidence: {result}."
-                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing -> return Ok()
-                                }
+                        match markerResult with
+                        | Error error -> return referenceIncomplete receipt error
+                        | Ok () ->
+                            let branchResult =
+                                match readDurableBranchConfiguration () with
+                                | Error error -> Error $"Reference finalization could not read Branch configuration: {error}."
+                                | Ok configuration when configuration.BranchId = WorkingDirectoryUpdateContracts.Target.branchId target -> Ok()
+                                | Ok configuration when configuration.BranchId = previousBranchId ->
+                                    throwIfCancellationStillControls ()
+                                    firstWriteStarted <- true
 
-                            match markerResult with
+                                    match publishSelectedBranch (WorkingDirectoryUpdateContracts.Target.branchId target) with
+                                    | Ok () -> Ok()
+                                    | Error error -> Error $"Reference finalization could not publish the selected Branch: {error}."
+                                | Ok _ -> Error "Reference finalization found a third Branch identity and left the pending completion unchanged."
+
+                            match branchResult with
                             | Error error -> return referenceIncomplete receipt error
                             | Ok () ->
-                                let branchResult =
-                                    match readDurableBranchConfiguration () with
-                                    | Error error -> Error $"Reference finalization could not read Branch configuration: {error}."
-                                    | Ok configuration when configuration.BranchId = WorkingDirectoryUpdateContracts.Target.branchId target -> Ok()
-                                    | Ok configuration when configuration.BranchId = previousBranchId ->
-                                        throwIfCancellationStillControls ()
-                                        firstWriteStarted <- true
+                                match readDurableBranchConfiguration () with
+                                | Ok configuration when configuration.BranchId = WorkingDirectoryUpdateContracts.Target.branchId target ->
+                                    throwIfCancellationStillControls ()
+                                    firstWriteStarted <- true
 
-                                        match publishSelectedBranch (WorkingDirectoryUpdateContracts.Target.branchId target) with
-                                        | Ok () -> Ok()
-                                        | Error error -> Error $"Reference finalization could not publish the selected Branch: {error}."
-                                    | Ok _ -> Error "Reference finalization found a third Branch identity and left the pending completion unchanged."
+                                    do!
+                                        LocalStateDb.finalizeWorkingDirectoryUpdateCompletionWithBeforeTerminalRecording
+                                            configuration.GraceStatusFile
+                                            target
+                                            operation
+                                            beforeTerminalRecording
 
-                                match branchResult with
-                                | Error error -> return referenceIncomplete receipt error
-                                | Ok () ->
-                                    match readDurableBranchConfiguration () with
-                                    | Ok configuration when configuration.BranchId = WorkingDirectoryUpdateContracts.Target.branchId target ->
-                                        throwIfCancellationStillControls ()
-                                        firstWriteStarted <- true
-
-                                        do!
-                                            LocalStateDb.finalizeWorkingDirectoryUpdateCompletionWithBeforeTerminalRecording
-                                                configuration.GraceStatusFile
-                                                target
-                                                operation
-                                                beforeTerminalRecording
-
-                                        return ReferenceTerminal receipt
-                                    | Ok _ ->
-                                        return
-                                            referenceIncomplete
-                                                receipt
-                                                "Reference finalization could not durably reread the selected Branch before terminal recording."
-                                    | Error error ->
-                                        return referenceIncomplete receipt $"Reference finalization could not durably reread Branch configuration: {error}."
-                        | None ->
-                            match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
-                            | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> return unchangedTerminal ()
-                            | _ -> return referenceIncomplete receipt "The persisted Reference completion disappeared before finalization."
-                        | Some _ -> return referenceIncomplete receipt "The persisted pending finalization does not match this Reference completion."
+                                    return ReferenceTerminal receipt
+                                | Ok _ ->
+                                    return
+                                        referenceIncomplete
+                                            receipt
+                                            "Reference finalization could not durably reread the selected Branch before terminal recording."
+                                | Error error ->
+                                    return referenceIncomplete receipt $"Reference finalization could not durably reread Branch configuration: {error}."
+                    | None ->
+                        match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
+                        | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> return unchangedTerminal ()
+                        | _ -> return referenceIncomplete receipt "The persisted Reference completion disappeared before finalization."
+                    | Some _ -> return referenceIncomplete receipt "The persisted pending finalization does not match this Reference completion."
                 | None -> return referenceIncomplete receipt "The persisted Reference completion is missing."
             with
             | :? OperationCanceledException -> return referenceIncomplete receipt "Reference finalization was canceled before its first applicable write."
             | ex -> return referenceIncomplete receipt $"Reference finalization failed: {ex.Message}"
+        }
+
+    /// Acquires the WDU lease before entering the shared Reference completion effect sequence.
+    let private finalizeReferenceCompletion receipt (cancellationToken: CancellationToken) beforeTerminalRecording =
+        task {
+            let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
+
+            try
+                match WorkingDirectoryUpdateCoordination.Scope.create (WorkingDirectoryUpdateContracts.Target.repositoryId target) (Current().RootDirectory)
+                    with
+                | Error error -> return referenceIncomplete receipt error
+                | Ok scope ->
+                    use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+                    return! finalizeReferenceCompletionUnderLease scope receipt cancellationToken beforeTerminalRecording
+            with
+            | :? OperationCanceledException -> return referenceIncomplete receipt "Reference finalization was canceled before its first applicable write."
+            | ex -> return referenceIncomplete receipt $"Reference finalization failed: {ex.Message}"
+        }
+
+    /// Verifies that SQLite still describes the complete selected root recorded by one pending Reference target.
+    let private statusMatchesTarget target (status: GraceStatus) =
+        status.RootDirectoryId = WorkingDirectoryUpdateContracts.Target.rootDirectoryVersionId target
+        && status.RootDirectorySha256Hash = WorkingDirectoryUpdateContracts.Target.sha256Hash target
+        && status.RootDirectoryBlake3Hash = WorkingDirectoryUpdateContracts.Target.blake3Hash target
+        && match status.Index.TryGetValue status.RootDirectoryId with
+           | true, root ->
+               root.RepositoryId = WorkingDirectoryUpdateContracts.Target.repositoryId target
+               && root.DirectoryVersionId = status.RootDirectoryId
+               && root.Sha256Hash = status.RootDirectorySha256Hash
+               && root.Blake3Hash = status.RootDirectoryBlake3Hash
+           | _ -> false
+
+    /// Hashes every tracked file and requires its current BLAKE3 bytes to match the selected status independently of timestamps.
+    let private trackedFilesMatchExactBytes localRoot (status: GraceStatus) =
+        let mutable matches = true
+
+        for directoryVersion in status.Index.Values do
+            for fileVersion in directoryVersion.Files do
+                let fullPath =
+                    Path.Combine(
+                        localRoot,
+                        (string fileVersion.RelativePath)
+                            .Replace('/', Path.DirectorySeparatorChar)
+                    )
+                    |> Path.GetFullPath
+
+                if not (Services.isPathWithinDirectoryWithComparison StringComparison.OrdinalIgnoreCase localRoot fullPath)
+                   || not (File.Exists(fullPath))
+                   || Directory.Exists(fullPath)
+                   || (File.ReadAllBytes(fullPath)
+                       |> ContentAddress.computeBlake3Hex
+                       |> Blake3Hash)
+                      <> fileVersion.Blake3Hash then
+                    matches <- false
+
+        matches
+
+    /// Completes Doctor's applicable pending Reference only after lease-held persisted-state and exact-byte validation.
+    let internal repairPendingReferenceFinalization (cancellationToken: CancellationToken) =
+        task {
+            let initialConfiguration =
+                match readDurableBranchConfiguration () with
+                | Ok configuration -> configuration
+                | Error error -> invalidOp $"Doctor could not read durable WDU configuration before acquiring its lease: {error}."
+
+            let localStatePath = initialConfiguration.GraceStatusFile
+
+            match WorkingDirectoryUpdateCoordination.Scope.create initialConfiguration.RepositoryId initialConfiguration.RootDirectory with
+            | Error error -> return invalidOp error
+            | Ok scope ->
+                use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+
+                let configuration =
+                    match readDurableBranchConfiguration () with
+                    | Ok configuration -> configuration
+                    | Error error -> invalidOp $"Doctor could not reread durable Branch configuration: {error}."
+
+                let durableScope =
+                    WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                    |> Result.defaultWith (fun error -> invalidOp $"Doctor found invalid durable WDU configuration: {error}.")
+
+                if
+                    configuration.RepositoryId
+                    <> initialConfiguration.RepositoryId
+                    || WorkingDirectoryUpdateCoordination.Scope.value durableScope
+                       <> WorkingDirectoryUpdateCoordination.Scope.value scope
+                    || not (String.Equals(configuration.GraceStatusFile, localStatePath, StringComparison.OrdinalIgnoreCase))
+                then
+                    invalidOp "Doctor found configuration drift while waiting for the WDU lease."
+
+                let inspection = LocalStateDb.inspectReadOnly localStatePath
+
+                let canContainPendingCompletion =
+                    inspection.OpenedReadOnly
+                    && inspection.SchemaVersion = Some LocalStateDb.SchemaVersion
+                    && Array.isEmpty inspection.MissingRequiredTables
+                    && Array.isEmpty inspection.MissingRequiredIndexes
+                    && inspection.IntegrityCheckRows.Length = 1
+                    && String.Equals(inspection.IntegrityCheckRows[0], "ok", StringComparison.OrdinalIgnoreCase)
+                    && Array.isEmpty inspection.ForeignKeyViolations
+
+                if not canContainPendingCompletion then
+                    return None
+                else
+                    match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization localStatePath with
+                    | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (target,
+                                                                                                              operation,
+                                                                                                              _,
+                                                                                                              WorkingDirectoryUpdateContracts.BranchSelection.Reference _)) ->
+                        let receipt =
+                            WorkingDirectoryUpdateContracts.Receipt.create target operation true
+                            |> Result.defaultWith invalidOp
+
+                        let incomplete reason =
+                            referenceIncomplete receipt reason
+                            |> projectReferenceFinalization
+                            |> Some
+
+                        if WorkingDirectoryUpdateContracts.Target.repositoryId target
+                           <> configuration.RepositoryId then
+                            return incomplete "Doctor found pending Reference facts for a different repository."
+                        else
+                            try
+                                match! LocalStateDb.readWorkingDirectoryUpdateCompletion localStatePath target operation with
+                                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                                    let! finalization = finalizeReferenceCompletionUnderLease scope receipt cancellationToken ignore
+                                    return Some(projectReferenceFinalization finalization)
+                                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                                    let! revisionBeforeValidation = LocalStateDb.readLocalStatusRevisionReadOnly localStatePath
+
+                                    match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization localStatePath with
+                                    | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
+                                                                                                                              persistedOperation,
+                                                                                                                              _,
+                                                                                                                              WorkingDirectoryUpdateContracts.BranchSelection.Reference _)) when
+                                        WorkingDirectoryUpdateContracts.Target.canonical persistedTarget = WorkingDirectoryUpdateContracts.Target.canonical
+                                                                                                               target
+                                        && WorkingDirectoryUpdateContracts.Operation.value persistedOperation = WorkingDirectoryUpdateContracts.Operation.value
+                                                                                                                    operation
+                                        ->
+                                        match!
+                                            LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                                localStatePath
+                                                configuration.OwnerId
+                                                configuration.OrganizationId
+                                                configuration.RepositoryId
+                                            with
+                                        | Error error -> return incomplete $"Doctor could not read pending Reference local status: {error}."
+                                        | Ok status when not (statusMatchesTarget target status) ->
+                                            return incomplete "Doctor found local status that does not match the pending Reference target."
+                                        | Ok status ->
+                                            let! differences = Services.scanForDifferences status
+                                            let exactBytesMatch = trackedFilesMatchExactBytes configuration.RootDirectory status
+                                            let! revisionAfterValidation = LocalStateDb.readLocalStatusRevisionReadOnly localStatePath
+
+                                            if revisionBeforeValidation
+                                               <> revisionAfterValidation then
+                                                return incomplete "Doctor found local status changed during pending Reference validation."
+                                            elif not (Services.wasLastScanForDifferencesSuccessful ())
+                                                 || differences.Count <> 0
+                                                 || not exactBytesMatch then
+                                                return incomplete "Doctor found working-tree bytes or paths do not match the pending Reference target."
+                                            else
+                                                let! finalization = finalizeReferenceCompletionUnderLease scope receipt cancellationToken ignore
+                                                return Some(projectReferenceFinalization finalization)
+                                    | _ -> return incomplete "Doctor found pending Reference facts that changed while holding the WDU lease."
+                                | None -> return incomplete "Doctor found the pending Reference completion missing while holding the WDU lease."
+                            with
+                            | :? OperationCanceledException -> return incomplete "Reference finalization was canceled before its first applicable write."
+                            | ex -> return incomplete $"Reference finalization failed: {ex.Message}"
+                    | Some _
+                    | None -> return None
         }
 
     /// Reconstructs and finalizes the sole persisted Reference row without preparing or writing working-tree content.
