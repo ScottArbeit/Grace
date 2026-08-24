@@ -1748,6 +1748,27 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(Path.Combine(root, "selected.txt"))
             |> should equal false)
 
+    /// Proves a selected Reference graph cannot retain a removed descendant from the Save predecessor graph.
+    [<Test>]
+    let ``Save Reference target graph excludes removed nested Save descendants`` () =
+        withRepo (fun _ configuration ->
+            let savedStatus, _, _ = nestedDirectoryStatus configuration "old-parent" "old-parent/child.txt" (Encoding.UTF8.GetBytes("saved child"))
+            let selectedStatus, selectedRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", Encoding.UTF8.GetBytes("selected root")))
+
+            let targetStatus =
+                Branch.selectedReferenceTargetStatus savedStatus [| selectedRoot |]
+                |> required
+
+            targetStatus.RootDirectoryId
+            |> should equal selectedStatus.RootDirectoryId
+
+            targetStatus.Index.Keys
+            |> Set.ofSeq
+            |> should equal (set [ selectedRoot.DirectoryVersionId ])
+
+            Grace.CLI.LocalStateDb.validateCompleteStatusTree targetStatus
+            |> should equal (Ok(): Result<unit, string>))
+
     /// Proves an initial Reference run finalizes only after real local application verifies its root.
     [<Test>]
     let ``Reference five-input transaction finalizes after verified local root`` () =

@@ -633,6 +633,29 @@ module Branch =
             | ex -> return Error(GraceError.Create $"Save admission failed before target preparation: {ex.Message}" correlationId)
         }
 
+    /// Builds a Reference target status only from the complete server-selected graph, without retaining Save predecessor descendants.
+    let internal selectedReferenceTargetStatus (savePredecessorStatus: GraceStatus) (selectedDirectories: IEnumerable<LocalDirectoryVersion>) =
+        let selectedIndex = GraceIndex()
+
+        for directory in selectedDirectories do
+            selectedIndex.AddOrUpdate(directory.DirectoryVersionId, directory, (fun _ _ -> directory))
+            |> ignore
+
+        match selectedIndex.Values
+              |> Seq.tryFind (fun directory -> directory.RelativePath = Constants.RootDirectoryPath)
+            with
+        | None -> Error "The server-selected DirectoryVersion graph does not contain a root directory."
+        | Some rootDirectory ->
+            Ok
+                {
+                    Index = selectedIndex
+                    RootDirectoryId = rootDirectory.DirectoryVersionId
+                    RootDirectorySha256Hash = rootDirectory.Sha256Hash
+                    RootDirectoryBlake3Hash = rootDirectory.Blake3Hash
+                    LastSuccessfulDirectoryVersionUpload = savePredecessorStatus.LastSuccessfulDirectoryVersionUpload
+                    LastSuccessfulFileUpload = savePredecessorStatus.LastSuccessfulFileUpload
+                }
+
     /// Projects one WDU outcome into the public outcome name, message, and process exit status shared by human and JSON output.
     let internal projectHashSwitchOutcome outcome =
         match outcome with
@@ -4463,7 +4486,14 @@ module Branch =
                                                         (getCorrelationId parseResult)
                                                 )
                                         else
-                                            let targetStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus directoryDtos
+                                            let selectedDirectories =
+                                                directoryDtos
+                                                |> Seq.map (fun directory -> directory.DirectoryVersion.ToLocalDirectoryVersion DateTime.UtcNow)
+                                                |> Seq.toArray
+
+                                            let targetStatus =
+                                                selectedReferenceTargetStatus newGraceStatus selectedDirectories
+                                                |> Result.defaultWith invalidOp
 
                                             let targetDirectories = targetStatus.Index.Values |> Seq.toArray
 

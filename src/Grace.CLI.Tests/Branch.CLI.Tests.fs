@@ -10,7 +10,9 @@ open Grace.Shared.Parameters.Branch
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Annotation
+open Grace.Types.Branch
 open Grace.Types.Common
+open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
 open NodaTime
 open NUnit.Framework
@@ -18,7 +20,13 @@ open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
+open System.IO.Compression
+open System.Net
+open System.Net.Sockets
+open System.Security.Cryptography
+open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups branch command coverage for the CLI test project.
@@ -245,14 +253,263 @@ module BranchCommandTests =
             configuration.BranchId <- branchId
             configuration.BranchName <- "branch-switch-current"
             configuration.RootDirectory <- tempDir
+            saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, Constants.GraceConfigFileName)) configuration
+            resetConfiguration ()
 
             action ()
         finally
             resetConfiguration ()
             Services.parseResult <- originalParseResult
             Environment.CurrentDirectory <- originalDir
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
 
             if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+
+    /// Computes stable content hashes for the binary files served by the Save switch loopback fixture.
+    let private switchFixtureHashes (bytes: byte array) =
+        Sha256Hash(
+            Convert
+                .ToHexString(SHA256.HashData(bytes))
+                .ToLowerInvariant()
+        ),
+        Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+    /// Creates one complete root-only local status used before the Save switch updates its tracked file.
+    let private switchFixtureStatus (configuration: GraceConfiguration) (directoryId: DirectoryVersionId) (relativePath: string) (bytes: byte array) =
+        let sha256, blake3 = switchFixtureHashes bytes
+
+        let file =
+            LocalFileVersion.CreateWithHashes (RelativePath relativePath) sha256 blake3 true (int64 bytes.Length) (getCurrentInstant ()) true DateTime.UtcNow
+
+        let entry = Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+
+        let root =
+            LocalDirectoryVersion.CreateWithHashes
+                directoryId
+                configuration.OwnerId
+                configuration.OrganizationId
+                configuration.RepositoryId
+                (RelativePath Constants.RootDirectoryPath)
+                (Services.computeSha256ForDirectoryEntries (RelativePath Constants.RootDirectoryPath) [| entry |])
+                (Services.computeBlake3ForDirectory (RelativePath Constants.RootDirectoryPath) [| entry |])
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| file |]))
+                file.Size
+                DateTime.UtcNow
+
+        let index = GraceIndex()
+        index[root.DirectoryVersionId] <- root
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = root.DirectoryVersionId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        },
+        root
+
+    /// Serves the Save switch control-plane and direct binary Azure Blob exchanges through one loopback listener.
+    let private withSaveSwitchLoopback
+        (currentBranch: BranchDto)
+        (selectedBranch: BranchDto)
+        (selectedReference: ReferenceDto)
+        (selectedDirectory: LocalDirectoryVersion)
+        (editedBytes: byte array)
+        (targetBytes: byte array)
+        (beforeTargetBlobRead: unit -> unit)
+        (action: string -> ResizeArray<string> -> ResizeArray<string> -> ResizeArray<byte array> -> unit)
+        =
+        use listener = new TcpListener(IPAddress.Loopback, 0)
+        use cancellation = new CancellationTokenSource()
+        listener.Start()
+        let port = (listener.LocalEndpoint :?> IPEndPoint).Port
+        let baseUri = $"http://127.0.0.1:{port}"
+        let requests = ResizeArray<string>()
+        let headers = ResizeArray<string>()
+        let bodies = ResizeArray<byte array>()
+        let mutable branchGetCount = 0
+
+        /// Decodes one complete HTTP chunked body so binary Blob uploads can be asserted as their original bytes.
+        let decodeChunkedBody (bytes: byte array) =
+            use decoded = new MemoryStream()
+            let mutable offset = 0
+            let mutable complete = false
+
+            while not complete do
+                let lineEnd =
+                    bytes
+                    |> Array.skip offset
+                    |> Array.pairwise
+                    |> Array.tryFindIndex (fun (first, second) -> first = byte '\r' && second = byte '\n')
+                    |> Option.map (fun index -> offset + index)
+                    |> Option.defaultWith (fun () -> invalidOp "Save switch loopback chunk header ended early.")
+
+                let size =
+                    Encoding.ASCII.GetString(bytes, offset, lineEnd - offset)
+                    |> fun value -> value.Split(';')[0]
+                    |> fun value -> Convert.ToInt32(value, 16)
+
+                offset <- lineEnd + 2
+
+                if size = 0 then
+                    complete <- true
+                else
+                    if bytes.Length < offset + size + 2 then
+                        invalidOp "Save switch loopback chunk payload ended early."
+
+                    decoded.Write(bytes, offset, size)
+                    offset <- offset + size + 2
+
+            decoded.ToArray()
+
+        /// Decompresses the direct Blob upload payload so the fixture verifies the original staged file bytes.
+        let decodeGzipBody (bytes: byte array) =
+            use compressed = new MemoryStream(bytes)
+            use gzip = new GZipStream(compressed, CompressionMode.Decompress)
+            use decoded = new MemoryStream()
+            gzip.CopyTo(decoded)
+            decoded.ToArray()
+
+        /// Reads one complete HTTP request, including Content-Length or chunked binary bodies.
+        let readRequest (stream: NetworkStream) =
+            use buffer = new MemoryStream()
+            let scratch = Array.zeroCreate<byte> 8192
+            let mutable headerEnd = -1
+            let mutable contentLength = 0
+            let mutable chunked = false
+
+            let completeBody () =
+                if headerEnd < 0 then
+                    false
+                elif chunked then
+                    let bytes = buffer.ToArray()
+
+                    try
+                        decodeChunkedBody bytes[headerEnd..] |> ignore
+                        true
+                    with
+                    | _ -> false
+                else
+                    buffer.Length >= int64 (headerEnd + contentLength)
+
+            while not (completeBody ()) do
+                let read = stream.Read(scratch, 0, scratch.Length)
+                if read = 0 then invalidOp "Save switch loopback request ended early."
+                buffer.Write(scratch, 0, read)
+                let bytes = buffer.ToArray()
+                let text = Encoding.ASCII.GetString(bytes)
+                let terminator = text.IndexOf("\r\n\r\n", StringComparison.Ordinal)
+
+                if terminator >= 0 then
+                    headerEnd <- terminator + 4
+
+                    contentLength <-
+                        text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+                        |> Array.tryPick (fun header ->
+                            if header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) then
+                                Some(Int32.Parse(header.Substring(15).Trim()))
+                            else
+                                None)
+                        |> Option.defaultValue 0
+
+                    chunked <- text.Contains("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase)
+
+            let bytes = buffer.ToArray()
+            let header = Encoding.ASCII.GetString(bytes, 0, headerEnd)
+            let line = header.Substring(0, header.IndexOf("\r\n", StringComparison.Ordinal))
+
+            let body =
+                if contentLength = 0 then
+                    if chunked then decodeChunkedBody bytes[headerEnd..] else Array.empty<byte>
+                else
+                    bytes[headerEnd .. (headerEnd + contentLength - 1)]
+
+            line, header, body
+
+        /// Writes one close-delimited loopback response with the Azure headers required by direct blob clients.
+        let writeResponse (stream: NetworkStream) status contentType (body: byte array) =
+            let headers =
+                $"HTTP/1.1 {status}\r\nContent-Type: {contentType}\r\nx-ms-request-id: fixture\r\nx-ms-version: 2023-11-03\r\nx-ms-request-server-encrypted: true\r\nETag: \"fixture\"\r\nLast-Modified: Tue, 01 Jan 2030 00:00:00 GMT\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n"
+
+            let headerBytes = Encoding.ASCII.GetBytes(headers)
+            stream.Write(headerBytes, 0, headerBytes.Length)
+            if body.Length > 0 then stream.Write(body, 0, body.Length)
+
+        /// Produces a typed Grace return envelope for one SDK route response.
+        let envelope value =
+            serialize (GraceReturnValue.Create value correlationId)
+            |> Encoding.UTF8.GetBytes
+
+        let server =
+            Task.Run (fun () ->
+                try
+                    while not cancellation.IsCancellationRequested do
+                        use client = listener.AcceptTcpClient()
+                        use stream = client.GetStream()
+                        let line, header, requestBody = readRequest stream
+
+                        let body =
+                            if line.Contains(" /fixture-container/save-object?sig=fake ") then
+                                decodeGzipBody requestBody
+                            else
+                                requestBody
+
+                        requests.Add(line)
+                        headers.Add(header)
+                        bodies.Add(body)
+
+                        let response =
+                            if line.Contains(" /fixture-container/save-object?sig=fake ") then
+                                201, "application/octet-stream", Array.empty<byte>
+                            elif line.Contains(" /fixture-container/target-object?sig=fake ") then
+                                beforeTargetBlobRead ()
+                                200, "application/octet-stream", targetBytes
+                            elif line.Contains("/branch/Get ") then
+                                branchGetCount <- branchGetCount + 1
+                                200, "application/json", envelope (if branchGetCount < 3 then currentBranch else selectedBranch)
+                            elif line.Contains("/directory/GetDirectoryVersionsRecursive ") then
+                                200, "application/json", envelope (Array.empty<DirectoryVersion>)
+                            elif line.Contains("/storage/getUploadMetadataForFiles ") then
+                                let sha256, blake3 = switchFixtureHashes editedBytes
+
+                                let uploadMetadata: Grace.Shared.Parameters.Storage.UploadMetadata =
+                                    {
+                                        RelativePath = RelativePath "tracked.bin"
+                                        BlobUriWithSasToken = Uri($"{baseUri}/fixture-container/save-object?sig=fake")
+                                        Sha256Hash = sha256
+                                        Blake3Hash = blake3
+                                        ContentReference = FileContentReference.WholeFileContent
+                                    }
+
+                                200, "application/json", envelope (List<Grace.Shared.Parameters.Storage.UploadMetadata>([| uploadMetadata |]))
+                            elif line.Contains("/directory/SaveDirectoryVersions ") then
+                                200, "application/json", envelope "saved"
+                            elif line.Contains("/branch/Save ") then
+                                200, "application/json", envelope "saved-reference"
+                            elif line.Contains("/branch/GetReference ") then
+                                200, "application/json", envelope selectedReference
+                            elif line.Contains("/branch/GetVersion ") then
+                                200, "application/json", envelope [| selectedDirectory.DirectoryVersionId |]
+                            elif line.Contains("/directory/GetByDirectoryIds ") then
+                                200,
+                                "application/json",
+                                envelope [| { DirectoryVersionDto.Default with DirectoryVersion = selectedDirectory.ToDirectoryVersion } |]
+                            elif line.Contains("/storage/getDownloadUri ") then
+                                200, "text/plain", Encoding.UTF8.GetBytes($"{baseUri}/fixture-container/target-object?sig=fake")
+                            else
+                                404, "text/plain", Encoding.UTF8.GetBytes(line)
+
+                        let status, contentType, payload = response
+                        writeResponse stream status contentType payload
+                with
+                | :? SocketException -> ())
+
+        try
+            action baseUri requests headers bodies
+        finally
+            cancellation.Cancel()
+            listener.Stop()
+            server.Wait(TimeSpan.FromSeconds(5.0)) |> ignore
 
     /// Runs a Reference-only switch through the built action and checks which route receives control.
     let private runReferenceOnlySwitchRoute route expectedHandler sentinelExitCode =
@@ -321,6 +578,325 @@ module BranchCommandTests =
     /// Verifies a Save-enabled current Branch resumes finalization before using the WDU Save admission route.
     [<Test>]
     let ``Reference-only switch resumes before routing to WDU when Save is enabled`` () = runReferenceOnlySwitchRoute Branch.WduSave "wdu-save" 8712
+
+    /// Proves the public Save-enabled Reference command persists its edit, prepares the selected graph, and completes through WDU.
+    [<Test>]
+    let ``Save Reference switch command persists rereads and applies selected target`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let configuration = Current()
+            let originalServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+            let initialBytes = [| 1uy; 2uy; 3uy |]
+            let editedBytes = [| 4uy; 5uy; 6uy |]
+            let targetBytes = [| 7uy; 8uy; 9uy |]
+            let initialStatus, _ = switchFixtureStatus configuration (DirectoryVersionId.NewGuid()) "tracked.bin" initialBytes
+            let selectedStatus, selectedRoot = switchFixtureStatus configuration (DirectoryVersionId.NewGuid()) "selected.bin" targetBytes
+
+            let selectedBranch =
+                { BranchDto.Default with BranchId = BranchId.NewGuid(); BranchName = BranchName "selected"; RepositoryId = configuration.RepositoryId }
+
+            let selectedReference =
+                { ReferenceDto.Default with ReferenceId = targetReferenceId; BranchId = selectedBranch.BranchId; DirectoryId = selectedRoot.DirectoryVersionId }
+
+            try
+                File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "tracked.bin"), editedBytes)
+
+                LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile initialStatus
+                |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+                let watchStatus =
+                    {
+                        UpdatedAt = getCurrentInstant ()
+                        IsStartupClaim = false
+                        RepositoryId = configuration.RepositoryId
+                        RepositoryName = RepositoryName configuration.RepositoryName
+                        BranchId = configuration.BranchId
+                        BranchName = BranchName configuration.BranchName
+                        RootDirectory = configuration.RootDirectory
+                        HasPendingWatchWork = false
+                        IsWorkingTreeClean = true
+                        RootDirectoryId = initialStatus.RootDirectoryId
+                        RootDirectorySha256Hash = initialStatus.RootDirectorySha256Hash
+                        RootDirectoryBlake3Hash = initialStatus.RootDirectoryBlake3Hash
+                        LastFileUploadInstant = Instant.MinValue
+                        LastDirectoryVersionInstant = Instant.MinValue
+                        DirectoryIds = HashSet<DirectoryVersionId>(initialStatus.Index.Keys)
+                    }
+
+                let watchStatusFile = Services.IpcFileName()
+
+                Directory.CreateDirectory(Path.GetDirectoryName(watchStatusFile))
+                |> ignore
+
+                File.WriteAllText(watchStatusFile, serialize watchStatus)
+                configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+
+                let editedSha256, editedBlake3 = switchFixtureHashes editedBytes
+
+                let editedFile =
+                    LocalFileVersion.CreateWithHashes
+                        (RelativePath "tracked.bin")
+                        editedSha256
+                        editedBlake3
+                        true
+                        (int64 editedBytes.Length)
+                        (getCurrentInstant ())
+                        true
+                        DateTime.UtcNow
+
+                let editedCachePath = Services.getLocalObjectCachePathForFileVersion editedFile.ToFileVersion
+
+                Directory.CreateDirectory(Path.GetDirectoryName(editedCachePath))
+                |> ignore
+
+                File.WriteAllBytes(editedCachePath, editedBytes)
+                File.Exists(editedCachePath) |> should equal true
+
+                withSaveSwitchLoopback
+                    { BranchDto.Default with
+                        BranchId = configuration.BranchId
+                        BranchName = BranchName configuration.BranchName
+                        RepositoryId = configuration.RepositoryId
+                        SaveEnabled = true
+                    }
+                    selectedBranch
+                    selectedReference
+                    selectedRoot
+                    editedBytes
+                    targetBytes
+                    (fun () -> ())
+                    (fun serverUri requests headers bodies ->
+                        configuration.ServerUri <- serverUri
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, serverUri)
+
+                        let action = new Branch.Switch()
+
+                        let exitCode, output =
+                            captureOutput (fun () ->
+                                action
+                                    .InvokeAsync(
+                                        parse [| "branch"
+                                                 "switch"
+                                                 "--reference-id"
+                                                 targetReferenceId.ToString() |],
+                                        CancellationToken.None
+                                    )
+                                    .GetAwaiter()
+                                    .GetResult())
+
+                        if exitCode <> 0 then
+                            Assert.Fail($"{output}{Environment.NewLine}{String.Join(Environment.NewLine, requests)}")
+
+                        output |> should contain "Uploading 1 file(s)"
+
+                        File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "selected.bin"))
+                        |> should equal targetBytes
+
+                        File.Exists(Path.Combine(configuration.RootDirectory, "tracked.bin"))
+                        |> should equal false
+
+                        Current().BranchId
+                        |> should equal selectedBranch.BranchId
+
+                        let committedStatus =
+                            LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                            |> fun task -> task.GetAwaiter().GetResult()
+
+                        committedStatus.RootDirectoryId
+                        |> should equal selectedRoot.DirectoryVersionId
+
+                        committedStatus.Index.Keys
+                        |> Set.ofSeq
+                        |> should equal (set [ selectedRoot.DirectoryVersionId ])
+
+                        LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+                        |> fun task -> task.GetAwaiter().GetResult()
+                        |> should be (greaterThan 0L)
+
+                        headers[0]
+                        |> should contain "X-Correlation-Id: branch-annotate-tests"
+
+                        headers[0]
+                        |> should contain "X-Api-Version: 2023-10-01"
+
+                        headers[3]
+                        |> should contain $"x-ms-meta-Sha256Hash: {editedSha256}"
+
+                        Encoding.UTF8.GetString(bodies[5])
+                        |> should contain $"{editedSha256}"
+
+                        requests
+                        |> Seq.map string
+                        |> should
+                            equal
+                            [
+                                "POST /branch/Get HTTP/1.1"
+                                "POST /branch/Get HTTP/1.1"
+                                "POST /storage/getUploadMetadataForFiles HTTP/1.1"
+                                "PUT /fixture-container/save-object?sig=fake HTTP/1.1"
+                                "POST /directory/GetDirectoryVersionsRecursive HTTP/1.1"
+                                "POST /directory/SaveDirectoryVersions HTTP/1.1"
+                                "POST /branch/Save HTTP/1.1"
+                                "POST /branch/GetReference HTTP/1.1"
+                                "POST /branch/Get HTTP/1.1"
+                                "POST /branch/GetVersion HTTP/1.1"
+                                "POST /directory/GetByDirectoryIds HTTP/1.1"
+                                "POST /storage/getDownloadUri HTTP/1.1"
+                                "GET /fixture-container/target-object?sig=fake HTTP/1.1"
+                            ]
+
+                        bodies
+                        |> Seq.exists (fun body -> body = editedBytes)
+                        |> should equal true)
+            finally
+                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri))
+
+    /// Proves a post-Save local-status drift aborts the public Reference command before it mutates the selected target.
+    [<Test>]
+    let ``Save Reference switch command rejects drift before target mutation`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let configuration = Current()
+            let originalServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+            let initialBytes = [| 1uy; 2uy; 3uy |]
+            let editedBytes = [| 4uy; 5uy; 6uy |]
+            let targetBytes = [| 7uy; 8uy; 9uy |]
+            let initialStatus, _ = switchFixtureStatus configuration (DirectoryVersionId.NewGuid()) "tracked.bin" initialBytes
+            let driftStatus, _ = switchFixtureStatus configuration (DirectoryVersionId.NewGuid()) "drift.bin" [| 10uy; 11uy; 12uy |]
+            let _, selectedRoot = switchFixtureStatus configuration (DirectoryVersionId.NewGuid()) "selected.bin" targetBytes
+
+            let selectedBranch =
+                { BranchDto.Default with BranchId = BranchId.NewGuid(); BranchName = BranchName "selected"; RepositoryId = configuration.RepositoryId }
+
+            let selectedReference =
+                { ReferenceDto.Default with ReferenceId = targetReferenceId; BranchId = selectedBranch.BranchId; DirectoryId = selectedRoot.DirectoryVersionId }
+
+            try
+                File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "tracked.bin"), editedBytes)
+
+                LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile initialStatus
+                |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+                let watchStatus =
+                    {
+                        UpdatedAt = getCurrentInstant ()
+                        IsStartupClaim = false
+                        RepositoryId = configuration.RepositoryId
+                        RepositoryName = RepositoryName configuration.RepositoryName
+                        BranchId = configuration.BranchId
+                        BranchName = BranchName configuration.BranchName
+                        RootDirectory = configuration.RootDirectory
+                        HasPendingWatchWork = false
+                        IsWorkingTreeClean = true
+                        RootDirectoryId = initialStatus.RootDirectoryId
+                        RootDirectorySha256Hash = initialStatus.RootDirectorySha256Hash
+                        RootDirectoryBlake3Hash = initialStatus.RootDirectoryBlake3Hash
+                        LastFileUploadInstant = Instant.MinValue
+                        LastDirectoryVersionInstant = Instant.MinValue
+                        DirectoryIds = HashSet<DirectoryVersionId>(initialStatus.Index.Keys)
+                    }
+
+                let watchStatusFile = Services.IpcFileName()
+
+                Directory.CreateDirectory(Path.GetDirectoryName(watchStatusFile))
+                |> ignore
+
+                File.WriteAllText(watchStatusFile, serialize watchStatus)
+                configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+
+                let editedSha256, editedBlake3 = switchFixtureHashes editedBytes
+
+                let editedFile =
+                    LocalFileVersion.CreateWithHashes
+                        (RelativePath "tracked.bin")
+                        editedSha256
+                        editedBlake3
+                        true
+                        (int64 editedBytes.Length)
+                        (getCurrentInstant ())
+                        true
+                        DateTime.UtcNow
+
+                let editedCachePath = Services.getLocalObjectCachePathForFileVersion editedFile.ToFileVersion
+
+                Directory.CreateDirectory(Path.GetDirectoryName(editedCachePath))
+                |> ignore
+
+                File.WriteAllBytes(editedCachePath, editedBytes)
+
+                withSaveSwitchLoopback
+                    { BranchDto.Default with
+                        BranchId = configuration.BranchId
+                        BranchName = BranchName configuration.BranchName
+                        RepositoryId = configuration.RepositoryId
+                        SaveEnabled = true
+                    }
+                    selectedBranch
+                    selectedReference
+                    selectedRoot
+                    editedBytes
+                    targetBytes
+                    (fun () ->
+                        LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile driftStatus
+                        |> fun task -> task.GetAwaiter().GetResult() |> ignore)
+                    (fun serverUri requests _ bodies ->
+                        configuration.ServerUri <- serverUri
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, serverUri)
+
+                        let exitCode, output =
+                            captureOutput (fun () ->
+                                (new Branch.Switch())
+                                    .InvokeAsync(
+                                        parse [| "branch"
+                                                 "switch"
+                                                 "--reference-id"
+                                                 targetReferenceId.ToString() |],
+                                        CancellationToken.None
+                                    )
+                                    .GetAwaiter()
+                                    .GetResult())
+
+                        exitCode |> should not' (equal 0)
+
+                        output
+                        |> should contain "Local status changed while the selected Reference was being prepared."
+
+                        File.Exists(Path.Combine(configuration.RootDirectory, "selected.bin"))
+                        |> should equal false
+
+                        File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "tracked.bin"))
+                        |> should equal editedBytes
+
+                        Current().BranchId
+                        |> should equal configuration.BranchId
+
+                        LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile
+                        |> fun task -> task.GetAwaiter().GetResult()
+                        |> should equal None
+
+                        requests
+                        |> Seq.map string
+                        |> should
+                            equal
+                            [
+                                "POST /branch/Get HTTP/1.1"
+                                "POST /branch/Get HTTP/1.1"
+                                "POST /storage/getUploadMetadataForFiles HTTP/1.1"
+                                "PUT /fixture-container/save-object?sig=fake HTTP/1.1"
+                                "POST /directory/GetDirectoryVersionsRecursive HTTP/1.1"
+                                "POST /directory/SaveDirectoryVersions HTTP/1.1"
+                                "POST /branch/Save HTTP/1.1"
+                                "POST /branch/GetReference HTTP/1.1"
+                                "POST /branch/Get HTTP/1.1"
+                                "POST /branch/GetVersion HTTP/1.1"
+                                "POST /directory/GetByDirectoryIds HTTP/1.1"
+                                "POST /storage/getDownloadUri HTTP/1.1"
+                                "GET /fixture-container/target-object?sig=fake HTTP/1.1"
+                            ]
+
+                        bodies
+                        |> Seq.exists (fun body -> body = editedBytes)
+                        |> should equal true)
+            finally
+                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri))
 
     /// Builds a trusted Watch IPC inspection snapshot for branch switch preflight tests.
     let private branchSwitchWatchStatus () : GraceWatchStatus =
