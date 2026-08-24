@@ -41,9 +41,11 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   opaque cursor stored for the current repository and branch. Changed-root and same-root events both pass through
   Working Directory Update. Watch advances that cursor only after durable local completion becomes terminal, then
   publishes clean IPC from the completed root.
-- Watch starts only when the local SQLite database contains a complete status tree and a matching ordered remote-event
-  boundary for the configured repository and branch. Missing, schema-only, corrupt, incompatible, or mismatched state
-  fails before callback admission, working-tree scan, upload, Save, cursor mutation, or materialization.
+- Watch starts with a complete status tree and a matching ordered remote-event boundary for the configured repository and
+  branch. It also recovers one exact restart state before runtime admission: target status plus predecessor boundary when
+  an exact retained pending or terminal Watch Working Directory Update completion explains the mismatch. Missing,
+  schema-only, corrupt, incompatible, or otherwise mismatched state fails before callbacks, working-tree scans, or
+  ordinary cursor work; run `grace doctor --repair-local-state`.
 - Watch never reconstructs missing local state, invents descendant identities, or establishes an unmatched server-tail
   baseline. If a materialized working tree still exactly matches a root in configured branch history, stop Watch and
   run `grace doctor --repair-local-state`. The explicit repair preserves local bytes, fetches the server's immutable
