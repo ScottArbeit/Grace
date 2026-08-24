@@ -1429,29 +1429,15 @@ module Doctor =
         task {
             cancellationToken.ThrowIfCancellationRequested()
             let current = Current()
-            let inspection = LocalStateDb.inspectReadOnly current.GraceStatusFile
+            let operationalConfiguration = Grace.CLI.Services.captureOperationalConfigurationSnapshot "Doctor" current
+            let! watchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
 
-            let canContainPendingCompletion =
-                inspection.OpenedReadOnly
-                && inspection.SchemaVersion = Some LocalStateDb.SchemaVersion
-                && Array.isEmpty inspection.MissingRequiredTables
-                && Array.isEmpty inspection.MissingRequiredIndexes
-                && inspection.IntegrityCheckRows.Length = 1
-                && String.Equals(inspection.IntegrityCheckRows[0], "ok", StringComparison.OrdinalIgnoreCase)
-                && Array.isEmpty inspection.ForeignKeyViolations
+            if watchInspection.IsFresh
+               && watchInspection.HasCurrentRepositoryIdentity then
+                invalidOp "Grace Doctor refused local-state repair because Grace Watch is active for this repository and branch."
 
-            if not canContainPendingCompletion then
-                return None
-            else
-                let operationalConfiguration = Grace.CLI.Services.captureOperationalConfigurationSnapshot "Doctor" current
-                let! watchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
-
-                if watchInspection.IsFresh
-                   && watchInspection.HasCurrentRepositoryIdentity then
-                    invalidOp "Grace Doctor refused local-state repair because Grace Watch is active for this repository and branch."
-
-                Grace.CLI.Services.requireOperationalConfigurationSnapshotCurrent "Doctor" current operationalConfiguration
-                return! WorkingDirectoryUpdate.repairPendingReferenceFinalization cancellationToken
+            Grace.CLI.Services.requireOperationalConfigurationSnapshotCurrent "Doctor" current operationalConfiguration
+            return! WorkingDirectoryUpdate.repairPendingReferenceFinalization cancellationToken
         }
 
     /// Converts the immutable server directory closure into the exact local status identities used by later saves.
