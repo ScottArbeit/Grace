@@ -31,14 +31,14 @@ module BranchCommandTests =
     let private targetReferenceId = Guid.NewGuid()
     let private correlationId = "branch-annotate-tests"
 
-    /// Proves the built Reference-only routing decision preserves Save-enabled Branch switches.
+    /// Proves both supported Reference-only admissions enter the shared WDU transaction.
     [<Test>]
-    let ``reference-only route selects WDU only when the current Branch disables Save`` () =
+    let ``reference-only route selects WDU admission for both Save modes`` () =
         Branch.referenceOnlySwitchRoute false
         |> should equal Branch.WduNoSave
 
         Branch.referenceOnlySwitchRoute true
-        |> should equal Branch.LegacySave
+        |> should equal Branch.WduSave
 
     /// Proves initial and resumed Reference output share one stable JSON field set.
     [<Test>]
@@ -275,6 +275,10 @@ module BranchCommandTests =
                         fun _ _ ->
                             calls.Add("wdu")
                             Task.FromResult sentinelExitCode
+                    RunWduSave =
+                        fun _ _ ->
+                            calls.Add("wdu-save")
+                            Task.FromResult sentinelExitCode
                     RunLegacy =
                         fun _ _ ->
                             calls.Add("legacy")
@@ -314,9 +318,9 @@ module BranchCommandTests =
     [<Test>]
     let ``Reference-only switch resumes before routing to WDU when Save is disabled`` () = runReferenceOnlySwitchRoute Branch.WduNoSave "wdu" 8711
 
-    /// Verifies a Save-enabled current Branch resumes finalization before using the existing legacy route.
+    /// Verifies a Save-enabled current Branch resumes finalization before using the WDU Save admission route.
     [<Test>]
-    let ``Reference-only switch resumes before routing to legacy when Save is enabled`` () = runReferenceOnlySwitchRoute Branch.LegacySave "legacy" 8712
+    let ``Reference-only switch resumes before routing to WDU when Save is enabled`` () = runReferenceOnlySwitchRoute Branch.WduSave "wdu-save" 8712
 
     /// Builds a trusted Watch IPC inspection snapshot for branch switch preflight tests.
     let private branchSwitchWatchStatus () : GraceWatchStatus =
