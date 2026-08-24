@@ -2168,7 +2168,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             let originalConfiguration = File.ReadAllText(configurationFile)
 
             File.WriteAllBytes(selectedPath, selectedBytes)
-            Current() |> ignore
+            resetConfiguration ()
             File.WriteAllText(configurationFile, "not valid configuration json")
 
             try
