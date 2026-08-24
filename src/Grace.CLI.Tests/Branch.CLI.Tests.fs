@@ -84,6 +84,48 @@ module BranchCommandTests =
             .GetGuid()
         |> should equal directoryVersionId
 
+    /// Proves every public switch outcome preserves its exit classification and classified message.
+    [<Test>]
+    let ``hash switch outcome projects all public cases`` () =
+        let target =
+            WorkingDirectoryUpdateContracts.Target.create
+                repositoryId
+                branchId
+                (Guid.NewGuid())
+                (Sha256Hash(String.replicate 64 "a"))
+                (Blake3Hash(String.replicate 64 "b"))
+            |> Result.defaultWith failwith
+
+        let operation =
+            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection branchId WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion target
+            |> Result.defaultWith failwith
+
+        let updated =
+            WorkingDirectoryUpdateContracts.Receipt.create target operation true
+            |> Result.defaultWith failwith
+
+        let unchanged =
+            WorkingDirectoryUpdateContracts.Receipt.create target operation false
+            |> Result.defaultWith failwith
+
+        let failure =
+            WorkingDirectoryUpdateContracts.Failure.create "classified failure"
+            |> Result.defaultWith failwith
+
+        [
+            WorkingDirectoryUpdateContracts.Outcome.Updated updated, "Updated", 0
+            WorkingDirectoryUpdateContracts.Outcome.Unchanged unchanged, "Unchanged", 0
+            WorkingDirectoryUpdateContracts.Outcome.Rejected failure, "Rejected", -1
+            WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure, "UpdateIncomplete", -1
+            WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete(updated, failure), "FinalizationIncomplete", -1
+        ]
+        |> List.iter (fun (outcome, name, exitCode) ->
+            let actualName, message, actualExitCode = Branch.projectHashSwitchOutcome outcome
+            actualName |> should equal name
+            actualExitCode |> should equal exitCode
+
+            if exitCode <> 0 then message |> should equal "classified failure")
+
     /// Pins the built switch ordering and handlers without requiring an unrelated server harness.
     [<Test>]
     let ``switch source resumes pending Reference completion before selecting the Save route`` () =
