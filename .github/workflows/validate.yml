@@ -58,7 +58,7 @@ jobs:
             "mcr.microsoft.com/azure-storage/azurite:latest"
             "mcr.microsoft.com/mssql/server:2022-latest"
             "mcr.microsoft.com/azure-messaging/servicebus-emulator:latest"
-            "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest"
+            "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-latest"
           )
 
           pids=()
