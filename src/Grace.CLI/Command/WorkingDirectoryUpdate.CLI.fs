@@ -1591,9 +1591,13 @@ module internal WorkingDirectoryUpdate =
     /// Reconstructs and finalizes the sole persisted Reference row without preparing or writing working-tree content.
     let internal resumePendingReferenceFinalization (cancellationToken: CancellationToken) =
         task {
-            let configuration = Current()
+            let localStatePath =
+                try
+                    Current().GraceStatusFile
+                with
+                | _ -> Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
-            match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile with
+            match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization localStatePath with
             | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (target,
                                                                                                       operation,
                                                                                                       _,

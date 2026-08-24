@@ -2177,7 +2177,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 |> function
                     | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)) ->
                         WorkingDirectoryUpdateContracts.Failure.reason failure
-                        |> should contain "could not read Branch configuration"
+                        |> should contain "Reference finalization failed"
                     | outcome -> Assert.Fail($"Expected unreadable-configuration finalization result, got {outcome}.")
             finally
                 File.WriteAllText(configurationFile, originalConfiguration)
