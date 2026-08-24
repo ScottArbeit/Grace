@@ -3,7 +3,7 @@
 **Status:** Implemented for Branch through merged Issue #872 / PR #1015 and for Watch replay through Issue #843
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-23, `origin/main` `22c3ad89`, epic head `72223994`
+**Evidence current through:** 2026-08-24, `origin/main` `22c3ad89`, epic head `ad18ae65`
 
 ## 1. Outcome and scope
 
