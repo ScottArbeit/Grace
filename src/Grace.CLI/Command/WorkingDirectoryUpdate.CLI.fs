@@ -2325,6 +2325,81 @@ module internal WorkingDirectoryUpdate =
                 | None -> return None
             }
 
+        /// Reads the pending or latest terminal Watch completion whose exact target is the committed local status.
+        let tryReadCompletionForStatus (targetStatus: GraceStatus) =
+            task {
+                let current = Current()
+
+                match
+                    WorkingDirectoryUpdateContracts.Target.create
+                        current.RepositoryId
+                        current.BranchId
+                        targetStatus.RootDirectoryId
+                        targetStatus.RootDirectorySha256Hash
+                        targetStatus.RootDirectoryBlake3Hash
+                    with
+                | Error _ -> return None
+                | Ok target ->
+                    match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization current.GraceStatusFile with
+                    | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingWatchFinalization (pendingTarget, operation, eventCursor)) when
+                        WorkingDirectoryUpdateContracts.Target.canonical pendingTarget = WorkingDirectoryUpdateContracts.Target.canonical target
+                        ->
+                        match! LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation with
+                        | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                            let receipt =
+                                WorkingDirectoryUpdateContracts.Receipt.create target operation true
+                                |> Result.defaultWith invalidOp
+
+                            return Some(eventCursor, receipt, LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+                        | _ -> return None
+                    | Some _ -> return None
+                    | None ->
+                        let connectionString =
+                            let builder = Microsoft.Data.Sqlite.SqliteConnectionStringBuilder()
+                            builder.DataSource <- current.GraceStatusFile
+                            builder.Mode <- Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly
+                            builder.Cache <- Microsoft.Data.Sqlite.SqliteCacheMode.Private
+                            builder.ToString()
+
+                        use connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString)
+                        connection.Open()
+                        use command = connection.CreateCommand()
+
+                        command.CommandText <-
+                            "SELECT operation_value, watch_event_cursor FROM working_directory_update_completions WHERE caller_kind = 'Watch' AND finalization_state = 'Terminal' AND target_canonical = $target_canonical LIMIT 1;"
+
+                        command.Parameters.AddWithValue("$target_canonical", WorkingDirectoryUpdateContracts.Target.canonical target)
+                        |> ignore
+
+                        use reader = command.ExecuteReader()
+
+                        if
+                            not (reader.Read()) || reader.IsDBNull(0)
+                            || reader.IsDBNull(1)
+                        then
+                            return None
+                        else
+                            let operationValue = reader.GetString(0)
+                            let eventCursor = reader.GetString(1)
+
+                            match WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor with
+                            | Error _ -> return None
+                            | Ok operation when
+                                WorkingDirectoryUpdateContracts.Operation.value operation
+                                <> operationValue
+                                ->
+                                return None
+                            | Ok operation ->
+                                match! LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation with
+                                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                                    let receipt =
+                                        WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                                        |> Result.defaultWith invalidOp
+
+                                    return Some(eventCursor, receipt, LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+                                | _ -> return None
+            }
+
         /// Applies one accepted Watch replay target, records pending local completion, and terminalizes it under the same WDU lease.
         let runAtRevision
             (acceptedStatus: GraceStatus)

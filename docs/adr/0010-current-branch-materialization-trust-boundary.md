@@ -67,6 +67,6 @@ the final write cannot be verified, would let an unproven state cross that proce
 ## Related decision
 
 [ADR 0011](0011-working-directory-update-transaction.md) records the shared Working Directory Update transaction that
-now owns Watch filesystem planning, mutation, dual-hash verification, marker behavior, and local completion. This ADR
-continues to define Watch's server-event ordering, replay admission, cursor progression, IPC publication, and resync
-policy around that transaction.
+now owns Watch filesystem planning, mutation, BLAKE3 byte verification, marker behavior, and local completion. SHA-256
+remains target identity, selector, and metadata. This ADR continues to define Watch's server-event ordering, replay
+admission, cursor progression, IPC publication, and resync policy around that transaction.

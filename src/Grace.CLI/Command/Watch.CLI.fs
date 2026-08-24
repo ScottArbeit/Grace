@@ -8266,8 +8266,8 @@ module Watch =
     /// Restores the production callback/runtime setup boundary after public startup-order tests.
     let internal resetBeforeWatchCallbackRuntimeSetupForTests () = beforeWatchCallbackRuntimeSetup <- fun () -> ()
 
-    /// Reads only a complete status tree whose root and branch boundary agree without mutating local state.
-    let private requireInitializedLocalStateForWatch cachedConfiguration operationalConfiguration =
+    /// Reads a complete status tree and permits only an exact recoverable Watch completion to explain a predecessor boundary.
+    let private requireInitializedLocalStateForWatch allowRecoverableWatchCompletion cachedConfiguration operationalConfiguration =
         task {
             requireOperationalConfigurationSnapshotCurrent "Watch" cachedConfiguration operationalConfiguration
             let inspection = Grace.CLI.LocalStateDb.inspectReadOnly operationalConfiguration.GraceStatusFile
@@ -8313,13 +8313,39 @@ module Watch =
                     operationalConfiguration.RepositoryId
                     operationalConfiguration.BranchId
 
+            let boundaryTargetsStatus (boundary: ReferenceMaterializationBoundaryDto) =
+                boundary.DirectoryId = status.RootDirectoryId
+                && boundary.Sha256Hash = status.RootDirectorySha256Hash
+                && boundary.Blake3Hash = status.RootDirectoryBlake3Hash
+
+            let boundaryHasCurrentIdentity (boundary: ReferenceMaterializationBoundaryDto) =
+                boundary.RepositoryId = operationalConfiguration.RepositoryId
+                && boundary.BranchId = operationalConfiguration.BranchId
+                && not (String.IsNullOrWhiteSpace boundary.EventCursor)
+
+            let! exactRecoverableCompletion =
+                match boundaryResult with
+                | Some boundary when
+                    allowRecoverableWatchCompletion
+                    && boundaryHasCurrentIdentity boundary
+                    && not (boundaryTargetsStatus boundary)
+                    ->
+                    task {
+                        match! WorkingDirectoryUpdate.Watch.tryReadCompletionForStatus status with
+                        | Some (eventCursor, _, Grace.CLI.LocalStateDb.WorkingDirectoryUpdateCompletion.Pending) when eventCursor <> boundary.EventCursor ->
+                            return true
+                        | Some (eventCursor, _, Grace.CLI.LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal) when eventCursor <> boundary.EventCursor ->
+                            return true
+                        | _ -> return false
+                    }
+                | _ -> Task.FromResult false
+
             let boundary =
                 match boundaryResult with
                 | Some boundary when
-                    boundary.DirectoryId = status.RootDirectoryId
-                    && boundary.Sha256Hash = status.RootDirectorySha256Hash
-                    && boundary.Blake3Hash = status.RootDirectoryBlake3Hash
-                    && not (String.IsNullOrWhiteSpace boundary.EventCursor)
+                    boundaryHasCurrentIdentity boundary
+                    && (boundaryTargetsStatus boundary
+                        || exactRecoverableCompletion)
                     ->
                     boundary
                 | _ ->
@@ -8528,15 +8554,14 @@ module Watch =
 
             let! expectedBoundary = Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
 
-            match! WorkingDirectoryUpdate.Watch.resumePendingFinalization cancellationToken WorkingDirectoryUpdate.Watch.none with
-            | None -> return expectedBoundary
-            | Some (eventCursor, outcome) ->
-                match outcome with
-                | WorkingDirectoryUpdateContracts.Outcome.Updated receipt
-                | WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt ->
+            let acknowledgeCompletion eventCursor receipt =
+                task {
                     let boundary =
                         expectedBoundary
                         |> Option.defaultWith (fun () -> invalidOp "Watch cannot advance a recovered WDU completion without its prior durable cursor boundary.")
+
+                    if boundary.EventCursor = eventCursor then
+                        invalidOp "Watch recovered completion already matches the durable cursor boundary."
 
                     let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
 
@@ -8552,10 +8577,121 @@ module Watch =
                     let! advancedBoundary = acknowledgeCurrentBranchReferenceReplayCursor boundary (Some payload) eventCursor cancellationToken
 
                     return Some advancedBoundary
+                }
+
+            match! WorkingDirectoryUpdate.Watch.resumePendingFinalization cancellationToken WorkingDirectoryUpdate.Watch.none with
+            | None ->
+                match expectedBoundary with
+                | None -> return None
+                | Some boundary ->
+                    let! statusResult =
+                        Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly
+                            current.GraceStatusFile
+                            current.OwnerId
+                            current.OrganizationId
+                            current.RepositoryId
+
+                    let status =
+                        statusResult
+                        |> Result.defaultWith (fun error -> invalidOp $"Watch could not read local status while recovering terminal completion: {error}")
+
+                    match! WorkingDirectoryUpdate.Watch.tryReadCompletionForStatus status with
+                    | Some (eventCursor, receipt, Grace.CLI.LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal) when
+                        boundary.EventCursor <> eventCursor
+                        && (boundary.DirectoryId <> status.RootDirectoryId
+                            || boundary.Sha256Hash
+                               <> status.RootDirectorySha256Hash
+                            || boundary.Blake3Hash
+                               <> status.RootDirectoryBlake3Hash)
+                        ->
+                        return! acknowledgeCompletion eventCursor receipt
+                    | _ -> return expectedBoundary
+            | Some (eventCursor, outcome) ->
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                | WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt -> return! acknowledgeCompletion eventCursor receipt
                 | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)
                 | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected failure ->
                     return invalidOp $"Watch could not recover pending local completion: {WorkingDirectoryUpdateContracts.Failure.reason failure}"
+        }
+
+    /// Claims Watch startup, settles an exact retained completion, and crosses the runtime boundary only after clean IPC is verified.
+    let private recoverInitializedLocalStateBeforeWatchRuntime cachedOperationalConfiguration operationalConfiguration (cancellationToken: CancellationToken) =
+        task {
+            let! initializedStateBeforeClaim = requireInitializedLocalStateForWatch true cachedOperationalConfiguration operationalConfiguration
+
+            let! graceWatchClaim = claimGraceWatchInterprocessFile ()
+
+            if not graceWatchClaim.Claimed then
+                logToAnsiConsole Colors.Error "GraceWatch is already running."
+                raise (WatchCommandExit -1)
+
+            afterWatchStartupClaim ()
+
+            let! initializedStateAfterClaim = requireInitializedLocalStateForWatch true cachedOperationalConfiguration operationalConfiguration
+
+            requireWatchLocalStateUnchangedAfterClaim initializedStateBeforeClaim initializedStateAfterClaim
+
+            let predecessorBoundary: ReferenceMaterializationBoundaryDto = initializedStateAfterClaim.Boundary
+            let! recoveredBoundary = resumePendingWatchCompletionBeforeReplay cancellationToken
+
+            let recoveryAdvanced =
+                match recoveredBoundary with
+                | Some (boundary: ReferenceMaterializationBoundaryDto) ->
+                    boundary.DirectoryId
+                    <> predecessorBoundary.DirectoryId
+                    || boundary.Sha256Hash
+                       <> predecessorBoundary.Sha256Hash
+                    || boundary.Blake3Hash
+                       <> predecessorBoundary.Blake3Hash
+                    || boundary.EventCursor
+                       <> predecessorBoundary.EventCursor
+                | None -> false
+
+            let! initializedState = requireInitializedLocalStateForWatch false cachedOperationalConfiguration operationalConfiguration
+
+            if recoveryAdvanced then
+                match recoveredBoundary with
+                | Some (boundary: ReferenceMaterializationBoundaryDto) when
+                    boundary.RepositoryId = initializedState.Boundary.RepositoryId
+                    && boundary.BranchId = initializedState.Boundary.BranchId
+                    && boundary.DirectoryId = initializedState.Boundary.DirectoryId
+                    && boundary.Sha256Hash = initializedState.Boundary.Sha256Hash
+                    && boundary.Blake3Hash = initializedState.Boundary.Blake3Hash
+                    && boundary.EventCursor = initializedState.Boundary.EventCursor
+                    ->
+                    ()
+                | _ -> invalidOp "Watch startup recovery did not retain its exact advanced cursor boundary."
+
+                let! inspection = inspectGraceWatchStatus ()
+
+                match inspection.Status with
+                | Some status when
+                    inspection.IsUsable
+                    && status.RootDirectoryId = initializedState.Status.RootDirectoryId
+                    && status.RootDirectorySha256Hash = initializedState.Status.RootDirectorySha256Hash
+                    && status.RootDirectoryBlake3Hash = initializedState.Status.RootDirectoryBlake3Hash
+                    && not status.HasPendingWatchWork
+                    && status.IsWorkingTreeClean
+                    ->
+                    ()
+                | _ -> invalidOp "Watch startup recovery did not publish verified clean IPC before runtime admission."
+
+            beforeWatchCallbackRuntimeSetup ()
+            return initializedState
+        }
+
+    /// Exercises the production pre-runtime Watch recovery boundary without creating callbacks, scans, or SignalR connections.
+    let internal recoverInitializedLocalStateBeforeWatchRuntimeForTests cancellationToken =
+        task {
+            let cachedOperationalConfiguration = Current()
+
+            let operationalConfiguration = captureOperationalConfigurationSnapshot "Watch" cachedOperationalConfiguration
+
+            let! initializedState = recoverInitializedLocalStateBeforeWatchRuntime cachedOperationalConfiguration operationalConfiguration cancellationToken
+
+            return initializedState.Status
         }
 
     /// Invokes the typed replay route from the current durable boundary and processes eligible events one at a time.
@@ -10730,19 +10866,10 @@ module Watch =
 
                     let operationalConfiguration = captureOperationalConfigurationSnapshot "Watch" cachedOperationalConfiguration
 
-                    let! initializedStateBeforeClaim = requireInitializedLocalStateForWatch cachedOperationalConfiguration operationalConfiguration
+                    let! initializedState =
+                        recoverInitializedLocalStateBeforeWatchRuntime cachedOperationalConfiguration operationalConfiguration cancellationToken
 
-                    let! graceWatchClaim = claimGraceWatchInterprocessFile ()
-
-                    if not graceWatchClaim.Claimed then
-                        logToAnsiConsole Colors.Error "GraceWatch is already running."
-                        raise (WatchCommandExit -1)
-
-                    afterWatchStartupClaim ()
-                    let! initializedStateAfterClaim = requireInitializedLocalStateForWatch cachedOperationalConfiguration operationalConfiguration
-                    requireWatchLocalStateUnchangedAfterClaim initializedStateBeforeClaim initializedStateAfterClaim
-                    beforeWatchCallbackRuntimeSetup ()
-                    let initializedStatus = initializedStateAfterClaim.Status
+                    let initializedStatus = initializedState.Status
 
                     ClientIdentity.configureWatchProcessId watchProcessId
 

@@ -28622,6 +28622,171 @@ module WatchTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
 
+    /// Proves startup settles exact pending or terminal Watch completion before crossing the callback/runtime boundary.
+    [<TestCase(false, TestName = "watch startup recovers exact pending WDU completion before runtime admission")>]
+    [<TestCase(true, TestName = "watch startup recovers exact terminal WDU completion before runtime admission")>]
+    [<Category("WatchStartupWduRecovery")>]
+    let ``watch startup recovers exact WDU completion before runtime admission`` terminalBeforeStartup =
+        withTempRepo (fun root ->
+            let current = Current()
+            let predecessorRootId = DirectoryVersionId.NewGuid()
+            writeTrustedRootOnlyWatchState predecessorRootId
+
+            let predecessorBoundary =
+                LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> Option.defaultWith (fun () -> invalidOp "Expected predecessor Watch boundary.")
+
+            let relativePath = "recovered.txt"
+            let workingPath = Path.Combine(root, relativePath)
+            let targetBytes = Text.Encoding.UTF8.GetBytes("already written before Watch restart")
+            File.WriteAllBytes(workingPath, targetBytes)
+            let targetFile = localFileVersionFromWorkingTree root relativePath
+            let targetRootId = DirectoryVersionId.NewGuid()
+
+            let targetEntries =
+                [
+                    DirectoryVersionPreimageEntry.File targetFile.RelativePath targetFile.Size targetFile.Blake3Hash targetFile.Sha256Hash
+                ]
+
+            let targetRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    targetRootId
+                    current.OwnerId
+                    current.OrganizationId
+                    current.RepositoryId
+                    Constants.RootDirectoryPath
+                    (computeSha256ForDirectoryEntries Constants.RootDirectoryPath targetEntries)
+                    (computeBlake3ForDirectory Constants.RootDirectoryPath targetEntries)
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| targetFile |]))
+                    targetFile.Size
+                    DateTime.UtcNow
+
+            let targetStatus = graceStatusFromRootDirectory targetRoot
+
+            let eventCursor =
+                if terminalBeforeStartup then
+                    "opaque-terminal-before-startup"
+                else
+                    "opaque-pending-before-startup"
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    current.RepositoryId
+                    current.BranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> Result.defaultWith invalidOp
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                |> Result.defaultWith invalidOp
+
+            LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                current.GraceStatusFile
+                targetStatus
+                [| targetRoot |]
+                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization eventCursor)
+                target
+                operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId root
+                |> Result.defaultWith invalidOp
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdateContracts.AttemptToken.create ()) target operation
+                |> Result.defaultWith invalidOp
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            if terminalBeforeStartup then
+                WorkingDirectoryUpdate.Watch.resumePendingFinalization CancellationToken.None WorkingDirectoryUpdate.Watch.none
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> function
+                    | Some (actualCursor, WorkingDirectoryUpdateContracts.Outcome.Updated _) -> actualCursor |> should equal eventCursor
+                    | outcome -> Assert.Fail($"Expected terminal Watch setup, got {outcome}.")
+
+            let expectedBeforeStartup =
+                if terminalBeforeStartup then
+                    Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal
+                else
+                    Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal expectedBeforeStartup
+
+            let revisionBeforeRecovery =
+                LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            use workingFileLock = new FileStream(workingPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let mutable runtimeAdmissionObserved = false
+
+            Watch.setBeforeWatchCallbackRuntimeSetupForTests (fun () ->
+                let inspection = Services.inspectGraceWatchStatus().Result
+                inspection.IsUsable |> should equal true
+                let status = inspection.Status |> Option.get
+
+                status.RootDirectoryId
+                |> should equal targetStatus.RootDirectoryId
+
+                status.HasPendingWatchWork |> should equal false
+                status.IsWorkingTreeClean |> should equal true
+                runtimeAdmissionObserved <- true)
+
+            try
+                Watch.recoverInitializedLocalStateBeforeWatchRuntimeForTests CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> fun recoveredStatus ->
+                    recoveredStatus.RootDirectoryId
+                    |> should equal targetStatus.RootDirectoryId
+            finally
+                Watch.resetBeforeWatchCallbackRuntimeSetupForTests ()
+
+            runtimeAdmissionObserved |> should equal true
+
+            File.ReadAllBytes(workingPath)
+            |> should equal targetBytes
+
+            LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal revisionBeforeRecovery
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            let advancedBoundary =
+                LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> Option.defaultWith (fun () -> invalidOp "Expected recovered Watch boundary.")
+
+            advancedBoundary.EventCursor
+            |> should equal eventCursor
+
+            advancedBoundary.DirectoryId
+            |> should equal targetStatus.RootDirectoryId
+
+            advancedBoundary.Sha256Hash
+            |> should equal targetStatus.RootDirectorySha256Hash
+
+            advancedBoundary.Blake3Hash
+            |> should equal targetStatus.RootDirectoryBlake3Hash
+
+            predecessorBoundary.EventCursor
+            |> should not' (equal advancedBoundary.EventCursor))
+
     /// Proves production Watch publishes clean IPC only after exact terminal completion and cursor compare-and-set.
     [<Test; Category("CurrentBranchCursorReplay"); Category("CurrentBranchMaterializationPublication")>]
     let ``terminal Watch completion advances exact cursor before clean ipc publication`` () =

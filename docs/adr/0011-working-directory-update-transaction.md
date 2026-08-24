@@ -37,9 +37,10 @@ justify three local-integrity implementations.
 - A repository ID plus normalized local-root-path hash scopes the exclusive file lease, versioned marker, and completion
   sidecar. Branch identity is excluded from the physical scope.
 - The module rereads selected target and local state after acquiring the lease, builds a fresh relevant-topology plan,
-  mutates only proven paths, verifies object and working bytes with SHA-256 and BLAKE3, and proves the final relevant
-  selected root. Unrelated ignored or untracked content remains preserved and excluded unless it is a destructive
-  required-path, case-alias, or replaced-subtree collision.
+  mutates only proven paths, verifies object and working bytes with BLAKE3, and proves the final relevant selected root.
+  SHA-256 remains target identity, selector, and metadata; it is not a Working Directory Update byte-equality
+  computation. Unrelated ignored or untracked content remains preserved and excluded unless it is a destructive required
+  path, case-alias, or replaced-subtree collision.
 - SQLite local completion is the irreversible point. One transaction records matching status, required object-cache
   metadata, Connect's initial cursor when present, and a bounded update completion row. `DirectoryVersion` selection
   records terminal completion in that transaction; `Reference` selection records pending completion for later Branch
@@ -54,7 +55,7 @@ justify three local-integrity implementations.
   `grace doctor --repair-local-state`.
 - The same deterministic operation may adopt a known orphaned marker only after acquiring the lease and performing
   complete revalidation and replanning. Exact adoption reconciles each requirement as `NeedsApply` or
-  `AlreadySatisfied` from real dual-hash evidence; mixed partial progress is not rewritten. Different or unrecognized
+  `AlreadySatisfied` from real BLAKE3 byte evidence; mixed partial progress is not rewritten. Different or unrecognized
   markers require Doctor, except for one exact terminal-owned residue case. A later operation may replace that residue
   only when SQLite matches the marker operation and target and current status still names the same target root.
 - Doctor first attempts a filesystem-free retry of recorded finalization, then may use exact local-state reconstruction.
