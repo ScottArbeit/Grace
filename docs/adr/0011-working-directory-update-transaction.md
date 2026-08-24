@@ -15,10 +15,10 @@ admission, target selection, remote retrieval, scheduling, and presentation.
 
 ## Context
 
-The current `WorkingDirectoryMaterialization` module serializes arbitrary callbacks but does not own planning, marker
+The legacy `WorkingDirectoryMaterialization` module serializes arbitrary callbacks but does not own planning, marker
 behavior, filesystem mutation, content verification, durable local state, finalization, or failure classification.
-Branch and Watch each implement substantial private mutation workflows, while Connect extracts a server zip directly
-into working and object paths without the same lease or marker contract.
+Branch and Watch now route those effects through Working Directory Update, while Connect still extracts a server zip
+directly into working and object paths without the same lease or marker contract.
 
 These paths can change the same local directory and SQLite state. Their differences are real—Watch advances an ordered
 cursor, Branch publishes selected branch identity, and Connect preserves zip retrieval—but those differences do not
@@ -27,9 +27,9 @@ justify three local-integrity implementations.
 ## Decision
 
 - The internal module exposes one exact five-input Branch `run` operation—sealed accepted phase, typed selection,
-  exact target graph, immutable prepared content, and diagnostic correlation—and one persisted-facts-only
-  `retryFinalization` operation. Callers cannot supply alternate paths, status graphs, readers, writers, finalizers,
-  or generic request bags.
+  exact target graph, immutable prepared content, and diagnostic correlation—and a narrow Watch replay adapter over the
+  same local-application stage. Persisted-facts-only finalization reconstructs either caller. Callers cannot supply
+  alternate paths, status graphs, writers, finalizers, or generic request bags.
 - Target identity contains repository, branch, root DirectoryVersion, SHA-256, and BLAKE3. Caller operation identity is
   separate and deterministic. Each execution attempt receives a separate random marker token.
 - Prepared-content adapters expose exact immutable manifests and readable uncompressed bytes. They never provide
@@ -43,7 +43,7 @@ justify three local-integrity implementations.
 - SQLite local completion is the irreversible point. One transaction records matching status, required object-cache
   metadata, Connect's initial cursor when present, and a bounded update completion row. `DirectoryVersion` selection
   records terminal completion in that transaction; `Reference` selection records pending completion for later Branch
-  publication or verification.
+  publication or Watch verification.
 - SQLite stores no running operation. It retains the latest terminal row per caller and one unresolved pending
   finalization.
 - The completion sidecar is derived Watch notification evidence. It cannot override SQLite completion truth.
@@ -65,10 +65,10 @@ justify three local-integrity implementations.
 
 ## Serial delivery and test boundary
 
-Issue #960 is the next public tracer. It consumes the merged Issue #959 transition classifier and crosses topology
-composition, held-lease application, `VerifiedLocalRoot`, terminal SQLite completion, marker cleanup, and
-`grace branch switch --sha256-hash` or `--blake3-hash`. Issue #900 and Issue #901 are superseded by that tracer. Generic
-Reference application and pending-completion work in Issue #922 and Issue #923 waits for the post-tracer checkpoint.
+Issue #960 supplied the first public tracer across topology composition, held-lease application, `VerifiedLocalRoot`,
+terminal SQLite completion, marker cleanup, and `grace branch switch --sha256-hash` or `--blake3-hash`. Issues #922,
+Issue #923, Issue #871, and Issue #872 completed shared local application and Branch Reference completion. Issue #843 now consumes those
+states for ordered Watch replay. Issue #900 and Issue #901 remain superseded by Issue #960.
 
 Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
 legacy materialization, or WDU leases. Only the WDU transaction holds its local lease for fresh reread, mutation,
@@ -81,8 +81,8 @@ replace it. For DirectoryVersion, the verified-status transaction also records t
 cleanup follows that transaction and cannot downgrade success. Exact replay returns `Unchanged`; safe replacement of
 terminal-owned marker residue uses the matching SQLite operation, target, and status root. Runtime tests use the
 five-input operation with real filesystem and SQLite facts. Ephemeral `bytesChanged` selects distinct changed and
-unchanged terminal rows; Reference remains on its ordinary post-completion row without inferring that
-DirectoryVersion-only discriminator.
+unchanged terminal rows; Branch and Watch Reference operations remain on their ordinary post-completion rows without
+inferring that DirectoryVersion-only discriminator.
 
 The complete requirements, state model, propagation map, and proof contract are in
 [Working Directory Update](../Working%20Directory%20Update.md).

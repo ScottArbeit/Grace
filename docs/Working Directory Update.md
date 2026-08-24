@@ -1,30 +1,32 @@
 # Working Directory Update
 
-**Status:** Implemented through merged Issue #871 / PR #1014; Issue #872 is the current Save-admission slice
+**Status:** Implemented for Branch through merged Issue #872 / PR #1015 and for Watch replay through Issue #843
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
 **Evidence current through:** 2026-08-23, `origin/main` `22c3ad89`, epic head `72223994`
 
 ## 1. Outcome and scope
 
-Working Directory Update is the bounded local transaction used by `grace branch switch` to make a Grace-indexed working
-directory and local SQLite state match one exact selected root. It verifies prepared objects, applies only the tracked
-plan, proves the complete final root, commits local completion, and completes typed Branch finalization.
+Working Directory Update is the bounded local transaction used by `grace branch switch` and ordered `grace watch`
+current-Reference replay to make a Grace-indexed working directory and local SQLite state match one exact selected root.
+It verifies prepared objects, applies only the tracked plan, proves the complete final root, commits local completion,
+and completes the caller's typed finalization.
 
-This replacement contract is Branch-only. Merged Issue #960 supplies the first public tracer: hash selection resolves
+Merged Issue #960 supplies the first public tracer: hash selection resolves
 one exact `DirectoryVersion`, updates the working directory, retains the current Branch identity, and records terminal
 completion atomically with verified local status. Merged Issue #922 extracts the selection-neutral local-application
 stage through opaque `VerifiedLocalRoot`. Merged Issue #1005 makes BLAKE3 the sole WDU byte-equality check while retaining
 SHA-256 selectors and metadata. Merged Issue #923 / PR #1009 supplies the five-input composition and persists a typed
 Reference pending completion after verified local completion. Merged Issue #871 consumes that pending fact to publish the
-selected Branch identity and record terminal completion. Merged Issue #872 adds Save-enabled phase construction. Issue #842
-routes explicit Doctor repair through the same completion algorithm. Watch and Connect remain deferred. Migration, rollback, journals,
-automatic recovery, and multi-platform parity remain out of scope.
+selected Branch identity and record terminal completion. Merged Issue #872 adds Save-enabled phase construction.
+Issue #842 routes explicit Doctor repair through the same completion algorithm. Issue #843 routes accepted ordered Watch replay
+through the shared local-application stage, typed pending completion, and restart-safe terminal recording. Connect remains
+deferred. Migration, rollback, journals, automatic recovery, and multi-platform parity remain out of scope.
 
-Working-directory mutation is currently distributed across caller implementations, so cleanup, finalization, and
-failure behavior can drift apart. One lifecycle contract prevents Grace from publishing a selected Branch after marker
-cleanup fails, keeps partial failures truthful and recoverable, and gives implementation workers one user-safety goal
-when lower-level details are incomplete.
+Branch and Watch now share the local-application and completion transaction. One lifecycle contract prevents Grace from
+publishing caller completion after marker cleanup fails, keeps partial failures truthful and recoverable, and gives
+implementation workers one user-safety goal when lower-level details are incomplete. Connect remains outside this
+shared path.
 
 ## 2. Accepted decisions
 
@@ -57,10 +59,12 @@ The post-Issue #1005 checkpoint makes these planning selections without changing
   Retry still reconstructs from persisted typed facts rather than this in-memory value.
 - Merged Issue #871 consumes only the persisted typed Reference pending fact. It does not expose `VerifiedLocalRoot`, local
   paths, status snapshots, database handles, mutation plans, finalizers, or callbacks.
+- Issue #843 supplies a private Watch adapter over the same local-application stage. Watch retains event admission,
+  replay ordering, cursor compare-and-set, SignalR wake policy, IPC publication, and foreground output.
 
-No product or architecture decision remains open for the delivered Issue #871 and Issue #872 slices. Issue #842 adds
+No product or architecture decision remains open for the delivered Issue #871, Issue #872, and Issue #843 slices. Issue #842 adds
 explicit Doctor completion for an applicable pending Reference while retaining exact reconstruction as the no-pending
-fallback. Watch and Connect remain deferred.
+fallback. Connect remains deferred.
 
 ## 3. Domain facts and interface
 
@@ -421,7 +425,8 @@ The following consumers carry generated projections rather than competing lifecy
 - #871 completed Reference pending-completion consumption during the original invocation and after restart.
 - #872 completed Save/no-Save admission and reaches the same initial rows.
 - #842 completes Branch-only retry rows through explicit Doctor repair without working-file mutation.
-- #843–#845 later consume the transaction contract for Watch and Connect.
+- #843 consumes the transaction contract for ordered Watch current-Reference replay.
+- #844 and #845 later consume the transaction contract for Connect.
 - #846 audits public output, Doctor guidance, row references, and absence of retired paths.
 
 ADR 0011 and the declared issue bodies remain contextual consumers. Their marker-delimited projections are rendered
@@ -432,7 +437,7 @@ The bounded Product V1 residual risk remains interruption after working-tree mut
 and the final check-to-operation race after synchronous precondition validation. `WDU-LC-002` and `WDU-LC-007` require
 truthful `UpdateIncomplete`; Grace does not guess, roll back, or add a broader recovery system.
 
-### Issue #871 delivery and Issue #872 current contract
+### Issue #871, Issue #872, and Issue #843 delivery contract
 
 Merged Issue #871 fit the Product V1 budget by consuming, but not extending, the merged pending-completion mechanism:
 
@@ -450,6 +455,12 @@ Merged Issue #871 fit the Product V1 budget by consuming, but not extending, the
 Issue #871 retains pending state with `FinalizationIncomplete` and Doctor guidance for disallowed marker evidence,
 configuration read failure, third Branch identity, publication failure, or terminal-recording failure. Cancellation is
 invocation control only until cleanup, publication, or terminal recording starts. Issue #842 routes explicit Doctor
-repair through that completion algorithm after lease-held status and byte validation. Watch and Connect remain deferred. Stop if delivery needs a new
+repair through that completion algorithm after lease-held status and byte validation. Stop if delivery needs a new
 persisted state, schema, configuration-write interface, retry file mutation, another lease, a caller finalizer, a second
 transaction interface, changed Save behavior, or a DirectoryVersion semantic change.
+
+Issue #843 reuses the same `Pending` and `Terminal` completion states for exact repository, branch, target, and event
+cursor identity. Watch applies or verifies the accepted root through WDU, records pending local completion, cleans only
+exact marker evidence, and records terminal completion before advancing the prior remote cursor by compare-and-set.
+Only then may Watch publish clean IPC. Restart reconstructs the pending cursor and completion without rewriting working
+files. Connect remains deferred.
