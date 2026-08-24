@@ -1,9 +1,9 @@
 # Working Directory Update
 
-**Status:** Implemented through merged Issue #923 / PR #1009; Issue #871 is the selected Reference finalization slice
+**Status:** Implemented through merged Issue #871 / PR #1014; Issue #872 is the current Save-admission slice
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-22, `origin/main` `7f80ade9`, epic head `3c0c70d8`
+**Evidence current through:** 2026-08-23, `origin/main` `22c3ad89`, epic head `72223994`
 
 ## 1. Outcome and scope
 
@@ -16,8 +16,8 @@ one exact `DirectoryVersion`, updates the working directory, retains the current
 completion atomically with verified local status. Merged Issue #922 extracts the selection-neutral local-application
 stage through opaque `VerifiedLocalRoot`. Merged Issue #1005 makes BLAKE3 the sole WDU byte-equality check while retaining
 SHA-256 selectors and metadata. Merged Issue #923 / PR #1009 supplies the five-input composition and persists a typed
-Reference pending completion after verified local completion. Issue #871 now consumes that pending fact to publish the
-selected Branch identity and record terminal completion. Watch, Connect, and Doctor remain deferred. Migration, rollback, journals,
+Reference pending completion after verified local completion. Merged Issue #871 consumes that pending fact to publish the
+selected Branch identity and record terminal completion. Issue #872 now adds Save-enabled phase construction. Watch, Connect, and Doctor remain deferred. Migration, rollback, journals,
 automatic recovery, and multi-platform parity remain out of scope.
 
 Working-directory mutation is currently distributed across caller implementations, so cleanup, finalization, and
@@ -54,11 +54,11 @@ The post-Issue #1005 checkpoint makes these planning selections without changing
 - `LocalCompletion` is private non-durable evidence inside WDU. It distinguishes the persisted Reference-pending and
   DirectoryVersion-terminal results without exposing `VerifiedLocalRoot` or asking callers to reconstruct SQLite truth.
   Retry still reconstructs from persisted typed facts rather than this in-memory value.
-- Issue #871 may consume only the persisted typed Reference pending fact. It must not expose `VerifiedLocalRoot`, local
+- Merged Issue #871 consumes only the persisted typed Reference pending fact. It does not expose `VerifiedLocalRoot`, local
   paths, status snapshots, database handles, mutation plans, finalizers, or callbacks.
 
-No product or architecture decision remains open for the bounded Issue #871 slice. Its one outcome is repeatable
-Reference completion from persisted facts. Save-enabled construction of the same phase remains Issue #872. Doctor
+No product or architecture decision remains open for the delivered Issue #871 slice. Issue #872 is the current bounded
+Save-admission slice: it constructs the same phase from the exact reread post-Save SQLite graph before target preparation. Doctor
 recovery, Watch, and Connect remain deferred.
 
 ## 3. Domain facts and interface
@@ -333,8 +333,8 @@ dependency, checklist, assignment, or primary-delivery role. Issue #960 replaces
 | Five-input composition and Reference pending completion | #923 | Add the missing opaque inputs, route DirectoryVersion through its merged terminal path, and atomically record Reference pending completion after `VerifiedLocalRoot`. |
 | DirectoryVersion terminalization and hash wiring | #900 and #901 | Superseded by Issue #960 because terminalization is part of the verified-status transaction and the public command is the tracer boundary. |
 
-The compiler result is the sole primary-requirement mapping. Issue #923 is the only selected next child after its issue
-body is rewritten and the exact live packet passes.
+The compiler result is the sole primary-requirement mapping. Issue #871 is complete; Issue #872 is the current selected
+Save-admission child after its exact live packet passes.
 
 ### Selected Product V1 boundaries
 
@@ -372,7 +372,7 @@ returns `Rejected`. Reference completion follows `WDU-LC-006` and records pendin
 `bytesChanged` remains ephemeral: true selects `Updated`, false selects `Unchanged`, and neither value is persisted.
 
 For Issue #923, successful Reference pending completion produces private `ReferencePending(Receipt)` inside WDU. The
-Issue #871 path consumes it during the original invocation and consumes the matching persisted pending facts after
+Merged Issue #871 consumes it during the original invocation and consumes the matching persisted pending facts after
 restart. Only Issue #871 may project `Updated`, `Unchanged`, or `FinalizationIncomplete` after evaluating actual
 finalization evidence. No caller finalizer or in-memory retry dependency is added.
 
@@ -417,8 +417,8 @@ The following consumers carry generated projections rather than competing lifecy
 - #1005 owns merged BLAKE3-only byte validation across every WDU application boundary.
 - #923 / PR #1009 provide the merged five-input composition and Reference pending-completion slice.
 - #900 and #901 are superseded by #960.
-- #871 is selected to consume Reference pending completion during the original invocation and after restart.
-- #872 proves Save/no-Save admission reaches the same initial rows.
+- #871 completed Reference pending-completion consumption during the original invocation and after restart.
+- #872 is the current Save/no-Save admission slice and reaches the same initial rows.
 - #842 proves Branch-only retry rows without working-file mutation.
 - #843–#845 later consume the transaction contract for Watch and Connect.
 - #846 audits public output, Doctor guidance, row references, and absence of retired paths.
@@ -431,9 +431,9 @@ The bounded Product V1 residual risk remains interruption after working-tree mut
 and the final check-to-operation race after synchronous precondition validation. `WDU-LC-002` and `WDU-LC-007` require
 truthful `UpdateIncomplete`; Grace does not guess, roll back, or add a broader recovery system.
 
-### Issue #871 delivery contract
+### Issue #871 delivery and Issue #872 current contract
 
-Issue #871 fits the Product V1 budget by consuming, but not extending, the merged pending-completion mechanism:
+Merged Issue #871 fit the Product V1 budget by consuming, but not extending, the merged pending-completion mechanism:
 
 - One outcome: after verified local completion, publish the selected Branch identity and terminalize the matching SQLite
   pending row. A retry reconstructs only from that row and the durable Branch configuration.
@@ -442,12 +442,12 @@ Issue #871 fits the Product V1 budget by consuming, but not extending, the merge
 - No new durable lifecycle: the existing SQLite `Pending` and `Terminal` states and lifecycle rows remain unchanged.
 - One source for each decision: SQLite selects the pending completion; disk Branch configuration classifies previous,
   selected, third, or unreadable identity; the lease serializes the completion effects.
-- Existing algorithm evidence: Issues #960, #922, and merged Issue #923 / PR #1009 establish local application,
-  completion, and pending facts. Issue #871 adds only their bounded publication and terminal-recording sequence.
+- Existing algorithm evidence: Issues #960, #922, merged Issue #923 / PR #1009, and merged Issue #871 / PR #1014 establish local application,
+  completion, pending facts, bounded publication, and terminal recording. Issue #872 adds only Save-enabled phase construction.
 
-Issue #871 must retain pending state with `FinalizationIncomplete` and Doctor guidance for disallowed marker evidence,
+Issue #871 retains pending state with `FinalizationIncomplete` and Doctor guidance for disallowed marker evidence,
 configuration read failure, third Branch identity, publication failure, or terminal-recording failure. Cancellation is
-invocation control only until cleanup, publication, or terminal recording starts. Issue #872 remains responsible for
+invocation control only until cleanup, publication, or terminal recording starts. Issue #872 is responsible for
 Save-enabled construction; Watch, Connect, and Doctor implementation remain deferred. Stop if delivery needs a new
 persisted state, schema, configuration-write interface, retry file mutation, another lease, a caller finalizer, a second
 transaction interface, changed Save behavior, or a DirectoryVersion semantic change.

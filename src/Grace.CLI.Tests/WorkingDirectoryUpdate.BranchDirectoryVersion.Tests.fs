@@ -1669,6 +1669,106 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> ()
                 | outcome -> Assert.Fail($"Expected zero-action replay Unchanged, got {outcome}."))
 
+    /// Proves Save admission persists and rereads the exact complete SQLite graph before target preparation.
+    [<Test>]
+    let ``Save admission seals the persisted complete status and revision`` () =
+        withRepo (fun _ configuration ->
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let savedStatus, savedRoot = status configuration (Guid.NewGuid()) (Some("saved.txt", Encoding.UTF8.GetBytes("saved status bytes")))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let acceptedPhaseResult =
+                Branch.sealSavedBranchPhase configuration savedStatus [| savedRoot |] Array.empty<FileSystemDifference> "save-admission"
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            let acceptedPhase =
+                match acceptedPhaseResult with
+                | Ok phase -> phase
+                | Error error -> failwith $"Expected Save admission, got {error.Error}."
+
+            WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches
+                (WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedStatus acceptedPhase)
+                savedStatus
+            |> should equal true
+
+            WorkingDirectoryUpdateContracts.AcceptedBranchPhase.acceptedRevision acceptedPhase
+            |> should equal (revision configuration))
+
+    /// Proves Save admission drift rejects through the real five-input WDU transaction before target mutation.
+    [<Test>]
+    let ``Save admission stale reread rejects before Reference target mutation`` () =
+        withRepo (fun root configuration ->
+            let currentStatus, _ = status configuration (Guid.NewGuid()) None
+            let savedStatus, savedRoot = status configuration (Guid.NewGuid()) (Some("saved.txt", Encoding.UTF8.GetBytes("saved status bytes")))
+            let selectedBytes = Encoding.UTF8.GetBytes("selected target bytes")
+            let targetStatus, targetRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", selectedBytes))
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let acceptedPhaseResult =
+                Branch.sealSavedBranchPhase configuration savedStatus [| savedRoot |] Array.empty<FileSystemDifference> "save-admission-stale"
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            let acceptedPhase =
+                match acceptedPhaseResult with
+                | Ok phase -> phase
+                | Error error -> failwith $"Expected Save admission, got {error.Error}."
+
+            let preparedRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+            let target = WorkingDirectoryUpdateContracts.Request.target preparedRequest
+            let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent preparedRequest
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference(Guid.NewGuid())
+
+            let resolvedTargetGraph =
+                WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus metadata manifest
+                |> required
+
+            let driftedStatus, _ = status configuration (Guid.NewGuid()) None
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile driftedStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            WorkingDirectoryUpdate.run
+                acceptedPhase
+                selection
+                resolvedTargetGraph
+                preparedContent
+                "save-admission-stale"
+                CancellationToken.None
+                WorkingDirectoryUpdate.BranchDirectoryVersion.none
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> WorkingDirectoryUpdate.projectRunOutcome
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | outcome -> Assert.Fail($"Expected stale Save admission rejection, got {outcome}.")
+
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
+
+    /// Proves a selected Reference graph cannot retain a removed descendant from the Save predecessor graph.
+    [<Test>]
+    let ``Save Reference target graph excludes removed nested Save descendants`` () =
+        withRepo (fun _ configuration ->
+            let savedStatus, _, _ = nestedDirectoryStatus configuration "old-parent" "old-parent/child.txt" (Encoding.UTF8.GetBytes("saved child"))
+            let selectedStatus, selectedRoot = status configuration (Guid.NewGuid()) (Some("selected.txt", Encoding.UTF8.GetBytes("selected root")))
+
+            let targetStatus =
+                Branch.selectedReferenceTargetStatus savedStatus [| selectedRoot |]
+                |> required
+
+            targetStatus.RootDirectoryId
+            |> should equal selectedStatus.RootDirectoryId
+
+            targetStatus.Index.Keys
+            |> Set.ofSeq
+            |> should equal (set [ selectedRoot.DirectoryVersionId ])
+
+            Grace.CLI.LocalStateDb.validateCompleteStatusTree targetStatus
+            |> should equal (Ok(): Result<unit, string>))
+
     /// Proves an initial Reference run finalizes only after real local application verifies its root.
     [<Test>]
     let ``Reference five-input transaction finalizes after verified local root`` () =
