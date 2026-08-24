@@ -126,20 +126,6 @@ module BranchCommandTests =
 
             if exitCode <> 0 then message |> should equal "classified failure")
 
-    /// Pins the built switch ordering and handlers without requiring an unrelated server harness.
-    [<Test>]
-    let ``switch source resumes pending Reference completion before selecting the Save route`` () =
-        let source = File.ReadAllText(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.CLI", "Command", "Branch.CLI.fs"))
-
-        source.IndexOf("resumePendingReferenceFinalization", StringComparison.Ordinal)
-        |> should be (lessThan (source.LastIndexOf("referenceOnlySwitchRoute", StringComparison.Ordinal)))
-
-        source
-        |> should contain "referenceSelectedHandler parseResult cancellationToken"
-
-        source
-        |> should contain "runBranchSwitchWorkflowWithLease"
-
     /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
@@ -267,6 +253,70 @@ module BranchCommandTests =
             Environment.CurrentDirectory <- originalDir
 
             if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+
+    /// Runs a Reference-only switch through the built action and checks which route receives control.
+    let private runReferenceOnlySwitchRoute route expectedHandler sentinelExitCode =
+        withTempBranchSwitchRepo (fun () ->
+            let calls = ResizeArray<string>()
+            let mutable resolvedParameters: GetBranchParameters option = None
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult None
+                    ResolveReferenceRoute =
+                        fun parameters ->
+                            calls.Add("resolve")
+                            resolvedParameters <- Some parameters
+                            Task.FromResult(Ok(Some route))
+                    RunWduReference =
+                        fun _ _ ->
+                            calls.Add("wdu")
+                            Task.FromResult sentinelExitCode
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult sentinelExitCode
+                }
+
+            let action = Branch.Switch.CreateForTests operations
+
+            let parseResult =
+                parse [| "branch"
+                         "switch"
+                         "--reference-id"
+                         (Guid.NewGuid()).ToString() |]
+
+            let actualExitCode =
+                action
+                    .InvokeAsync(parseResult, System.Threading.CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+
+            actualExitCode |> should equal sentinelExitCode
+
+            match resolvedParameters with
+            | Some parameters ->
+                parameters.RepositoryId
+                |> should equal (repositoryId.ToString())
+
+                parameters.BranchId
+                |> should equal (branchId.ToString())
+            | None -> Assert.Fail("Expected a Reference-only switch to resolve the current Branch.")
+
+            calls
+            |> Seq.toList
+            |> should equal [ "resume"; "resolve"; expectedHandler ])
+
+    /// Verifies a no-Save current Branch resumes finalization before using the WDU Reference route.
+    [<Test>]
+    let ``Reference-only switch resumes before routing to WDU when Save is disabled`` () = runReferenceOnlySwitchRoute Branch.WduNoSave "wdu" 8711
+
+    /// Verifies a Save-enabled current Branch resumes finalization before using the existing legacy route.
+    [<Test>]
+    let ``Reference-only switch resumes before routing to legacy when Save is enabled`` () = runReferenceOnlySwitchRoute Branch.LegacySave "legacy" 8712
 
     /// Builds a trusted Watch IPC inspection snapshot for branch switch preflight tests.
     let private branchSwitchWatchStatus () : GraceWatchStatus =

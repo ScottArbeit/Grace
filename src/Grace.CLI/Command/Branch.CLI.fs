@@ -3303,8 +3303,17 @@ module Branch =
                             deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
         }
 
+    /// Defines the action-boundary operations used to exercise built Reference-only switch routing without a server.
+    type internal SwitchTestOperations =
+        {
+            ResumePending: CancellationToken -> Task<WorkingDirectoryUpdateContracts.Outcome option>
+            ResolveReferenceRoute: GetBranchParameters -> Task<Result<ReferenceSwitchRoute option, GraceError>>
+            RunWduReference: ParseResult -> CancellationToken -> Task<int>
+            RunLegacy: ParseResult -> CancellationToken -> Task<int>
+        }
+
     /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
-    type Switch() =
+    type Switch private (testOperations: SwitchTestOperations option) =
         inherit AsynchronousCommandLineAction()
 
         /// Runs the Product V1 hash-selected DirectoryVersion tracer without entering legacy Branch/Reference switch behavior.
@@ -4552,6 +4561,12 @@ module Branch =
                     return -1
             }
 
+        /// Creates the production switch action used by command registration.
+        new() = Switch(None)
+
+        /// Creates a switch action with action-boundary operations for behavioral routing tests.
+        static member internal CreateForTests(operations: SwitchTestOperations) = Switch(Some operations)
+
         /// Runs the asynchronous switch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             let sha256Hash = getSha256HashPrefix parseResult
@@ -4568,7 +4583,11 @@ module Branch =
                 <> Guid.Empty
 
             task {
-                match! WorkingDirectoryUpdate.resumePendingReferenceFinalization cancellationToken with
+                match!
+                    match testOperations with
+                    | Some operations -> operations.ResumePending cancellationToken
+                    | None -> WorkingDirectoryUpdate.resumePendingReferenceFinalization cancellationToken
+                    with
                 | Some outcome ->
                     let outcomeName, message, exitCode = projectHashSwitchOutcome outcome
 
@@ -4614,13 +4633,16 @@ module Branch =
                                     CorrelationId = getCorrelationId parseResult
                                 )
 
-                            task {
-                                let! result = Branch.Get parameters
+                            match testOperations with
+                            | Some operations -> operations.ResolveReferenceRoute parameters
+                            | None ->
+                                task {
+                                    let! result = Branch.Get parameters
 
-                                return
-                                    result
-                                    |> Result.map (fun value -> Some(referenceOnlySwitchRoute value.ReturnValue.SaveEnabled))
-                            }
+                                    return
+                                        result
+                                        |> Result.map (fun value -> Some(referenceOnlySwitchRoute value.ReturnValue.SaveEnabled))
+                                }
                         else
                             Task.FromResult(Ok None)
 
@@ -4632,66 +4654,72 @@ module Branch =
                         | Error message ->
                             let error = GraceError.Create message (getCorrelationId parseResult)
                             return renderOutput parseResult (GraceResult.Error error)
-                        | Ok false when referenceRoute = Some WduNoSave -> return! referenceSelectedHandler parseResult cancellationToken
+                        | Ok false when referenceRoute = Some WduNoSave ->
+                            match testOperations with
+                            | Some operations -> return! operations.RunWduReference parseResult cancellationToken
+                            | None -> return! referenceSelectedHandler parseResult cancellationToken
                         | Ok false ->
-                            return!
-                                task {
-                                    let updateMarkerFileName = updateInProgressFileName ()
-                                    let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
-                                    let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+                            match testOperations with
+                            | Some operations -> return! operations.RunLegacy parseResult cancellationToken
+                            | None ->
+                                return!
+                                    task {
+                                        let updateMarkerFileName = updateInProgressFileName ()
+                                        let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
+                                        let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
 
-                                    if parseResult |> verbose then printParseResult parseResult
+                                        if parseResult |> verbose then printParseResult parseResult
 
-                                    let preflightOperations =
-                                        {
-                                            UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
-                                            InspectWatchStatus = inspectGraceWatchStatus
-                                            ReadPendingJournalSummary =
-                                                fun () ->
-                                                    Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
-                                        }
+                                        let preflightOperations =
+                                            {
+                                                UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
+                                                InspectWatchStatus = inspectGraceWatchStatus
+                                                ReadPendingJournalSummary =
+                                                    fun () ->
+                                                        Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+                                            }
 
-                                    let! switchResult =
-                                        runBranchSwitchWorkflowWithLease
-                                            preflightOperations
-                                            (getCorrelationId parseResult)
-                                            switchLeaseFileName
-                                            switchLeaseText
-                                            (fun () ->
-                                                task {
-                                                    let switchParameters = SwitchParameters()
+                                        let! switchResult =
+                                            runBranchSwitchWorkflowWithLease
+                                                preflightOperations
+                                                (getCorrelationId parseResult)
+                                                switchLeaseFileName
+                                                switchLeaseText
+                                                (fun () ->
+                                                    task {
+                                                        let switchParameters = SwitchParameters()
 
-                                                    let toBranchId = parseResult.GetValue(Options.toBranchId)
-                                                    if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+                                                        let toBranchId = parseResult.GetValue(Options.toBranchId)
+                                                        if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
 
-                                                    let toBranchName = parseResult.GetValue(Options.toBranchName)
-                                                    switchParameters.ToBranchName <- toBranchName
+                                                        let toBranchName = parseResult.GetValue(Options.toBranchName)
+                                                        switchParameters.ToBranchName <- toBranchName
 
-                                                    let referenceId = parseResult.GetValue(Options.referenceId)
+                                                        let referenceId = parseResult.GetValue(Options.referenceId)
 
-                                                    if referenceId <> Guid.Empty then
-                                                        switchParameters.ReferenceId <- $"{referenceId}"
+                                                        if referenceId <> Guid.Empty then
+                                                            switchParameters.ReferenceId <- $"{referenceId}"
 
-                                                    let sha256Hash = getSha256HashPrefix parseResult
-                                                    switchParameters.Sha256Hash <- sha256Hash
+                                                        let sha256Hash = getSha256HashPrefix parseResult
+                                                        switchParameters.Sha256Hash <- sha256Hash
 
-                                                    let blake3Hash = getBlake3HashPrefix parseResult
-                                                    switchParameters.Blake3Hash <- blake3Hash
+                                                        let blake3Hash = getBlake3HashPrefix parseResult
+                                                        switchParameters.Blake3Hash <- blake3Hash
 
-                                                    let! result = switchHandler parseResult switchParameters
-                                                    return result
-                                                })
+                                                        let! result = switchHandler parseResult switchParameters
+                                                        return result
+                                                    })
 
-                                    match switchResult with
-                                    | Error error ->
-                                        if parseResult |> verbose then
-                                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
-                                        else
-                                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+                                        match switchResult with
+                                        | Error error ->
+                                            if parseResult |> verbose then
+                                                AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
+                                            else
+                                                AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
 
-                                        return -1
-                                    | Ok result -> return result
-                                }
+                                            return -1
+                                        | Ok result -> return result
+                                    }
             }
 
     /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.
