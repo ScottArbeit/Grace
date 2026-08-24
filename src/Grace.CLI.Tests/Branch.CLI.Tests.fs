@@ -511,6 +511,38 @@ module BranchCommandTests =
             listener.Stop()
             server.Wait(TimeSpan.FromSeconds(5.0)) |> ignore
 
+    /// Identifies the platform-specific OIDC discovery request that precedes SDK route calls on Linux.
+    let private oidcDiscoveryRequest = "GET /authenticate/oidc/config HTTP/1.1"
+
+    /// Names the complete Save, selection, and direct Blob operation sequence required from the public switch command.
+    let private saveSwitchOperationSequence =
+        [
+            "POST /branch/Get HTTP/1.1"
+            "POST /branch/Get HTTP/1.1"
+            "POST /storage/getUploadMetadataForFiles HTTP/1.1"
+            "PUT /fixture-container/save-object?sig=fake HTTP/1.1"
+            "POST /directory/GetDirectoryVersionsRecursive HTTP/1.1"
+            "POST /directory/SaveDirectoryVersions HTTP/1.1"
+            "POST /branch/Save HTTP/1.1"
+            "POST /branch/GetReference HTTP/1.1"
+            "POST /branch/Get HTTP/1.1"
+            "POST /branch/GetVersion HTTP/1.1"
+            "POST /directory/GetByDirectoryIds HTTP/1.1"
+            "POST /storage/getDownloadUri HTTP/1.1"
+            "GET /fixture-container/target-object?sig=fake HTTP/1.1"
+        ]
+
+    /// Separates supported OIDC discovery traffic while retaining source indices for operation-specific header and body assertions.
+    let private saveSwitchOperationEntries (requests: ResizeArray<string>) =
+        requests
+        |> Seq.filter (fun request -> request.StartsWith("GET /authenticate/oidc/", StringComparison.Ordinal))
+        |> Seq.iter (fun request -> request |> should equal oidcDiscoveryRequest)
+
+        requests
+        |> Seq.indexed
+        |> Seq.filter (fun (_, request) -> request <> oidcDiscoveryRequest)
+        |> Seq.toArray
+
     /// Runs a Reference-only switch through the built action and checks which route receives control.
     let private runReferenceOnlySwitchRoute route expectedHandler sentinelExitCode =
         withTempBranchSwitchRepo (fun () ->
@@ -712,41 +744,41 @@ module BranchCommandTests =
                         |> fun task -> task.GetAwaiter().GetResult()
                         |> should be (greaterThan 0L)
 
-                        headers[0]
+                        let operationEntries = saveSwitchOperationEntries requests
+
+                        let branchGetIndex =
+                            operationEntries
+                            |> Array.find (fun (_, request) -> request = "POST /branch/Get HTTP/1.1")
+                            |> fst
+
+                        let uploadIndex =
+                            operationEntries
+                            |> Array.find (fun (_, request) -> request = "PUT /fixture-container/save-object?sig=fake HTTP/1.1")
+                            |> fst
+
+                        let saveDirectoryVersionsIndex =
+                            operationEntries
+                            |> Array.find (fun (_, request) -> request = "POST /directory/SaveDirectoryVersions HTTP/1.1")
+                            |> fst
+
+                        headers[branchGetIndex]
                         |> should contain "X-Correlation-Id: branch-annotate-tests"
 
-                        headers[0]
+                        headers[branchGetIndex]
                         |> should contain "X-Api-Version: 2023-10-01"
 
-                        headers[3]
+                        headers[uploadIndex]
                         |> should contain $"x-ms-meta-Sha256Hash: {editedSha256}"
 
-                        Encoding.UTF8.GetString(bodies[5])
+                        Encoding.UTF8.GetString(bodies[saveDirectoryVersionsIndex])
                         |> should contain $"{editedSha256}"
 
-                        requests
-                        |> Seq.map string
-                        |> should
-                            equal
-                            [
-                                "POST /branch/Get HTTP/1.1"
-                                "POST /branch/Get HTTP/1.1"
-                                "POST /storage/getUploadMetadataForFiles HTTP/1.1"
-                                "PUT /fixture-container/save-object?sig=fake HTTP/1.1"
-                                "POST /directory/GetDirectoryVersionsRecursive HTTP/1.1"
-                                "POST /directory/SaveDirectoryVersions HTTP/1.1"
-                                "POST /branch/Save HTTP/1.1"
-                                "POST /branch/GetReference HTTP/1.1"
-                                "POST /branch/Get HTTP/1.1"
-                                "POST /branch/GetVersion HTTP/1.1"
-                                "POST /directory/GetByDirectoryIds HTTP/1.1"
-                                "POST /storage/getDownloadUri HTTP/1.1"
-                                "GET /fixture-container/target-object?sig=fake HTTP/1.1"
-                            ]
+                        bodies[uploadIndex] |> should equal editedBytes
 
-                        bodies
-                        |> Seq.exists (fun body -> body = editedBytes)
-                        |> should equal true)
+                        operationEntries
+                        |> Array.map snd
+                        |> Array.toList
+                        |> should equal saveSwitchOperationSequence)
             finally
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri))
 
@@ -872,29 +904,19 @@ module BranchCommandTests =
                         |> fun task -> task.GetAwaiter().GetResult()
                         |> should equal None
 
-                        requests
-                        |> Seq.map string
-                        |> should
-                            equal
-                            [
-                                "POST /branch/Get HTTP/1.1"
-                                "POST /branch/Get HTTP/1.1"
-                                "POST /storage/getUploadMetadataForFiles HTTP/1.1"
-                                "PUT /fixture-container/save-object?sig=fake HTTP/1.1"
-                                "POST /directory/GetDirectoryVersionsRecursive HTTP/1.1"
-                                "POST /directory/SaveDirectoryVersions HTTP/1.1"
-                                "POST /branch/Save HTTP/1.1"
-                                "POST /branch/GetReference HTTP/1.1"
-                                "POST /branch/Get HTTP/1.1"
-                                "POST /branch/GetVersion HTTP/1.1"
-                                "POST /directory/GetByDirectoryIds HTTP/1.1"
-                                "POST /storage/getDownloadUri HTTP/1.1"
-                                "GET /fixture-container/target-object?sig=fake HTTP/1.1"
-                            ]
+                        let operationEntries = saveSwitchOperationEntries requests
 
-                        bodies
-                        |> Seq.exists (fun body -> body = editedBytes)
-                        |> should equal true)
+                        let uploadIndex =
+                            operationEntries
+                            |> Array.find (fun (_, request) -> request = "PUT /fixture-container/save-object?sig=fake HTTP/1.1")
+                            |> fst
+
+                        operationEntries
+                        |> Array.map snd
+                        |> Array.toList
+                        |> should equal saveSwitchOperationSequence
+
+                        bodies[uploadIndex] |> should equal editedBytes)
             finally
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri))
 
