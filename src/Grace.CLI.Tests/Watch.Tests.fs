@@ -27729,6 +27729,7 @@ module WatchTests =
 
             writeWatchStatusJsonWithRuntimeSurface dirtyStatus
             |> ignore
+            |> ignore
 
             let inspection =
                 Services
@@ -28527,6 +28528,198 @@ module WatchTests =
 
                 File.Exists(ipcFileName) |> should equal true))
 
+    /// Proves same-root Watch replay reads the verified retained file even when an unrelated cache entry is corrupt.
+    [<Test; Category("CurrentBranchCursorReplay"); Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``same-root Watch WDU replay ignores corrupt cache and does not rewrite retained file`` () =
+        withTempRepo (fun root ->
+            let current = Current()
+            let relativePath = "retained.txt"
+            let retainedPath = Path.Combine(root, relativePath)
+            let retainedBytes = Text.Encoding.UTF8.GetBytes("verified retained Watch bytes")
+            File.WriteAllBytes(retainedPath, retainedBytes)
+
+            let rootDirectoryId = DirectoryVersionId.NewGuid()
+            let retainedFile = localFileVersionFromWorkingTree root relativePath
+
+            let entries =
+                [
+                    DirectoryVersionPreimageEntry.File retainedFile.RelativePath retainedFile.Size retainedFile.Blake3Hash retainedFile.Sha256Hash
+                ]
+
+            let rootDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    rootDirectoryId
+                    current.OwnerId
+                    current.OrganizationId
+                    current.RepositoryId
+                    Constants.RootDirectoryPath
+                    (computeSha256ForDirectoryEntries Constants.RootDirectoryPath entries)
+                    (computeBlake3ForDirectory Constants.RootDirectoryPath entries)
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| retainedFile |]))
+                    retainedFile.Size
+                    DateTime.UtcNow
+
+            let status = graceStatusFromRootDirectory rootDirectory
+
+            let boundary =
+                { ReferenceMaterializationBoundaryDto.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    DirectoryId = status.RootDirectoryId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                    EventCursor = "opaque-before-same-root-wdu"
+                }
+
+            Services.writeGraceStatusFileWithRemoteReferenceBoundary status boundary CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let cachePath = Services.getLocalObjectCachePathForFileVersion retainedFile.ToFileVersion
+
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath))
+            |> ignore
+
+            File.WriteAllText(cachePath, "corrupt unrelated cache bytes")
+
+            let eventCursor = "opaque-same-root-wdu"
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    ReferenceId = Guid.NewGuid()
+                    ReferenceType = ReferenceType.Save
+                    DirectoryId = status.RootDirectoryId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                }
+
+            Watch.applyCurrentBranchReferenceThroughWorkingDirectoryUpdateForWatchTests
+                payload
+                (acceptedMaterializationStatus status)
+                eventCursor
+                CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            File.ReadAllBytes(retainedPath)
+            |> should equal retainedBytes
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    current.RepositoryId
+                    current.BranchId
+                    status.RootDirectoryId
+                    status.RootDirectorySha256Hash
+                    status.RootDirectoryBlake3Hash
+                |> Result.defaultWith invalidOp
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                |> Result.defaultWith invalidOp
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
+    /// Proves production Watch publishes clean IPC only after exact terminal completion and cursor compare-and-set.
+    [<Test; Category("CurrentBranchCursorReplay"); Category("CurrentBranchMaterializationPublication")>]
+    let ``terminal Watch completion advances exact cursor before clean ipc publication`` () =
+        withTempRepo (fun _ ->
+            let current = Current()
+            let rootDirectoryId = DirectoryVersionId.NewGuid()
+            let eventCursor = "opaque-terminal-wdu-event"
+            writeTrustedRootOnlyWatchState rootDirectoryId
+            let status = Services.readGraceStatusFile().Result
+            let metadata = status.Index.Values |> Seq.toArray
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    current.RepositoryId
+                    current.BranchId
+                    status.RootDirectoryId
+                    status.RootDirectorySha256Hash
+                    status.RootDirectoryBlake3Hash
+                |> Result.defaultWith invalidOp
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                |> Result.defaultWith invalidOp
+
+            LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                current.GraceStatusFile
+                status
+                metadata
+                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization eventCursor)
+                target
+                operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            LocalStateDb.finalizeWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let durableBoundary =
+                LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> Option.defaultWith (fun () -> invalidOp "Expected a durable Watch cursor boundary.")
+
+            let dirtyStatus =
+                { liveWatchStatus rootDirectoryId with
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                    HasPendingWatchWork = true
+                    IsWorkingTreeClean = false
+                }
+
+            writeWatchStatusJsonWithRuntimeSurface dirtyStatus
+            |> ignore
+
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests false
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    DirectoryId = status.RootDirectoryId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                }
+
+            let staleExpected = { durableBoundary with EventCursor = "opaque-stale-predecessor" }
+
+            Assert.ThrowsAsync<InvalidOperationException>(
+                Func<Task> (fun () ->
+                    Watch.acknowledgeCurrentBranchReferenceReplayCursorForWatchTests staleExpected (Some payload) eventCursor CancellationToken.None :> Task)
+            )
+            |> ignore
+
+            let stillDirty =
+                Services.inspectGraceWatchStatus().Result.Status
+                |> Option.get
+
+            stillDirty.HasPendingWatchWork
+            |> should equal true
+
+            stillDirty.IsWorkingTreeClean
+            |> should equal false
+
+            let advanced =
+                Watch.acknowledgeCurrentBranchReferenceReplayCursorForWatchTests durableBoundary (Some payload) eventCursor CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            advanced.EventCursor |> should equal eventCursor
+
+            let publishedClean =
+                Services.inspectGraceWatchStatus().Result.Status
+                |> Option.get
+
+            publishedClean.HasPendingWatchWork
+            |> should equal false
+
+            publishedClean.IsWorkingTreeClean
+            |> should equal true)
+
     /// Creates a deterministic durable replay boundary without exposing cursor format assumptions to the replay seam.
     let private replayBoundary cursor =
         { ReferenceMaterializationBoundaryDto.Default with
@@ -28591,7 +28784,7 @@ module WatchTests =
             let laterEvent = replayEvent "opaque-later-event" 11
             let mutable durableBoundary: ReferenceMaterializationBoundaryDto option = None
             let mutable resolutionCount = 0
-            let processed = ResizeArray<ReferenceId>()
+            let processed = ResizeArray<ReferenceId * string>()
             use replayGate = new SemaphoreSlim(1, 1)
 
             let clients =
@@ -28607,8 +28800,8 @@ module WatchTests =
                              Assert.That(boundary.EventCursor, Is.EqualTo("opaque-matching-root"))
                              Task.FromResult(Ok(replayReturnValue boundary [| laterEvent |] "opaque-later-event"))
                      ProcessReference =
-                         fun payload ->
-                             processed.Add(payload.ReferenceId)
+                         fun payload eventCursor ->
+                             processed.Add(payload.ReferenceId, eventCursor)
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun expected reference cursor _ ->
@@ -28634,7 +28827,11 @@ module WatchTests =
             Assert.That(outcome.AcknowledgedEventCount, Is.EqualTo(1))
 
             processed.ToArray()
-            |> should equal [| laterEvent.Reference.ReferenceId |]
+            |> should
+                equal
+                [|
+                    laterEvent.Reference.ReferenceId, laterEvent.EventCursor
+                |]
         }
 
     /// An unmatched local root establishes a conservative baseline, preserves history, and follows only a future event.
@@ -28646,7 +28843,7 @@ module WatchTests =
             let futureEvent = replayEvent "opaque-future-event" 13
             let mutable durableBoundary: ReferenceMaterializationBoundaryDto option = None
             let mutable futureAvailable = false
-            let processed = ResizeArray<ReferenceId>()
+            let processed = ResizeArray<ReferenceId * string>()
             use replayGate = new SemaphoreSlim(1, 1)
 
             let clients =
@@ -28662,8 +28859,8 @@ module WatchTests =
                              let scannedThrough = if futureAvailable then futureEvent.EventCursor else boundary.EventCursor
                              Task.FromResult(Ok(replayReturnValue boundary events scannedThrough))
                      ProcessReference =
-                         fun payload ->
-                             processed.Add(payload.ReferenceId)
+                         fun payload eventCursor ->
+                             processed.Add(payload.ReferenceId, eventCursor)
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun expected reference cursor _ ->
@@ -28696,9 +28893,13 @@ module WatchTests =
             Assert.That(futureOutcome.AcknowledgedEventCount, Is.EqualTo(1))
 
             processed.ToArray()
-            |> should equal [| futureEvent.Reference.ReferenceId |]
+            |> should
+                equal
+                [|
+                    futureEvent.Reference.ReferenceId, futureEvent.EventCursor
+                |]
 
-            Assert.That(processed, Does.Not.Contain(historicalEvent.Reference.ReferenceId))
+            Assert.That(processed, Does.Not.Contain((historicalEvent.Reference.ReferenceId, historicalEvent.EventCursor)))
         }
 
     /// Proves a partial root match stays non-terminal at the production decision and replay acknowledgement boundary.
@@ -28721,7 +28922,7 @@ module WatchTests =
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-partial-match"))
                      ProcessReference =
-                         fun currentPayload ->
+                         fun currentPayload _ ->
                              let decision =
                                  Services.revalidateAcceptedCurrentBranchReferenceMaterialization
                                      currentPayload.RepositoryId
@@ -28818,7 +29019,7 @@ module WatchTests =
         task {
             let mutable durableBoundary = replayBoundary "opaque-n"
             let event = replayEvent "opaque-n-plus-one" 1
-            let processed = ResizeArray<ReferenceId>()
+            let processed = ResizeArray<ReferenceId * string>()
             let acknowledgements = ResizeArray<string>()
             use replayGate = new SemaphoreSlim(1, 1)
 
@@ -28831,8 +29032,8 @@ module WatchTests =
                              let events = if boundary.EventCursor = "opaque-n" then [| event |] else Array.empty
                              Task.FromResult(Ok(replayReturnValue boundary events "opaque-scanned"))
                      ProcessReference =
-                         fun payload ->
-                             processed.Add(payload.ReferenceId)
+                         fun payload eventCursor ->
+                             processed.Add(payload.ReferenceId, eventCursor)
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun expected reference cursor _ ->
@@ -28861,7 +29062,11 @@ module WatchTests =
 
             processed
             |> Seq.toArray
-            |> should equal [| event.Reference.ReferenceId |]
+            |> should
+                equal
+                [|
+                    event.Reference.ReferenceId, event.EventCursor
+                |]
 
             acknowledgements
             |> Seq.toArray
@@ -28894,7 +29099,7 @@ module WatchTests =
                              let events = if boundary.EventCursor = "opaque-before" then [| event |] else Array.empty
                              Task.FromResult(Ok(replayReturnValue boundary events "opaque-closed"))
                      ProcessReference =
-                         fun payload ->
+                         fun payload _ ->
                              task {
                                  processCount <- processCount + 1
                                  applyStarted.TrySetResult(()) |> ignore
@@ -28945,7 +29150,7 @@ module WatchTests =
                      ReadBoundary = fun () -> Task.FromResult(Some boundary)
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-wait"))
-                     ProcessReference = fun payload -> Task.FromResult(waitingReplayOutcome payload.ReferenceId)
+                     ProcessReference = fun payload _ -> Task.FromResult(waitingReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun _ _ _ _ ->
                              acknowledgementCount <- acknowledgementCount + 1
@@ -28976,7 +29181,7 @@ module WatchTests =
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-scan-closed"))
                      ProcessReference =
-                         fun payload ->
+                         fun payload _ ->
                              processCount <- processCount + 1
                              Task.FromResult(sameRootReplayOutcome payload.ReferenceId payload)
                      AcknowledgeCursor =
@@ -29025,7 +29230,7 @@ module WatchTests =
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-cancel"))
                      ProcessReference =
-                         fun payload ->
+                         fun payload _ ->
                              cancellation.Cancel()
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =

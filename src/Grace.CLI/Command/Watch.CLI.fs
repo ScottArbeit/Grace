@@ -6679,49 +6679,230 @@ module Watch =
             return! applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
         }
 
-    /// Applies one BranchDto-confirmed current-branch Reference without downloading missing object content.
-    let private applyCurrentBranchReferenceMaterialization (payload: CurrentBranchReferenceNotification) acceptedStatus =
-        applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
-            {
-                GetRemoteDirectoryVersions =
-                    fun rootDirectoryId correlationId ->
-                        task {
-                            let current = Current()
+    /// Fails closed when a legacy BranchDto catch-up lacks the exact replay cursor required by Watch WDU identity.
+    let private rejectCursorlessCurrentBranchReferenceMaterialization _ _ =
+        task {
+            requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
+            return invalidOp "Current-branch materialization requires an ordered replay event cursor."
+        }
 
-                            let parameters =
-                                GetParameters(
-                                    OwnerId = $"{current.OwnerId}",
-                                    OwnerName = current.OwnerName,
-                                    OrganizationId = $"{current.OrganizationId}",
-                                    OrganizationName = current.OrganizationName,
-                                    RepositoryId = $"{current.RepositoryId}",
-                                    RepositoryName = current.RepositoryName,
-                                    DirectoryVersionId = $"{rootDirectoryId}",
-                                    CorrelationId = correlationId
-                                )
+    /// Supplies immutable WDU preparation bytes from verified cache content or the accepted retained working file.
+    type private CurrentBranchWatchPreparedContentReader(targetStatus: GraceStatus, plan: CurrentBranchRemoteMaterializationPlan) =
+        let comparer = materializationStringComparer ()
+        let files = Dictionary<string, LocalFileVersion>(comparer)
 
-                            match! DirectoryVersion.GetDirectoryVersionsRecursive parameters with
-                            | Ok returnValue ->
-                                return
-                                    Ok(
-                                        returnValue.ReturnValue
-                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
-                                        |> Seq.toArray
-                                    )
-                            | Error error -> return Error error
-                        }
-                ReadGraceStatus = readGraceStatusFile
-                WriteGraceStatus = writeGraceStatusFileAndRecordRevision
-                RequestResync = requestGraceWatchExplicitResync
-                TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
-                IsUpdateMarkerOwned = currentBranchMaterializationMarkerIsOwned
-                BeforeTargetMutation = ignore
-                DeleteUpdateMarker = File.Delete
-                BeforeFinalVerification = fun () -> Task.FromResult(())
-                BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
-            }
-            payload
-            acceptedStatus
+        let retainedPaths =
+            HashSet<string>(
+                plan.RetainedFiles
+                |> Seq.map (fun file -> normalizedMaterializationPath file.RelativePath),
+                comparer
+            )
+
+        let writePaths =
+            HashSet<string>(
+                plan.FileWrites
+                |> Seq.map (fun file -> normalizedMaterializationPath file.RelativePath),
+                comparer
+            )
+
+        do
+            for directory in targetStatus.Index.Values do
+                for file in directory.Files do
+                    files[normalizedMaterializationPath file.RelativePath] <- file
+
+        interface WorkingDirectoryUpdateContracts.IPreparedContentReader with
+            member _.FilePaths =
+                files.Values
+                |> Seq.map (fun file -> string file.RelativePath)
+
+            member _.OpenReadAsync((relativePath: RelativePath), cancellationToken) =
+                task {
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    let normalizedPath = normalizedMaterializationPath relativePath
+
+                    match files.TryGetValue(normalizedPath) with
+                    | false, _ -> return raise (FileNotFoundException($"Watch prepared-content metadata is missing '{relativePath}'."))
+                    | true, file ->
+                        let cachePath = getLocalObjectCachePathForFileVersion file.ToFileVersion
+                        let retainedPath = materializationTargetFullPath relativePath
+
+                        let sourcePath =
+                            if
+                                retainedPaths.Contains(normalizedPath)
+                                && File.Exists(retainedPath)
+                                && not (Directory.Exists(retainedPath))
+                            then
+                                retainedPath
+                            elif
+                                writePaths.Contains(normalizedPath)
+                                && File.Exists(cachePath)
+                                && not (Directory.Exists(cachePath))
+                            then
+                                cachePath
+                            elif
+                                File.Exists(retainedPath)
+                                && not (Directory.Exists(retainedPath))
+                            then
+                                raise (InvalidOperationException($"Watch apply planning did not classify retained content for '{relativePath}'."))
+                            else
+                                raise (FileNotFoundException($"Watch prepared content is unavailable for '{relativePath}'."))
+
+                        return File.Open(sourcePath, fileStreamOptionsRead) :> Stream
+                }
+
+            member _.Dispose() = ()
+
+    /// Builds the exact WDU manifest represented by one complete Watch target status.
+    let private createCurrentBranchWatchManifest (targetStatus: GraceStatus) =
+        targetStatus.Index
+        |> Seq.collect (fun pair ->
+            seq {
+                let directory = pair.Value
+
+                if directory.DirectoryVersionId
+                   <> targetStatus.RootDirectoryId then
+                    yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory directory.RelativePath
+
+                for file in directory.Files do
+                    yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(file.RelativePath, file.Sha256Hash, file.Blake3Hash)
+            })
+        |> WorkingDirectoryUpdateContracts.PreparedManifest.create
+
+    /// Resolves and applies one exact cursor-backed current-Reference through the shared WDU transaction.
+    let private applyCurrentBranchReferenceThroughWorkingDirectoryUpdate
+        (payload: CurrentBranchReferenceNotification)
+        acceptedStatus
+        eventCursor
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            configureWatchPathComparisonForCurrentRepository ()
+            let current = Current()
+            let! revisionBefore = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+            let! acceptedStatusResult =
+                Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
+
+            let! revisionAfter = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+            let acceptedLocalStatus =
+                match acceptedStatusResult with
+                | Error error ->
+                    requestGraceWatchExplicitResync $"Watch WDU local status read failed before preparation: {error}"
+                    invalidOp error
+                | Ok status when revisionBefore <> revisionAfter ->
+                    requestGraceWatchExplicitResync "Watch WDU local status changed during preparation admission"
+                    invalidOp "Watch local status changed during WDU preparation admission."
+                | Ok status ->
+                    try
+                        validateCurrentBranchMaterializationAcceptedStatus acceptedStatus status
+                        status
+                    with
+                    | ex ->
+                        requestGraceWatchExplicitResync $"Watch WDU accepted status changed before preparation: {ex.Message}"
+                        raise ex
+
+            let sameRoot =
+                acceptedLocalStatus.RootDirectoryId = payload.DirectoryId
+                && acceptedLocalStatus.RootDirectorySha256Hash = payload.Sha256Hash
+                && acceptedLocalStatus.RootDirectoryBlake3Hash = payload.Blake3Hash
+
+            let! targetStatus, objectMetadata =
+                if sameRoot then
+                    Task.FromResult(acceptedLocalStatus, acceptedLocalStatus.Index.Values |> Seq.toArray)
+                else
+                    task {
+                        let parameters =
+                            GetParameters(
+                                OwnerId = $"{current.OwnerId}",
+                                OwnerName = current.OwnerName,
+                                OrganizationId = $"{current.OrganizationId}",
+                                OrganizationName = current.OrganizationName,
+                                RepositoryId = $"{current.RepositoryId}",
+                                RepositoryName = current.RepositoryName,
+                                DirectoryVersionId = $"{payload.DirectoryId}",
+                                CorrelationId = payload.CorrelationId
+                            )
+
+                        match! DirectoryVersion.GetDirectoryVersionsRecursive parameters with
+                        | Error error ->
+                            requestGraceWatchExplicitResync $"Watch WDU metadata fetch failed before preparation: {error.Error}"
+                            return raise (InvalidOperationException(error.Error))
+                        | Ok returnValue ->
+                            let remoteDirectoryVersions =
+                                returnValue.ReturnValue
+                                |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                |> Seq.toArray
+
+                            try
+                                validateCurrentBranchMaterializationAcceptedMetadata remoteDirectoryVersions
+                                validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
+                                validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
+                                validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
+                                let targetStatus = createRemoteGraceStatus acceptedLocalStatus remoteDirectoryVersions
+                                return targetStatus, targetStatus.Index.Values |> Seq.toArray
+                            with
+                            | ex ->
+                                requestGraceWatchExplicitResync $"Watch WDU target metadata was invalid before preparation: {ex.Message}"
+                                return raise ex
+                    }
+
+            let plan = buildCurrentBranchRemoteMaterializationPlanForWatchTests acceptedLocalStatus targetStatus
+
+            try
+                do! verifyCurrentBranchMaterializationTargetsUnchanged acceptedLocalStatus plan
+                do! verifyCurrentBranchMaterializationRetainedFiles plan
+                do! verifyCurrentBranchMaterializationObjectCache plan
+                do! verifyCurrentBranchMaterializationBinaryClassifications plan
+            with
+            | ex ->
+                requestGraceWatchExplicitResync $"Watch WDU preparation validation failed: {ex.Message}"
+                return raise ex
+
+            let manifest =
+                createCurrentBranchWatchManifest targetStatus
+                |> Result.defaultWith (fun error -> invalidOp $"Watch WDU manifest is invalid: {error}")
+
+            let! preparedContentResult =
+                WorkingDirectoryUpdateContracts.PreparedContent.create
+                    manifest
+                    (new CurrentBranchWatchPreparedContentReader(targetStatus, plan))
+                    cancellationToken
+
+            let preparedContent =
+                preparedContentResult
+                |> Result.defaultWith (fun error -> invalidOp $"Watch WDU content preparation failed: {error}")
+
+            let! outcome =
+                WorkingDirectoryUpdate.Watch.runAtRevision
+                    acceptedLocalStatus
+                    targetStatus
+                    objectMetadata
+                    preparedContent
+                    eventCursor
+                    (string payload.CorrelationId)
+                    revisionBefore
+                    cancellationToken
+                    WorkingDirectoryUpdate.Watch.none
+
+            match outcome with
+            | WorkingDirectoryUpdateContracts.Outcome.Updated _
+            | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ ->
+                let! completedStatus = readGraceStatusFile ()
+                graceStatus <- completedStatus
+                updateGraceStatusDirectoryIds completedStatus
+            | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)
+            | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure
+            | WorkingDirectoryUpdateContracts.Outcome.Rejected failure ->
+                let reason = WorkingDirectoryUpdateContracts.Failure.reason failure
+                requestGraceWatchExplicitResync $"Watch WDU did not reach terminal local completion: {reason}"
+                invalidOp reason
+        }
+
+    /// Exercises the production Watch-to-WDU adapter without server replay orchestration.
+    let internal applyCurrentBranchReferenceThroughWorkingDirectoryUpdateForWatchTests payload acceptedStatus eventCursor cancellationToken =
+        applyCurrentBranchReferenceThroughWorkingDirectoryUpdate payload acceptedStatus eventCursor cancellationToken
 
     /// Identifies the exact dirty Watch snapshot published for one coordinator-owned materialization boundary.
     type private CurrentBranchMaterializationPendingPublication =
@@ -6851,6 +7032,9 @@ module Watch =
             WaitForSafePoint: CurrentBranchReferenceNotification -> CurrentBranchMaterializationStatusGate -> Task<unit>
             ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
             ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
+            ApplySameRootReference: bool
+            DeferCleanIpcPublication: bool
+            UseLegacyMaterializationLease: bool
             PublishCleanIpcAfterApply: unit -> bool
             ReassertDirtyIpcAfterFailedCleanPublication: unit -> bool
             MaxAttempts: int option
@@ -7001,6 +7185,11 @@ module Watch =
             let mutable latestEligibleAdmissionAccepted = false
             let mutable retriedAfterRecoveredLocalStatus = false
 
+            let shouldApplyDecision reason =
+                reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+                || (clients.ApplySameRootReference
+                    && reason = LatestCurrentBranchReferenceDecisionReason.SameRoot)
+
             let canRetry () =
                 clients.MaxAttempts
                 |> Option.forall (fun maxAttempts -> attempts < maxAttempts)
@@ -7030,7 +7219,7 @@ module Watch =
                     terminal <- true
                 | Ok decision ->
                     match decision.Reason with
-                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                    | reason when shouldApplyDecision reason ->
                         let! inspection = clients.InspectLocalStatus()
 
                         match currentBranchMaterializationStatusGate false None payload inspection with
@@ -7048,40 +7237,62 @@ module Watch =
                             latestEligibleAdmissionAccepted <- true
                             let mutable postLeaseRetryGate: CurrentBranchMaterializationStatusGate option = None
 
-                            let! cleanOutcome =
-                                WorkingDirectoryMaterialization.runWithLease (fun () ->
-                                    task {
-                                        let! leaseInspection = clients.InspectLocalStatus()
+                            let applyAfterAdmission () =
+                                task {
+                                    let! leaseInspection = clients.InspectLocalStatus()
 
-                                        if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                        return
+                                            {
+                                                ReferenceId = payload.ReferenceId
+                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                Decision = Some acceptedDecision
+                                            }
+                                    else
+                                        let leaseDecision = revalidateAcceptedCurrentBranchMaterializationDecision current payload leaseInspection
+
+                                        if not (shouldApplyDecision leaseDecision.Reason) then
                                             return
                                                 {
                                                     ReferenceId = payload.ReferenceId
-                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                    Decision = Some acceptedDecision
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+                                                    Decision = Some leaseDecision
                                                 }
                                         else
-                                            let leaseDecision = revalidateAcceptedCurrentBranchMaterializationDecision current payload leaseInspection
-
-                                            if leaseDecision.Reason
-                                               <> LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired then
+                                            match currentBranchMaterializationStatusGate false None payload leaseInspection with
+                                            | NotCurrentBranch ->
                                                 return
                                                     {
                                                         ReferenceId = payload.ReferenceId
-                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
-                                                        Decision = Some leaseDecision
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                        Decision = Some acceptedDecision
                                                     }
-                                            else
-                                                match currentBranchMaterializationStatusGate false None payload leaseInspection with
-                                                | NotCurrentBranch ->
+                                            | Clean leaseStatus ->
+                                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
                                                     return
                                                         {
                                                             ReferenceId = payload.ReferenceId
                                                             Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
                                                             Decision = Some acceptedDecision
                                                         }
-                                                | Clean leaseStatus ->
-                                                    if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                else
+                                                    setGraceWatchPendingWorkStatusFlag true
+                                                    let materializationPendingPublication = tryPublishCurrentBranchMaterializationPendingStatus ()
+
+                                                    if materializationPendingPublication.IsNone then
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
+
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    elif not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        publishPendingWatchWorkTransitionIfNeeded ()
+
                                                         return
                                                             {
                                                                 ReferenceId = payload.ReferenceId
@@ -7089,20 +7300,9 @@ module Watch =
                                                                 Decision = Some acceptedDecision
                                                             }
                                                     else
-                                                        setGraceWatchPendingWorkStatusFlag true
-                                                        let materializationPendingPublication = tryPublishCurrentBranchMaterializationPendingStatus ()
+                                                        let! preApplyInspection = clients.InspectLocalStatus()
 
-                                                        if materializationPendingPublication.IsNone then
-                                                            setGraceWatchPendingWorkStatusFlag false
-                                                            clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
-
-                                                            return
-                                                                {
-                                                                    ReferenceId = payload.ReferenceId
-                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-                                                                    Decision = Some acceptedDecision
-                                                                }
-                                                        elif not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                        if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
                                                             setGraceWatchPendingWorkStatusFlag false
                                                             publishPendingWatchWorkTransitionIfNeeded ()
 
@@ -7113,138 +7313,129 @@ module Watch =
                                                                     Decision = Some acceptedDecision
                                                                 }
                                                         else
-                                                            let! preApplyInspection = clients.InspectLocalStatus()
+                                                            let preApplyDecision =
+                                                                revalidateAcceptedCurrentBranchMaterializationDecision current payload preApplyInspection
 
-                                                            if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                            if not (shouldApplyDecision preApplyDecision.Reason) then
                                                                 setGraceWatchPendingWorkStatusFlag false
                                                                 publishPendingWatchWorkTransitionIfNeeded ()
 
                                                                 return
                                                                     {
                                                                         ReferenceId = payload.ReferenceId
-                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                                        Decision = Some acceptedDecision
+                                                                        Reason =
+                                                                            CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+                                                                        Decision = Some preApplyDecision
                                                                     }
                                                             else
-                                                                let preApplyDecision =
-                                                                    revalidateAcceptedCurrentBranchMaterializationDecision current payload preApplyInspection
-
-                                                                if preApplyDecision.Reason
-                                                                   <> LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired then
+                                                                match
+                                                                    currentBranchMaterializationStatusGate
+                                                                        true
+                                                                        materializationPendingPublication
+                                                                        payload
+                                                                        preApplyInspection
+                                                                    with
+                                                                | NotCurrentBranch ->
                                                                     setGraceWatchPendingWorkStatusFlag false
                                                                     publishPendingWatchWorkTransitionIfNeeded ()
 
                                                                     return
                                                                         {
                                                                             ReferenceId = payload.ReferenceId
-                                                                            Reason =
-                                                                                CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
-                                                                            Decision = Some preApplyDecision
+                                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                            Decision = Some acceptedDecision
                                                                         }
-                                                                else
-                                                                    match
-                                                                        currentBranchMaterializationStatusGate
-                                                                            true
-                                                                            materializationPendingPublication
-                                                                            payload
-                                                                            preApplyInspection
-                                                                        with
-                                                                    | NotCurrentBranch ->
+                                                                | Blocked reason ->
+                                                                    setGraceWatchPendingWorkStatusFlag false
+                                                                    publishPendingWatchWorkTransitionIfNeeded ()
+                                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                                                    return
+                                                                        {
+                                                                            ReferenceId = payload.ReferenceId
+                                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                                            Decision = Some acceptedDecision
+                                                                        }
+                                                                | Degraded reason ->
+                                                                    setGraceWatchPendingWorkStatusFlag false
+                                                                    publishPendingWatchWorkTransitionIfNeeded ()
+                                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                                                    return
+                                                                        {
+                                                                            ReferenceId = payload.ReferenceId
+                                                                            Reason =
+                                                                                CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                            Decision = Some acceptedDecision
+                                                                        }
+                                                                | Clean preApplyStatus ->
+                                                                    try
+                                                                        do! clients.ApplyReference payload preApplyStatus
+
                                                                         setGraceWatchPendingWorkStatusFlag false
-                                                                        publishPendingWatchWorkTransitionIfNeeded ()
 
-                                                                        return
-                                                                            {
-                                                                                ReferenceId = payload.ReferenceId
-                                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                                                Decision = Some acceptedDecision
-                                                                            }
-                                                                    | Blocked reason ->
-                                                                        setGraceWatchPendingWorkStatusFlag false
-                                                                        publishPendingWatchWorkTransitionIfNeeded ()
-                                                                        postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
-
-                                                                        return
-                                                                            {
-                                                                                ReferenceId = payload.ReferenceId
-                                                                                Reason =
-                                                                                    CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-                                                                                Decision = Some acceptedDecision
-                                                                            }
-                                                                    | Degraded reason ->
-                                                                        setGraceWatchPendingWorkStatusFlag false
-                                                                        publishPendingWatchWorkTransitionIfNeeded ()
-                                                                        postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
-
-                                                                        return
-                                                                            {
-                                                                                ReferenceId = payload.ReferenceId
-                                                                                Reason =
-                                                                                    CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-                                                                                Decision = Some acceptedDecision
-                                                                            }
-                                                                    | Clean preApplyStatus ->
-                                                                        try
-                                                                            do! clients.ApplyReference payload preApplyStatus
-
-                                                                            setGraceWatchPendingWorkStatusFlag false
-
-                                                                            if clients.PublishCleanIpcAfterApply() then
-                                                                                return
-                                                                                    {
-                                                                                        ReferenceId = payload.ReferenceId
-                                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-                                                                                        Decision = Some acceptedDecision
-                                                                                    }
-                                                                            else
-                                                                                setGraceWatchPendingWorkStatusFlag true
-
-                                                                                let dirtyPublicationVerified =
-                                                                                    clients.ReassertDirtyIpcAfterFailedCleanPublication()
-
-                                                                                let resyncReason =
-                                                                                    if dirtyPublicationVerified then
-                                                                                        "materialization final clean Watch IPC/status publication failed"
-                                                                                    else
-                                                                                        "materialization final clean Watch IPC/status publication failed and dirty replacement was unproven"
-
-                                                                                clients.RequestDegradedResync resyncReason
-
-                                                                                return
-                                                                                    {
-                                                                                        ReferenceId = payload.ReferenceId
-                                                                                        Reason =
-                                                                                            CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-                                                                                        Decision = Some acceptedDecision
-                                                                                    }
-                                                                        with
-                                                                        | ex ->
+                                                                        if clients.DeferCleanIpcPublication
+                                                                           || clients.PublishCleanIpcAfterApply() then
+                                                                            return
+                                                                                {
+                                                                                    ReferenceId = payload.ReferenceId
+                                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                                                    Decision = Some acceptedDecision
+                                                                                }
+                                                                        else
                                                                             setGraceWatchPendingWorkStatusFlag true
-                                                                            publishPendingWatchWorkTransitionIfNeeded ()
-                                                                            return raise ex
-                                                | Blocked reason ->
-                                                    reportCurrentBranchWaitTransition payload (Blocked reason)
 
-                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+                                                                            let dirtyPublicationVerified = clients.ReassertDirtyIpcAfterFailedCleanPublication()
 
-                                                    return
-                                                        {
-                                                            ReferenceId = payload.ReferenceId
-                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-                                                            Decision = Some acceptedDecision
-                                                        }
-                                                | Degraded reason ->
-                                                    reportCurrentBranchWaitTransition payload (Degraded reason)
+                                                                            let resyncReason =
+                                                                                if dirtyPublicationVerified then
+                                                                                    "materialization final clean Watch IPC/status publication failed"
+                                                                                else
+                                                                                    "materialization final clean Watch IPC/status publication failed and dirty replacement was unproven"
 
-                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+                                                                            clients.RequestDegradedResync resyncReason
 
-                                                    return
-                                                        {
-                                                            ReferenceId = payload.ReferenceId
-                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-                                                            Decision = Some acceptedDecision
-                                                        }
-                                    })
+                                                                            return
+                                                                                {
+                                                                                    ReferenceId = payload.ReferenceId
+                                                                                    Reason =
+                                                                                        CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                                    Decision = Some acceptedDecision
+                                                                                }
+                                                                    with
+                                                                    | ex ->
+                                                                        setGraceWatchPendingWorkStatusFlag true
+                                                                        publishPendingWatchWorkTransitionIfNeeded ()
+                                                                        return raise ex
+                                            | Blocked reason ->
+                                                reportCurrentBranchWaitTransition payload (Blocked reason)
+
+                                                postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                            | Degraded reason ->
+                                                reportCurrentBranchWaitTransition payload (Degraded reason)
+
+                                                postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                }
+
+                            let! cleanOutcome =
+                                if clients.UseLegacyMaterializationLease then
+                                    WorkingDirectoryMaterialization.runWithLease applyAfterAdmission
+                                else
+                                    applyAfterAdmission ()
 
                             match postLeaseRetryGate with
                             | Some (CurrentBranchMaterializationStatusGate.Blocked reason as gate) ->
@@ -7563,6 +7754,9 @@ module Watch =
                 WaitForSafePoint = fun _ _ -> Task.FromResult(())
                 ReestablishIpc = fun _ _ -> Task.FromResult(())
                 ApplyReference = fun _ _ -> Task.FromResult(())
+                ApplySameRootReference = false
+                DeferCleanIpcPublication = false
+                UseLegacyMaterializationLease = true
                 PublishCleanIpcAfterApply = fun () -> true
                 ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
                 MaxAttempts = Some 3
@@ -7580,7 +7774,10 @@ module Watch =
                         RequestDegradedResync = requestGraceWatchExplicitResync
                         WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
-                        ApplyReference = applyCurrentBranchReferenceMaterialization
+                        ApplyReference = rejectCursorlessCurrentBranchReferenceMaterialization
+                        ApplySameRootReference = false
+                        DeferCleanIpcPublication = false
+                        UseLegacyMaterializationLease = true
                         PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                         ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                         MaxAttempts = Some 3
@@ -7797,7 +7994,10 @@ module Watch =
                 RequestDegradedResync = requestGraceWatchExplicitResync
                 WaitForSafePoint = fun _ _ -> Task.FromResult(())
                 ReestablishIpc = fun _ _ -> Task.FromResult(())
-                ApplyReference = applyCurrentBranchReferenceMaterialization
+                ApplyReference = rejectCursorlessCurrentBranchReferenceMaterialization
+                ApplySameRootReference = false
+                DeferCleanIpcPublication = false
+                UseLegacyMaterializationLease = true
                 PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                 ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                 MaxAttempts = Some 1
@@ -7908,7 +8108,7 @@ module Watch =
             ReadBoundary: unit -> Task<ReferenceMaterializationBoundaryDto option>
             ResolveMissingBoundary: CancellationToken -> Task<ReferenceMaterializationBoundaryDto option>
             Replay: ReferenceMaterializationBoundaryDto -> Task<Result<GraceReturnValue<ReferenceReplayDto>, GraceError>>
-            ProcessReference: CurrentBranchReferenceNotification -> Task<CurrentBranchMaterializationCoordinatorOutcome>
+            ProcessReference: CurrentBranchReferenceNotification -> string -> Task<CurrentBranchMaterializationCoordinatorOutcome>
             AcknowledgeCursor: ReferenceMaterializationBoundaryDto
                 -> CurrentBranchReferenceNotification option
                 -> string
@@ -7993,7 +8193,7 @@ module Watch =
                                 if String.IsNullOrWhiteSpace replayEvent.EventCursor then
                                     responseIntervalOpen <- false
                                 else
-                                    let! outcome = clients.ProcessReference replayEvent.Reference
+                                    let! outcome = clients.ProcessReference replayEvent.Reference replayEvent.EventCursor
 
                                     if currentBranchReplayEventReachedTerminalAcknowledgement outcome then
                                         let! acceptedBoundary =
@@ -8208,16 +8408,51 @@ module Watch =
                 invalidOp "Watch repository or branch identity changed before cursor acknowledgement."
             | Ok _ -> ()
 
-            let! inspection = inspectGraceWatchStatus ()
+            match reference with
+            | Some payload ->
+                let target =
+                    WorkingDirectoryUpdateContracts.Target.create
+                        current.RepositoryId
+                        current.BranchId
+                        payload.DirectoryId
+                        payload.Sha256Hash
+                        payload.Blake3Hash
+                    |> Result.defaultWith (fun error -> invalidOp $"Watch replay target is invalid before cursor acknowledgement: {error}")
 
-            let gatePayload =
-                match reference with
-                | Some payload -> payload
-                | None -> { CurrentBranchReferenceNotification.Default with RepositoryId = current.RepositoryId; BranchId = current.BranchId }
+                let operation =
+                    WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                    |> Result.defaultWith (fun error -> invalidOp $"Watch replay operation is invalid before cursor acknowledgement: {error}")
 
-            match currentBranchMaterializationStatusGate true None gatePayload inspection with
-            | Clean status ->
-                ensureCurrentBranchReplayReferenceRootAcknowledged status reference
+                match! Grace.CLI.LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation with
+                | Some Grace.CLI.LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> ()
+                | Some Grace.CLI.LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                    invalidOp "Watch replay local completion remained pending before cursor acknowledgement."
+                | None -> invalidOp "Watch replay local completion was missing before cursor acknowledgement."
+
+                let! revisionBefore = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+                let! completeStatus =
+                    Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly
+                        current.GraceStatusFile
+                        current.OwnerId
+                        current.OrganizationId
+                        current.RepositoryId
+
+                let! revisionAfter = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+                let status =
+                    match completeStatus with
+                    | Error error -> invalidOp $"Watch could not reread complete local status before cursor acknowledgement: {error}"
+                    | Ok _ when revisionBefore <> revisionAfter -> invalidOp "Watch local status changed while cursor acknowledgement facts were reread."
+                    | Ok status when
+                        status.RootDirectoryId <> payload.DirectoryId
+                        || status.RootDirectorySha256Hash
+                           <> payload.Sha256Hash
+                        || status.RootDirectoryBlake3Hash
+                           <> payload.Blake3Hash
+                        ->
+                        invalidOp "Watch local status did not match the terminal replay target before cursor acknowledgement."
+                    | Ok status -> status
 
                 let acceptedBoundary =
                     { expectedBoundary with
@@ -8231,14 +8466,96 @@ module Watch =
                     Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile expectedBoundary.RepositoryId expectedBoundary.BranchId
 
                 if durableBoundary <> Some expectedBoundary then
-                    invalidOp "Watch replay cursor changed before this response interval could acknowledge it."
+                    invalidOp "Watch replay cursor changed before this event could acknowledge it."
 
                 cancellationToken.ThrowIfCancellationRequested()
 
-                return! Grace.CLI.LocalStateDb.advanceRemoteReferenceBoundaryCursor current.GraceStatusFile expectedBoundary acceptedBoundary cancellationToken
-            | NotCurrentBranch -> return invalidOp "Watch branch identity changed before cursor acknowledgement."
-            | Blocked reason -> return invalidOp $"Watch local work blocked cursor acknowledgement: {reason}."
-            | Degraded reason -> return invalidOp $"Watch local state blocked cursor acknowledgement: {reason}."
+                let! advancedBoundary =
+                    Grace.CLI.LocalStateDb.advanceRemoteReferenceBoundaryCursor current.GraceStatusFile expectedBoundary acceptedBoundary cancellationToken
+
+                if tryPublishCurrentBranchMaterializationCleanStatus () then
+                    return advancedBoundary
+                else
+                    setGraceWatchPendingWorkStatusFlag true
+                    let dirtyPublicationVerified = tryPublishCurrentBranchMaterializationDirtyStatus ()
+
+                    let reason =
+                        if dirtyPublicationVerified then
+                            "Watch replay cursor advanced after terminal local completion, but clean IPC/status publication failed"
+                        else
+                            "Watch replay cursor advanced after terminal local completion, but clean IPC/status publication failed and dirty replacement was unproven"
+
+                    requestGraceWatchExplicitResync reason
+                    return advancedBoundary
+            | None ->
+                let! inspection = inspectGraceWatchStatus ()
+
+                let gatePayload = { CurrentBranchReferenceNotification.Default with RepositoryId = current.RepositoryId; BranchId = current.BranchId }
+
+                match currentBranchMaterializationStatusGate true None gatePayload inspection with
+                | Clean status ->
+                    let acceptedBoundary =
+                        { expectedBoundary with
+                            DirectoryId = status.RootDirectoryId
+                            Sha256Hash = status.RootDirectorySha256Hash
+                            Blake3Hash = status.RootDirectoryBlake3Hash
+                            EventCursor = eventCursor
+                        }
+
+                    let! durableBoundary =
+                        Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile expectedBoundary.RepositoryId expectedBoundary.BranchId
+
+                    if durableBoundary <> Some expectedBoundary then
+                        invalidOp "Watch replay cursor changed before this response interval could acknowledge it."
+
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    return!
+                        Grace.CLI.LocalStateDb.advanceRemoteReferenceBoundaryCursor current.GraceStatusFile expectedBoundary acceptedBoundary cancellationToken
+                | NotCurrentBranch -> return invalidOp "Watch branch identity changed before cursor acknowledgement."
+                | Blocked reason -> return invalidOp $"Watch local work blocked cursor acknowledgement: {reason}."
+                | Degraded reason -> return invalidOp $"Watch local state blocked cursor acknowledgement: {reason}."
+        }
+
+    /// Exposes the production terminal-completion, cursor-CAS, and clean-IPC sequence to focused Watch tests.
+    let internal acknowledgeCurrentBranchReferenceReplayCursorForWatchTests expectedBoundary reference eventCursor cancellationToken =
+        acknowledgeCurrentBranchReferenceReplayCursor expectedBoundary reference eventCursor cancellationToken
+
+    /// Completes a crash-retained Watch WDU row and advances only its exact cursor before replaying newer events.
+    let private resumePendingWatchCompletionBeforeReplay (cancellationToken: CancellationToken) =
+        task {
+            let current = Current()
+
+            let! expectedBoundary = Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+
+            match! WorkingDirectoryUpdate.Watch.resumePendingFinalization cancellationToken WorkingDirectoryUpdate.Watch.none with
+            | None -> return expectedBoundary
+            | Some (eventCursor, outcome) ->
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                | WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt ->
+                    let boundary =
+                        expectedBoundary
+                        |> Option.defaultWith (fun () -> invalidOp "Watch cannot advance a recovered WDU completion without its prior durable cursor boundary.")
+
+                    let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
+
+                    let payload =
+                        { CurrentBranchReferenceNotification.Default with
+                            RepositoryId = WorkingDirectoryUpdateContracts.Target.repositoryId target
+                            BranchId = WorkingDirectoryUpdateContracts.Target.branchId target
+                            DirectoryId = WorkingDirectoryUpdateContracts.Target.rootDirectoryVersionId target
+                            Sha256Hash = WorkingDirectoryUpdateContracts.Target.sha256Hash target
+                            Blake3Hash = WorkingDirectoryUpdateContracts.Target.blake3Hash target
+                        }
+
+                    let! advancedBoundary = acknowledgeCurrentBranchReferenceReplayCursor boundary (Some payload) eventCursor cancellationToken
+
+                    return Some advancedBoundary
+                | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)
+                | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected failure ->
+                    return invalidOp $"Watch could not recover pending local completion: {WorkingDirectoryUpdateContracts.Failure.reason failure}"
         }
 
     /// Invokes the typed replay route from the current durable boundary and processes eligible events one at a time.
@@ -8249,8 +8566,7 @@ module Watch =
 
                 let clients =
                     {
-                        ReadBoundary =
-                            fun () -> Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                        ReadBoundary = fun () -> resumePendingWatchCompletionBeforeReplay cancellationToken
                         ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                         Replay =
                             fun boundary ->
@@ -8272,7 +8588,7 @@ module Watch =
 
                                 Grace.SDK.Branch.ReplayReferenceEvents parameters
                         ProcessReference =
-                            fun payload ->
+                            fun payload eventCursor ->
                                 runCurrentBranchMaterializationCoordinator
                                     {
                                         GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
@@ -8280,7 +8596,16 @@ module Watch =
                                         RequestDegradedResync = requestGraceWatchExplicitResync
                                         WaitForSafePoint = fun _ _ -> Task.FromResult(())
                                         ReestablishIpc = fun _ _ -> Task.FromResult(())
-                                        ApplyReference = applyCurrentBranchReferenceMaterialization
+                                        ApplyReference =
+                                            fun acceptedPayload acceptedStatus ->
+                                                applyCurrentBranchReferenceThroughWorkingDirectoryUpdate
+                                                    acceptedPayload
+                                                    acceptedStatus
+                                                    eventCursor
+                                                    cancellationToken
+                                        ApplySameRootReference = true
+                                        DeferCleanIpcPublication = true
+                                        UseLegacyMaterializationLease = false
                                         PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                                         ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                                         MaxAttempts = Some 1
@@ -8358,6 +8683,9 @@ module Watch =
                             WaitForSafePoint = waitForSafePoint
                             ReestablishIpc = reestablishIpc
                             ApplyReference = applyReference
+                            ApplySameRootReference = false
+                            DeferCleanIpcPublication = false
+                            UseLegacyMaterializationLease = true
                             PublishCleanIpcAfterApply = fun () -> true
                             ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
                             MaxAttempts = Some 3
@@ -8392,6 +8720,9 @@ module Watch =
                             WaitForSafePoint = waitForSafePoint
                             ReestablishIpc = reestablishIpc
                             ApplyReference = applyReference
+                            ApplySameRootReference = false
+                            DeferCleanIpcPublication = false
+                            UseLegacyMaterializationLease = true
                             PublishCleanIpcAfterApply = publishCleanIpcAfterApply
                             ReassertDirtyIpcAfterFailedCleanPublication = reassertDirtyIpcAfterFailedCleanPublication
                             MaxAttempts = Some 3
