@@ -580,8 +580,8 @@ module Branch =
 
     /// Names the only supported routes for a Reference-only Branch switch.
     type internal ReferenceSwitchRoute =
-        | WduNoSave
-        | WduSave
+        | ReferenceWithoutSave
+        | ReferenceWithSave
 
     /// Holds the stable machine-readable result emitted by initial and resumed exact-Reference switching.
     type internal ReferenceSwitchOutput = { Outcome: string; Message: string; BranchId: BranchId; DirectoryVersionId: DirectoryVersionId }
@@ -591,7 +591,7 @@ module Branch =
         { Outcome = outcome; Message = message; BranchId = branchId; DirectoryVersionId = directoryVersionId }
 
     /// Selects the Reference-only WDU admission from the current Branch Save capability.
-    let internal referenceOnlySwitchRoute saveEnabled = if saveEnabled then WduSave else WduNoSave
+    let internal referenceOnlySwitchRoute saveEnabled = if saveEnabled then ReferenceWithSave else ReferenceWithoutSave
 
     /// Persists the server-saved status, rereads its complete SQLite graph and revision, and seals the WDU admission before target preparation.
     let internal sealSavedBranchPhase
@@ -3371,8 +3371,8 @@ module Branch =
         {
             ResumePending: CancellationToken -> Task<WorkingDirectoryUpdateContracts.Outcome option>
             ResolveReferenceRoute: GetBranchParameters -> Task<Result<ReferenceSwitchRoute option, GraceError>>
-            RunWduReference: ParseResult -> CancellationToken -> Task<int>
-            RunWduSave: ParseResult -> CancellationToken -> Task<int>
+            RunReferenceWithoutSave: ParseResult -> CancellationToken -> Task<int>
+            RunReferenceWithSave: ParseResult -> CancellationToken -> Task<int>
             RunLegacy: ParseResult -> CancellationToken -> Task<int>
         }
 
@@ -4979,13 +4979,14 @@ module Branch =
                         | Error message ->
                             let error = GraceError.Create message (getCorrelationId parseResult)
                             return renderOutput parseResult (GraceResult.Error error)
-                        | Ok false when referenceRoute = Some WduNoSave ->
+                        | Ok false when referenceRoute = Some ReferenceWithoutSave ->
                             match testOperations with
-                            | Some operations -> return! operations.RunWduReference parseResult cancellationToken
+                            | Some operations -> return! operations.RunReferenceWithoutSave parseResult cancellationToken
                             | None -> return! referenceSelectedHandler parseResult cancellationToken
                         | Ok false ->
                             match testOperations with
-                            | Some operations when referenceRoute = Some WduSave -> return! operations.RunWduSave parseResult cancellationToken
+                            | Some operations when referenceRoute = Some ReferenceWithSave ->
+                                return! operations.RunReferenceWithSave parseResult cancellationToken
                             | Some operations -> return! operations.RunLegacy parseResult cancellationToken
                             | None ->
                                 return!

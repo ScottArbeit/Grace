@@ -43,10 +43,10 @@ module BranchCommandTests =
     [<Test>]
     let ``reference-only route selects WDU admission for both Save modes`` () =
         Branch.referenceOnlySwitchRoute false
-        |> should equal Branch.WduNoSave
+        |> should equal Branch.ReferenceWithoutSave
 
         Branch.referenceOnlySwitchRoute true
-        |> should equal Branch.WduSave
+        |> should equal Branch.ReferenceWithSave
 
     /// Proves initial and resumed Reference output share one stable JSON field set.
     [<Test>]
@@ -560,13 +560,13 @@ module BranchCommandTests =
                             calls.Add("resolve")
                             resolvedParameters <- Some parameters
                             Task.FromResult(Ok(Some route))
-                    RunWduReference =
+                    RunReferenceWithoutSave =
                         fun _ _ ->
-                            calls.Add("wdu")
+                            calls.Add("reference-without-save")
                             Task.FromResult sentinelExitCode
-                    RunWduSave =
+                    RunReferenceWithSave =
                         fun _ _ ->
-                            calls.Add("wdu-save")
+                            calls.Add("reference-with-save")
                             Task.FromResult sentinelExitCode
                     RunLegacy =
                         fun _ _ ->
@@ -605,11 +605,13 @@ module BranchCommandTests =
 
     /// Verifies a no-Save current Branch resumes finalization before using the WDU Reference route.
     [<Test>]
-    let ``Reference-only switch resumes before routing to WDU when Save is disabled`` () = runReferenceOnlySwitchRoute Branch.WduNoSave "wdu" 8711
+    let ``Reference-only switch resumes before routing to WDU when Save is disabled`` () =
+        runReferenceOnlySwitchRoute Branch.ReferenceWithoutSave "reference-without-save" 8711
 
     /// Verifies a Save-enabled current Branch resumes finalization before using the WDU Save admission route.
     [<Test>]
-    let ``Reference-only switch resumes before routing to WDU when Save is enabled`` () = runReferenceOnlySwitchRoute Branch.WduSave "wdu-save" 8712
+    let ``Reference-only switch resumes before routing to WDU when Save is enabled`` () =
+        runReferenceOnlySwitchRoute Branch.ReferenceWithSave "reference-with-save" 8712
 
     /// Proves the public Save-enabled Reference command persists its edit, prepares the selected graph, and completes through WDU.
     [<Test>]
