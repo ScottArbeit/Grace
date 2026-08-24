@@ -55,6 +55,7 @@
     <Compile Include="WorkingDirectoryUpdate.Transition.Tests.fs" />
     <Compile Include="WorkingDirectoryUpdate.Topology.Tests.fs" />
     <Compile Include="WorkingDirectoryUpdate.BranchDirectoryVersion.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Watch.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

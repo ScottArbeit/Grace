@@ -2142,3 +2142,481 @@ module internal WorkingDirectoryUpdate =
 
                 return! runAtRevision request currentStatus targetStatus objectMetadata manifest root dbPath acceptedRevision cancellationToken failureInjection
             }
+
+    /// Owns the narrow Watch replay adapter and its restart-safe completion sequence.
+    module Watch =
+        /// Preserves the established deterministic effect-boundary type for focused Watch tests.
+        type FailurePoint = LocalApplication.FailurePoint
+
+        /// Preserves the established deterministic effect controls for focused Watch tests.
+        type FailureInjection = LocalApplication.FailureInjection
+
+        /// Uses normal WDU effects for Watch replay.
+        let none = LocalApplication.none
+
+        /// Exposes the deterministic boundary immediately before Watch terminal recording.
+        let BeforeTerminalRecording = LocalApplication.BeforeTerminalRecording
+
+        /// Exposes the deterministic Watch marker-cleanup boundary.
+        let MarkerCleanup = LocalApplication.MarkerCleanup
+
+        /// Exposes the deterministic boundary after durable local completion but before Watch terminal recording.
+        let AfterCommit = LocalApplication.AfterCommit
+
+        /// Reports a pending Watch completion without misclassifying it as a successful replay.
+        let private incomplete receipt reason =
+            WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete(
+                receipt,
+                transactionFailure $"{reason} Run `grace doctor --repair-local-state` before retrying Watch."
+            )
+
+        /// Projects one successful Watch completion without introducing a Watch-specific WDU outcome.
+        let private completed receipt =
+            if WorkingDirectoryUpdateContracts.Receipt.bytesChanged receipt then
+                WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+            else
+                WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+
+        /// Requires prepared content to describe every target directory and file exactly once.
+        let private manifestMatchesTargetStatus (targetStatus: GraceStatus) manifest =
+            let expected =
+                targetStatus.Index
+                |> Seq.collect (fun pair ->
+                    seq {
+                        let directory = pair.Value
+
+                        if directory.DirectoryVersionId
+                           <> targetStatus.RootDirectoryId then
+                            yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory directory.RelativePath
+
+                        for file in directory.Files do
+                            yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(file.RelativePath, file.Sha256Hash, file.Blake3Hash)
+                    })
+                |> Seq.toArray
+
+            let actual =
+                WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest
+                |> Seq.toArray
+
+            expected.Length = actual.Length
+            && expected
+               |> Array.forall (fun entry -> actual |> Array.exists ((=) entry))
+
+        /// Requires caller-resolved object metadata to reproduce the complete target status fingerprint.
+        let private objectMetadataMatchesTargetStatus (targetStatus: GraceStatus) (objectMetadata: LocalDirectoryVersion array) =
+            if
+                isNull (box objectMetadata)
+                || objectMetadata.Length <> targetStatus.Index.Count
+            then
+                false
+            else
+                let metadataIndex = GraceIndex()
+
+                for directory in objectMetadata do
+                    metadataIndex[directory.DirectoryVersionId] <- directory
+
+                metadataIndex.Count = objectMetadata.Length
+                && LocalApplication.statusFingerprintMatches targetStatus { targetStatus with Index = metadataIndex }
+
+        /// Finalizes one exact pending Watch row while its caller retains the matching WDU lease.
+        let private finalizeUnderLease scope receipt eventCursor (cancellationToken: CancellationToken) (failureInjection: FailureInjection) =
+            task {
+                let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
+                let operation = WorkingDirectoryUpdateContracts.Receipt.operation receipt
+                let mutable firstWriteStarted = false
+
+                let throwIfCancellationStillControls () = if not firstWriteStarted then cancellationToken.ThrowIfCancellationRequested()
+
+                let unchangedTerminal () =
+                    WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                    |> Result.defaultWith invalidOp
+                    |> WorkingDirectoryUpdateContracts.Outcome.Unchanged
+
+                try
+                    match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
+                    | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> return unchangedTerminal ()
+                    | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                        match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization (Current().GraceStatusFile) with
+                        | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingWatchFinalization (persistedTarget,
+                                                                                                                 persistedOperation,
+                                                                                                                 persistedEventCursor)) when
+                            WorkingDirectoryUpdateContracts.Target.canonical persistedTarget = WorkingDirectoryUpdateContracts.Target.canonical target
+                            && WorkingDirectoryUpdateContracts.Operation.value persistedOperation = WorkingDirectoryUpdateContracts.Operation.value operation
+                            && persistedEventCursor = eventCursor
+                            ->
+                            let! marker = WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                            let! markerResult =
+                                task {
+                                    match marker with
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable ->
+                                        return Error $"Watch finalization retained marker evidence: {marker}."
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                        throwIfCancellationStillControls ()
+                                        firstWriteStarted <- true
+                                        failureInjection.ThrowAt MarkerCleanup
+
+                                        let! cleanup =
+                                            WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
+                                                scope
+                                                (WorkingDirectoryUpdateContracts.Operation.value operation)
+                                                (WorkingDirectoryUpdateContracts.Target.canonical target)
+                                                failureInjection.DeleteMarker
+
+                                        match cleanup with
+                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+                                        | WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker -> return Ok()
+                                        | result -> return Error $"Watch finalization could not clean its exact marker evidence: {result}."
+                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing -> return Ok()
+                                }
+
+                            match markerResult with
+                            | Error error -> return incomplete receipt error
+                            | Ok () ->
+                                throwIfCancellationStillControls ()
+                                firstWriteStarted <- true
+
+                                do!
+                                    LocalStateDb.finalizeWorkingDirectoryUpdateCompletionWithBeforeTerminalRecording
+                                        (Current().GraceStatusFile)
+                                        target
+                                        operation
+                                        (fun () -> failureInjection.ThrowAt BeforeTerminalRecording)
+
+                                return completed receipt
+                        | None ->
+                            match! LocalStateDb.readWorkingDirectoryUpdateCompletion (Current().GraceStatusFile) target operation with
+                            | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal -> return unchangedTerminal ()
+                            | _ -> return incomplete receipt "The persisted Watch completion disappeared before finalization."
+                        | Some _ -> return incomplete receipt "The persisted pending finalization does not match this Watch completion."
+                    | None -> return incomplete receipt "The persisted Watch completion is missing."
+                with
+                | :? OperationCanceledException -> return incomplete receipt "Watch finalization was canceled before its first applicable write."
+                | ex -> return incomplete receipt $"Watch finalization failed: {ex.Message}"
+            }
+
+        /// Reconstructs and terminalizes the one pending Watch completion without entering local application again.
+        let resumePendingFinalization (cancellationToken: CancellationToken) (failureInjection: FailureInjection) =
+            task {
+                match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization (Current().GraceStatusFile) with
+                | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingWatchFinalization (target, operation, eventCursor)) ->
+                    let receipt =
+                        WorkingDirectoryUpdateContracts.Receipt.create target operation true
+                        |> Result.defaultWith invalidOp
+
+                    try
+                        match
+                            WorkingDirectoryUpdateCoordination.Scope.create
+                                (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                                (Current().RootDirectory)
+                            with
+                        | Error error -> return Some(eventCursor, incomplete receipt error)
+                        | Ok scope ->
+                            use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+                            let! outcome = finalizeUnderLease scope receipt eventCursor cancellationToken failureInjection
+                            return Some(eventCursor, outcome)
+                    with
+                    | :? OperationCanceledException ->
+                        return Some(eventCursor, incomplete receipt "Watch finalization was canceled before its first applicable write.")
+                    | ex -> return Some(eventCursor, incomplete receipt $"Watch finalization failed: {ex.Message}")
+                | Some _
+                | None -> return None
+            }
+
+        /// Reads the pending or latest terminal Watch completion whose exact target is the committed local status.
+        let tryReadCompletionForStatus (targetStatus: GraceStatus) =
+            task {
+                let current = Current()
+
+                match
+                    WorkingDirectoryUpdateContracts.Target.create
+                        current.RepositoryId
+                        current.BranchId
+                        targetStatus.RootDirectoryId
+                        targetStatus.RootDirectorySha256Hash
+                        targetStatus.RootDirectoryBlake3Hash
+                    with
+                | Error _ -> return None
+                | Ok target ->
+                    match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization current.GraceStatusFile with
+                    | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingWatchFinalization (pendingTarget, operation, eventCursor)) when
+                        WorkingDirectoryUpdateContracts.Target.canonical pendingTarget = WorkingDirectoryUpdateContracts.Target.canonical target
+                        ->
+                        match! LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation with
+                        | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                            let receipt =
+                                WorkingDirectoryUpdateContracts.Receipt.create target operation true
+                                |> Result.defaultWith invalidOp
+
+                            return Some(eventCursor, receipt, LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+                        | _ -> return None
+                    | Some _ -> return None
+                    | None ->
+                        let connectionString =
+                            let builder = Microsoft.Data.Sqlite.SqliteConnectionStringBuilder()
+                            builder.DataSource <- current.GraceStatusFile
+                            builder.Mode <- Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly
+                            builder.Cache <- Microsoft.Data.Sqlite.SqliteCacheMode.Private
+                            builder.ToString()
+
+                        use connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString)
+                        connection.Open()
+                        use command = connection.CreateCommand()
+
+                        command.CommandText <-
+                            "SELECT operation_value, watch_event_cursor FROM working_directory_update_completions WHERE caller_kind = 'Watch' AND finalization_state = 'Terminal' AND target_canonical = $target_canonical LIMIT 1;"
+
+                        command.Parameters.AddWithValue("$target_canonical", WorkingDirectoryUpdateContracts.Target.canonical target)
+                        |> ignore
+
+                        use reader = command.ExecuteReader()
+
+                        if
+                            not (reader.Read()) || reader.IsDBNull(0)
+                            || reader.IsDBNull(1)
+                        then
+                            return None
+                        else
+                            let operationValue = reader.GetString(0)
+                            let eventCursor = reader.GetString(1)
+
+                            match WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor with
+                            | Error _ -> return None
+                            | Ok operation when
+                                WorkingDirectoryUpdateContracts.Operation.value operation
+                                <> operationValue
+                                ->
+                                return None
+                            | Ok operation ->
+                                match! LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation with
+                                | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                                    let receipt =
+                                        WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                                        |> Result.defaultWith invalidOp
+
+                                    return Some(eventCursor, receipt, LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+                                | _ -> return None
+            }
+
+        /// Applies one accepted Watch replay target, records pending local completion, and terminalizes it under the same WDU lease.
+        let runAtRevision
+            (acceptedStatus: GraceStatus)
+            (targetStatus: GraceStatus)
+            (objectMetadata: LocalDirectoryVersion array)
+            (preparedContent: WorkingDirectoryUpdateContracts.PreparedContent)
+            eventCursor
+            correlationId
+            acceptedRevision
+            (cancellationToken: CancellationToken)
+            (failureInjection: FailureInjection)
+            =
+            task {
+                let manifest = WorkingDirectoryUpdateContracts.PreparedContent.manifest preparedContent
+
+                let reject reason =
+                    WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+                    WorkingDirectoryUpdateContracts.Outcome.Rejected(transactionFailure reason)
+
+                if targetStatus.RootDirectoryId = Guid.Empty then
+                    return reject "Watch replay requires a complete target root."
+                elif not (manifestMatchesTargetStatus targetStatus manifest) then
+                    return reject "Prepared Watch content does not exactly match the target status."
+                elif not (objectMetadataMatchesTargetStatus targetStatus objectMetadata) then
+                    return reject "Watch object metadata does not exactly match the target status."
+                else
+                    let current = Current()
+
+                    match WorkingDirectoryUpdateContracts.Target.create
+                              current.RepositoryId
+                              current.BranchId
+                              targetStatus.RootDirectoryId
+                              targetStatus.RootDirectorySha256Hash
+                              targetStatus.RootDirectoryBlake3Hash,
+                          WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                        with
+                    | Error error, _
+                    | _, Error error -> return reject error
+                    | Ok target, Ok operation ->
+                        match WorkingDirectoryUpdateContracts.Request.create target operation preparedContent correlationId with
+                        | Error error -> return reject error
+                        | Ok request ->
+                            use _preparedContentScope =
+                                { new IDisposable with
+                                    member _.Dispose() = WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+                                }
+
+                            let mutable committedReceipt: WorkingDirectoryUpdateContracts.Receipt option = None
+
+                            try
+                                match WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId current.RootDirectory with
+                                | Error error -> return reject error
+                                | Ok scope ->
+                                    use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+
+                                    let leasedConfiguration =
+                                        match readDurableBranchConfiguration () with
+                                        | Ok configuration -> configuration
+                                        | Error error -> invalidOp $"Watch could not reread durable configuration after acquiring the WDU lease: {error}."
+
+                                    if
+                                        leasedConfiguration.RepositoryId
+                                        <> current.RepositoryId
+                                        || leasedConfiguration.BranchId <> current.BranchId
+                                        || not (String.Equals(leasedConfiguration.RootDirectory, current.RootDirectory, StringComparison.OrdinalIgnoreCase))
+                                        || not (String.Equals(leasedConfiguration.GraceStatusFile, current.GraceStatusFile, StringComparison.OrdinalIgnoreCase))
+                                    then
+                                        invalidOp "Watch repository or branch identity changed while waiting for the WDU lease."
+
+                                    match! LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation with
+                                    | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
+                                        let receipt =
+                                            WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                                            |> Result.defaultWith invalidOp
+
+                                        return WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                                    | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending ->
+                                        let receipt =
+                                            WorkingDirectoryUpdateContracts.Receipt.create target operation true
+                                            |> Result.defaultWith invalidOp
+
+                                        return! finalizeUnderLease scope receipt eventCursor cancellationToken failureInjection
+                                    | None ->
+                                        match! LocalStateDb.readPendingWorkingDirectoryUpdateFinalization current.GraceStatusFile with
+                                        | Some _ -> return reject "Watch replay cannot begin while another WDU finalization is pending."
+                                        | None ->
+                                            let! revisionBeforeRead = LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+                                            let! freshStatusResult =
+                                                LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                                    current.GraceStatusFile
+                                                    current.OwnerId
+                                                    current.OrganizationId
+                                                    current.RepositoryId
+
+                                            let! revisionAfterRead = LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+                                            let gateError =
+                                                if revisionBeforeRead <> acceptedRevision
+                                                   || revisionAfterRead <> acceptedRevision then
+                                                    Some "Local status changed while the Watch target was being prepared."
+                                                else
+                                                    match freshStatusResult with
+                                                    | Ok freshStatus when not (LocalApplication.statusFingerprintMatches acceptedStatus freshStatus) ->
+                                                        Some "Local status changed while the Watch target was being prepared."
+                                                    | Ok _ -> None
+                                                    | Error error -> Some error
+
+                                            let freshStatus =
+                                                freshStatusResult
+                                                |> Result.defaultValue acceptedStatus
+
+                                            let! markerInspection =
+                                                match gateError with
+                                                | Some _ -> Task.FromResult WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                                | None -> WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+
+                                            let! admittedMarkerInspection =
+                                                task {
+                                                    match markerInspection with
+                                                    | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                                        match! WorkingDirectoryUpdateCoordination.Marker.readEvidence scope with
+                                                        | Some evidence ->
+                                                            let! isTerminal =
+                                                                LocalStateDb.hasTerminalWorkingDirectoryUpdateEvidence
+                                                                    current.GraceStatusFile
+                                                                    evidence.OperationId
+                                                                    evidence.Target
+
+                                                            if isTerminal then
+                                                                let! cleanup =
+                                                                    WorkingDirectoryUpdateCoordination.Marker.tryRemoveTerminalEvidenceWithDelete
+                                                                        scope
+                                                                        evidence.OperationId
+                                                                        evidence.Target
+                                                                        File.Delete
+
+                                                                return
+                                                                    if cleanup = WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned then
+                                                                        WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                                                                    else
+                                                                        markerInspection
+                                                            else
+                                                                return markerInspection
+                                                        | None -> return markerInspection
+                                                    | _ -> return markerInspection
+                                                }
+
+                                            match admittedMarkerInspection with
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.MalformedOrUnsupported
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Unreadable
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.DifferentOperation ->
+                                                return
+                                                    reject (
+                                                        gateError
+                                                        |> Option.defaultValue $"Working Directory Update marker evidence is {markerInspection}."
+                                                    )
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+                                            | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
+                                                match LocalStateDb.validateCompleteStatusTree freshStatus, LocalStateDb.validateCompleteStatusTree targetStatus
+                                                    with
+                                                | Error error, _
+                                                | _, Error error -> return reject error
+                                                | Ok (), Ok () ->
+                                                    let attemptToken = WorkingDirectoryUpdateContracts.AttemptToken.create ()
+
+                                                    let marker =
+                                                        WorkingDirectoryUpdateCoordination.Marker.create scope attemptToken target operation
+                                                        |> Result.defaultWith invalidOp
+
+                                                    do! WorkingDirectoryUpdateCoordination.Marker.write scope marker
+
+                                                    let exactAdoption =
+                                                        admittedMarkerInspection = WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+
+                                                    match!
+                                                        LocalApplication.run
+                                                            request
+                                                            acceptedStatus
+                                                            targetStatus
+                                                            objectMetadata
+                                                            manifest
+                                                            current.RootDirectory
+                                                            current.GraceStatusFile
+                                                            acceptedRevision
+                                                            scope
+                                                            attemptToken
+                                                            exactAdoption
+                                                            cancellationToken
+                                                            failureInjection
+                                                        with
+                                                    | LocalApplication.Rejected error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected error
+                                                    | LocalApplication.UpdateIncomplete error ->
+                                                        return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete error
+                                                    | LocalApplication.Verified localRoot ->
+                                                        let! _ =
+                                                            LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
+                                                                current.GraceStatusFile
+                                                                (LocalApplication.VerifiedLocalRoot.targetStatus localRoot)
+                                                                (LocalApplication.VerifiedLocalRoot.objectMetadata localRoot)
+                                                                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization eventCursor)
+                                                                target
+                                                                operation
+                                                                (fun () -> failureInjection.ThrowAt LocalApplication.BeforeCommit)
+
+                                                        let receipt =
+                                                            WorkingDirectoryUpdateContracts.Receipt.create
+                                                                target
+                                                                operation
+                                                                (LocalApplication.VerifiedLocalRoot.bytesChanged localRoot)
+                                                            |> Result.defaultWith invalidOp
+
+                                                        committedReceipt <- Some receipt
+                                                        failureInjection.ThrowAt AfterCommit
+                                                        return! finalizeUnderLease scope receipt eventCursor cancellationToken failureInjection
+                            with
+                            | ex when committedReceipt.IsSome -> return incomplete committedReceipt.Value $"Watch finalization failed: {ex.Message}"
+                            | :? OperationCanceledException as ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(transactionFailure ex.Message)
+                            | ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(transactionFailure ex.Message)
+            }
