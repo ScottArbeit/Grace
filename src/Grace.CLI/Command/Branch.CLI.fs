@@ -583,6 +583,13 @@ module Branch =
         | WduNoSave
         | LegacySave
 
+    /// Holds the stable machine-readable result emitted by initial and resumed exact-Reference switching.
+    type internal ReferenceSwitchOutput = { Outcome: string; Message: string; BranchId: BranchId; DirectoryVersionId: DirectoryVersionId }
+
+    /// Creates the single machine-output shape for exact-Reference switch results.
+    let internal referenceSwitchOutput outcome message branchId directoryVersionId =
+        { Outcome = outcome; Message = message; BranchId = branchId; DirectoryVersionId = directoryVersionId }
+
     /// Selects the Reference-only switch route from the current Branch capability.
     let internal referenceOnlySwitchRoute saveEnabled = if saveEnabled then LegacySave else WduNoSave
 
@@ -3752,13 +3759,7 @@ module Branch =
                                                     let outcomeName, message, exitCode = projectHashSwitchOutcome outcome
                                                     let branchId = Current().BranchId
 
-                                                    let output =
-                                                        {|
-                                                            Outcome = outcomeName
-                                                            Message = message
-                                                            BranchId = branchId
-                                                            DirectoryVersionId = targetStatus.RootDirectoryId
-                                                        |}
+                                                    let output = referenceSwitchOutput outcomeName message branchId targetStatus.RootDirectoryId
 
                                                     if parseResult |> isOutputFormat OutputFormat.Json then
                                                         AnsiConsole.Write(JsonText(serialize output))
@@ -4587,7 +4588,7 @@ module Branch =
                         with
                         | _ -> branchIdBeforeFinalization
 
-                    let output = {| Outcome = outcomeName; Message = message; BranchId = branchId; DirectoryVersionId = directoryVersionId |}
+                    let output = referenceSwitchOutput outcomeName message branchId directoryVersionId
 
                     if parseResult |> isOutputFormat OutputFormat.Json then
                         AnsiConsole.Write(JsonText(serialize output))

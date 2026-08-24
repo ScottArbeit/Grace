@@ -40,6 +40,31 @@ module BranchCommandTests =
         Branch.referenceOnlySwitchRoute true
         |> should equal Branch.LegacySave
 
+    /// Proves initial and resumed Reference output share one stable JSON field set.
+    [<Test>]
+    let ``reference switch output serializes one stable shape`` () =
+        let output = Branch.referenceSwitchOutput "FinalizationIncomplete" "repair" branchId (Guid.NewGuid())
+        use document = JsonDocument.Parse(serialize output)
+
+        let properties =
+            document.RootElement.EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
+
+        properties
+        |> should
+            equal
+            (set [ "Outcome"
+                   "Message"
+                   "BranchId"
+                   "DirectoryVersionId" ])
+
+        document
+            .RootElement
+            .GetProperty("Outcome")
+            .GetString()
+        |> should equal "FinalizationIncomplete"
+
     /// Pins the built switch ordering and handlers without requiring an unrelated server harness.
     [<Test>]
     let ``switch source resumes pending Reference completion before selecting the Save route`` () =
