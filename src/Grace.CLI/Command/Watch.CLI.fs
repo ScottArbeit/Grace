@@ -7023,6 +7023,19 @@ module Watch =
 
         lock currentBranchWaitTransitionLock (fun () -> lastReportedCurrentBranchWait <- None)
 
+    /// Selects the cohesive policy bundle for cursorless materialization or cursor-backed Watch replay.
+    type private CurrentBranchMaterializationMode =
+        /// Preserves the cursorless coordinator's same-root, publication, and lease behavior.
+        | LegacyMaterialization
+        /// Applies every accepted cursor event while deferring publication and lease ownership to Watch replay.
+        | CursorBackedWatchReplay
+
+    /// Derives the only legal same-root, clean-publication, and lease policy bundle for one coordinator mode.
+    let private currentBranchMaterializationPolicies =
+        function
+        | LegacyMaterialization -> false, false, true
+        | CursorBackedWatchReplay -> true, true, false
+
     /// Coordinates a same-branch Reference once clean IPC and BranchDto latest authority have both been proven.
     type private CurrentBranchMaterializationCoordinatorClients =
         {
@@ -7032,9 +7045,7 @@ module Watch =
             WaitForSafePoint: CurrentBranchReferenceNotification -> CurrentBranchMaterializationStatusGate -> Task<unit>
             ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
             ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
-            ApplySameRootReference: bool
-            DeferCleanIpcPublication: bool
-            UseLegacyMaterializationLease: bool
+            Mode: CurrentBranchMaterializationMode
             PublishCleanIpcAfterApply: unit -> bool
             ReassertDirtyIpcAfterFailedCleanPublication: unit -> bool
             MaxAttempts: int option
@@ -7185,9 +7196,11 @@ module Watch =
             let mutable latestEligibleAdmissionAccepted = false
             let mutable retriedAfterRecoveredLocalStatus = false
 
+            let applySameRootReference, deferCleanIpcPublication, useLegacyMaterializationLease = currentBranchMaterializationPolicies clients.Mode
+
             let shouldApplyDecision reason =
                 reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
-                || (clients.ApplySameRootReference
+                || (applySameRootReference
                     && reason = LatestCurrentBranchReferenceDecisionReason.SameRoot)
 
             let canRetry () =
@@ -7374,7 +7387,7 @@ module Watch =
 
                                                                         setGraceWatchPendingWorkStatusFlag false
 
-                                                                        if clients.DeferCleanIpcPublication
+                                                                        if deferCleanIpcPublication
                                                                            || clients.PublishCleanIpcAfterApply() then
                                                                             return
                                                                                 {
@@ -7432,7 +7445,7 @@ module Watch =
                                 }
 
                             let! cleanOutcome =
-                                if clients.UseLegacyMaterializationLease then
+                                if useLegacyMaterializationLease then
                                     WorkingDirectoryMaterialization.runWithLease applyAfterAdmission
                                 else
                                     applyAfterAdmission ()
@@ -7754,9 +7767,7 @@ module Watch =
                 WaitForSafePoint = fun _ _ -> Task.FromResult(())
                 ReestablishIpc = fun _ _ -> Task.FromResult(())
                 ApplyReference = fun _ _ -> Task.FromResult(())
-                ApplySameRootReference = false
-                DeferCleanIpcPublication = false
-                UseLegacyMaterializationLease = true
+                Mode = LegacyMaterialization
                 PublishCleanIpcAfterApply = fun () -> true
                 ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
                 MaxAttempts = Some 3
@@ -7775,9 +7786,7 @@ module Watch =
                         WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ApplyReference = rejectCursorlessCurrentBranchReferenceMaterialization
-                        ApplySameRootReference = false
-                        DeferCleanIpcPublication = false
-                        UseLegacyMaterializationLease = true
+                        Mode = LegacyMaterialization
                         PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                         ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                         MaxAttempts = Some 3
@@ -7995,9 +8004,7 @@ module Watch =
                 WaitForSafePoint = fun _ _ -> Task.FromResult(())
                 ReestablishIpc = fun _ _ -> Task.FromResult(())
                 ApplyReference = rejectCursorlessCurrentBranchReferenceMaterialization
-                ApplySameRootReference = false
-                DeferCleanIpcPublication = false
-                UseLegacyMaterializationLease = true
+                Mode = LegacyMaterialization
                 PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                 ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                 MaxAttempts = Some 1
@@ -8739,9 +8746,7 @@ module Watch =
                                                     acceptedStatus
                                                     eventCursor
                                                     cancellationToken
-                                        ApplySameRootReference = true
-                                        DeferCleanIpcPublication = true
-                                        UseLegacyMaterializationLease = false
+                                        Mode = CursorBackedWatchReplay
                                         PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                                         ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                                         MaxAttempts = Some 1
@@ -8798,6 +8803,15 @@ module Watch =
     let internal handleCurrentBranchReferenceNotificationWithClientsForWatchTests getCurrentBranch readLocalStatus payload =
         handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus payload
 
+    /// Exposes the two legal coordinator policy bundles without making the private mode type part of the test contract.
+    let internal currentBranchMaterializationPoliciesForWatchTests cursorBackedWatchReplay =
+        currentBranchMaterializationPolicies (
+            if cursorBackedWatchReplay then
+                CursorBackedWatchReplay
+            else
+                LegacyMaterialization
+        )
+
     /// Exposes serialized current-branch materialization coordination to Watch tests without opening a HubConnection.
     let internal handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
         getCurrentBranch
@@ -8819,9 +8833,7 @@ module Watch =
                             WaitForSafePoint = waitForSafePoint
                             ReestablishIpc = reestablishIpc
                             ApplyReference = applyReference
-                            ApplySameRootReference = false
-                            DeferCleanIpcPublication = false
-                            UseLegacyMaterializationLease = true
+                            Mode = LegacyMaterialization
                             PublishCleanIpcAfterApply = fun () -> true
                             ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
                             MaxAttempts = Some 3
@@ -8856,9 +8868,7 @@ module Watch =
                             WaitForSafePoint = waitForSafePoint
                             ReestablishIpc = reestablishIpc
                             ApplyReference = applyReference
-                            ApplySameRootReference = false
-                            DeferCleanIpcPublication = false
-                            UseLegacyMaterializationLease = true
+                            Mode = LegacyMaterialization
                             PublishCleanIpcAfterApply = publishCleanIpcAfterApply
                             ReassertDirtyIpcAfterFailedCleanPublication = reassertDirtyIpcAfterFailedCleanPublication
                             MaxAttempts = Some 3

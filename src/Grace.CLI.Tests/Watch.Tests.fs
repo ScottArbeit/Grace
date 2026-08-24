@@ -21998,6 +21998,19 @@ module WatchTests =
 
             Assert.DoesNotThrow(Action(fun () -> Watch.ensureCurrentBranchReplayReferenceRootAcknowledged status (Some payload))))
 
+    /// Verifies that each coordinator mode retains one cohesive same-root, publication, and lease policy bundle.
+    [<TestCase(false, false, false, true, TestName = "legacy materialization retains its exact coordinator policies")>]
+    [<TestCase(true, true, true, false, TestName = "cursor-backed Watch replay retains its exact coordinator policies")>]
+    [<Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization mode retains exact policies``
+        cursorBackedWatchReplay
+        expectedApplySameRoot
+        expectedDeferCleanIpc
+        expectedUseLegacyLease
+        =
+        Watch.currentBranchMaterializationPoliciesForWatchTests cursorBackedWatchReplay
+        |> should equal (expectedApplySameRoot, expectedDeferCleanIpc, expectedUseLegacyLease)
+
     /// Verifies that BranchDto latest authority, not notification arrival order, selects the materializable Reference.
     [<Test>]
     let ``latest current branch decision drops older notification even when it arrives last`` () =
