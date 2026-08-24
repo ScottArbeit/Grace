@@ -43,7 +43,8 @@ module BranchCommandTests =
     /// Proves initial and resumed Reference output share one stable JSON field set.
     [<Test>]
     let ``reference switch output serializes one stable shape`` () =
-        let output = Branch.referenceSwitchOutput "FinalizationIncomplete" "repair" branchId (Guid.NewGuid())
+        let directoryVersionId = Guid.Parse("11111111-1111-4111-8111-111111111111")
+        let output = Branch.referenceSwitchOutput "FinalizationIncomplete" "repair" branchId directoryVersionId
         use document = JsonDocument.Parse(serialize output)
 
         let properties =
@@ -64,6 +65,24 @@ module BranchCommandTests =
             .GetProperty("Outcome")
             .GetString()
         |> should equal "FinalizationIncomplete"
+
+        document
+            .RootElement
+            .GetProperty("Message")
+            .GetString()
+        |> should equal "repair"
+
+        document
+            .RootElement
+            .GetProperty("BranchId")
+            .GetGuid()
+        |> should equal branchId
+
+        document
+            .RootElement
+            .GetProperty("DirectoryVersionId")
+            .GetGuid()
+        |> should equal directoryVersionId
 
     /// Pins the built switch ordering and handlers without requiring an unrelated server harness.
     [<Test>]
