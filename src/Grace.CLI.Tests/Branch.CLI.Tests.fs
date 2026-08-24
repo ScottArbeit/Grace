@@ -31,6 +31,29 @@ module BranchCommandTests =
     let private targetReferenceId = Guid.NewGuid()
     let private correlationId = "branch-annotate-tests"
 
+    /// Proves the built Reference-only routing decision preserves Save-enabled Branch switches.
+    [<Test>]
+    let ``reference-only route selects WDU only when the current Branch disables Save`` () =
+        Branch.referenceOnlySwitchRoute false
+        |> should equal Branch.WduNoSave
+
+        Branch.referenceOnlySwitchRoute true
+        |> should equal Branch.LegacySave
+
+    /// Pins the built switch ordering and handlers without requiring an unrelated server harness.
+    [<Test>]
+    let ``switch source resumes pending Reference completion before selecting the Save route`` () =
+        let source = File.ReadAllText(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.CLI", "Command", "Branch.CLI.fs"))
+
+        source.IndexOf("resumePendingReferenceFinalization", StringComparison.Ordinal)
+        |> should be (lessThan (source.LastIndexOf("referenceOnlySwitchRoute", StringComparison.Ordinal)))
+
+        source
+        |> should contain "referenceSelectedHandler parseResult cancellationToken"
+
+        source
+        |> should contain "runBranchSwitchWorkflowWithLease"
+
     /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append

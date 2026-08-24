@@ -2116,6 +2116,33 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
 
+    /// Proves Windows refuses deletion of an owned exact marker held open without delete sharing; non-Windows filesystems do not promise this behavior.
+    [<Test>]
+    let ``Reference finalization retains pending state when exact marker cleanup fails on Windows`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows-only open-handle deletion semantics.")
+
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("Reference Windows cleanup failure")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", bytes))
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot (BranchId.NewGuid())
+            let scope = writeExactReferenceMarker configuration root target operation
+            let markerPath = WorkingDirectoryUpdateCoordination.Scope.markerPath scope
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), bytes)
+            use markerLock = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete _) -> ()
+                | outcome -> Assert.Fail($"Expected Windows cleanup failure, got {outcome}.")
+
+            File.Exists(markerPath) |> should equal true
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
+
     /// Proves malformed marker evidence retains the pending Reference completion without writing verified working bytes.
     [<Test>]
     let ``Reference finalization retains pending state for malformed marker evidence`` () =
