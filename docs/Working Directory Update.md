@@ -1,6 +1,6 @@
 # Working Directory Update
 
-**Status:** Plan-ready for the Issue #923 five-input composition and Reference pending-completion slice
+**Status:** Implemented through merged Issue #923 / PR #1009; Issue #871 is the selected Reference finalization slice
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
 **Evidence current through:** 2026-08-22, `origin/main` `7f80ade9`, epic head `3c0c70d8`
@@ -15,8 +15,9 @@ This replacement contract is Branch-only. Merged Issue #960 supplies the first p
 one exact `DirectoryVersion`, updates the working directory, retains the current Branch identity, and records terminal
 completion atomically with verified local status. Merged Issue #922 extracts the selection-neutral local-application
 stage through opaque `VerifiedLocalRoot`. Merged Issue #1005 makes BLAKE3 the sole WDU byte-equality check while retaining
-SHA-256 selectors and metadata. Issue #923 is the next composition slice and may add only Reference pending completion.
-Reference publication, Watch, and Connect consume the completed transaction later. Migration, rollback, journals,
+SHA-256 selectors and metadata. Merged Issue #923 / PR #1009 supplies the five-input composition and persists a typed
+Reference pending completion after verified local completion. Issue #871 now consumes that pending fact to publish the
+selected Branch identity and record terminal completion. Watch, Connect, and Doctor remain deferred. Migration, rollback, journals,
 automatic recovery, and multi-platform parity remain out of scope.
 
 Working-directory mutation is currently distributed across caller implementations, so cleanup, finalization, and
@@ -29,7 +30,7 @@ when lower-level details are incomplete.
 | ID | Decision | Lasting consequence | Owner |
 | --- | --- | --- | --- |
 | DEC-001 | Branch selection is typed as `Reference` or exact-root `DirectoryVersion`. | Reference may change Branch identity; DirectoryVersion retains the current Branch and has no Reference ID. | #869 |
-| DEC-002 | Successful Save or no-Save admission seals the sole accepted baseline. | `AcceptedBranchPhase` carries SQLite revision, full-status fingerprint, and action token through preparation. | #872 |
+| DEC-002 | Successful Save or no-Save admission seals the sole accepted baseline. | `AcceptedBranchPhase` carries SQLite revision and complete-status fingerprint through preparation. | #923 and #872 |
 | DEC-003 | Marker evidence retains typed dispositions. | Missing, exact, different operation, malformed, unsupported, unreadable, and exact-cleanup-failed never collapse to a Boolean. | #869 |
 | DEC-004 | Reference finalization is repeatable from persisted typed facts. | Previous Branch publishes once, selected Branch proves prior publication, and a third Branch retains pending. | #871 |
 | DEC-005 | Planning and verification cover complete relevant tracked topology. | Every selected entry and tracked predecessor entry is compared; unrelated ignored/untracked content is preserved and excluded unless it is a destructive collision. | #898, #959, and #960 |
@@ -38,36 +39,34 @@ when lower-level details are incomplete.
 | DEC-008 | Tests retain stable internal boundaries inside the public tracer. | Pure reconciliation, real filesystem application, atomic completion, and built-command selector tests remain independently reachable without adding enabling pull requests. | #960 |
 | DEC-009 | #868 and PR #873 are superseded planning evidence. | Their review findings inform this table but their commits and competing prose are not implementation authority. | #881 |
 | DEC-010 | `DirectoryVersion` completion is terminal in the verified-status SQLite transaction. | Hash-selected switching cannot create pending finalization; exact marker cleanup follows the terminal commit and cannot downgrade success. | #960 |
-| DEC-011 | Issue #923 keeps local completion private and typed. | `LocalCompletion` distinguishes `ReferencePending` from `DirectoryVersionTerminal`, carries the existing `Receipt`, and never crosses the WDU module interface. | #923 |
-| DEC-012 | The five inputs are the only replaceable Branch facts. | Cancellation is invocation control and deterministic failure injection is a private test seam; neither becomes a sixth product fact, overload, context bag, or caller callback. | #923 |
-| DEC-013 | Issue #923 owns the first no-Save `AcceptedBranchPhase` producer and exact target-graph value. | The phase seals accepted status, SQLite revision, complete-status fingerprint, and one action token before target preparation; Issue #872 later adds Save-enabled production without changing the five-input seam. | #923 and #872 |
+| DEC-011 | Merged Issue #923 keeps local completion private and typed. | `LocalCompletion` distinguishes `ReferencePending` from `DirectoryVersionTerminal`, carries the existing `Receipt`, and never crosses the WDU module interface. | #923 / PR #1009 |
+| DEC-012 | The five inputs are the only replaceable Branch facts. | Cancellation remains invocation control and deterministic failure injection is a private test seam; neither becomes a sixth product fact, overload, context bag, or caller callback. | #923 / PR #1009 |
+| DEC-013 | Merged Issue #923 owns the first no-Save `AcceptedBranchPhase` producer and exact target-graph value. | The phase seals accepted status, SQLite revision, and complete-status fingerprint before target preparation; Issue #872 later adds Save-enabled production without changing the five-input seam. | #923 / PR #1009 and #872 |
 
 The post-Issue #1005 checkpoint makes these planning selections without changing the compiled lifecycle rows:
 
 - Final local-application admission occurs after prepared-object publication. No revision, status, completion, marker,
   topology snapshot, or plan computed before publication may authorize the first working-tree mutation or zero-action
   `VerifiedLocalRoot`.
-- The extracted local-application stage is selection-neutral, while completion is selection-specific. Issue #923 may
-  record Reference pending completion after opaque `VerifiedLocalRoot`, but it must delegate DirectoryVersion to the
-  merged terminal behavior unchanged.
+- The extracted local-application stage is selection-neutral, while completion is selection-specific. Merged Issue #923
+  records Reference pending completion after opaque `VerifiedLocalRoot` and delegates DirectoryVersion to the merged
+  terminal behavior unchanged.
 - `LocalCompletion` is private non-durable evidence inside WDU. It distinguishes the persisted Reference-pending and
   DirectoryVersion-terminal results without exposing `VerifiedLocalRoot` or asking callers to reconstruct SQLite truth.
   Retry still reconstructs from persisted typed facts rather than this in-memory value.
-- Issue #923 may introduce the missing opaque input values and deepen the current many-parameter implementation behind
-  one five-input seam. It must not expose `VerifiedLocalRoot`, local paths, status snapshots, database handles, mutation
-  plans, finalizers, or callbacks.
+- Issue #871 may consume only the persisted typed Reference pending fact. It must not expose `VerifiedLocalRoot`, local
+  paths, status snapshots, database handles, mutation plans, finalizers, or callbacks.
 
-No product or architecture decision remains open for the bounded Issue #923 slice. Issue #923 is the only selected next
-Product V1 child after its tracker packet is rewritten from this specification and the exact live packet passes.
-Reference publication and repeatable finalization remain Issue #871. Save-enabled construction of the same phase remains
-Issue #872. Doctor recovery, Watch, and Connect remain deferred.
+No product or architecture decision remains open for the bounded Issue #871 slice. Its one outcome is repeatable
+Reference completion from persisted facts. Save-enabled construction of the same phase remains Issue #872. Doctor
+recovery, Watch, and Connect remain deferred.
 
 ## 3. Domain facts and interface
 
 `AcceptedBranchPhase` is opaque and sealed immediately after successful Save or no-Save admission. It contains the
-accepted complete status, SQLite revision, complete-status fingerprint, and one public action token. Issue #923 adds the
-no-Save constructor used by the merged hash-selected producer. Issue #872 later adds Save-enabled construction without
-changing the type or the run interface. Preparation carries the same phase unchanged.
+accepted complete status, SQLite revision, and complete-status fingerprint. Merged Issue #923 adds the no-Save
+constructor used by the hash-selected producer. Issue #872 later adds Save-enabled construction without changing the
+type or the run interface. Preparation carries the same phase unchanged.
 
 `ResolvedTargetGraph` is an opaque target plus the exact target status, required object metadata, and prepared-manifest
 identity. Construction rejects a selection, target, graph, or manifest mismatch before the value reaches WDU. Callers
@@ -403,7 +402,7 @@ sleeps, and impossible hand-built states are insufficient.
 
 <!-- grace:wdu-lifecycle-projection-plan:start -->
 ```json
-{"schema":"grace.wdu.lifecycle-projection-plan/v1","compilerInput":"docs/Working Directory Update.md#normative-branch-lifecycle-table","publicationState":"issue-923-readiness-pass"}
+{"schema":"grace.wdu.lifecycle-projection-plan/v1","compilerInput":"docs/Working Directory Update.md#normative-branch-lifecycle-table","publicationState":"issue-871-reference-finalization"}
 ```
 <!-- grace:wdu-lifecycle-projection-plan:end -->
 
@@ -416,9 +415,9 @@ The following consumers carry generated projections rather than competing lifecy
 - #960 owns the merged hash-selected public tracer through terminal DirectoryVersion completion.
 - #922 owns the merged selection-neutral extraction through `VerifiedLocalRoot`.
 - #1005 owns merged BLAKE3-only byte validation across every WDU application boundary.
-- #923 owns the selected five-input composition and Reference pending-completion slice.
+- #923 / PR #1009 provide the merged five-input composition and Reference pending-completion slice.
 - #900 and #901 are superseded by #960.
-- #871 proves Reference and retry row families.
+- #871 is selected to consume Reference pending completion during the original invocation and after restart.
 - #872 proves Save/no-Save admission reaches the same initial rows.
 - #842 proves Branch-only retry rows without working-file mutation.
 - #843–#845 later consume the transaction contract for Watch and Connect.
@@ -432,23 +431,23 @@ The bounded Product V1 residual risk remains interruption after working-tree mut
 and the final check-to-operation race after synchronous precondition validation. `WDU-LC-002` and `WDU-LC-007` require
 truthful `UpdateIncomplete`; Grace does not guess, roll back, or add a broader recovery system.
 
-### Issue #923 readiness handoff
+### Issue #871 delivery contract
 
-Issue #923 fits the Product V1 budget after narrowing `LocalCompletion` to private typed evidence:
+Issue #871 fits the Product V1 budget by consuming, but not extending, the merged pending-completion mechanism:
 
-- One outcome: both Branch selections enter one five-input WDU seam, and Reference can reach one truthful pending local
-  completion without exposing a public Reference switch.
-- One primary invariant: no Reference pending fact exists before `VerifiedLocalRoot`, and verified status, required
-  object metadata, target, operation, and pending `BranchFinalization` facts commit atomically.
+- One outcome: after verified local completion, publish the selected Branch identity and terminalize the matching SQLite
+  pending row. A retry reconstructs only from that row and the durable Branch configuration.
+- One primary invariant: Reference completion follows verified local completion, cleans only exact marker evidence
+  before publication, and is repeatable without rewriting a working file or republishing an already selected Branch.
 - No new durable lifecycle: the existing SQLite `Pending` and `Terminal` states and lifecycle rows remain unchanged.
-- One source for each decision: sealed phase for the accepted baseline, resolved graph plus prepared content for the
-  selected target, fresh SQLite and marker reads under the WDU lease for admission, and SQLite for completion truth.
-- Existing algorithm evidence: Issues #960 and #922 already exercise the effect order, mutation residue, exact adoption,
-  cancellation boundary, complete-root verification, and atomic completion seam. Issue #923 adds composition and the
-  Reference pending branch, not another filesystem or recovery algorithm.
+- One source for each decision: SQLite selects the pending completion; disk Branch configuration classifies previous,
+  selected, third, or unreadable identity; the lease serializes the completion effects.
+- Existing algorithm evidence: Issues #960, #922, and merged Issue #923 / PR #1009 establish local application,
+  completion, and pending facts. Issue #871 adds only their bounded publication and terminal-recording sequence.
 
-The rewritten issue must own `AcceptedBranchPhase`, `ActionToken`, `ResolvedTargetGraph`, the exact five-input
-composition, Reference pending completion, DirectoryVersion delegation, and direct real-filesystem/SQLite tests. It must
-leave Reference publication, finalization retry, Save-enabled switching, public Reference dispatch, Doctor, Watch, and
-Connect out of scope. Stop if implementation needs a new persisted state, another lease, a caller finalizer, a second
-transaction interface, or a change to DirectoryVersion terminal behavior.
+Issue #871 must retain pending state with `FinalizationIncomplete` and Doctor guidance for disallowed marker evidence,
+configuration read failure, third Branch identity, publication failure, or terminal-recording failure. Cancellation is
+invocation control only until cleanup, publication, or terminal recording starts. Issue #872 remains responsible for
+Save-enabled construction; Watch, Connect, and Doctor implementation remain deferred. Stop if delivery needs a new
+persisted state, schema, configuration-write interface, retry file mutation, another lease, a caller finalizer, a second
+transaction interface, changed Save behavior, or a DirectoryVersion semantic change.

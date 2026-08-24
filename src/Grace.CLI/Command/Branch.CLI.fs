@@ -578,6 +578,21 @@ module Branch =
         else
             Error "Branch switch accepts exactly one hash selector without a Branch or Reference selector."
 
+    /// Names the only supported routes for a Reference-only Branch switch.
+    type internal ReferenceSwitchRoute =
+        | WduNoSave
+        | LegacySave
+
+    /// Holds the stable machine-readable result emitted by initial and resumed exact-Reference switching.
+    type internal ReferenceSwitchOutput = { Outcome: string; Message: string; BranchId: BranchId; DirectoryVersionId: DirectoryVersionId }
+
+    /// Creates the single machine-output shape for exact-Reference switch results.
+    let internal referenceSwitchOutput outcome message branchId directoryVersionId =
+        { Outcome = outcome; Message = message; BranchId = branchId; DirectoryVersionId = directoryVersionId }
+
+    /// Selects the Reference-only switch route from the current Branch capability.
+    let internal referenceOnlySwitchRoute saveEnabled = if saveEnabled then LegacySave else WduNoSave
+
     /// Projects one WDU outcome into the public outcome name, message, and process exit status shared by human and JSON output.
     let internal projectHashSwitchOutcome outcome =
         match outcome with
@@ -3288,8 +3303,17 @@ module Branch =
                             deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
         }
 
+    /// Defines the action-boundary operations used to exercise built Reference-only switch routing without a server.
+    type internal SwitchTestOperations =
+        {
+            ResumePending: CancellationToken -> Task<WorkingDirectoryUpdateContracts.Outcome option>
+            ResolveReferenceRoute: GetBranchParameters -> Task<Result<ReferenceSwitchRoute option, GraceError>>
+            RunWduReference: ParseResult -> CancellationToken -> Task<int>
+            RunLegacy: ParseResult -> CancellationToken -> Task<int>
+        }
+
     /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
-    type Switch() =
+    type Switch private (testOperations: SwitchTestOperations option) =
         inherit AsynchronousCommandLineAction()
 
         /// Runs the Product V1 hash-selected DirectoryVersion tracer without entering legacy Branch/Reference switch behavior.
@@ -3505,6 +3529,256 @@ module Branch =
                                                             $"Branch working directory {outcomeName}: DirectoryVersion {targetStatus.RootDirectoryId}.{suffix}"
 
                                                     return exitCode
+                with
+                | ex ->
+                    let error = GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult)
+                    return renderOutput parseResult (GraceResult.Error error)
+            }
+
+        /// Runs the Product V1 exact-Reference switch through WDU so Branch identity cannot publish before verified local completion.
+        let referenceSelectedHandler (parseResult: ParseResult) (cancellationToken: CancellationToken) =
+            task {
+                try
+                    let configuration = Current()
+                    let graceIds = getNormalizedIdsAndNames parseResult
+                    let referenceId = parseResult.GetValue(Options.referenceId)
+                    let! currentStatus = readGraceStatusFile ()
+                    let! acceptedRevision = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
+
+                    let getReferenceParameters =
+                        GetReferenceParameters(
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            BranchId = $"{configuration.BranchId}",
+                            ReferenceId = $"{referenceId}",
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    match! Branch.GetReference getReferenceParameters with
+                    | Error error -> return renderOutput parseResult (GraceResult.Error error)
+                    | Ok referenceResult ->
+                        let reference = referenceResult.ReturnValue
+
+                        let getBranchParameters =
+                            GetBranchParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                BranchId = $"{reference.BranchId}",
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        let getVersionParameters =
+                            GetBranchVersionParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                BranchId = $"{reference.BranchId}",
+                                ReferenceId = $"{referenceId}",
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        let! branchResult = Branch.Get getBranchParameters
+                        let! versionResult = Branch.GetVersion getVersionParameters
+
+                        match branchResult, versionResult with
+                        | Ok branchResult, Ok versionResult ->
+                            let selectedBranch = branchResult.ReturnValue
+
+                            let directoryIds =
+                                versionResult.ReturnValue
+                                |> Seq.distinct
+                                |> Seq.toArray
+
+                            let getDirectoriesParameters =
+                                GetByDirectoryIdsParameters(
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OwnerName = graceIds.OwnerName,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    OrganizationName = graceIds.OrganizationName,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    RepositoryName = graceIds.RepositoryName,
+                                    DirectoryVersionId = $"{directoryIds[0]}",
+                                    DirectoryIds = List<DirectoryVersionId>(directoryIds),
+                                    CorrelationId = graceIds.CorrelationId
+                                )
+
+                            match! DirectoryVersion.GetByDirectoryIds getDirectoriesParameters with
+                            | Error error -> return renderOutput parseResult (GraceResult.Error error)
+                            | Ok directoryResult ->
+                                let directoryDtos = directoryResult.ReturnValue |> Seq.toArray
+
+                                let returnedIds =
+                                    directoryDtos
+                                    |> Seq.map (fun dto -> dto.DirectoryVersion.DirectoryVersionId)
+                                    |> HashSet
+
+                                if
+                                    directoryIds
+                                    |> Array.exists (returnedIds.Contains >> not)
+                                then
+                                    return
+                                        renderOutput
+                                            parseResult
+                                            (GraceResult.Error(
+                                                GraceError.Create
+                                                    "The server did not return the complete selected DirectoryVersion graph."
+                                                    (getCorrelationId parseResult)
+                                            ))
+                                else
+                                    let targetStatus = updateGraceStatusWithNewDirectoryVersionsFromServer currentStatus directoryDtos
+                                    let targetDirectories = targetStatus.Index.Values |> Seq.toArray
+
+                                    match Grace.CLI.LocalStateDb.validateCompleteStatusTree targetStatus with
+                                    | Error validationError ->
+                                        return
+                                            renderOutput
+                                                parseResult
+                                                (GraceResult.Error(
+                                                    GraceError.Create
+                                                        $"The selected DirectoryVersion graph is incomplete: {validationError}"
+                                                        (getCorrelationId parseResult)
+                                                ))
+                                    | Ok () ->
+                                        let getDownloadUriParameters =
+                                            Storage.GetDownloadUriParameters(
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OwnerName = graceIds.OwnerName,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                OrganizationName = graceIds.OrganizationName,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                RepositoryName = graceIds.RepositoryName,
+                                                CorrelationId = graceIds.CorrelationId
+                                            )
+
+                                        let targetFiles =
+                                            targetDirectories
+                                            |> Seq.collect (fun directory -> directory.Files)
+                                            |> Seq.toArray
+
+                                        match!
+                                            downloadFileVersionsFromObjectStorage
+                                                getDownloadUriParameters
+                                                (targetFiles
+                                                 |> Seq.map (fun file -> file.ToFileVersion))
+                                                (getCorrelationId parseResult)
+                                            with
+                                        | Error error ->
+                                            return renderOutput parseResult (GraceResult.Error(GraceError.Create error (getCorrelationId parseResult)))
+                                        | Ok _ ->
+                                            let manifestEntries =
+                                                seq {
+                                                    for directory in targetDirectories do
+                                                        if directory.RelativePath
+                                                           <> Constants.RootDirectoryPath then
+                                                            yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory directory.RelativePath
+
+                                                        for file in directory.Files do
+                                                            yield
+                                                                WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                    file.RelativePath,
+                                                                    file.Sha256Hash,
+                                                                    file.Blake3Hash
+                                                                )
+                                                }
+
+                                            match WorkingDirectoryUpdateContracts.PreparedManifest.create manifestEntries with
+                                            | Error error ->
+                                                return renderOutput parseResult (GraceResult.Error(GraceError.Create error (getCorrelationId parseResult)))
+                                            | Ok manifest ->
+                                                let preparedFiles = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+
+                                                for file in targetFiles do
+                                                    preparedFiles[string file.RelativePath] <- Path.Combine(
+                                                        configuration.ObjectDirectory,
+                                                        string file.RelativePath,
+                                                        getLocalObjectCacheFileName file.RelativePath file.Sha256Hash file.Blake3Hash
+                                                    )
+
+                                                let reader = new BranchSwitchPreparedReader(preparedFiles)
+
+                                                match! WorkingDirectoryUpdateContracts.PreparedContent.create manifest reader cancellationToken with
+                                                | Error error ->
+                                                    return renderOutput parseResult (GraceResult.Error(GraceError.Create error (getCorrelationId parseResult)))
+                                                | Ok preparedContent ->
+                                                    let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference referenceId
+
+                                                    let acceptedPhase =
+                                                        WorkingDirectoryUpdateContracts.AcceptedBranchPhase.noSave
+                                                            currentStatus
+                                                            acceptedRevision
+                                                            configuration.BranchId
+                                                        |> Result.defaultWith invalidOp
+
+                                                    let target =
+                                                        WorkingDirectoryUpdateContracts.Target.create
+                                                            configuration.RepositoryId
+                                                            selectedBranch.BranchId
+                                                            targetStatus.RootDirectoryId
+                                                            targetStatus.RootDirectorySha256Hash
+                                                            targetStatus.RootDirectoryBlake3Hash
+                                                        |> Result.defaultWith invalidOp
+
+                                                    let operation =
+                                                        WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection
+                                                            configuration.BranchId
+                                                            selection
+                                                            target
+                                                        |> Result.defaultWith invalidOp
+
+                                                    let resolvedTargetGraph =
+                                                        WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create
+                                                            acceptedPhase
+                                                            selection
+                                                            target
+                                                            targetStatus
+                                                            targetDirectories
+                                                            manifest
+                                                        |> Result.defaultWith invalidOp
+
+                                                    let request =
+                                                        WorkingDirectoryUpdateContracts.Request.create
+                                                            target
+                                                            operation
+                                                            preparedContent
+                                                            (getCorrelationId parseResult)
+                                                        |> Result.defaultWith invalidOp
+
+                                                    let! runOutcome =
+                                                        WorkingDirectoryUpdate.run
+                                                            acceptedPhase
+                                                            selection
+                                                            resolvedTargetGraph
+                                                            preparedContent
+                                                            (getCorrelationId parseResult)
+                                                            cancellationToken
+                                                            WorkingDirectoryUpdate.BranchDirectoryVersion.none
+
+                                                    let outcome = WorkingDirectoryUpdate.projectRunOutcome runOutcome
+                                                    let outcomeName, message, exitCode = projectHashSwitchOutcome outcome
+                                                    let branchId = Current().BranchId
+
+                                                    let output = referenceSwitchOutput outcomeName message branchId targetStatus.RootDirectoryId
+
+                                                    if parseResult |> isOutputFormat OutputFormat.Json then
+                                                        AnsiConsole.Write(JsonText(serialize output))
+                                                    else
+                                                        let suffix = if String.IsNullOrWhiteSpace message then String.Empty else $" {message}"
+                                                        logToConsole $"Branch working directory {outcomeName}: Reference {referenceId}.{suffix}"
+
+                                                    return exitCode
+                        | Error error, _
+                        | _, Error error -> return renderOutput parseResult (GraceResult.Error error)
                 with
                 | ex ->
                     let error = GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult)
@@ -4287,10 +4561,17 @@ module Branch =
                     return -1
             }
 
+        /// Creates the production switch action used by command registration.
+        new() = Switch(None)
+
+        /// Creates a switch action with action-boundary operations for behavioral routing tests.
+        static member internal CreateForTests(operations: SwitchTestOperations) = Switch(Some operations)
+
         /// Runs the asynchronous switch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             let sha256Hash = getSha256HashPrefix parseResult
             let blake3Hash = getBlake3HashPrefix parseResult
+            let branchIdBeforeFinalization = Current().BranchId
 
             let hasBranchSelector =
                 parseResult.GetValue(Options.toBranchId)
@@ -4301,65 +4582,145 @@ module Branch =
                 parseResult.GetValue(Options.referenceId)
                 <> Guid.Empty
 
-            match classifyHashSelectedSwitch sha256Hash blake3Hash hasBranchSelector hasReferenceSelector with
-            | Ok true -> hashSelectedDirectoryVersionHandler parseResult cancellationToken
-            | Error message ->
-                task {
-                    let error = GraceError.Create message (getCorrelationId parseResult)
-                    return renderOutput parseResult (GraceResult.Error error)
-                }
-            | Ok false ->
-                task {
-                    let updateMarkerFileName = updateInProgressFileName ()
-                    let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
-                    let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            task {
+                match!
+                    match testOperations with
+                    | Some operations -> operations.ResumePending cancellationToken
+                    | None -> WorkingDirectoryUpdate.resumePendingReferenceFinalization cancellationToken
+                    with
+                | Some outcome ->
+                    let outcomeName, message, exitCode = projectHashSwitchOutcome outcome
 
-                    if parseResult |> verbose then printParseResult parseResult
+                    let directoryVersionId =
+                        match outcome with
+                        | WorkingDirectoryUpdateContracts.Outcome.Updated receipt
+                        | WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt
+                        | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (receipt, _) ->
+                            WorkingDirectoryUpdateContracts.Receipt.target receipt
+                            |> WorkingDirectoryUpdateContracts.Target.rootDirectoryVersionId
+                        | WorkingDirectoryUpdateContracts.Outcome.Rejected _
+                        | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> DirectoryVersionId.Empty
 
-                    let preflightOperations =
-                        {
-                            UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
-                            InspectWatchStatus = inspectGraceWatchStatus
-                            ReadPendingJournalSummary =
-                                fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
-                        }
+                    let branchId =
+                        try
+                            Current().BranchId
+                        with
+                        | _ -> branchIdBeforeFinalization
 
-                    let! switchResult =
-                        runBranchSwitchWorkflowWithLease preflightOperations (getCorrelationId parseResult) switchLeaseFileName switchLeaseText (fun () ->
-                            task {
-                                let switchParameters = SwitchParameters()
+                    let output = referenceSwitchOutput outcomeName message branchId directoryVersionId
 
-                                let toBranchId = parseResult.GetValue(Options.toBranchId)
-                                if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+                    if parseResult |> isOutputFormat OutputFormat.Json then
+                        AnsiConsole.Write(JsonText(serialize output))
+                    else
+                        let suffix = if String.IsNullOrWhiteSpace message then String.Empty else $" {message}"
+                        logToConsole $"Branch working directory {outcomeName}: persisted Reference finalization.{suffix}"
 
-                                let toBranchName = parseResult.GetValue(Options.toBranchName)
-                                switchParameters.ToBranchName <- toBranchName
+                    return exitCode
+                | None ->
+                    let! referenceRoute =
+                        if hasReferenceSelector
+                           && not hasBranchSelector
+                           && String.IsNullOrWhiteSpace sha256Hash
+                           && String.IsNullOrWhiteSpace blake3Hash then
+                            let configuration = Current()
 
-                                let referenceId = parseResult.GetValue(Options.referenceId)
+                            let parameters =
+                                GetBranchParameters(
+                                    OwnerId = $"{configuration.OwnerId}",
+                                    OrganizationId = $"{configuration.OrganizationId}",
+                                    RepositoryId = $"{configuration.RepositoryId}",
+                                    BranchId = $"{configuration.BranchId}",
+                                    CorrelationId = getCorrelationId parseResult
+                                )
 
-                                if referenceId <> Guid.Empty then
-                                    switchParameters.ReferenceId <- $"{referenceId}"
+                            match testOperations with
+                            | Some operations -> operations.ResolveReferenceRoute parameters
+                            | None ->
+                                task {
+                                    let! result = Branch.Get parameters
 
-                                let sha256Hash = getSha256HashPrefix parseResult
-                                switchParameters.Sha256Hash <- sha256Hash
-
-                                let blake3Hash = getBlake3HashPrefix parseResult
-                                switchParameters.Blake3Hash <- blake3Hash
-
-                                let! result = switchHandler parseResult switchParameters
-                                return result
-                            })
-
-                    match switchResult with
-                    | Error error ->
-                        if parseResult |> verbose then
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
+                                    return
+                                        result
+                                        |> Result.map (fun value -> Some(referenceOnlySwitchRoute value.ReturnValue.SaveEnabled))
+                                }
                         else
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+                            Task.FromResult(Ok None)
 
-                        return -1
-                    | Ok result -> return result
-                }
+                    match referenceRoute with
+                    | Error error -> return renderOutput parseResult (GraceResult.Error error)
+                    | Ok referenceRoute ->
+                        match classifyHashSelectedSwitch sha256Hash blake3Hash hasBranchSelector hasReferenceSelector with
+                        | Ok true -> return! hashSelectedDirectoryVersionHandler parseResult cancellationToken
+                        | Error message ->
+                            let error = GraceError.Create message (getCorrelationId parseResult)
+                            return renderOutput parseResult (GraceResult.Error error)
+                        | Ok false when referenceRoute = Some WduNoSave ->
+                            match testOperations with
+                            | Some operations -> return! operations.RunWduReference parseResult cancellationToken
+                            | None -> return! referenceSelectedHandler parseResult cancellationToken
+                        | Ok false ->
+                            match testOperations with
+                            | Some operations -> return! operations.RunLegacy parseResult cancellationToken
+                            | None ->
+                                return!
+                                    task {
+                                        let updateMarkerFileName = updateInProgressFileName ()
+                                        let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
+                                        let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+
+                                        if parseResult |> verbose then printParseResult parseResult
+
+                                        let preflightOperations =
+                                            {
+                                                UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
+                                                InspectWatchStatus = inspectGraceWatchStatus
+                                                ReadPendingJournalSummary =
+                                                    fun () ->
+                                                        Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+                                            }
+
+                                        let! switchResult =
+                                            runBranchSwitchWorkflowWithLease
+                                                preflightOperations
+                                                (getCorrelationId parseResult)
+                                                switchLeaseFileName
+                                                switchLeaseText
+                                                (fun () ->
+                                                    task {
+                                                        let switchParameters = SwitchParameters()
+
+                                                        let toBranchId = parseResult.GetValue(Options.toBranchId)
+                                                        if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+
+                                                        let toBranchName = parseResult.GetValue(Options.toBranchName)
+                                                        switchParameters.ToBranchName <- toBranchName
+
+                                                        let referenceId = parseResult.GetValue(Options.referenceId)
+
+                                                        if referenceId <> Guid.Empty then
+                                                            switchParameters.ReferenceId <- $"{referenceId}"
+
+                                                        let sha256Hash = getSha256HashPrefix parseResult
+                                                        switchParameters.Sha256Hash <- sha256Hash
+
+                                                        let blake3Hash = getBlake3HashPrefix parseResult
+                                                        switchParameters.Blake3Hash <- blake3Hash
+
+                                                        let! result = switchHandler parseResult switchParameters
+                                                        return result
+                                                    })
+
+                                        match switchResult with
+                                        | Error error ->
+                                            if parseResult |> verbose then
+                                                AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
+                                            else
+                                                AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+
+                                            return -1
+                                        | Ok result -> return result
+                                    }
+            }
 
     /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.
     let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) (referenceId: ReferenceId) =

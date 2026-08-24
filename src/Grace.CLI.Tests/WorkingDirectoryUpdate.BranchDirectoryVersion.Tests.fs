@@ -57,18 +57,20 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
     let private status (configuration: GraceConfiguration) (rootId: DirectoryVersionId) (file: (string * byte array) option) =
         let files =
             match file with
-            | Some(path, bytes) ->
+            | Some (path, bytes) ->
                 let sha256, blake3 = hashes bytes
 
-                [| LocalFileVersion.CreateWithHashes
-                       (RelativePath path)
-                       sha256
-                       blake3
-                       false
-                       (int64 bytes.Length)
-                       (Grace.Shared.Utilities.getCurrentInstant ())
-                       true
-                       DateTime.UtcNow |]
+                [|
+                    LocalFileVersion.CreateWithHashes
+                        (RelativePath path)
+                        sha256
+                        blake3
+                        false
+                        (int64 bytes.Length)
+                        (Grace.Shared.Utilities.getCurrentInstant ())
+                        true
+                        DateTime.UtcNow
+                |]
             | None -> Array.empty
 
         let entries =
@@ -96,7 +98,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             Index = index
             RootDirectoryId = root.DirectoryVersionId
             RootDirectorySha256Hash = root.Sha256Hash
-            RootDirectoryBlake3Hash = root.Blake3Hash },
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        },
         root
 
     /// Creates a production-valid root graph containing one nested directory and file.
@@ -115,7 +118,10 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 true
                 DateTime.UtcNow
 
-        let childEntries = [| Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash |]
+        let childEntries =
+            [|
+                Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+            |]
 
         let child =
             LocalDirectoryVersion.CreateWithHashes
@@ -134,7 +140,10 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         let rootId = DirectoryVersionId.NewGuid()
         let rootPath = RelativePath RootDirectoryPath
 
-        let rootEntries = [| Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash |]
+        let rootEntries =
+            [|
+                Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+            |]
 
         let root =
             LocalDirectoryVersion.CreateWithHashes
@@ -158,7 +167,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             Index = index
             RootDirectoryId = rootId
             RootDirectorySha256Hash = root.Sha256Hash
-            RootDirectoryBlake3Hash = root.Blake3Hash },
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        },
         root,
         child
 
@@ -184,7 +194,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             configuration.GraceObjectCacheFile <- configuration.GraceStatusFile
             configuration.ConfigurationDirectory <- configuration.GraceDirectory
 
-            Directory.CreateDirectory(configuration.ConfigurationDirectory) |> ignore
+            Directory.CreateDirectory(configuration.ConfigurationDirectory)
+            |> ignore
 
             saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, GraceConfigFileName)) configuration
             resetConfiguration ()
@@ -203,8 +214,11 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         let sha256, blake3 = hashes bytes
 
         let manifest =
-            WorkingDirectoryUpdateContracts.PreparedManifest.create
-                [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath path, sha256, blake3) ]
+            WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                          RelativePath path,
+                                                                          sha256,
+                                                                          blake3
+                                                                      ) ]
             |> required
 
         let prepared =
@@ -233,14 +247,71 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
         manifest,
         [| targetRoot |]
 
+    /// Persists the existing Reference-pending facts used to test restart-only finalization without a working-tree update.
+    let private seedPendingReferenceFinalization
+        (configuration: GraceConfiguration)
+        (targetStatus: GraceStatus)
+        (targetRoot: LocalDirectoryVersion)
+        (selectedBranchId: BranchId)
+        =
+        let previousBranchId = configuration.BranchId
+        let referenceId = ReferenceId.NewGuid()
+
+        let target =
+            WorkingDirectoryUpdateContracts.Target.create
+                configuration.RepositoryId
+                selectedBranchId
+                targetStatus.RootDirectoryId
+                targetStatus.RootDirectorySha256Hash
+                targetStatus.RootDirectoryBlake3Hash
+            |> required
+
+        let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference referenceId
+
+        let operation =
+            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection previousBranchId selection target
+            |> required
+
+        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+            configuration.GraceStatusFile
+            targetStatus
+            [| targetRoot |]
+            (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, referenceId))
+            target
+            operation
+        |> fun task -> task.GetAwaiter().GetResult()
+        |> ignore
+
+        target, operation
+
+    /// Writes exact marker evidence owned by a pending Reference completion.
+    let private writeExactReferenceMarker (configuration: GraceConfiguration) root target operation =
+        let scope =
+            WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+            |> required
+
+        let marker =
+            WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdateContracts.AttemptToken.create ()) target operation
+            |> required
+
+        WorkingDirectoryUpdateCoordination.Marker.write scope marker
+        |> fun task -> task.GetAwaiter().GetResult()
+
+        scope
+
     /// Creates a fully prepared request for one nested directory-and-file target graph.
     let private directoryRequest (configuration: GraceConfiguration) (targetStatus: GraceStatus) metadata (directoryPath: string) (filePath: string) bytes =
         let sha256, blake3 = hashes bytes
 
         let manifest =
-            WorkingDirectoryUpdateContracts.PreparedManifest.create
-                [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath directoryPath)
-                  WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath filePath, sha256, blake3) ]
+            WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(
+                                                                          RelativePath directoryPath
+                                                                      )
+                                                                      WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                          RelativePath filePath,
+                                                                          sha256,
+                                                                          blake3
+                                                                      ) ]
             |> required
 
         let prepared =
@@ -299,17 +370,27 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 directoryRequest configuration targetStatus [| targetRoot; targetChild |] "selected" "selected/content.txt" selectedBytes
 
             let missingFileManifest =
-                WorkingDirectoryUpdateContracts.PreparedManifest.create
-                    [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "selected") ]
+                WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(
+                                                                              RelativePath "selected"
+                                                                          ) ]
                 |> required
 
             let sha256, blake3 = hashes selectedBytes
 
             let extraFileManifest =
-                WorkingDirectoryUpdateContracts.PreparedManifest.create
-                    [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "selected")
-                      WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath "selected/content.txt", sha256, blake3)
-                      WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(RelativePath "unexpected.txt", sha256, blake3) ]
+                WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(
+                                                                              RelativePath "selected"
+                                                                          )
+                                                                          WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                              RelativePath "selected/content.txt",
+                                                                              sha256,
+                                                                              blake3
+                                                                          )
+                                                                          WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                              RelativePath "unexpected.txt",
+                                                                              sha256,
+                                                                              blake3
+                                                                          ) ]
                 |> required
 
             let alteredChild =
@@ -326,7 +407,13 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     targetChild.Size
                     (targetChild.LastWriteTimeUtc.AddSeconds(1.0))
 
-            let alteredFile = { targetChild.Files[0] with LastWriteTimeUtc = targetChild.Files[0].LastWriteTimeUtc.AddSeconds(1.0) }
+            let alteredFile =
+                { targetChild.Files[0] with
+                    LastWriteTimeUtc =
+                        targetChild
+                            .Files[ 0 ]
+                            .LastWriteTimeUtc.AddSeconds(1.0)
+                }
 
             let childWithAlteredFile =
                 LocalDirectoryVersion.CreateWithHashes
@@ -348,7 +435,9 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 |> should equal true
 
             rejected [| targetRoot; alteredChild |]
-            rejected [| targetRoot; childWithAlteredFile |]
+
+            rejected [| targetRoot
+                        childWithAlteredFile |]
 
             WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus matchingMetadata missingFileManifest
             |> Result.isError
@@ -362,7 +451,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             |> Result.isOk
             |> should equal true
 
-            File.Exists(Path.Combine(root, "selected", "content.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected", "content.txt"))
+            |> should equal false
 
             LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
             |> fun task -> task.GetAwaiter().GetResult()
@@ -484,7 +574,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.DuringApplication then
-                                raise (IOException("injected mid-application")) }
+                                raise (IOException("injected mid-application"))
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -501,7 +592,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
                 | outcome -> Assert.Fail($"Expected UpdateIncomplete, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal true
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal true
 
             let retryRequest, retryManifest, retryMetadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
 
@@ -546,7 +638,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
             |> fun task -> task.GetAwaiter().GetResult() |> ignore
 
-            Directory.CreateDirectory(Path.Combine(root, "nested")) |> ignore
+            Directory.CreateDirectory(Path.Combine(root, "nested"))
+            |> ignore
 
             let freshRequest, freshManifest, freshMetadata =
                 directoryRequest configuration targetStatus [| targetRoot; targetChild |] "nested" "nested/file.txt" targetBytes
@@ -599,7 +692,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                                 completedActions <- completedActions + 1
 
                                 if completedActions = 2 then
-                                    raise (IOException("interrupt after nested target file creation")) }
+                                    raise (IOException("interrupt after nested target file creation"))
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -616,7 +710,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
                 | outcome -> Assert.Fail($"Expected interrupted UpdateIncomplete, got {outcome}.")
 
-            Directory.Exists(Path.Combine(root, "nested")) |> should equal true
+            Directory.Exists(Path.Combine(root, "nested"))
+            |> should equal true
 
             File.ReadAllBytes(Path.Combine(root, "nested", "file.txt"))
             |> should equal targetBytes
@@ -715,7 +810,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected contradictory marker rejection, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal markerBefore)
@@ -740,7 +836,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.BeforeCommit then
-                                raise (IOException("injected transaction rollback")) }
+                                raise (IOException("injected transaction rollback"))
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -765,7 +862,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
                 |> fun task -> task.GetAwaiter().GetResult()
 
-            persisted.RootDirectoryId |> should equal currentStatus.RootDirectoryId)
+            persisted.RootDirectoryId
+            |> should equal currentStatus.RootDirectoryId)
 
     /// Proves a later hash switch replaces only the prior terminal Branch row and adopts its owned marker residue.
     [<Test>]
@@ -828,9 +926,11 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
                 | outcome -> Assert.Fail($"Expected later Updated, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "first.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "first.txt"))
+            |> should equal false
 
-            File.ReadAllBytes(Path.Combine(root, "second.txt")) |> should equal secondBytes
+            File.ReadAllBytes(Path.Combine(root, "second.txt"))
+            |> should equal secondBytes
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false
@@ -874,7 +974,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.BeforeMutation then
-                                raise (OperationCanceledException("injected pre-mutation cancellation")) }
+                                raise (OperationCanceledException("injected pre-mutation cancellation"))
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -894,7 +995,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false)
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
 
     /// Proves same-kind tracked byte drift is rejected by accepted BLAKE3 prefix identity before overwrite.
     [<Test>]
@@ -917,7 +1019,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     BeforeAction =
                         fun index ->
                             if index = 0 then
-                                File.WriteAllBytes(Path.Combine(root, "selected.txt"), driftBytes) }
+                                File.WriteAllBytes(Path.Combine(root, "selected.txt"), driftBytes)
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -934,7 +1037,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected same-kind byte-drift Rejected, got {outcome}.")
 
-            File.ReadAllBytes(Path.Combine(root, "selected.txt")) |> should equal driftBytes
+            File.ReadAllBytes(Path.Combine(root, "selected.txt"))
+            |> should equal driftBytes
 
             let scope =
                 WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
@@ -963,7 +1067,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterCommit then
-                                raise (IOException("injected lost response")) }
+                                raise (IOException("injected lost response"))
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -984,7 +1089,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
                 |> fun task -> task.GetAwaiter().GetResult()
 
-            persisted.RootDirectoryId |> should equal targetStatus.RootDirectoryId
+            persisted.RootDirectoryId
+            |> should equal targetStatus.RootDirectoryId
 
             LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile targetStatus.RootDirectoryId
             |> fun task -> task.GetAwaiter().GetResult()
@@ -1027,7 +1133,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
             let completedAfterReplay = timestampCommand.ExecuteScalar() :?> int64
 
-            completedAfterReplay |> should equal completedBeforeReplay
+            completedAfterReplay
+            |> should equal completedBeforeReplay
 
             File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal markerBeforeReplay)
@@ -1073,13 +1180,15 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             let persisted =
                 LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
                 |> fun task -> task.GetAwaiter().GetResult()
 
-            persisted.RootDirectoryId |> should equal newerStatus.RootDirectoryId)
+            persisted.RootDirectoryId
+            |> should equal newerStatus.RootDirectoryId)
 
     /// Proves every exact-marker identity drift after publication rejects without removing another invocation's marker.
     [<TestCase("attempt")>]
@@ -1140,7 +1249,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                                     |> required
 
                                 WorkingDirectoryUpdateCoordination.Marker.write scope replacement
-                                |> fun task -> task.GetAwaiter().GetResult() }
+                                |> fun task -> task.GetAwaiter().GetResult()
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -1157,7 +1267,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected post-publication marker-drift Rejected, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             let publishedFile = metadata[0].Files |> Seq.head
 
@@ -1168,7 +1279,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     Services.getLocalObjectCacheFileName publishedFile.RelativePath publishedFile.Sha256Hash publishedFile.Blake3Hash
                 )
 
-            File.ReadAllBytes(objectPath) |> should equal bytes
+            File.ReadAllBytes(objectPath)
+            |> should equal bytes
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal true)
@@ -1191,7 +1303,9 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     BeforeAction =
                         fun index ->
                             if index = 0 then
-                                Directory.CreateDirectory(Path.Combine(root, "selected.txt")) |> ignore }
+                                Directory.CreateDirectory(Path.Combine(root, "selected.txt"))
+                                |> ignore
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -1215,9 +1329,11 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false
 
-            Directory.Exists(Path.Combine(root, "selected.txt")) |> should equal true
+            Directory.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal true
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false)
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
 
     /// Proves terminal replay waits for an active mutation and cannot return stale terminal facts after the lease advances.
     [<Test>]
@@ -1259,7 +1375,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                         fun index ->
                             if index = 1 then
                                 mutationBlocked.Set()
-                                releaseMutation.Wait() }
+                                releaseMutation.Wait()
+                }
 
             let secondTask =
                 WorkingDirectoryUpdate.BranchDirectoryVersion.run
@@ -1273,7 +1390,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     CancellationToken.None
                     injection
 
-            mutationBlocked.Wait(TimeSpan.FromSeconds(5.0)) |> should equal true
+            mutationBlocked.Wait(TimeSpan.FromSeconds(5.0))
+            |> should equal true
 
             let replayRequest, replayManifest, replayMetadata = request configuration firstStatus firstRoot "first.txt" firstBytes
 
@@ -1349,7 +1467,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected lease-wait Rejected, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false
@@ -1382,7 +1501,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                                 let replacement = if drift = "revision" then acceptedStatus else changedStatus
 
                                 LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile replacement
-                                |> fun task -> task.GetAwaiter().GetResult() }
+                                |> fun task -> task.GetAwaiter().GetResult()
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -1399,7 +1519,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected post-publication {drift} rejection, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false)
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
 
     /// Proves completion created while objects publish blocks local application before its first filesystem mutation.
     [<Test>]
@@ -1428,7 +1549,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                                     (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization(configuration.BranchId))
                                     target
                                     operation
-                                |> fun task -> task.GetAwaiter().GetResult() |> ignore }
+                                |> fun task -> task.GetAwaiter().GetResult() |> ignore
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -1445,7 +1567,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected post-publication completion rejection, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false)
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
 
     /// Proves corruption after atomic object publication is detected before final admission can mutate the working tree.
     [<Test>]
@@ -1473,7 +1596,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterObjectPublication then
-                                File.WriteAllBytes(objectPath, Encoding.UTF8.GetBytes("corrupt")) }
+                                File.WriteAllBytes(objectPath, Encoding.UTF8.GetBytes("corrupt"))
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -1490,7 +1614,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected published-object corruption rejection, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false)
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false)
 
     /// Proves a committed zero-action update retains the truthful Unchanged outcome when its response is lost.
     [<Test>]
@@ -1511,7 +1636,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = WorkingDirectoryUpdate.BranchDirectoryVersion.AfterCommit then
-                                invalidOp "lost zero-action response" }
+                                invalidOp "lost zero-action response"
+                }
 
             WorkingDirectoryUpdate.BranchDirectoryVersion.run
                 updateRequest
@@ -1543,9 +1669,9 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ -> ()
                 | outcome -> Assert.Fail($"Expected zero-action replay Unchanged, got {outcome}."))
 
-    /// Proves the private Reference path records pending completion only after real local application verifies its root.
+    /// Proves an initial Reference run finalizes only after real local application verifies its root.
     [<Test>]
-    let ``Reference five-input transaction records pending completion after verified local root`` () =
+    let ``Reference five-input transaction finalizes after verified local root`` () =
         withRepo (fun root configuration ->
             let selectedBytes = Encoding.UTF8.GetBytes("reference pending selected bytes")
             let currentStatus, _ = status configuration (Guid.NewGuid()) None
@@ -1582,10 +1708,10 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.none
             |> fun task -> task.GetAwaiter().GetResult()
             |> function
-                | Grace.CLI.Command.WorkingDirectoryUpdate.Completed(Grace.CLI.Command.WorkingDirectoryUpdate.ReferencePending receipt) ->
+                | Grace.CLI.Command.WorkingDirectoryUpdate.Finalized (Grace.CLI.Command.WorkingDirectoryUpdate.ReferenceTerminal receipt) ->
                     WorkingDirectoryUpdateContracts.Receipt.bytesChanged receipt
                     |> should equal true
-                | outcome -> Assert.Fail($"Expected ReferencePending, got {outcome}.")
+                | outcome -> Assert.Fail($"Expected Reference finalization, got {outcome}.")
 
             File.ReadAllBytes(Path.Combine(root, "selected.txt"))
             |> should equal selectedBytes
@@ -1596,7 +1722,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
             LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
             |> fun task -> task.GetAwaiter().GetResult()
-            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
 
             LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
             |> fun task -> task.GetAwaiter().GetResult()
@@ -1637,7 +1763,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     ThrowAt =
                         fun point ->
                             if point = Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.BeforeCommit then
-                                raise (IOException("injected Reference completion rollback")) }
+                                raise (IOException("injected Reference completion rollback"))
+                }
 
             Grace.CLI.Command.WorkingDirectoryUpdate.run
                 acceptedPhase
@@ -1712,7 +1839,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                 | Grace.CLI.Command.WorkingDirectoryUpdate.Rejected _ -> ()
                 | outcome -> Assert.Fail($"Expected Reference cancellation rejection, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             let operation =
                 WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection configuration.BranchId selection target
@@ -1777,11 +1905,317 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
                     |> should equal "Local status changed while the selected Reference was being prepared."
                 | outcome -> Assert.Fail($"Expected accepted-status rejection, got {outcome}.")
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             WorkingDirectoryUpdateContracts.PreparedContent.openRead preparedContent (RelativePath "selected.txt")
             |> Result.isError
             |> should equal true)
+
+    /// Proves restart finalization reconstructs only persisted Reference facts and does not write verified working files.
+    [<Test>]
+    let ``Reference finalization restart publishes the selected Branch and terminalizes without rewriting bytes`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("Reference finalization restart bytes")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+            let selectedPath = Path.Combine(root, "selected.txt")
+
+            File.WriteAllBytes(selectedPath, selectedBytes)
+            let beforeWrite = File.GetLastWriteTimeUtc(selectedPath)
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.Updated _) -> ()
+                | outcome -> Assert.Fail($"Expected resumed Reference finalization, got {outcome}.")
+
+            File.ReadAllBytes(selectedPath)
+            |> should equal selectedBytes
+
+            File.GetLastWriteTimeUtc(selectedPath)
+            |> should equal beforeWrite
+
+            Current().BranchId
+            |> should equal selectedBranchId
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
+    /// Proves restart records terminal completion after selected-Branch publication fails at the terminal-recording boundary.
+    [<Test>]
+    let ``Reference terminal recording failure retries from selected Branch without rewriting bytes`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("Reference terminal-recording restart bytes")
+            let currentStatus, _ = status configuration (DirectoryVersionId.NewGuid()) None
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult() |> ignore
+
+            let sourceRequest, manifest, metadata = request configuration targetStatus targetRoot "selected.txt" selectedBytes
+            let preparedContent = WorkingDirectoryUpdateContracts.Request.preparedContent sourceRequest
+            let selection = WorkingDirectoryUpdateContracts.BranchSelection.Reference(ReferenceId.NewGuid())
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    configuration.RepositoryId
+                    selectedBranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> required
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection configuration.BranchId selection target
+                |> required
+
+            let acceptedPhase =
+                WorkingDirectoryUpdateContracts.AcceptedBranchPhase.noSave
+                    currentStatus
+                    (LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
+                     |> fun task -> task.GetAwaiter().GetResult())
+                    configuration.BranchId
+                |> required
+
+            let resolvedTargetGraph =
+                WorkingDirectoryUpdateContracts.ResolvedTargetGraph.create acceptedPhase selection target targetStatus metadata manifest
+                |> required
+
+            let injection =
+                { Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = Grace.CLI.Command.WorkingDirectoryUpdate.BranchDirectoryVersion.BeforeTerminalRecording then
+                                raise (IOException("injected terminal-recording failure"))
+                }
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.run
+                acceptedPhase
+                selection
+                resolvedTargetGraph
+                preparedContent
+                "reference-terminal-recording-restart"
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Grace.CLI.Command.WorkingDirectoryUpdate.Finalized _ -> ()
+                | outcome -> Assert.Fail($"Expected Reference terminal-recording failure, got {outcome}.")
+
+            let selectedPath = Path.Combine(root, "selected.txt")
+            let beforeRetryWrite = File.GetLastWriteTimeUtc(selectedPath)
+
+            Current().BranchId
+            |> should equal selectedBranchId
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+
+            resetConfiguration ()
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.Updated _) -> ()
+                | outcome -> Assert.Fail($"Expected terminal-recording restart to complete, got {outcome}.")
+
+            File.ReadAllBytes(selectedPath)
+            |> should equal selectedBytes
+
+            File.GetLastWriteTimeUtc(selectedPath)
+            |> should equal beforeRetryWrite
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
+    /// Proves a lease waiter reconciles a completed Reference row as Unchanged without repeating any completion effects.
+    [<Test>]
+    let ``Reference finalization lease waiter returns Unchanged after another completion terminalizes`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("Reference finalization lease waiter bytes")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+            let selectedPath = Path.Combine(root, "selected.txt")
+
+            File.WriteAllBytes(selectedPath, selectedBytes)
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let heldLease =
+                WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            try
+                let waitingResume = Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+
+                let selectedConfiguration = Current()
+                selectedConfiguration.BranchId <- selectedBranchId
+                selectedConfiguration.BranchName <- String.Empty
+                updateConfiguration selectedConfiguration
+                resetConfiguration ()
+
+                LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> ignore
+
+                let beforeWaiterWrite = File.GetLastWriteTimeUtc(selectedPath)
+
+                WorkingDirectoryUpdateCoordination.Lease.dispose heldLease
+
+                waitingResume
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> function
+                    | Some (WorkingDirectoryUpdateContracts.Outcome.Unchanged _) -> ()
+                    | outcome -> Assert.Fail($"Expected terminal Reference waiter to return Unchanged, got {outcome}.")
+
+                Current().BranchId
+                |> should equal selectedBranchId
+
+                File.ReadAllBytes(selectedPath)
+                |> should equal selectedBytes
+
+                File.GetLastWriteTimeUtc(selectedPath)
+                |> should equal beforeWaiterWrite
+            finally
+                WorkingDirectoryUpdateCoordination.Lease.dispose heldLease)
+
+    /// Proves exact marker evidence is cleaned before the selected Branch is published and the pending row becomes terminal.
+    [<Test>]
+    let ``Reference finalization cleans exact marker before publishing selected Branch`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("Reference exact marker cleanup bytes")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+            let scope = writeExactReferenceMarker configuration root target operation
+
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), selectedBytes)
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.Updated _) -> ()
+                | outcome -> Assert.Fail($"Expected exact-marker Reference finalization, got {outcome}.")
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            Current().BranchId
+            |> should equal selectedBranchId
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
+    /// Proves Windows refuses deletion of an owned exact marker held open without delete sharing; non-Windows filesystems do not promise this behavior.
+    [<Test>]
+    let ``Reference finalization retains pending state when exact marker cleanup fails on Windows`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows-only open-handle deletion semantics.")
+
+        withRepo (fun root configuration ->
+            let bytes = Encoding.UTF8.GetBytes("Reference Windows cleanup failure")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", bytes))
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot (BranchId.NewGuid())
+            let scope = writeExactReferenceMarker configuration root target operation
+            let markerPath = WorkingDirectoryUpdateCoordination.Scope.markerPath scope
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), bytes)
+            use markerLock = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete _) -> ()
+                | outcome -> Assert.Fail($"Expected Windows cleanup failure, got {outcome}.")
+
+            File.Exists(markerPath) |> should equal true
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
+
+    /// Proves malformed marker evidence retains the pending Reference completion without writing verified working bytes.
+    [<Test>]
+    let ``Reference finalization retains pending state for malformed marker evidence`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("Reference malformed marker bytes")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            let markerPath = WorkingDirectoryUpdateCoordination.Scope.markerPath scope
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerPath))
+            |> ignore
+
+            File.WriteAllText(markerPath, "malformed marker")
+            File.WriteAllBytes(Path.Combine(root, "selected.txt"), selectedBytes)
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)) ->
+                    WorkingDirectoryUpdateContracts.Failure.reason failure
+                    |> should contain "retained marker evidence"
+                | outcome -> Assert.Fail($"Expected malformed-marker finalization result, got {outcome}.")
+
+            Current().BranchId
+            |> should equal configuration.BranchId
+
+            File.ReadAllBytes(Path.Combine(root, "selected.txt"))
+            |> should equal selectedBytes
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
+
+    /// Proves an unreadable Branch configuration retains pending completion and leaves verified working bytes unchanged.
+    [<Test>]
+    let ``Reference finalization retains pending state when Branch configuration becomes unreadable`` () =
+        withRepo (fun root configuration ->
+            let selectedBytes = Encoding.UTF8.GetBytes("Reference finalization unreadable configuration")
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) (Some("selected.txt", selectedBytes))
+            let selectedBranchId = BranchId.NewGuid()
+            let target, operation = seedPendingReferenceFinalization configuration targetStatus targetRoot selectedBranchId
+            let selectedPath = Path.Combine(root, "selected.txt")
+            let configurationFile = Path.Combine(configuration.ConfigurationDirectory, GraceConfigFileName)
+            let originalConfiguration = File.ReadAllText(configurationFile)
+
+            File.WriteAllBytes(selectedPath, selectedBytes)
+            resetConfiguration ()
+            File.WriteAllText(configurationFile, "not valid configuration json")
+
+            try
+                Grace.CLI.Command.WorkingDirectoryUpdate.resumePendingReferenceFinalization CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> function
+                    | Some (WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)) ->
+                        WorkingDirectoryUpdateContracts.Failure.reason failure
+                        |> should contain "Reference finalization failed"
+                    | outcome -> Assert.Fail($"Expected unreadable-configuration finalization result, got {outcome}.")
+            finally
+                File.WriteAllText(configurationFile, originalConfiguration)
+                resetConfiguration ()
+
+            File.ReadAllBytes(selectedPath)
+            |> should equal selectedBytes
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending))
 
     /// Proves a pending Branch completion written while this Reference waits for the lease blocks admission before mutation.
     [<Test>]
@@ -1860,7 +2294,8 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
             finally
                 WorkingDirectoryUpdateCoordination.Lease.dispose heldLease
 
-            File.Exists(Path.Combine(root, "selected.txt")) |> should equal false
+            File.Exists(Path.Combine(root, "selected.txt"))
+            |> should equal false
 
             WorkingDirectoryUpdateContracts.PreparedContent.openRead preparedContent (RelativePath "selected.txt")
             |> Result.isError

@@ -74,7 +74,14 @@ module internal WorkingDirectoryUpdateContracts =
 
     /// Binds one selected target graph to the accepted Branch admission that prepared it.
     type ResolvedTargetGraph =
-        private { SealedIdentity: Guid; Target: Target; TargetStatus: GraceStatus; ObjectMetadata: LocalDirectoryVersion array; Manifest: PreparedManifest }
+        private
+            {
+                SealedIdentity: Guid
+                Target: Target
+                TargetStatus: GraceStatus
+                ObjectMetadata: LocalDirectoryVersion array
+                Manifest: PreparedManifest
+            }
 
     /// Holds validated update inputs without exposing a mutation plan, writer, or transaction callback.
     type Request = private Request of Target * Operation * PreparedContent * CorrelationId
@@ -127,7 +134,10 @@ module internal WorkingDirectoryUpdateContracts =
 
     /// Requires an exact opaque server cursor without trimming or rewriting it.
     let private requireCursor name (value: string) =
-        if String.IsNullOrWhiteSpace(value) || value <> value.Trim() then
+        if
+            String.IsNullOrWhiteSpace(value)
+            || value <> value.Trim()
+        then
             Error $"{name} must be present and canonical."
         else
             Ok value
@@ -183,9 +193,13 @@ module internal WorkingDirectoryUpdateContracts =
                         Some "Prepared-content paths must not contain empty segments."
                     elif segment = "." || segment = ".." then
                         Some "Prepared-content paths must not contain traversal segments."
-                    elif segment |> Seq.exists (fun character -> int character < 32) then
+                    elif segment
+                         |> Seq.exists (fun character -> int character < 32) then
                         Some "Prepared-content paths must not contain Windows control characters."
-                    elif segment.IndexOfAny([| '<'; '>'; ':'; '"'; '|'; '?'; '*' |]) >= 0 then
+                    elif
+                        segment.IndexOfAny([| '<'; '>'; ':'; '"'; '|'; '?'; '*' |])
+                        >= 0
+                    then
                         Some "Prepared-content paths must be representable on Windows."
                     elif segment.EndsWith('.') || segment.EndsWith(' ') then
                         Some "Prepared-content paths must not end a Windows segment with a dot or space."
@@ -199,19 +213,20 @@ module internal WorkingDirectoryUpdateContracts =
             | None -> Ok(RelativePath normalized)
 
     /// Produces the canonical Windows comparison key used for manifest, reader, and verified-byte lookup.
-    let private windowsPathKey (path: RelativePath) = string path |> fun value -> value.ToUpperInvariant()
+    let private windowsPathKey (path: RelativePath) =
+        string path
+        |> fun value -> value.ToUpperInvariant()
 
     /// Supplies construction and access functions for complete selected targets.
     module Target =
         /// Creates a selected target only when every identifier and dual hash is complete and canonical.
         let create repositoryId branchId rootDirectoryVersionId sha256Hash blake3Hash =
-            match
-                requireId "RepositoryId" repositoryId,
-                requireId "BranchId" branchId,
-                requireId "RootDirectoryVersionId" rootDirectoryVersionId,
-                requireSha256 sha256Hash,
-                requireBlake3 blake3Hash
-            with
+            match requireId "RepositoryId" repositoryId,
+                  requireId "BranchId" branchId,
+                  requireId "RootDirectoryVersionId" rootDirectoryVersionId,
+                  requireSha256 sha256Hash,
+                  requireBlake3 blake3Hash
+                with
             | Ok repositoryId, Ok branchId, Ok rootDirectoryVersionId, Ok sha256Hash, Ok blake3Hash ->
                 let canonical =
                     "grace.working-directory-update.target.v1\n"
@@ -229,22 +244,22 @@ module internal WorkingDirectoryUpdateContracts =
             | _, _, _, _, Error error -> Error error
 
         /// Returns the repository selected by this target.
-        let repositoryId (Target(repositoryId, _, _, _, _, _)) = repositoryId
+        let repositoryId (Target (repositoryId, _, _, _, _, _)) = repositoryId
 
         /// Returns the branch selected by this target.
-        let branchId (Target(_, branchId, _, _, _, _)) = branchId
+        let branchId (Target (_, branchId, _, _, _, _)) = branchId
 
         /// Returns the root DirectoryVersion selected by this target.
-        let rootDirectoryVersionId (Target(_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
+        let rootDirectoryVersionId (Target (_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
 
         /// Returns the complete SHA-256 root selected by this target.
-        let sha256Hash (Target(_, _, _, sha256Hash, _, _)) = sha256Hash
+        let sha256Hash (Target (_, _, _, sha256Hash, _, _)) = sha256Hash
 
         /// Returns the complete BLAKE3 root selected by this target.
-        let blake3Hash (Target(_, _, _, _, blake3Hash, _)) = blake3Hash
+        let blake3Hash (Target (_, _, _, _, blake3Hash, _)) = blake3Hash
 
         /// Returns the canonical target encoding included in caller operation tuples.
-        let canonical (Target(_, _, _, _, _, canonical)) = canonical
+        let canonical (Target (_, _, _, _, _, canonical)) = canonical
 
     /// Supplies construction and access functions for sealed accepted Branch admissions.
     module AcceptedBranchPhase =
@@ -255,10 +270,12 @@ module internal WorkingDirectoryUpdateContracts =
             | Ok previousBranchId when acceptedRevision < 0L -> Error "Accepted Branch phase requires a non-negative local status revision."
             | Ok previousBranchId ->
                 Ok
-                    { AcceptedStatus = acceptedStatus
-                      AcceptedRevision = acceptedRevision
-                      PreviousBranchId = previousBranchId
-                      SealedIdentity = Guid.NewGuid() }
+                    {
+                        AcceptedStatus = acceptedStatus
+                        AcceptedRevision = acceptedRevision
+                        PreviousBranchId = previousBranchId
+                        SealedIdentity = Guid.NewGuid()
+                    }
 
         /// Returns the accepted status used only for the transaction's post-publication freshness comparison.
         let acceptedStatus (acceptedPhase: AcceptedBranchPhase) = acceptedPhase.AcceptedStatus
@@ -291,7 +308,9 @@ module internal WorkingDirectoryUpdateContracts =
                     else
                         fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
-                let canonicalPath = normalizeFilePath trimmed |> fun path -> path.ToLowerInvariant()
+                let canonicalPath =
+                    normalizeFilePath trimmed
+                    |> fun path -> path.ToLowerInvariant()
 
                 SHA256.HashData(Encoding.UTF8.GetBytes(canonicalPath))
                 |> Convert.ToHexString
@@ -383,16 +402,20 @@ module internal WorkingDirectoryUpdateContracts =
                 create Connect (Some target) repositoryId branchId canonical
 
         /// Returns the operation identity independently of diagnostic correlation.
-        let value (Operation(_, _, _, _, value)) = value
+        let value (Operation (_, _, _, _, value)) = value
 
         /// Returns the caller kind that owns completion progress.
-        let callerKind (Operation(callerKind, _, _, _, _)) = callerKind
+        let callerKind (Operation (callerKind, _, _, _, _)) = callerKind
 
         /// Verifies Watch scope or the complete Branch and Connect target embedded by the operation.
-        let matchesTarget target (Operation(callerKind, operationTarget, repositoryId, branchId, _)) =
+        let matchesTarget target (Operation (callerKind, operationTarget, repositoryId, branchId, _)) =
             match callerKind, operationTarget with
-            | Watch, None -> repositoryId = Target.repositoryId target && branchId = Target.branchId target
-            | (Branch | Connect), Some operationTarget -> operationTarget = target
+            | Watch, None ->
+                repositoryId = Target.repositoryId target
+                && branchId = Target.branchId target
+            | (Branch
+              | Connect),
+              Some operationTarget -> operationTarget = target
             | _ -> false
 
     /// Supplies construction and access functions for marker attempt tokens.
@@ -431,7 +454,7 @@ module internal WorkingDirectoryUpdateContracts =
                                 let entry = Directory normalizedPath
                                 paths[key] <- entry
                                 canonicalEntries.Add(entry)
-                    | File(path, sha256Hash, blake3Hash) ->
+                    | File (path, sha256Hash, blake3Hash) ->
                         match normalizeRelativePath path, requireSha256 sha256Hash, requireBlake3 blake3Hash with
                         | Error pathError, _, _ -> error <- Some pathError
                         | _, Error hashError, _ -> error <- Some hashError
@@ -468,10 +491,10 @@ module internal WorkingDirectoryUpdateContracts =
                     | None -> Ok(PreparedManifest(canonicalEntries.ToArray(), files.ToArray()))
 
         /// Returns the canonical file paths that must have readable bytes.
-        let filePaths (PreparedManifest(_, files)) = files |> Seq.map (fun file -> file.RelativePath)
+        let filePaths (PreparedManifest (_, files)) = files |> Seq.map (fun file -> file.RelativePath)
 
         /// Returns the immutable canonical manifest entries.
-        let entries (PreparedManifest(entries, _)) = entries :> seq<PreparedManifestEntry>
+        let entries (PreparedManifest (entries, _)) = entries :> seq<PreparedManifestEntry>
 
     /// Supplies actual-byte validation and lifetime functions for prepared content.
     module PreparedContent =
@@ -487,7 +510,7 @@ module internal WorkingDirectoryUpdateContracts =
 
                         PreparedManifest.entries manifest
                         |> Seq.iter (function
-                            | File(path, _, blake3Hash) -> declaredBlake3Hashes[windowsPathKey path] <- blake3Hash
+                            | File (path, _, blake3Hash) -> declaredBlake3Hashes[windowsPathKey path] <- blake3Hash
                             | Directory _ -> ())
 
                         let readerPaths = reader.FilePaths |> Seq.toArray
@@ -495,7 +518,8 @@ module internal WorkingDirectoryUpdateContracts =
                         let mutable error = None
                         let mutable readerIndex = 0
 
-                        while readerIndex < readerPaths.Length && Option.isNone error do
+                        while readerIndex < readerPaths.Length
+                              && Option.isNone error do
                             match normalizeRelativePath (RelativePath readerPaths[readerIndex]) with
                             | Error pathError -> error <- Some pathError
                             | Ok path when not (readerKeys.Add(windowsPathKey path)) ->
@@ -506,7 +530,10 @@ module internal WorkingDirectoryUpdateContracts =
 
                         let expected = HashSet<string>(files |> Seq.map windowsPathKey, StringComparer.Ordinal)
 
-                        if Option.isNone error && not (readerKeys.SetEquals(expected)) then
+                        if
+                            Option.isNone error
+                            && not (readerKeys.SetEquals(expected))
+                        then
                             error <- Some "Prepared-content reader paths do not exactly match the declared manifest files."
 
                         match error with
@@ -516,7 +543,8 @@ module internal WorkingDirectoryUpdateContracts =
                             let mutable fileIndex = 0
                             let mutable byteError = None
 
-                            while fileIndex < files.Length && Option.isNone byteError do
+                            while fileIndex < files.Length
+                                  && Option.isNone byteError do
                                 cancellationToken.ThrowIfCancellationRequested()
                                 let path = files[fileIndex]
 
@@ -537,8 +565,8 @@ module internal WorkingDirectoryUpdateContracts =
                                             byteError <- Some $"Prepared-content bytes do not match declared BLAKE3 for '{path}'."
                                         else
                                             bytesByPath[windowsPathKey path] <- bytes
-                                with ex ->
-                                    byteError <- Some $"Prepared-content reader failed for '{path}': {ex.Message}"
+                                with
+                                | ex -> byteError <- Some $"Prepared-content reader failed for '{path}': {ex.Message}"
 
                                 fileIndex <- fileIndex + 1
 
@@ -550,7 +578,7 @@ module internal WorkingDirectoryUpdateContracts =
             }
 
         /// Opens a read-only stream over verified bytes for one declared file.
-        let openRead (PreparedContent(_, bytesByPath, disposed)) path =
+        let openRead (PreparedContent (_, bytesByPath, disposed)) path =
             match normalizeRelativePath path with
             | Error error -> Error error
             | Ok path when !disposed -> Error "Prepared-content has already been disposed."
@@ -560,10 +588,10 @@ module internal WorkingDirectoryUpdateContracts =
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
         /// Returns the immutable manifest whose exact bytes this prepared content owns.
-        let manifest (PreparedContent(manifest, _, _)) = manifest
+        let manifest (PreparedContent (manifest, _, _)) = manifest
 
         /// Clears verified bytes when the owning update operation reaches a terminal path.
-        let dispose (PreparedContent(_, bytesByPath, disposed)) =
+        let dispose (PreparedContent (_, bytesByPath, disposed)) =
             if not !disposed then
                 bytesByPath.Values
                 |> Seq.iter (fun bytes -> Array.Clear(bytes, 0, bytes.Length))
@@ -610,7 +638,8 @@ module internal WorkingDirectoryUpdateContracts =
                 seq {
                     let directory = pair.Value
 
-                    if directory.DirectoryVersionId <> targetStatus.RootDirectoryId then
+                    if directory.DirectoryVersionId
+                       <> targetStatus.RootDirectoryId then
                         yield Directory directory.RelativePath
 
                     for file in directory.Files do
@@ -624,44 +653,44 @@ module internal WorkingDirectoryUpdateContracts =
             let actual = PreparedManifest.entries manifest |> Seq.toArray
 
             expected.Length = actual.Length
-            && expected |> Array.forall (fun entry -> actual |> Array.exists ((=) entry))
+            && expected
+               |> Array.forall (fun entry -> actual |> Array.exists ((=) entry))
 
         /// Creates a graph only when its target root, selection, metadata, and sealed admission agree.
         let create acceptedPhase selection target targetStatus (objectMetadata: LocalDirectoryVersion array) manifest =
             if isNull (box objectMetadata) then
                 Error "Resolved target graph requires object metadata."
-            elif
-                Target.rootDirectoryVersionId target <> targetStatus.RootDirectoryId
-                || Target.sha256Hash target <> targetStatus.RootDirectorySha256Hash
-                || Target.blake3Hash target <> targetStatus.RootDirectoryBlake3Hash
-            then
+            elif Target.rootDirectoryVersionId target
+                 <> targetStatus.RootDirectoryId
+                 || Target.sha256Hash target
+                    <> targetStatus.RootDirectorySha256Hash
+                 || Target.blake3Hash target
+                    <> targetStatus.RootDirectoryBlake3Hash then
                 Error "Resolved target graph does not match the selected target root."
-            elif
-                (match selection with
-                 | DirectoryVersion -> Target.branchId target = AcceptedBranchPhase.previousBranchId acceptedPhase
-                 | Reference referenceId -> referenceId <> Guid.Empty)
-                |> not
-            then
+            elif (match selection with
+                  | DirectoryVersion -> Target.branchId target = AcceptedBranchPhase.previousBranchId acceptedPhase
+                  | Reference referenceId -> referenceId <> Guid.Empty)
+                 |> not then
                 Error "Resolved target graph does not match the accepted Branch selection."
             elif objectMetadata.Length <> targetStatus.Index.Count then
                 Error "Resolved target graph does not contain complete object metadata."
-            elif
-                targetStatus.Index
-                |> Seq.exists (fun pair ->
-                    objectMetadata
-                    |> Array.exists (fun directory -> directoryMatches pair.Value directory)
-                    |> not)
-            then
+            elif targetStatus.Index
+                 |> Seq.exists (fun pair ->
+                     objectMetadata
+                     |> Array.exists (fun directory -> directoryMatches pair.Value directory)
+                     |> not) then
                 Error "Resolved target graph object metadata does not match the selected status."
             elif not (manifestMatchesStatus targetStatus manifest) then
                 Error "Resolved target graph manifest does not exactly match the selected status."
             else
                 Ok
-                    { SealedIdentity = AcceptedBranchPhase.sealedIdentity acceptedPhase
-                      Target = target
-                      TargetStatus = targetStatus
-                      ObjectMetadata = Array.copy objectMetadata
-                      Manifest = manifest }
+                    {
+                        SealedIdentity = AcceptedBranchPhase.sealedIdentity acceptedPhase
+                        Target = target
+                        TargetStatus = targetStatus
+                        ObjectMetadata = Array.copy objectMetadata
+                        Manifest = manifest
+                    }
 
         /// Returns whether this graph was prepared from the exact sealed admission supplied to the transaction.
         let belongsTo (acceptedPhase: AcceptedBranchPhase) (resolvedTargetGraph: ResolvedTargetGraph) =
@@ -691,16 +720,16 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update operation does not match the selected target."
 
         /// Returns the logical operation independently of diagnostic correlation.
-        let operation (Request(_, operation, _, _)) = operation
+        let operation (Request (_, operation, _, _)) = operation
 
         /// Returns the exact selected target admitted by this request.
-        let target (Request(target, _, _, _)) = target
+        let target (Request (target, _, _, _)) = target
 
         /// Returns the BLAKE3-verified prepared bytes owned by this request.
-        let preparedContent (Request(_, _, preparedContent, _)) = preparedContent
+        let preparedContent (Request (_, _, preparedContent, _)) = preparedContent
 
         /// Returns the diagnostic correlation without making it part of replay identity.
-        let correlationId (Request(_, _, _, correlationId)) = correlationId
+        let correlationId (Request (_, _, _, correlationId)) = correlationId
 
     /// Supplies construction and access functions for completed update receipts.
     module Receipt =
@@ -712,7 +741,13 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update receipt operation does not match the selected target."
 
         /// Returns whether the receipt records a completed byte mutation.
-        let bytesChanged (Receipt(_, _, bytesChanged)) = bytesChanged
+        let bytesChanged (Receipt (_, _, bytesChanged)) = bytesChanged
+
+        /// Returns the exact selected target retained by this completed update receipt.
+        let target (Receipt (target, _, _)) = target
+
+        /// Returns the retry-stable logical operation retained by this completed update receipt.
+        let operation (Receipt (_, operation, _)) = operation
 
     /// Supplies construction functions for classified private update failures.
     module Failure =

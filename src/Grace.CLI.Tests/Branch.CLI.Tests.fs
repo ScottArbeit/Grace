@@ -31,6 +31,101 @@ module BranchCommandTests =
     let private targetReferenceId = Guid.NewGuid()
     let private correlationId = "branch-annotate-tests"
 
+    /// Proves the built Reference-only routing decision preserves Save-enabled Branch switches.
+    [<Test>]
+    let ``reference-only route selects WDU only when the current Branch disables Save`` () =
+        Branch.referenceOnlySwitchRoute false
+        |> should equal Branch.WduNoSave
+
+        Branch.referenceOnlySwitchRoute true
+        |> should equal Branch.LegacySave
+
+    /// Proves initial and resumed Reference output share one stable JSON field set.
+    [<Test>]
+    let ``reference switch output serializes one stable shape`` () =
+        let directoryVersionId = Guid.Parse("11111111-1111-4111-8111-111111111111")
+        let output = Branch.referenceSwitchOutput "FinalizationIncomplete" "repair" branchId directoryVersionId
+        use document = JsonDocument.Parse(serialize output)
+
+        let properties =
+            document.RootElement.EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
+
+        properties
+        |> should
+            equal
+            (set [ "Outcome"
+                   "Message"
+                   "BranchId"
+                   "DirectoryVersionId" ])
+
+        document
+            .RootElement
+            .GetProperty("Outcome")
+            .GetString()
+        |> should equal "FinalizationIncomplete"
+
+        document
+            .RootElement
+            .GetProperty("Message")
+            .GetString()
+        |> should equal "repair"
+
+        document
+            .RootElement
+            .GetProperty("BranchId")
+            .GetGuid()
+        |> should equal branchId
+
+        document
+            .RootElement
+            .GetProperty("DirectoryVersionId")
+            .GetGuid()
+        |> should equal directoryVersionId
+
+    /// Proves every public switch outcome preserves its exit classification and classified message.
+    [<Test>]
+    let ``hash switch outcome projects all public cases`` () =
+        let target =
+            WorkingDirectoryUpdateContracts.Target.create
+                repositoryId
+                branchId
+                (Guid.NewGuid())
+                (Sha256Hash(String.replicate 64 "a"))
+                (Blake3Hash(String.replicate 64 "b"))
+            |> Result.defaultWith failwith
+
+        let operation =
+            WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection branchId WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion target
+            |> Result.defaultWith failwith
+
+        let updated =
+            WorkingDirectoryUpdateContracts.Receipt.create target operation true
+            |> Result.defaultWith failwith
+
+        let unchanged =
+            WorkingDirectoryUpdateContracts.Receipt.create target operation false
+            |> Result.defaultWith failwith
+
+        let failure =
+            WorkingDirectoryUpdateContracts.Failure.create "classified failure"
+            |> Result.defaultWith failwith
+
+        [
+            WorkingDirectoryUpdateContracts.Outcome.Updated updated, "Updated", 0
+            WorkingDirectoryUpdateContracts.Outcome.Unchanged unchanged, "Unchanged", 0
+            WorkingDirectoryUpdateContracts.Outcome.Rejected failure, "Rejected", -1
+            WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure, "UpdateIncomplete", -1
+            WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete(updated, failure), "FinalizationIncomplete", -1
+        ]
+        |> List.iter (fun (outcome, name, exitCode) ->
+            let actualName, message, actualExitCode = Branch.projectHashSwitchOutcome outcome
+            actualName |> should equal name
+            actualExitCode |> should equal exitCode
+
+            if exitCode <> 0 then message |> should equal "classified failure")
+
     /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
@@ -158,6 +253,70 @@ module BranchCommandTests =
             Environment.CurrentDirectory <- originalDir
 
             if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+
+    /// Runs a Reference-only switch through the built action and checks which route receives control.
+    let private runReferenceOnlySwitchRoute route expectedHandler sentinelExitCode =
+        withTempBranchSwitchRepo (fun () ->
+            let calls = ResizeArray<string>()
+            let mutable resolvedParameters: GetBranchParameters option = None
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult None
+                    ResolveReferenceRoute =
+                        fun parameters ->
+                            calls.Add("resolve")
+                            resolvedParameters <- Some parameters
+                            Task.FromResult(Ok(Some route))
+                    RunWduReference =
+                        fun _ _ ->
+                            calls.Add("wdu")
+                            Task.FromResult sentinelExitCode
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult sentinelExitCode
+                }
+
+            let action = Branch.Switch.CreateForTests operations
+
+            let parseResult =
+                parse [| "branch"
+                         "switch"
+                         "--reference-id"
+                         (Guid.NewGuid()).ToString() |]
+
+            let actualExitCode =
+                action
+                    .InvokeAsync(parseResult, System.Threading.CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+
+            actualExitCode |> should equal sentinelExitCode
+
+            match resolvedParameters with
+            | Some parameters ->
+                parameters.RepositoryId
+                |> should equal (repositoryId.ToString())
+
+                parameters.BranchId
+                |> should equal (branchId.ToString())
+            | None -> Assert.Fail("Expected a Reference-only switch to resolve the current Branch.")
+
+            calls
+            |> Seq.toList
+            |> should equal [ "resume"; "resolve"; expectedHandler ])
+
+    /// Verifies a no-Save current Branch resumes finalization before using the WDU Reference route.
+    [<Test>]
+    let ``Reference-only switch resumes before routing to WDU when Save is disabled`` () = runReferenceOnlySwitchRoute Branch.WduNoSave "wdu" 8711
+
+    /// Verifies a Save-enabled current Branch resumes finalization before using the existing legacy route.
+    [<Test>]
+    let ``Reference-only switch resumes before routing to legacy when Save is enabled`` () = runReferenceOnlySwitchRoute Branch.LegacySave "legacy" 8712
 
     /// Builds a trusted Watch IPC inspection snapshot for branch switch preflight tests.
     let private branchSwitchWatchStatus () : GraceWatchStatus =
