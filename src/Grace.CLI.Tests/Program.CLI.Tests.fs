@@ -2327,6 +2327,94 @@ module HelpDoesNotReadConfigTests =
 
             standardOut |> should not' (contain "Exception:"))
 
+    /// Verifies that a failed configuration write throws without emitting helper diagnostics to stdout.
+    [<Test>]
+    let ``configuration writer failure throws without stdout diagnostics`` () =
+        withTempDir (fun root ->
+            let configurationPath = Path.Combine(root, "configuration-target")
+
+            Directory.CreateDirectory(configurationPath)
+            |> ignore
+
+            let mutable capturedException: exn option = None
+
+            let standardOut =
+                captureOutput (fun () ->
+                    try
+                        saveConfigFile configurationPath (GraceConfiguration())
+                    with
+                    | ex -> capturedException <- Some ex)
+
+            match capturedException with
+            | Some (:? UnauthorizedAccessException) -> ()
+            | Some ex -> Assert.Fail($"Expected a configuration write access failure, got {ex.GetType().FullName}.")
+            | None -> Assert.Fail("Expected configuration write to throw.")
+
+            standardOut |> should equal String.Empty)
+
+    /// Verifies that a failed configuration write does not publish the proposed configuration to the process cache.
+    [<Test>]
+    let ``configuration update failure preserves current cache`` () =
+        if Environment.OSVersion.Platform
+           <> PlatformID.Win32NT then
+            Assert.Ignore("This focused file-sharing failure injection is specific to the supported Windows filesystem.")
+
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let proposedConfiguration = Current()
+            let originalOwnerName = proposedConfiguration.OwnerName
+            proposedConfiguration.OwnerName <- OwnerName "proposed-owner"
+
+            let configurationPath = Path.Combine(proposedConfiguration.ConfigurationDirectory, Constants.GraceConfigFileName)
+            use readLock = new FileStream(configurationPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+            let mutable capturedException: exn option = None
+
+            try
+                updateConfiguration proposedConfiguration
+            with
+            | ex -> capturedException <- Some ex
+
+            capturedException
+            |> Option.isSome
+            |> should equal true
+
+            Current().OwnerName
+            |> should equal originalOwnerName)
+
+    /// Verifies that a direct configuration-write failure remains one JSON error document without stack text.
+    [<Test>]
+    let ``config write json failure emits one structured error without stack text`` () =
+        withTempDir (fun root ->
+            let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+            let configurationPath = Path.Combine(graceDirectory, Constants.GraceConfigFileName)
+
+            Directory.CreateDirectory(graceDirectory)
+            |> ignore
+
+            Directory.CreateDirectory(configurationPath)
+            |> ignore
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "config"
+                                                  "write"
+                                                  "--directory"
+                                                  root |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            let error = assertJsonErrorOutput standardOut
+            error |> should not' (equal String.Empty)
+
+            standardOut
+            |> should not' (contain "Stack trace:")
+
+            standardOut |> should not' (contain "Exception:")
+            standardOut |> should not' (contain "at Grace."))
+
     /// Verifies that missing config in human mode remains human oriented.
     [<Test>]
     let ``missing config in human mode remains human oriented`` () =

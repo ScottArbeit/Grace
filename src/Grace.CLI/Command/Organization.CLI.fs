@@ -26,6 +26,16 @@ open Grace.CLI
 /// Groups the organization command parser, handlers, and output helpers.
 module Organization =
 
+    /// Marks a configuration write failure so organization commands can preserve their existing error result shape without stack output.
+    exception private ConfigurationWriteFailure of exn
+
+    /// Updates configuration data while retaining the original exception for command-level projection.
+    let private updateConfigurationForCommand configuration =
+        try
+            updateConfiguration configuration
+        with
+        | ex -> raise (ConfigurationWriteFailure ex)
+
     /// Executes the common parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type CommonParameters() =
         inherit ParameterBase()
@@ -177,7 +187,7 @@ module Organization =
                                     let newConfig = Current()
                                     newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
                                     newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
-                                    updateConfiguration newConfig
+                                    updateConfigurationForCommand newConfig
 
                                 return result |> renderOutput parseResult
                             | Error _ -> return result |> renderOutput parseResult
@@ -190,13 +200,15 @@ module Organization =
                                     let newConfig = Current()
                                     newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
                                     newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
-                                    updateConfiguration newConfig
+                                    updateConfigurationForCommand newConfig
 
                                 return result |> renderOutput parseResult
                             | Error _ -> return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
                 with
+                | ConfigurationWriteFailure ex ->
+                    return renderOutput parseResult (GraceResult.Error(GraceError.Create ex.Message (parseResult |> getCorrelationId)))
                 | ex ->
                     return
                         renderOutput

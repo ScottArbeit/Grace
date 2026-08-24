@@ -33,6 +33,16 @@ open Spectre.Console.Json
 /// Groups the repository command parser, handlers, and output helpers.
 module Repository =
 
+    /// Marks a configuration write failure so repository commands can preserve their existing error result shape without stack output.
+    exception private ConfigurationWriteFailure of exn
+
+    /// Updates configuration data while retaining the original exception for command-level projection.
+    let private updateConfigurationForCommand configuration =
+        try
+            updateConfiguration configuration
+        with
+        | ex -> raise (ConfigurationWriteFailure ex)
+
     /// Defines the options parsed by the repository command handlers.
     module private Options =
         let ownerId =
@@ -329,7 +339,7 @@ module Repository =
                                     newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
                                     newConfig.DefaultBranchName <- "main"
                                     newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
-                                    updateConfiguration newConfig
+                                    updateConfigurationForCommand newConfig
 
                                 return result |> renderOutput parseResult
                             | Error error ->
@@ -348,7 +358,7 @@ module Repository =
                                     newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
                                     newConfig.DefaultBranchName <- "main"
                                     newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
-                                    updateConfiguration newConfig
+                                    updateConfigurationForCommand newConfig
 
                                 return result |> renderOutput parseResult
                             | Error error ->
@@ -357,6 +367,8 @@ module Repository =
                     | Error error -> return Error error |> renderOutput parseResult
 
                 with
+                | ConfigurationWriteFailure ex ->
+                    return renderOutput parseResult (GraceResult.Error(GraceError.Create ex.Message (parseResult |> getCorrelationId)))
                 | ex ->
                     return
                         renderOutput

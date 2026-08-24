@@ -123,23 +123,33 @@ module Config =
 
                     Directory.Delete(graceDirPath, recursive = true)
 
-                if
-                    File.Exists(graceConfigPath)
-                    && not parameters.Overwrite
-                then
-                    if parseResult |> hasOutput then
-                        printfn
-                            $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
-                else
-                    let directoryInfo = Directory.CreateDirectory(graceDirPath)
+                let writeResult =
+                    if
+                        File.Exists(graceConfigPath)
+                        && not parameters.Overwrite
+                    then
+                        if parseResult |> hasOutput then
+                            printfn
+                                $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
 
-                    if parseResult |> hasOutput then
-                        printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
+                        Ok()
+                    else
+                        let directoryInfo = Directory.CreateDirectory(graceDirPath)
 
-                    GraceConfiguration()
-                    |> saveConfigFile graceConfigPath
+                        if parseResult |> hasOutput then
+                            printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
 
-                return Ok(GraceReturnValue.Create () parameters.CorrelationId)
+                        try
+                            GraceConfiguration()
+                            |> saveConfigFile graceConfigPath
+
+                            Ok()
+                        with
+                        | ex -> Error(GraceError.Create ex.Message parameters.CorrelationId)
+
+                match writeResult with
+                | Ok () -> return Ok(GraceReturnValue.Create () parameters.CorrelationId)
+                | Error error -> return Error error
             | Error error -> return (Error error)
         }
 
@@ -177,22 +187,33 @@ module Config =
 
                         Directory.Delete(graceDirPath, recursive = true)
 
-                    if File.Exists(graceConfigPath) && not overwrite then
-                        if parseResult |> hasOutput then
-                            printfn
-                                $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
-                    else
-                        let directoryInfo = Directory.CreateDirectory(graceDirPath)
+                    let writeResult =
+                        if File.Exists(graceConfigPath) && not overwrite then
+                            if parseResult |> hasOutput then
+                                printfn
+                                    $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
 
-                        if parseResult |> hasOutput then
-                            printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
+                            Ok()
+                        else
+                            let directoryInfo = Directory.CreateDirectory(graceDirPath)
 
-                        GraceConfiguration()
-                        |> saveConfigFile graceConfigPath
+                            if parseResult |> hasOutput then
+                                printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
 
-                    return
-                        Ok(GraceReturnValue.Create () (getCorrelationId parseResult))
-                        |> renderOutput parseResult
+                            try
+                                GraceConfiguration()
+                                |> saveConfigFile graceConfigPath
+
+                                Ok()
+                            with
+                            | ex -> Error(GraceError.Create ex.Message (getCorrelationId parseResult))
+
+                    match writeResult with
+                    | Ok () ->
+                        return
+                            Ok(GraceReturnValue.Create () (getCorrelationId parseResult))
+                            |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
                 | Error error -> return (Error error) |> renderOutput parseResult
             //let! writeResult = writeHandler parseResult
             //return writeResult |> renderOutput parseResult

@@ -94,11 +94,8 @@ module Configuration =
 
     /// Writes the repository Grace configuration JSON to the specified config file path.
     let saveConfigFile graceConfigurationFilePath (graceConfiguration: GraceConfiguration) =
-        try
-            let json = serialize graceConfiguration
-            File.WriteAllText(graceConfigurationFilePath, json)
-        with
-        | ex -> printfn $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
+        let json = serialize graceConfiguration
+        File.WriteAllText(graceConfigurationFilePath, json)
 
     /// Walks upward from the current directory to locate the repository Grace configuration file.
     let private findGraceConfigurationFile () =
@@ -351,15 +348,21 @@ module Configuration =
 
     /// Saves the Grace configuration file after updates. Makes a backup of the previous version of the file.
     let updateConfiguration (newConfiguration: GraceConfiguration) =
-        do
+        let currentConfiguration = Current()
+
+        try
             File.Copy(
-                Path.Combine(Current().ConfigurationDirectory, Constants.GraceConfigFileName),
-                Path.Combine(Current().ConfigurationDirectory, $"{Constants.GraceConfigFileName}.backup"),
+                Path.Combine(currentConfiguration.ConfigurationDirectory, Constants.GraceConfigFileName),
+                Path.Combine(currentConfiguration.ConfigurationDirectory, $"{Constants.GraceConfigFileName}.backup"),
                 overwrite = true
             )
 
-        newConfiguration
-        |> saveConfigFile (Path.Combine(Current().ConfigurationDirectory, Constants.GraceConfigFileName))
+            newConfiguration
+            |> saveConfigFile (Path.Combine(currentConfiguration.ConfigurationDirectory, Constants.GraceConfigFileName))
+        with
+        | ex ->
+            resetConfiguration ()
+            reraise ()
 
         graceConfiguration <- newConfiguration
 

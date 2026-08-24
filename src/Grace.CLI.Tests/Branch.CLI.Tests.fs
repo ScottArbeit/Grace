@@ -820,6 +820,49 @@ module BranchCommandTests =
             configuration.BranchName
             |> should equal targetBranchName)
 
+    /// Verifies that a Branch switch configuration write failure leaves the persisted branch identity current in this process.
+    [<Test>]
+    let ``branch switch configuration update failure preserves current cache`` () =
+        if Environment.OSVersion.Platform
+           <> PlatformID.Win32NT then
+            Assert.Ignore("This focused file-sharing failure injection is specific to the supported Windows filesystem.")
+
+        withTempBranchSwitchRepo (fun () ->
+            let persistedConfiguration = Current()
+
+            updateConfiguration persistedConfiguration
+            resetConfiguration ()
+
+            let targetBranchId = Guid.NewGuid()
+            let targetBranchName = "branch-switch-proposed"
+            let configurationPath = Path.Combine(Current().ConfigurationDirectory, Constants.GraceConfigFileName)
+            use readLock = new FileStream(configurationPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+            let operation =
+                Func<Task> (fun () ->
+                    Branch.applyBranchSwitchLocalState
+                        (fun () -> Task.CompletedTask)
+                        (fun () ->
+                            let configuration = Current()
+                            configuration.BranchId <- targetBranchId
+                            configuration.BranchName <- targetBranchName
+                            updateConfiguration configuration)
+                        (fun () -> Task.CompletedTask)
+                    :> Task)
+
+            Assert.ThrowsAsync<IOException>(operation)
+            |> ignore
+
+            resetConfiguration ()
+
+            let currentConfiguration = Current()
+
+            currentConfiguration.BranchId
+            |> should equal branchId
+
+            currentConfiguration.BranchName
+            |> should equal "branch-switch-current")
+
     /// Verifies that a second Watch-clean preflight failure prevents marker creation and working tree mutation.
     [<Test>]
     let ``branch switch working tree update refuses dirty mutation boundary before marker or rewrite`` () =
