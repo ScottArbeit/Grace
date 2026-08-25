@@ -51,6 +51,9 @@ module Branch =
     /// Marks a configuration write failure so branch commands can preserve their existing error result shape without stack output.
     exception private ConfigurationWriteFailure of exn
 
+    /// Marks a selected Reference identity failure so no switch effect begins from inconsistent server responses.
+    exception private ReferenceSwitchValidationFailure of string
+
     /// Updates configuration data while retaining the original exception for command-level projection.
     let private updateConfigurationForCommand configuration =
         try
@@ -582,6 +585,81 @@ module Branch =
     type internal ReferenceSwitchRoute =
         | ReferenceWithoutSave
         | ReferenceWithSave
+
+    /// Binds an exact Reference to the Branch selected before target retrieval begins.
+    type internal ReferenceSwitchTarget = { ReferenceId: ReferenceId; SelectedBranchId: BranchId option }
+
+    /// Validates one Branch selector response and captures its exact latest Reference without chasing later Branch state.
+    let internal tryCreateBranchSelectorReferenceTarget ownerId organizationId repositoryId requestedBranchId requestedBranchName (selectedBranch: BranchDto) =
+        let latestReference = selectedBranch.LatestReference
+
+        if selectedBranch.OwnerId <> ownerId
+           || selectedBranch.OrganizationId <> organizationId
+           || selectedBranch.RepositoryId <> repositoryId then
+            Error "The selected Branch does not belong to the configured repository."
+        elif selectedBranch.BranchId = BranchId.Empty then
+            Error "The selected Branch response has an empty Branch ID."
+        elif requestedBranchId <> BranchId.Empty
+             && selectedBranch.BranchId <> requestedBranchId then
+            Error "The selected Branch response does not match the requested Branch ID."
+        elif requestedBranchId = BranchId.Empty
+             && (String.IsNullOrWhiteSpace requestedBranchName
+                 || not (String.Equals(string selectedBranch.BranchName, requestedBranchName, StringComparison.OrdinalIgnoreCase))) then
+            Error "The selected Branch response does not match the requested Branch name."
+        elif latestReference.ReferenceId = ReferenceId.Empty then
+            Error "The selected Branch does not have a latest Reference."
+        elif latestReference.OwnerId <> ownerId
+             || latestReference.OrganizationId <> organizationId
+             || latestReference.RepositoryId <> repositoryId
+             || latestReference.BranchId
+                <> selectedBranch.BranchId then
+            Error "The selected Branch latest Reference does not belong to that Branch."
+        elif latestReference.DirectoryId = DirectoryVersionId.Empty then
+            Error "The selected Branch latest Reference has an empty target root."
+        else
+            Ok { ReferenceId = latestReference.ReferenceId; SelectedBranchId = Some selectedBranch.BranchId }
+
+    /// Validates an exact Reference fetch against the configured repository and any preselected Branch identity.
+    let internal tryValidateReferenceSwitchTarget ownerId organizationId repositoryId target (reference: ReferenceDto) =
+        match target.SelectedBranchId with
+        | None -> Ok()
+        | Some selectedBranchId ->
+            if reference.ReferenceId <> target.ReferenceId then
+                Error "The server returned a different Reference than the exact selected Reference."
+            elif reference.OwnerId <> ownerId
+                 || reference.OrganizationId <> organizationId
+                 || reference.RepositoryId <> repositoryId then
+                Error "The exact selected Reference does not belong to the configured repository."
+            elif reference.BranchId = BranchId.Empty
+                 || reference.BranchId <> selectedBranchId then
+                Error "The exact selected Reference does not belong to the selected Branch."
+            elif reference.DirectoryId = DirectoryVersionId.Empty then
+                Error "The exact selected Reference has an empty target root."
+            else
+                Ok()
+
+    /// Validates the fetched Branch identity used for exact Reference target preparation and publication.
+    let internal tryValidateReferenceSwitchBranch ownerId organizationId repositoryId target (reference: ReferenceDto) (selectedBranch: BranchDto) =
+        match target.SelectedBranchId with
+        | None -> Ok()
+        | Some selectedBranchId ->
+            if selectedBranch.OwnerId <> ownerId
+               || selectedBranch.OrganizationId <> organizationId
+               || selectedBranch.RepositoryId <> repositoryId
+               || selectedBranch.BranchId <> reference.BranchId
+               || selectedBranch.BranchId <> selectedBranchId then
+                Error "The server returned a Branch that does not match the exact selected Reference."
+            else
+                Ok()
+
+    /// Requires the exact Reference root to be the first root of a nonempty resolved target graph.
+    let internal tryValidateReferenceTargetGraphRoot (reference: ReferenceDto) (directoryIds: DirectoryVersionId array) =
+        if directoryIds.Length = 0 then
+            Error "The server returned an empty DirectoryVersion graph for the exact selected Reference."
+        elif directoryIds[0] <> reference.DirectoryId then
+            Error "The server returned a DirectoryVersion graph whose root does not match the exact selected Reference."
+        else
+            Ok()
 
     /// Holds the stable machine-readable result emitted by initial and resumed exact-Reference switching.
     type internal ReferenceSwitchOutput = { Outcome: string; Message: string; BranchId: BranchId; DirectoryVersionId: DirectoryVersionId }
@@ -3371,8 +3449,9 @@ module Branch =
         {
             ResumePending: CancellationToken -> Task<WorkingDirectoryUpdateContracts.Outcome option>
             ResolveReferenceRoute: GetBranchParameters -> Task<Result<ReferenceSwitchRoute option, GraceError>>
-            RunReferenceWithoutSave: ParseResult -> CancellationToken -> Task<int>
-            RunReferenceWithSave: ParseResult -> CancellationToken -> Task<int>
+            ResolveBranchSelector: GetBranchParameters -> Task<Result<ReferenceSwitchTarget, GraceError>>
+            RunReferenceWithoutSave: ReferenceSwitchTarget -> ParseResult -> CancellationToken -> Task<int>
+            RunReferenceWithSave: ReferenceSwitchTarget -> ParseResult -> CancellationToken -> Task<int>
             RunLegacy: ParseResult -> CancellationToken -> Task<int>
         }
 
@@ -3600,12 +3679,12 @@ module Branch =
             }
 
         /// Runs the Product V1 exact-Reference switch through WDU so Branch identity cannot publish before verified local completion.
-        let referenceSelectedHandler (parseResult: ParseResult) (cancellationToken: CancellationToken) =
+        let referenceSelectedHandler (target: ReferenceSwitchTarget) (parseResult: ParseResult) (cancellationToken: CancellationToken) =
             task {
                 try
                     let configuration = Current()
                     let graceIds = getNormalizedIdsAndNames parseResult
-                    let referenceId = parseResult.GetValue(Options.referenceId)
+                    let referenceId = target.ReferenceId
                     let! currentStatus = readGraceStatusFile ()
                     let! acceptedRevision = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
 
@@ -3626,6 +3705,9 @@ module Branch =
                     | Error error -> return renderOutput parseResult (GraceResult.Error error)
                     | Ok referenceResult ->
                         let reference = referenceResult.ReturnValue
+
+                        tryValidateReferenceSwitchTarget configuration.OwnerId configuration.OrganizationId configuration.RepositoryId target reference
+                        |> Result.defaultWith (ReferenceSwitchValidationFailure >> raise)
 
                         let getBranchParameters =
                             GetBranchParameters(
@@ -3659,10 +3741,23 @@ module Branch =
                         | Ok branchResult, Ok versionResult ->
                             let selectedBranch = branchResult.ReturnValue
 
+                            tryValidateReferenceSwitchBranch
+                                configuration.OwnerId
+                                configuration.OrganizationId
+                                configuration.RepositoryId
+                                target
+                                reference
+                                selectedBranch
+                            |> Result.defaultWith (ReferenceSwitchValidationFailure >> raise)
+
                             let directoryIds =
                                 versionResult.ReturnValue
                                 |> Seq.distinct
                                 |> Seq.toArray
+
+                            if target.SelectedBranchId.IsSome then
+                                tryValidateReferenceTargetGraphRoot reference directoryIds
+                                |> Result.defaultWith (ReferenceSwitchValidationFailure >> raise)
 
                             let getDirectoriesParameters =
                                 GetByDirectoryIdsParameters(
@@ -3844,13 +3939,20 @@ module Branch =
                         | Error error, _
                         | _, Error error -> return renderOutput parseResult (GraceResult.Error error)
                 with
+                | ReferenceSwitchValidationFailure error ->
+                    return renderOutput parseResult (GraceResult.Error(GraceError.Create error (getCorrelationId parseResult)))
                 | ex ->
                     let error = GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult)
                     return renderOutput parseResult (GraceResult.Error error)
             }
 
         /// Routes the switch command from parsed options through validation, the SDK call, and result rendering.
-        let switchHandler (parseResult: ParseResult) (switchParameters: SwitchParameters) (cancellationToken: CancellationToken) =
+        let switchHandler
+            (parseResult: ParseResult)
+            (switchParameters: SwitchParameters)
+            (resolvedReferenceTarget: ReferenceSwitchTarget option)
+            (cancellationToken: CancellationToken)
+            =
             task {
                 try
                     let graceIds = getNormalizedIdsAndNames parseResult
@@ -4212,6 +4314,10 @@ module Branch =
                         (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto)
                         =
                         task {
+                            let exactReferenceTarget =
+                                resolvedReferenceTarget
+                                |> Option.defaultWith (fun () -> { ReferenceId = Guid.Parse(switchParameters.ReferenceId); SelectedBranchId = None })
+
                             let getReferenceParameters =
                                 GetReferenceParameters(
                                     OwnerId = graceIds.OwnerIdString,
@@ -4233,6 +4339,14 @@ module Branch =
                             | Ok returnValue ->
                                 // We have the reference, let's get the new branch and the DirectoryVersion from the reference.
                                 let reference = returnValue.ReturnValue
+
+                                tryValidateReferenceSwitchTarget
+                                    (Current().OwnerId)
+                                    (Current().OrganizationId)
+                                    (Current().RepositoryId)
+                                    exactReferenceTarget
+                                    reference
+                                |> Result.defaultWith (ReferenceSwitchValidationFailure >> raise)
 
                                 let getNewBranchParameters =
                                     GetBranchParameters(
@@ -4266,9 +4380,27 @@ module Branch =
                                 match (getNewBranchResult, getVersionResult) with
                                 | Ok branchReturnValue, Ok versionReturnValue ->
                                     let newBranch = branchReturnValue.ReturnValue
-                                    let directoryIds = versionReturnValue.ReturnValue
+
+                                    tryValidateReferenceSwitchBranch
+                                        (Current().OwnerId)
+                                        (Current().OrganizationId)
+                                        (Current().RepositoryId)
+                                        exactReferenceTarget
+                                        reference
+                                        newBranch
+                                    |> Result.defaultWith (ReferenceSwitchValidationFailure >> raise)
+
+                                    let directoryIds =
+                                        versionReturnValue.ReturnValue
+                                        |> Seq.distinct
+                                        |> Seq.toArray
+
+                                    if exactReferenceTarget.SelectedBranchId.IsSome then
+                                        tryValidateReferenceTargetGraphRoot reference directoryIds
+                                        |> Result.defaultWith (ReferenceSwitchValidationFailure >> raise)
+
                                     t |> setProgressTaskValue showOutput 100.0
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds :> IEnumerable<DirectoryVersionId>)
                                 | Error error, _ -> return Error error
                                 | _, Error error -> return Error error
                         }
@@ -4879,6 +5011,8 @@ module Branch =
                 with
                 | ConfigurationWriteFailure ex ->
                     return renderOutput parseResult (GraceResult.Error(GraceError.Create ex.Message (parseResult |> getCorrelationId)))
+                | ReferenceSwitchValidationFailure error ->
+                    return renderOutput parseResult (GraceResult.Error(GraceError.Create error (getCorrelationId parseResult)))
                 | ex ->
                     logToConsole $"{ExceptionResponse.Create ex}"
                     logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
@@ -4897,11 +5031,12 @@ module Branch =
             let sha256Hash = getSha256HashPrefix parseResult
             let blake3Hash = getBlake3HashPrefix parseResult
             let branchIdBeforeFinalization = Current().BranchId
+            let requestedBranchId = parseResult.GetValue(Options.toBranchId)
+            let requestedBranchName = parseResult.GetValue(Options.toBranchName)
 
             let hasBranchSelector =
-                parseResult.GetValue(Options.toBranchId)
-                <> Guid.Empty
-                || not (String.IsNullOrWhiteSpace(parseResult.GetValue(Options.toBranchName)))
+                requestedBranchId <> Guid.Empty
+                || not (String.IsNullOrWhiteSpace requestedBranchName)
 
             let hasReferenceSelector =
                 parseResult.GetValue(Options.referenceId)
@@ -4942,51 +5077,122 @@ module Branch =
 
                     return exitCode
                 | None ->
-                    let! referenceRoute =
-                        if hasReferenceSelector
-                           && not hasBranchSelector
-                           && String.IsNullOrWhiteSpace sha256Hash
-                           && String.IsNullOrWhiteSpace blake3Hash then
-                            let configuration = Current()
+                    let isExactBranchSelector =
+                        hasBranchSelector
+                        && not hasReferenceSelector
+                        && String.IsNullOrWhiteSpace sha256Hash
+                        && String.IsNullOrWhiteSpace blake3Hash
 
-                            let parameters =
-                                GetBranchParameters(
-                                    OwnerId = $"{configuration.OwnerId}",
-                                    OrganizationId = $"{configuration.OrganizationId}",
-                                    RepositoryId = $"{configuration.RepositoryId}",
-                                    BranchId = $"{configuration.BranchId}",
-                                    CorrelationId = getCorrelationId parseResult
-                                )
+                    let isExactReferenceSelector =
+                        hasReferenceSelector
+                        && not hasBranchSelector
+                        && String.IsNullOrWhiteSpace sha256Hash
+                        && String.IsNullOrWhiteSpace blake3Hash
 
-                            match testOperations with
-                            | Some operations -> operations.ResolveReferenceRoute parameters
-                            | None ->
-                                task {
-                                    let! result = Branch.Get parameters
+                    /// Resolves the current Branch capability that selects the established Reference WDU route.
+                    let resolveReferenceRoute () =
+                        let configuration = Current()
+
+                        let parameters =
+                            GetBranchParameters(
+                                OwnerId = $"{configuration.OwnerId}",
+                                OrganizationId = $"{configuration.OrganizationId}",
+                                RepositoryId = $"{configuration.RepositoryId}",
+                                BranchId = $"{configuration.BranchId}",
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        match testOperations with
+                        | Some operations -> operations.ResolveReferenceRoute parameters
+                        | None ->
+                            task {
+                                let! result = Branch.Get parameters
+
+                                return
+                                    result
+                                    |> Result.map (fun value -> Some(referenceOnlySwitchRoute value.ReturnValue.SaveEnabled))
+                            }
+
+                    /// Selects a Branch by ID precedence or name and binds its exact latest Reference once.
+                    let resolveBranchSelector () =
+                        let configuration = Current()
+
+                        let parameters =
+                            GetBranchParameters(
+                                OwnerId = $"{configuration.OwnerId}",
+                                OrganizationId = $"{configuration.OrganizationId}",
+                                RepositoryId = $"{configuration.RepositoryId}",
+                                BranchId = (if requestedBranchId = Guid.Empty then String.Empty else $"{requestedBranchId}"),
+                                BranchName = (if requestedBranchId = Guid.Empty then requestedBranchName else String.Empty),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        match testOperations with
+                        | Some operations -> operations.ResolveBranchSelector parameters
+                        | None ->
+                            task {
+                                let! result = Branch.Get parameters
+
+                                return
+                                    result
+                                    |> Result.bind (fun value ->
+                                        tryCreateBranchSelectorReferenceTarget
+                                            configuration.OwnerId
+                                            configuration.OrganizationId
+                                            configuration.RepositoryId
+                                            requestedBranchId
+                                            requestedBranchName
+                                            value.ReturnValue
+                                        |> Result.mapError (fun error -> GraceError.Create error (getCorrelationId parseResult)))
+                            }
+
+                    let! referenceSelection =
+                        task {
+                            if isExactBranchSelector then
+                                match! resolveBranchSelector () with
+                                | Error error -> return Error error
+                                | Ok target ->
+                                    let! route = resolveReferenceRoute ()
 
                                     return
-                                        result
-                                        |> Result.map (fun value -> Some(referenceOnlySwitchRoute value.ReturnValue.SaveEnabled))
-                                }
-                        else
-                            Task.FromResult(Ok None)
+                                        route
+                                        |> Result.map (fun value -> Some target, value)
+                            elif isExactReferenceSelector then
+                                let target = { ReferenceId = parseResult.GetValue(Options.referenceId); SelectedBranchId = None }
 
-                    match referenceRoute with
+                                let! route = resolveReferenceRoute ()
+
+                                return
+                                    route
+                                    |> Result.map (fun value -> Some target, value)
+                            else
+                                return Ok(None, None)
+                        }
+
+                    match referenceSelection with
                     | Error error -> return renderOutput parseResult (GraceResult.Error error)
-                    | Ok referenceRoute ->
+                    | Ok (referenceTarget, referenceRoute) ->
                         match classifyHashSelectedSwitch sha256Hash blake3Hash hasBranchSelector hasReferenceSelector with
                         | Ok true -> return! hashSelectedDirectoryVersionHandler parseResult cancellationToken
                         | Error message ->
                             let error = GraceError.Create message (getCorrelationId parseResult)
                             return renderOutput parseResult (GraceResult.Error error)
                         | Ok false when referenceRoute = Some ReferenceWithoutSave ->
+                            let target =
+                                referenceTarget
+                                |> Option.defaultWith (fun () -> invalidOp "Reference route requires an exact target.")
+
                             match testOperations with
-                            | Some operations -> return! operations.RunReferenceWithoutSave parseResult cancellationToken
-                            | None -> return! referenceSelectedHandler parseResult cancellationToken
+                            | Some operations -> return! operations.RunReferenceWithoutSave target parseResult cancellationToken
+                            | None -> return! referenceSelectedHandler target parseResult cancellationToken
                         | Ok false ->
                             match testOperations with
                             | Some operations when referenceRoute = Some ReferenceWithSave ->
-                                return! operations.RunReferenceWithSave parseResult cancellationToken
+                                let target =
+                                    referenceTarget
+                                    |> Option.defaultWith (fun () -> invalidOp "Reference route requires an exact target.")
+
+                                return! operations.RunReferenceWithSave target parseResult cancellationToken
                             | Some operations -> return! operations.RunLegacy parseResult cancellationToken
                             | None ->
                                 return!
@@ -5016,24 +5222,29 @@ module Branch =
                                                     task {
                                                         let switchParameters = SwitchParameters()
 
-                                                        let toBranchId = parseResult.GetValue(Options.toBranchId)
-                                                        if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+                                                        match referenceTarget, referenceRoute with
+                                                        | Some target, Some ReferenceWithSave -> switchParameters.ReferenceId <- $"{target.ReferenceId}"
+                                                        | _ ->
+                                                            if requestedBranchId <> Guid.Empty then
+                                                                switchParameters.ToBranchId <- $"{requestedBranchId}"
 
-                                                        let toBranchName = parseResult.GetValue(Options.toBranchName)
-                                                        switchParameters.ToBranchName <- toBranchName
+                                                            switchParameters.ToBranchName <- requestedBranchName
 
-                                                        let referenceId = parseResult.GetValue(Options.referenceId)
+                                                            let referenceId = parseResult.GetValue(Options.referenceId)
 
-                                                        if referenceId <> Guid.Empty then
-                                                            switchParameters.ReferenceId <- $"{referenceId}"
+                                                            if referenceId <> Guid.Empty then
+                                                                switchParameters.ReferenceId <- $"{referenceId}"
 
-                                                        let sha256Hash = getSha256HashPrefix parseResult
-                                                        switchParameters.Sha256Hash <- sha256Hash
+                                                            switchParameters.Sha256Hash <- sha256Hash
+                                                            switchParameters.Blake3Hash <- blake3Hash
 
-                                                        let blake3Hash = getBlake3HashPrefix parseResult
-                                                        switchParameters.Blake3Hash <- blake3Hash
+                                                        let! result =
+                                                            switchHandler
+                                                                parseResult
+                                                                switchParameters
+                                                                (if referenceRoute = Some ReferenceWithSave then referenceTarget else None)
+                                                                cancellationToken
 
-                                                        let! result = switchHandler parseResult switchParameters cancellationToken
                                                         return result
                                                     })
 

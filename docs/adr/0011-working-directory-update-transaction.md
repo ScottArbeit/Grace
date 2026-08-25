@@ -17,8 +17,8 @@ admission, target selection, remote retrieval, scheduling, and presentation.
 
 The legacy `WorkingDirectoryMaterialization` module serializes arbitrary callbacks but does not own planning, marker
 behavior, filesystem mutation, content verification, durable local state, finalization, or failure classification.
-Branch and Watch now route those effects through Working Directory Update, while Connect still extracts a server zip
-directly into working and object paths without the same lease or marker contract.
+Branch hash and explicit-Reference switching, Watch replay, and Connect retrieval route those effects through Working
+Directory Update. The remaining Branch ID and name selector path still uses the legacy mutation route.
 
 These paths can change the same local directory and SQLite state. Their differences are real—Watch advances an ordered
 cursor, Branch publishes selected branch identity, and Connect preserves zip retrieval—but those differences do not
@@ -30,6 +30,10 @@ justify three local-integrity implementations.
   exact target graph, immutable prepared content, and diagnostic correlation—and a narrow Watch replay adapter over the
   same local-application stage. Persisted-facts-only finalization reconstructs either caller. Callers cannot supply
   alternate paths, status graphs, writers, finalizers, or generic request bags.
+- Branch ID and name selectors resolve one Branch response, with Branch ID taking precedence when both are supplied.
+  Grace validates the returned repository and Branch identity, requires that response's latest Reference ID to be
+  nonempty, and maps that exact Reference to the existing `BranchSelection.Reference` transaction. Target retrieval and
+  preparation remain bound to that Reference ID; Grace does not chase a newer Reference after selection.
 - Target identity contains repository, branch, root DirectoryVersion, SHA-256, and BLAKE3. Caller operation identity is
   separate and deterministic. Each execution attempt receives a separate random marker token.
 - Prepared-content adapters expose exact immutable manifests and readable uncompressed bytes. They never provide
@@ -69,7 +73,8 @@ justify three local-integrity implementations.
 Issue #960 supplied the first public tracer across topology composition, held-lease application, `VerifiedLocalRoot`,
 terminal SQLite completion, marker cleanup, and `grace branch switch --sha256-hash` or `--blake3-hash`. Issues #922,
 Issue #923, Issue #871, and Issue #872 completed shared local application and Branch Reference completion. Issue #843 now consumes those
-states for ordered Watch replay. Issue #900 and Issue #901 remain superseded by Issue #960.
+states for ordered Watch replay. Issue #1025 maps the existing Branch ID and name selectors to that exact-Reference path.
+Issue #900 and Issue #901 remain superseded by Issue #960.
 
 Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
 legacy materialization, or WDU leases. Only the WDU transaction holds its local lease for fresh reread, mutation,

@@ -1,10 +1,10 @@
 # Working Directory Update
 
 **Status:** Implemented for Branch through merged Issue #872 / PR #1015, Watch replay through Issue #843, and Connect
-retrieval through Issue #845
+retrieval through Issue #845; Branch selector mapping accepted for Issue #1025
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-25, Issue #845 candidate based on epic head `2291bd00`
+**Evidence current through:** 2026-08-25, Issue #1025 Branch selector mapping on epic base `6ba6e695`
 
 ## 1. Outcome and scope
 
@@ -48,6 +48,7 @@ implementation workers one user-safety goal when lower-level details are incompl
 | DEC-012 | The five inputs are the only replaceable Branch facts. | Cancellation remains invocation control and deterministic failure injection is a private test seam; neither becomes a sixth product fact, overload, context bag, or caller callback. | #923 / PR #1009 |
 | DEC-013 | Merged Issue #923 owns the first no-Save `AcceptedBranchPhase` producer and exact target-graph value. | The phase seals accepted status, SQLite revision, and complete-status fingerprint before target preparation; Issue #872 later adds Save-enabled production without changing the five-input seam. | #923 / PR #1009 and #872 |
 | DEC-014 | Connect configuration is independent from optional retrieval, while the selected root, prepared bytes, cursor, status, object metadata, and terminal completion share one WDU commit point. | Connect saves and reports configuration first, stages the exact ZIP without a WDU lease, applies only through WDU, and reports update failure without rolling configuration back. | #845 |
+| DEC-015 | Branch ID and name selectors map to the selected Branch's exact latest Reference, with Branch ID taking precedence when both selectors are supplied. | Grace validates repository and Branch identity, selects one nonempty Reference ID from that Branch response, and binds that exact Reference, Branch, root, prepared graph, operation, SQLite completion, and Branch publication through the existing `Reference` transaction. | #1025 |
 
 The post-Issue #1005 checkpoint makes these planning selections without changing the compiled lifecycle rows:
 
@@ -66,6 +67,9 @@ The post-Issue #1005 checkpoint makes these planning selections without changing
   replay ordering, cursor compare-and-set, SignalR wake policy, IPC publication, and foreground output.
 - Issue #845 supplies a private Connect adapter over the same local-application stage. Connect retains server target
   selection, archive download, exact staging, configuration persistence, and command output outside the WDU lease.
+- Issue #1025 maps the existing Branch ID and name selectors to the same private Reference adapter. It preserves Branch
+  ID precedence, validates the selected Branch response against the configured repository and requested Branch identity,
+  and reads that response's exact latest nonempty Reference ID once.
 
 No product or architecture decision remains open for the delivered Issue #871, Issue #872, Issue #843, and Issue #845
 slices. Issue #842 adds
@@ -99,6 +103,14 @@ reconstructs solely from persisted typed operation facts.
 Cancellation remains explicit invocation control. A private deterministic failure seam remains available to focused
 tests. Neither is a caller-replaceable Branch fact and neither permits an overload that omits or substitutes one of the
 five inputs.
+
+For `grace branch switch --to-branch-id` and `--to-branch-name`, the selected Branch response is the remote source of
+truth at target-resolution time. Branch ID takes precedence when both options are present. Grace validates the returned
+repository and Branch identity, requires a nonempty latest Reference ID, and then resolves the target graph by that exact
+Reference ID. It does not chase a newer Reference after selection. A missing or mismatched latest Reference, or an
+incomplete target graph, fails before working-file mutation, SQLite completion, or Branch publication. No-Save and
+Save-enabled callers then use their existing accepted-phase producers and the same `BranchSelection.Reference`
+transaction.
 
 Connect first persists repository configuration. It then resolves the server boundary and complete target graph,
 downloads the selected ZIP, and validates immutable prepared content before entering WDU. The private Connect adapter
