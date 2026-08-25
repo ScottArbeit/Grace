@@ -382,6 +382,33 @@ module Branch =
                 EventCursor = referenceEventCursor candidate.EventPosition
             })
 
+    /// Rebuilds a selected Reference boundary from the current durable root DirectoryVersion while retaining its event cursor.
+    let internal tryCreateCanonicalReferenceMaterializationBoundary
+        (selectedBoundary: Reference.ReferenceMaterializationBoundaryDto)
+        (directoryVersion: DirectoryVersion)
+        =
+        let hasCompleteHashes =
+            not (String.IsNullOrWhiteSpace(string directoryVersion.Sha256Hash))
+            && not (String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash))
+
+        if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty
+           || directoryVersion.DirectoryVersionId
+              <> selectedBoundary.DirectoryId
+           || directoryVersion.RepositoryId
+              <> selectedBoundary.RepositoryId
+           || (directoryVersion.RelativePath
+               <> Constants.RootDirectoryPath
+               && directoryVersion.RelativePath <> "/")
+           || not hasCompleteHashes then
+            None
+        else
+            Some
+                { selectedBoundary with
+                    DirectoryId = directoryVersion.DirectoryVersionId
+                    Sha256Hash = directoryVersion.Sha256Hash
+                    Blake3Hash = directoryVersion.Blake3Hash
+                }
+
     /// Resolves an absent Watch cursor from an exact local root or the conservative tail of one branch-event snapshot.
     let internal tryResolveReferenceEventBoundary
         repositoryId
@@ -2062,15 +2089,31 @@ module Branch =
                     let! candidates = getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId branchEvents
 
                     match trySelectReferenceMaterializationBoundary parameters candidates with
-                    | Some boundary ->
-                        let returnValue =
-                            (GraceReturnValue.Create boundary correlationId)
-                                .enhance(getParametersAsDictionary parameters)
-                                .enhance(nameof RepositoryId, repositoryId)
-                                .enhance(nameof BranchId, branchId)
-                                .enhance ("Path", context.Request.Path.Value)
+                    | Some selectedBoundary ->
+                        let directoryVersionActor = DirectoryVersion.CreateActorProxy selectedBoundary.DirectoryId repositoryId correlationId
 
-                        return! context |> result200Ok returnValue
+                        let! directoryVersionDto = directoryVersionActor.Get correlationId
+
+                        match tryCreateCanonicalReferenceMaterializationBoundary selectedBoundary directoryVersionDto.DirectoryVersion with
+                        | Some boundary ->
+                            let returnValue =
+                                (GraceReturnValue.Create boundary correlationId)
+                                    .enhance(getParametersAsDictionary parameters)
+                                    .enhance(nameof RepositoryId, repositoryId)
+                                    .enhance(nameof BranchId, branchId)
+                                    .enhance ("Path", context.Request.Path.Value)
+
+                            return! context |> result200Ok returnValue
+                        | None ->
+                            let error =
+                                (GraceError.Create "The selected Reference does not resolve to a complete durable root DirectoryVersion." correlationId)
+                                    .enhance(getParametersAsDictionary parameters)
+                                    .enhance(nameof RepositoryId, repositoryId)
+                                    .enhance(nameof BranchId, branchId)
+                                    .enhance(nameof DirectoryVersionId, selectedBoundary.DirectoryId)
+                                    .enhance ("Path", context.Request.Path.Value)
+
+                            return! context |> result400BadRequest error
                     | None ->
                         let error =
                             (GraceError.Create "The selected root has no ordered Reference event boundary in this branch." correlationId)
