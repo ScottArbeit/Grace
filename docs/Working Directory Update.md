@@ -1,14 +1,16 @@
 # Working Directory Update
 
-**Status:** Implemented for Branch through merged Issue #872 / PR #1015 and for Watch replay through Issue #843
+**Status:** Implemented for Branch through merged Issue #872 / PR #1015, Watch replay through Issue #843, and Connect
+retrieval through Issue #845
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-24, `origin/main` `22c3ad89`, epic head `ad18ae65`
+**Evidence current through:** 2026-08-25, Issue #845 candidate based on epic head `2291bd00`
 
 ## 1. Outcome and scope
 
-Working Directory Update is the bounded local transaction used by `grace branch switch` and ordered `grace watch`
-current-Reference replay to make a Grace-indexed working directory and local SQLite state match one exact selected root.
+Working Directory Update is the bounded local transaction used by `grace branch switch`, optional `grace connect`
+retrieval, and ordered `grace watch` current-Reference replay to make a Grace-indexed working directory and local SQLite
+state match one exact selected root.
 It verifies prepared objects, applies only the tracked plan, proves the complete final root, commits local completion,
 and completes the caller's typed finalization.
 
@@ -19,14 +21,14 @@ stage through opaque `VerifiedLocalRoot`. Merged Issue #1005 makes BLAKE3 the so
 SHA-256 selectors and metadata. Merged Issue #923 / PR #1009 supplies the five-input composition and persists a typed
 Reference pending completion after verified local completion. Merged Issue #871 consumes that pending fact to publish the
 selected Branch identity and record terminal completion. Merged Issue #872 adds Save-enabled phase construction.
-Issue #842 routes explicit Doctor repair through the same completion algorithm. Issue #843 routes accepted ordered Watch replay
-through the shared local-application stage, typed pending completion, and restart-safe terminal recording. Connect remains
-deferred. Migration, rollback, journals, automatic recovery, and multi-platform parity remain out of scope.
+Issue #842 routes explicit Doctor repair through the same completion algorithm. Issue #843 routes accepted ordered Watch
+replay through the shared local-application stage, typed pending completion, and restart-safe terminal recording.
+Issue #845 routes optional Connect retrieval through immutable ZIP staging and the same local transaction. Migration, rollback,
+journals, automatic recovery, and multi-platform parity remain out of scope.
 
-Branch and Watch now share the local-application and completion transaction. One lifecycle contract prevents Grace from
+Branch, Connect, and Watch share the local-application and completion transaction. One lifecycle contract prevents Grace from
 publishing caller completion after marker cleanup fails, keeps partial failures truthful and recoverable, and gives
-implementation workers one user-safety goal when lower-level details are incomplete. Connect remains outside this
-shared path.
+implementation workers one user-safety goal when lower-level details are incomplete.
 
 ## 2. Accepted decisions
 
@@ -45,6 +47,7 @@ shared path.
 | DEC-011 | Merged Issue #923 keeps local completion private and typed. | `LocalCompletion` distinguishes `ReferencePending` from `DirectoryVersionTerminal`, carries the existing `Receipt`, and never crosses the WDU module interface. | #923 / PR #1009 |
 | DEC-012 | The five inputs are the only replaceable Branch facts. | Cancellation remains invocation control and deterministic failure injection is a private test seam; neither becomes a sixth product fact, overload, context bag, or caller callback. | #923 / PR #1009 |
 | DEC-013 | Merged Issue #923 owns the first no-Save `AcceptedBranchPhase` producer and exact target-graph value. | The phase seals accepted status, SQLite revision, and complete-status fingerprint before target preparation; Issue #872 later adds Save-enabled production without changing the five-input seam. | #923 / PR #1009 and #872 |
+| DEC-014 | Connect configuration is independent from optional retrieval, while the selected root, prepared bytes, cursor, status, object metadata, and terminal completion share one WDU commit point. | Connect saves and reports configuration first, stages the exact ZIP without a WDU lease, applies only through WDU, and reports update failure without rolling configuration back. | #845 |
 
 The post-Issue #1005 checkpoint makes these planning selections without changing the compiled lifecycle rows:
 
@@ -61,10 +64,13 @@ The post-Issue #1005 checkpoint makes these planning selections without changing
   paths, status snapshots, database handles, mutation plans, finalizers, or callbacks.
 - Issue #843 supplies a private Watch adapter over the same local-application stage. Watch retains event admission,
   replay ordering, cursor compare-and-set, SignalR wake policy, IPC publication, and foreground output.
+- Issue #845 supplies a private Connect adapter over the same local-application stage. Connect retains server target
+  selection, archive download, exact staging, configuration persistence, and command output outside the WDU lease.
 
-No product or architecture decision remains open for the delivered Issue #871, Issue #872, and Issue #843 slices. Issue #842 adds
+No product or architecture decision remains open for the delivered Issue #871, Issue #872, Issue #843, and Issue #845
+slices. Issue #842 adds
 explicit Doctor completion for an applicable pending Reference while retaining exact reconstruction as the no-pending
-fallback. Connect remains deferred.
+fallback.
 
 ## 3. Domain facts and interface
 
@@ -94,6 +100,12 @@ Cancellation remains explicit invocation control. A private deterministic failur
 tests. Neither is a caller-replaceable Branch fact and neither permits an overload that omits or substitutes one of the
 five inputs.
 
+Connect first persists repository configuration. It then resolves the server boundary and complete target graph,
+downloads the selected ZIP, and validates immutable prepared content before entering WDU. The private Connect adapter
+derives the configured local-root scope, constructs the existing Connect operation from the target and initial cursor,
+and commits matching status, object metadata, remote boundary cursor, and terminal completion in one SQLite transaction.
+No retrieval failure rolls configuration back.
+
 Issue #922 supplies one private stage behind this interface. Its inputs are the held lease, exact owned marker attempt,
 sealed phase and selection facts, exact target graph, and immutable prepared content already validated against the
 manifest. It publishes required object-cache copies, performs final admission from freshly read local facts, derives one
@@ -103,6 +115,8 @@ non-durable `VerifiedLocalRoot`. It neither writes SQLite completion nor decides
 The first working-tree mutation and SQLite local completion are distinct boundaries. For `Reference`, local completion
 atomically writes verified status, object metadata, and a pending Branch operation. For `DirectoryVersion`, the same
 transaction records verified status, object metadata, and terminal completion because Branch identity does not change.
+For Connect, the transaction also records the matching initial remote cursor and configured local-root scope with terminal
+completion.
 It is never called merely “commit” in lifecycle evidence.
 
 Issue #923 composes those paths behind a private five-input local-transaction seam:
@@ -336,6 +350,7 @@ dependency, checklist, assignment, or primary-delivery role. Issue #960 replaces
 | Hash-selected public tracer | #960 | Compose topology, apply under the WDU lease, verify the exact root, atomically record terminal SQLite completion, clean exact marker residue, and project `grace branch switch`. |
 | Selection-neutral local application | #922 | Extract the merged tracer's object publication, final admission, prefix-checked application, and verified-root transition without changing public behavior. |
 | Five-input composition and Reference pending completion | #923 | Add the missing opaque inputs, route DirectoryVersion through its merged terminal path, and atomically record Reference pending completion after `VerifiedLocalRoot`. |
+| Connect retrieval composition | #845 | Persist configuration first, stage the exact selected ZIP outside the lease, apply only through WDU, and atomically commit status, object metadata, initial cursor, local-root scope, and terminal completion. |
 | DirectoryVersion terminalization and hash wiring | #900 and #901 | Superseded by Issue #960 because terminalization is part of the verified-status transaction and the public command is the tracer boundary. |
 
 The compiler result is the sole primary-requirement mapping. Issue #871 is complete; Issue #872 is the current selected
@@ -381,8 +396,8 @@ Merged Issue #871 consumes it during the original invocation and consumes the ma
 restart. Only Issue #871 may project `Updated`, `Unchanged`, or `FinalizationIncomplete` after evaluating actual
 finalization evidence. No caller finalizer or in-memory retry dependency is added.
 
-The lease inventory is also finite. No-Save admission, hash-prefix resolution, target graph retrieval, object download,
-and immutable preparation hold none of the Branch workflow, legacy materialization, or WDU leases. The sealed phase
+The lease inventory is also finite. No-Save admission, hash-prefix resolution, target graph retrieval, Connect archive
+download, and immutable preparation hold none of the Branch workflow, legacy materialization, or WDU leases. The sealed phase
 handoff holds none. Only the WDU transaction holds `working-directory-update.lease` during local reread, mutation,
 SQLite completion, and terminal outcome. Marker and sidecar files are evidence, never leases; no second lease is added.
 
@@ -426,7 +441,7 @@ The following consumers carry generated projections rather than competing lifecy
 - #872 completed Save/no-Save admission and reaches the same initial rows.
 - #842 completes Branch-only retry rows through explicit Doctor repair without working-file mutation.
 - #843 consumes the transaction contract for ordered Watch current-Reference replay.
-- #844 and #845 later consume the transaction contract for Connect.
+- #844 supplies exact Connect ZIP staging, and #845 consumes it through the transaction contract.
 - #846 audits public output, Doctor guidance, row references, and absence of retired paths.
 
 ADR 0011 and the declared issue bodies remain contextual consumers. Their marker-delimited projections are rendered
@@ -463,4 +478,4 @@ Issue #843 reuses the same `Pending` and `Terminal` completion states for exact 
 cursor identity. Watch applies or verifies the accepted root through WDU, records pending local completion, cleans only
 exact marker evidence, and records terminal completion before advancing the prior remote cursor by compare-and-set.
 Only then may Watch publish clean IPC. Restart reconstructs the pending cursor and completion without rewriting working
-files. Connect remains deferred.
+files. Issue #845 uses the existing terminal completion for Connect and adds no lifecycle state or recovery path.

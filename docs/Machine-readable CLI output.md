@@ -231,20 +231,30 @@ grace --output Json doctor --select Status
 grace watch --check --select Mode
 ```
 
-## Planned Working Directory Update outcomes
+## Working Directory Update outcomes
 
-The Plan-ready [Working Directory Update specification](Working%20Directory%20Update.md) defines a typed local-update
-outcome for Branch switching, Connect retrieval, and Watch diagnostics. `Unchanged` and `Updated` return exit code `0`;
+The [Working Directory Update specification](Working%20Directory%20Update.md) defines a typed local-update outcome for
+Branch switching, Connect retrieval, and Watch diagnostics. `Unchanged` and `Updated` return exit code `0`;
 `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` return nonzero. `FinalizationIncomplete` states that the
 working directory was updated and includes `grace doctor --repair-local-state` as the recommended command.
 
-When implemented, Connect output will distinguish successful repository configuration from its optional update result.
-`branch.switch` will leave the V2 deferral list only when its stable outcome DTO, schema, example, selection behavior,
-and exit-code proof are complete. Foreground Watch remains a continuous command; its existing check projection and
-human diagnostics will report blocked update state without emitting a second JSON document.
+Connect reports repository configuration independently from its optional retrieval and update. After an update attempt,
+the single success or error envelope includes these properties:
 
-This is an accepted future contract. The inventory and deferral counts above remain the current executable inventory
-until implementation changes the command registry.
+- `Connect.ConfigurationOutcome` is `Configured`.
+- `Connect.RepositoryId` and `Connect.BranchId` identify the configuration that remains saved.
+- `Connect.UpdateOutcome` is `Updated`, `Unchanged`, `RetrievalFailed`, `Rejected`, `UpdateIncomplete`, or
+  `FinalizationIncomplete`.
+
+`Updated` and `Unchanged` use the existing `GraceReturnValue<ConnectDto>` success envelope. A failed retrieval or update
+uses the nonzero `GraceError` envelope. The human output likewise states that repository configuration remains saved
+before it reports an update error. Connect emits one JSON document only; it does not use JSON progress or a second
+configuration document.
+
+`branch.switch` will leave the V2 deferral list only when its stable outcome DTO, schema, example, selection behavior,
+and exit-code test are complete. Foreground Watch remains a continuous command; its existing check projection and human
+diagnostics report blocked update state without emitting a second JSON document. The inventory and deferral counts above
+remain the current executable inventory until implementation changes the command registry.
 
 ## V2 Deferrals
 
