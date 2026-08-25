@@ -14,6 +14,10 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Collections.Generic
+open System.Security.Cryptography
+open System.Text
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
@@ -76,83 +80,384 @@ module ConnectTests =
                     | _ -> ()
         }
 
-    /// A fresh default Connect persists the exact server-selected root identity in both status and boundary state.
+    /// Returns a private-contract value or fails at the construction boundary.
+    let private required =
+        function
+        | Ok value -> value
+        | Error error -> invalidOp error
+
+    /// Supplies one immutable in-memory prepared-content reader.
+    type private ByteReader(path: string, bytes: byte array) =
+        interface WorkingDirectoryUpdateContracts.IPreparedContentReader with
+            member _.FilePaths = [ path ]
+            member _.OpenReadAsync(_, _) = Task.FromResult(new MemoryStream(bytes, writable = false) :> Stream)
+            member _.Dispose() = ()
+
+    /// Computes both content hashes for deterministic Connect transaction fixtures.
+    let private hashes (bytes: byte array) =
+        let sha256 =
+            SHA256.HashData(bytes)
+            |> Convert.ToHexString
+            |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+        sha256, Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+    /// Creates a complete one-file target status and its exact root metadata.
+    let private oneFileStatus (configuration: GraceConfiguration) (path: string) (bytes: byte array) =
+        let sha256, blake3 = hashes bytes
+
+        let file = LocalFileVersion.CreateWithHashes (RelativePath path) sha256 blake3 false (int64 bytes.Length) (getCurrentInstant ()) true DateTime.UtcNow
+
+        let entries =
+            [|
+                Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+            |]
+
+        let root =
+            LocalDirectoryVersion.CreateWithHashes
+                (DirectoryVersionId.NewGuid())
+                configuration.OwnerId
+                configuration.OrganizationId
+                configuration.RepositoryId
+                (RelativePath Constants.RootDirectoryPath)
+                (Services.computeSha256ForDirectoryEntries (RelativePath Constants.RootDirectoryPath) entries)
+                (Services.computeBlake3ForDirectory (RelativePath Constants.RootDirectoryPath) entries)
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| file |]))
+                file.Size
+                DateTime.UtcNow
+
+        let index = GraceIndex()
+        index[root.DirectoryVersionId] <- root
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = root.DirectoryVersionId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        },
+        root,
+        file
+
+    /// Initializes and reads the production local-state sentinel from a repository that has no local database.
+    let private readFreshConnectStatus (configuration: GraceConfiguration) =
+        task {
+            File.Exists(configuration.GraceStatusFile)
+            |> should equal false
+
+            let! status = Services.readGraceStatusFile ()
+
+            File.Exists(configuration.GraceStatusFile)
+            |> should equal true
+
+            status.Index.Count |> should equal 0
+
+            status.RootDirectoryId
+            |> should equal DirectoryVersionId.Empty
+
+            status.RootDirectorySha256Hash
+            |> should equal (Sha256Hash String.Empty)
+
+            status.RootDirectoryBlake3Hash
+            |> should equal (Blake3Hash String.Empty)
+
+            return status
+        }
+
+    /// Creates exact prepared bytes and the matching private WDU target for one Connect transaction.
+    let private createConnectInput configuration path bytes =
+        task {
+            let targetStatus, _, targetFile = oneFileStatus configuration path bytes
+
+            let manifest =
+                WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                              targetFile.RelativePath,
+                                                                              targetFile.Sha256Hash,
+                                                                              targetFile.Blake3Hash
+                                                                          ) ]
+                |> required
+
+            let! preparedResult = WorkingDirectoryUpdateContracts.PreparedContent.create manifest (new ByteReader(path, bytes)) CancellationToken.None
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    configuration.RepositoryId
+                    configuration.BranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> required
+
+            return targetStatus, targetFile, target, (preparedResult |> required)
+        }
+
+    /// Connect routes exact prepared bytes and its initial cursor through one terminal WDU transaction.
     [<Test>]
-    let ``fresh connect materialization persists the selected server root identity`` () =
+    let ``connect WDU force replaces only the selected path and atomically records its cursor`` () =
         withConfiguredTempDir (fun configuration ->
             task {
-                let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
-                let selectedRootId = DirectoryVersionId.Parse "11111111-8020-4000-8000-111111111111"
-                let! scannedStatus = Services.createNewGraceStatusFile GraceStatus.Default parseResult
+                let selectedPath = "selected.txt"
+                let selectedBytes = Encoding.UTF8.GetBytes("selected bytes")
+                let unrelatedBytes = Encoding.UTF8.GetBytes("unrelated bytes")
+                let! targetStatus, targetFile, target, prepared = createConnectInput configuration selectedPath selectedBytes
+                let! currentStatus = readFreshConnectStatus configuration
+                File.WriteAllText(Path.Combine(configuration.RootDirectory, selectedPath), "conflicting bytes")
+                File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "unrelated.txt"), unrelatedBytes)
 
-                let boundary =
-                    { ReferenceMaterializationBoundaryDto.Default with
-                        RepositoryId = configuration.RepositoryId
-                        BranchId = configuration.BranchId
-                        DirectoryId = selectedRootId
-                        Sha256Hash = scannedStatus.RootDirectorySha256Hash
-                        Blake3Hash = scannedStatus.RootDirectoryBlake3Hash
-                        EventCursor = "branch-event-v1:1"
-                    }
+                let initialCursor = "branch-event-v1:845"
 
-                Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                let! outcome =
+                    WorkingDirectoryUpdate.Connect.run
+                        target
+                        currentStatus
+                        targetStatus
+                        prepared
+                        initialCursor
+                        true
+                        "connect-845"
+                        CancellationToken.None
+                        WorkingDirectoryUpdate.Connect.none
 
-                let! materializedStatus = Connect.createAndWriteMaterializedStatus GraceStatus.Default parseResult boundary CancellationToken.None
-                let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.Updated _ -> ()
+                | other -> Assert.Fail($"Expected Connect WDU Updated, got {other}.")
 
-                let! persistedBoundary =
-                    LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                File.ReadAllBytes(Path.Combine(configuration.RootDirectory, selectedPath))
+                |> should equal selectedBytes
 
-                Assert.That(materializedStatus.RootDirectoryId, Is.EqualTo(selectedRootId))
-                Assert.That(persistedStatus.RootDirectoryId, Is.EqualTo(selectedRootId))
-                Assert.That(persistedStatus.RootDirectorySha256Hash, Is.EqualTo(boundary.Sha256Hash))
-                Assert.That(persistedStatus.RootDirectoryBlake3Hash, Is.EqualTo(boundary.Blake3Hash))
-                Assert.That(persistedBoundary, Is.EqualTo(Some boundary))
+                File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "unrelated.txt"))
+                |> should equal unrelatedBytes
+
+                let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches targetStatus persistedStatus
+                |> should equal true
+
+                persistedStatus.RootDirectoryId
+                |> should equal targetStatus.RootDirectoryId
+
+                persistedStatus.RootDirectorySha256Hash
+                |> should equal targetStatus.RootDirectorySha256Hash
+
+                persistedStatus.RootDirectoryBlake3Hash
+                |> should equal targetStatus.RootDirectoryBlake3Hash
+
+                let objectPath =
+                    Path.Combine(
+                        configuration.ObjectDirectory,
+                        string targetFile.RelativePath,
+                        Services.getLocalObjectCacheFileName targetFile.RelativePath targetFile.Sha256Hash targetFile.Blake3Hash
+                    )
+
+                File.ReadAllBytes(objectPath)
+                |> should equal selectedBytes
+
+                let! objectMetadataCommitted = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile targetStatus.RootDirectoryId
+
+                objectMetadataCommitted |> should equal true
+
+                let! fileMetadataCommitted = LocalStateDb.isFileVersionInObjectCache configuration.GraceStatusFile targetFile
+
+                fileMetadataCommitted |> should equal true
+
+                let! boundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                boundary
+                |> should
+                    equal
+                    (Some
+                        { ReferenceMaterializationBoundaryDto.Default with
+                            RepositoryId = configuration.RepositoryId
+                            BranchId = configuration.BranchId
+                            DirectoryId = targetStatus.RootDirectoryId
+                            Sha256Hash = targetStatus.RootDirectorySha256Hash
+                            Blake3Hash = targetStatus.RootDirectoryBlake3Hash
+                            EventCursor = initialCursor
+                        })
+
+                let localRootScope =
+                    WorkingDirectoryUpdateContracts.LocalRootScope.create configuration.RootDirectory
+                    |> required
+
+                let operation =
+                    WorkingDirectoryUpdateContracts.Operation.connectBootstrap target initialCursor localRootScope
+                    |> required
+
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+
+                completion
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
             })
 
-    /// Cancellation after the status scan but before SQLite acceptance leaves neither status nor boundary committed.
+    /// Connect without force rejects an exact untracked conflict without changing unrelated local content or terminal state.
     [<Test>]
-    let ``connect cancellation before durable acceptance leaves no status or boundary`` () =
+    let ``connect WDU without force rejects the selected conflict and preserves local state`` () =
         withConfiguredTempDir (fun configuration ->
             task {
-                let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
-                let selectedRootId = DirectoryVersionId.Parse "22222222-8020-4000-8000-222222222222"
-                let! scannedStatus = Services.createNewGraceStatusFile GraceStatus.Default parseResult
+                let selectedPath = "selected.txt"
+                let conflictingBytes = Encoding.UTF8.GetBytes("conflicting bytes")
+                let unrelatedBytes = Encoding.UTF8.GetBytes("unrelated bytes")
+                let! targetStatus, _, target, prepared = createConnectInput configuration selectedPath (Encoding.UTF8.GetBytes("selected bytes"))
+                let! currentStatus = readFreshConnectStatus configuration
+                let initialCursor = "branch-event-v1:846"
 
-                let boundary =
-                    { ReferenceMaterializationBoundaryDto.Default with
-                        RepositoryId = configuration.RepositoryId
-                        BranchId = configuration.BranchId
-                        DirectoryId = selectedRootId
-                        Sha256Hash = scannedStatus.RootDirectorySha256Hash
-                        Blake3Hash = scannedStatus.RootDirectoryBlake3Hash
-                        EventCursor = "branch-event-v1:2"
+                File.WriteAllBytes(Path.Combine(configuration.RootDirectory, selectedPath), conflictingBytes)
+                File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "unrelated.txt"), unrelatedBytes)
+
+                let! outcome =
+                    WorkingDirectoryUpdate.Connect.run
+                        target
+                        currentStatus
+                        targetStatus
+                        prepared
+                        initialCursor
+                        false
+                        "connect-846"
+                        CancellationToken.None
+                        WorkingDirectoryUpdate.Connect.none
+
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | other -> Assert.Fail($"Expected Connect WDU Rejected, got {other}.")
+
+                File.ReadAllBytes(Path.Combine(configuration.RootDirectory, selectedPath))
+                |> should equal conflictingBytes
+
+                File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "unrelated.txt"))
+                |> should equal unrelatedBytes
+
+                let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches currentStatus persistedStatus
+                |> should equal true
+
+                persistedStatus.RootDirectoryId
+                |> should equal currentStatus.RootDirectoryId
+
+                let! boundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                boundary |> should equal None
+
+                let! objectMetadataCommitted = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile targetStatus.RootDirectoryId
+
+                objectMetadataCommitted |> should equal false
+            })
+
+    /// Connect force never recursively deletes unrelated content nested under an exact target collision.
+    [<Test>]
+    let ``connect WDU force rejects a nonempty target directory and preserves its contents`` () =
+        withConfiguredTempDir (fun configuration ->
+            task {
+                let selectedPath = "selected.txt"
+                let nestedBytes = Encoding.UTF8.GetBytes("keep nested content")
+                let! targetStatus, _, target, prepared = createConnectInput configuration selectedPath (Encoding.UTF8.GetBytes("selected bytes"))
+                let! currentStatus = readFreshConnectStatus configuration
+                let selectedDirectory = Path.Combine(configuration.RootDirectory, selectedPath)
+
+                Directory.CreateDirectory(selectedDirectory)
+                |> ignore
+
+                File.WriteAllBytes(Path.Combine(selectedDirectory, "keep.txt"), nestedBytes)
+
+                let! outcome =
+                    WorkingDirectoryUpdate.Connect.run
+                        target
+                        currentStatus
+                        targetStatus
+                        prepared
+                        "branch-event-v1:846-force"
+                        true
+                        "connect-846-force"
+                        CancellationToken.None
+                        WorkingDirectoryUpdate.Connect.none
+
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.Rejected _ -> ()
+                | other -> Assert.Fail($"Expected Connect WDU Rejected, got {other}.")
+
+                Directory.Exists(selectedDirectory)
+                |> should equal true
+
+                File.ReadAllBytes(Path.Combine(selectedDirectory, "keep.txt"))
+                |> should equal nestedBytes
+
+                let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                persistedStatus.RootDirectoryId
+                |> should equal currentStatus.RootDirectoryId
+            })
+
+    /// A failure at the Connect commit boundary leaves status, object metadata, cursor, and completion uncommitted together.
+    [<Test>]
+    let ``connect WDU commits no terminal facts when the atomic commit fails`` () =
+        withConfiguredTempDir (fun configuration ->
+            task {
+                let selectedPath = "selected.txt"
+                let selectedBytes = Encoding.UTF8.GetBytes("selected bytes")
+                let! targetStatus, targetFile, target, prepared = createConnectInput configuration selectedPath selectedBytes
+                let! currentStatus = readFreshConnectStatus configuration
+                let initialCursor = "branch-event-v1:847"
+
+                let failureInjection =
+                    { WorkingDirectoryUpdate.Connect.none with
+                        ThrowAt =
+                            fun point ->
+                                if point = WorkingDirectoryUpdate.Connect.BeforeCommit then
+                                    raise (InvalidOperationException("connect-before-commit"))
                     }
 
-                use cancellation = new CancellationTokenSource()
-                let mutable cancelled = false
+                let! outcome =
+                    WorkingDirectoryUpdate.Connect.run
+                        target
+                        currentStatus
+                        targetStatus
+                        prepared
+                        initialCursor
+                        false
+                        "connect-847"
+                        CancellationToken.None
+                        failureInjection
 
-                try
-                    let! _ =
-                        Connect.createAndWriteMaterializedStatusWithBeforeDurableWrite
-                            GraceStatus.Default
-                            parseResult
-                            boundary
-                            cancellation.Token
-                            cancellation.Cancel
+                match outcome with
+                | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure ->
+                    WorkingDirectoryUpdateContracts.Failure.reason failure
+                    |> should contain "connect-before-commit"
+                | other -> Assert.Fail($"Expected Connect WDU UpdateIncomplete, got {other}.")
 
-                    ()
-                with
-                | :? OperationCanceledException -> cancelled <- true
+                File.ReadAllBytes(Path.Combine(configuration.RootDirectory, selectedPath))
+                |> should equal selectedBytes
 
-                let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
 
-                let! persistedBoundary =
-                    LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches currentStatus persistedStatus
+                |> should equal true
 
-                Assert.That(cancelled, Is.True)
-                Assert.That(persistedStatus.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
-                Assert.That(persistedBoundary, Is.EqualTo(None))
+                persistedStatus.RootDirectoryId
+                |> should equal currentStatus.RootDirectoryId
+
+                let! boundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                boundary |> should equal None
+
+                let! objectMetadataCommitted = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile targetStatus.RootDirectoryId
+
+                objectMetadataCommitted |> should equal false
+
+                let! fileMetadataCommitted = LocalStateDb.isFileVersionInObjectCache configuration.GraceStatusFile targetFile
+
+                fileMetadataCommitted |> should equal false
+
+                let localRootScope =
+                    WorkingDirectoryUpdateContracts.LocalRootScope.create configuration.RootDirectory
+                    |> required
+
+                let operation =
+                    WorkingDirectoryUpdateContracts.Operation.connectBootstrap target initialCursor localRootScope
+                    |> required
+
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+
+                completion |> should equal None
             })
 
     /// A no-download Connect never enters the retrieval path that can persist a remote boundary.
@@ -211,6 +516,33 @@ module ConnectTests =
     /// Gets grace config path needed by the test scenario.
     let private getGraceConfigPath root = Path.Combine(root, ".grace", "graceconfig.json")
 
+    /// Creates the persisted Connect configuration result used by output projection tests.
+    let private outputConfiguration repositoryId branchId : Grace.CLI.Common.LocalOutputDto.ConnectDto =
+        {
+            OwnerId = Guid.NewGuid()
+            OwnerName = "owner"
+            OrganizationId = Guid.NewGuid()
+            OrganizationName = "organization"
+            RepositoryId = repositoryId
+            RepositoryName = "repository"
+            BranchId = branchId
+            BranchName = "main"
+            DefaultBranchName = "main"
+            RetrievedDefaultBranch = false
+        }
+
+    /// Reads one named Connect fact from the common JSON envelope properties.
+    let private jsonPropertyValue (root: JsonElement) (name: string) =
+        let properties = root.GetProperty("Properties")
+
+        match properties.ValueKind with
+        | JsonValueKind.Object -> properties.GetProperty(name).GetString()
+        | JsonValueKind.Array ->
+            properties.EnumerateArray()
+            |> Seq.find (fun property -> property.GetProperty("Key").GetString() = name)
+            |> fun property -> property.GetProperty("Value").GetString()
+        | kind -> invalidOp $"Unexpected JSON Properties shape: {kind}."
+
     /// Verifies that connect creates config when missing.
     [<Test>]
     let ``connect creates config when missing`` () =
@@ -222,33 +554,115 @@ module ConnectTests =
             File.Exists(getGraceConfigPath root)
             |> should equal true)
 
-    /// Verifies that connect skip decision requires matching blake3 when remote has one.
+    /// A failed optional update reports persisted configuration and update failure separately in the JSON error envelope.
     [<Test>]
-    let ``connect skip decision requires matching blake3 when remote has one`` () =
-        let remoteFile =
-            FileVersion.CreateWithHashes
-                (RelativePath "same-sha-different-blake3.txt")
-                (Sha256Hash "shared-sha")
-                (Blake3Hash "remote-blake3")
-                String.Empty
-                false
-                10L
+    let ``connect JSON separates configured repository from failed update outcome`` () =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
 
-        Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "local-blake3") remoteFile
-        |> should equal false
+        let configuration = outputConfiguration repositoryId branchId
 
-        Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "remote-blake3") remoteFile
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+            let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json"; "connect" |])
+            let error = GraceError.Create "local update failed" "connect-output-json"
+
+            Connect.renderConfiguredUpdateFailure parseResult configuration "UpdateIncomplete" error
+            |> should equal -1
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
+        use document = JsonDocument.Parse(writer.ToString())
+        let root = document.RootElement
+
+        root.GetProperty("Error").GetString()
+        |> should equal "local update failed"
+
+        jsonPropertyValue root Connect.configurationOutcomeProperty
+        |> should equal "Configured"
+
+        jsonPropertyValue root Connect.updateOutcomeProperty
+        |> should equal "UpdateIncomplete"
+
+        jsonPropertyValue root "Connect.RepositoryId"
+        |> should equal (string repositoryId)
+
+        jsonPropertyValue root "Connect.BranchId"
+        |> should equal (string branchId)
+
+        writer.ToString()
+        |> should not' (contain "configuration remains saved")
+
+    /// A successful optional update reports configuration and update outcomes separately in one JSON success envelope.
+    [<Test>]
+    let ``connect JSON separates configured repository from successful update outcome`` () =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+        let configuration = outputConfiguration repositoryId branchId
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+            let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json"; "connect" |])
+
+            Connect.renderConfiguredUpdateSuccess parseResult configuration "Unchanged" "connect-output-json-success"
+            |> should equal 0
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
+        use document = JsonDocument.Parse(writer.ToString())
+        let root = document.RootElement
+        let returnValue = root.GetProperty("ReturnValue")
+
+        returnValue.GetProperty("RepositoryId").GetGuid()
+        |> should equal repositoryId
+
+        returnValue.GetProperty("BranchId").GetGuid()
+        |> should equal branchId
+
+        returnValue
+            .GetProperty("RetrievedDefaultBranch")
+            .GetBoolean()
         |> should equal true
 
-    /// Verifies that connect does not accept a remote file without BLAKE3 as a match.
-    [<Test>]
-    let ``connect skip decision rejects empty remote blake3`` () =
-        let remoteFile = FileVersion.Default
-        remoteFile.RelativePath <- RelativePath "missing-blake3.txt"
-        remoteFile.Sha256Hash <- Sha256Hash "sha"
+        jsonPropertyValue root Connect.configurationOutcomeProperty
+        |> should equal "Configured"
 
-        Connect.existingFileMatchesRemoteVersion (Sha256Hash "sha") (Blake3Hash String.Empty) remoteFile
-        |> should equal false
+        jsonPropertyValue root Connect.updateOutcomeProperty
+        |> should equal "Unchanged"
+
+    /// A failed optional update repeats the durable configuration result before the human-readable update error.
+    [<Test>]
+    let ``connect human output keeps configuration success separate from update failure`` () =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        let configuration = outputConfiguration (Guid.NewGuid()) (Guid.NewGuid())
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+            let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+            let error = GraceError.Create "local update failed" "connect-output-human"
+
+            Connect.renderConfiguredUpdateFailure parseResult configuration "Rejected" error
+            |> should equal -1
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
+        writer.ToString()
+        |> should contain "Grace repository configuration remains saved."
+
+        writer.ToString()
+        |> should contain "local update failed"
 
     /// Verifies that a typed default sentinel is reported as no Reference even if another field is adversarially populated.
     [<Test>]

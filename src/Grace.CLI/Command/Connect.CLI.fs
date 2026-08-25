@@ -13,11 +13,11 @@ open Grace.Types.Branch
 open Grace.Types.Organization
 open Grace.Types.Reference
 open Grace.Types.Repository
+open Grace.Types.DirectoryVersion
 open Grace.Types.Common
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open System
-open System.Collections.Generic
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.IO
@@ -26,8 +26,6 @@ open System.Threading
 open System.CommandLine
 open Spectre.Console
 open Azure.Storage.Blobs
-open Azure.Storage.Blobs.Models
-open System.IO.Compression
 open Grace.CLI
 
 /// Groups the connect command parser, handlers, and output helpers.
@@ -502,58 +500,6 @@ module Connect =
                     return Ok boundary
         }
 
-    /// Coordinates existing file matches remote version behavior for this CLI command path.
-    let internal existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash (fileVersion: FileVersion) =
-        not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash))
-        && localSha256Hash = fileVersion.Sha256Hash
-        && localBlake3Hash = fileVersion.Blake3Hash
-
-    /// Coordinates collect file conflicts behavior for this CLI command path.
-    let private collectFileConflicts (fileVersions: FileVersion array) (force: bool) =
-        let conflicts = ResizeArray<string>()
-        let filesToSkip = HashSet<RelativePath>()
-
-        /// Coordinates rec behavior for this CLI command path.
-        let rec loop index =
-            task {
-                if index >= fileVersions.Length then
-                    return conflicts, filesToSkip
-                else
-                    let fileVersion = fileVersions[index]
-                    let filePath = Path.Combine(Current().RootDirectory, fileVersion.RelativePath)
-
-                    if File.Exists(filePath) then
-                        try
-                            use stream = File.OpenRead(filePath)
-
-                            let! localHash = Grace.Shared.Services.computeSha256ForFile stream fileVersion.RelativePath
-
-                            let! localBlake3Hash =
-                                task {
-                                    if
-                                        localHash = fileVersion.Sha256Hash
-                                        && not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash))
-                                    then
-                                        stream.Position <- 0L
-                                        let! localFileContentHash = Grace.Shared.Services.computeBlake3ForFile stream
-                                        return Blake3Hash $"{localFileContentHash}"
-                                    else
-                                        return Blake3Hash String.Empty
-                                }
-
-                            if existingFileMatchesRemoteVersion localHash localBlake3Hash fileVersion then
-                                filesToSkip.Add(fileVersion.RelativePath)
-                                |> ignore
-                            elif not force then
-                                conflicts.Add(fileVersion.RelativePath)
-                        with
-                        | _ -> if not force then conflicts.Add(fileVersion.RelativePath)
-
-                    return! loop (index + 1)
-            }
-
-        loop 0
-
     /// Ensures required command context is present.
     let private ensureConfigurationFileExists () =
         if not <| configurationFileExists () then
@@ -697,15 +643,6 @@ module Connect =
                 | Error error -> Error error
         }
 
-    /// Builds command objects or parameters for execution.
-    let private buildFileVersionsByRelativePath (fileVersions: FileVersion array) =
-        let lookup = Dictionary<RelativePath, FileVersion>(fileVersions.Length, StringComparer.OrdinalIgnoreCase)
-
-        fileVersions
-        |> Seq.iter (fun fileVersion -> lookup[normalizeFilePath fileVersion.RelativePath] <- fileVersion)
-
-        lookup
-
     /// Writes human line data through the CLI output contract.
     let private writeHumanLine (parseResult: ParseResult) text =
         if
@@ -736,94 +673,128 @@ module Connect =
             RetrievedDefaultBranch = retrievedDefaultBranch
         }
 
-    /// Coordinates extract zip entries behavior for this CLI command path.
-    let private extractZipEntries
-        (parseResult: ParseResult)
-        (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
-        (filesToSkip: HashSet<RelativePath>)
-        (zipFile: Stream)
-        =
-        use zipFile = zipFile
-        use zipArchive = new ZipArchive(zipFile, ZipArchiveMode.Read)
+    /// Names the Connect error property that reports the already-persisted configuration outcome.
+    let internal configurationOutcomeProperty = "Connect.ConfigurationOutcome"
 
-        writeHumanLine parseResult $"[{Colors.Important}]Streaming contents from .zip file.[/]"
-        writeHumanLine parseResult $"[{Colors.Important}]Starting to write files to disk.[/]"
+    /// Names the Connect error property that reports the optional working-directory update outcome.
+    let internal updateOutcomeProperty = "Connect.UpdateOutcome"
 
-        let additionalEntries = ResizeArray<string>()
+    /// Renders a failed optional update while preserving the successful configuration result in human and JSON output.
+    let internal renderConfiguredUpdateFailure (parseResult: ParseResult) (configuration: LocalOutputDto.ConnectDto) updateOutcome (error: GraceError) =
+        writeHumanLine parseResult $"[{Colors.Important}]Grace repository configuration remains saved.[/]"
 
-        zipArchive.Entries
-        |> Seq.iter (fun entry ->
-            if not <| String.IsNullOrEmpty(entry.Name) then
-                let entryRelativePath = normalizeFilePath entry.FullName
+        error.enhance (configurationOutcomeProperty, "Configured")
+        |> ignore
 
-                match fileVersionsByRelativePath.TryGetValue(entryRelativePath) with
-                | true, fileVersion ->
-                    let objectFileName = getLocalObjectCacheFileName fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.Blake3Hash
+        error.enhance ("Connect.RepositoryId", configuration.RepositoryId)
+        |> ignore
 
-                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
+        error.enhance ("Connect.BranchId", configuration.BranchId)
+        |> ignore
 
-                    let objectFileInfo = FileInfo(Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, objectFileName))
+        error.enhance (updateOutcomeProperty, updateOutcome)
+        |> ignore
 
-                    Directory.CreateDirectory(fileInfo.DirectoryName)
-                    |> ignore
+        Error error |> renderOutput parseResult
 
-                    Directory.CreateDirectory(objectFileInfo.DirectoryName)
-                    |> ignore
+    /// Renders a successful optional update with configuration and update outcomes as separate envelope facts.
+    let internal renderConfiguredUpdateSuccess (parseResult: ParseResult) (configuration: LocalOutputDto.ConnectDto) updateOutcome correlationId =
+        let result = GraceReturnValue.Create { configuration with RetrievedDefaultBranch = true } correlationId
 
-                    let writeWorkingFile =
-                        not
-                        <| filesToSkip.Contains(fileVersion.RelativePath)
+        result.enhance (configurationOutcomeProperty, "Configured")
+        |> ignore
 
-                    let writeObjectFile = not objectFileInfo.Exists
+        result.enhance ("Connect.RepositoryId", configuration.RepositoryId)
+        |> ignore
 
-                    if fileVersion.IsBinary then
-                        if writeWorkingFile then entry.ExtractToFile(fileInfo.FullName, true)
-                        if writeObjectFile then entry.ExtractToFile(objectFileInfo.FullName, true)
-                    else
-                        /// Coordinates uncompress and write to file behavior for this CLI command path.
-                        let uncompressAndWriteToFile (zipEntry: ZipArchiveEntry) (fileInfo: FileInfo) =
-                            use entryStream = zipEntry.Open()
-                            use fileStream = fileInfo.Create()
-                            use gzipStream = new GZipStream(entryStream, CompressionMode.Decompress)
-                            gzipStream.CopyTo(fileStream)
+        result.enhance ("Connect.BranchId", configuration.BranchId)
+        |> ignore
 
-                        if writeWorkingFile then uncompressAndWriteToFile entry fileInfo
-                        if writeObjectFile then uncompressAndWriteToFile entry objectFileInfo
+        result.enhance (updateOutcomeProperty, updateOutcome)
+        |> ignore
 
-                    if parseResult |> verbose then
-                        writeHumanLine parseResult $"[{Colors.Important}]Wrote {fileVersion.RelativePath}.[/]"
-                | false, _ -> additionalEntries.Add(entry.FullName))
+        Ok result |> renderOutput parseResult
 
-        if additionalEntries.Count > 0
-           && (parseResult |> verbose) then
-            writeHumanLine parseResult $"[{Colors.Deemphasized}]Zip contained {additionalEntries.Count} additional entry(ies). Ignored.[/]"
-
-        writeHumanLine parseResult $"[{Colors.Important}]Finished writing files to disk.[/]"
-
-    /// Builds and atomically persists local status after exposing the final pre-write seam used by deterministic cancellation proof.
-    let internal createAndWriteMaterializedStatusWithBeforeDurableWrite
-        (previousGraceStatus: GraceStatus)
-        (parseResult: ParseResult)
+    /// Builds the exact target status selected by the server without retaining predecessor descendants.
+    let private createTargetStatus
+        (previousStatus: GraceStatus)
         (boundary: ReferenceMaterializationBoundaryDto)
-        (cancellationToken: CancellationToken)
-        (beforeDurableWrite: unit -> unit)
+        (directoryVersionDtos: DirectoryVersionDto seq)
         =
-        task {
-            let! graceStatus = createNewGraceStatusFileForRoot boundary.DirectoryId previousGraceStatus parseResult
-            cancellationToken.ThrowIfCancellationRequested()
-            beforeDurableWrite ()
-            do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary cancellationToken
-            return graceStatus
-        }
+        let targetIndex = GraceIndex()
+        let mutable duplicateDirectoryId = None
 
-    /// Builds and atomically persists the local status represented by a selected server materialization boundary.
-    let internal createAndWriteMaterializedStatus
-        (previousGraceStatus: GraceStatus)
-        (parseResult: ParseResult)
-        (boundary: ReferenceMaterializationBoundaryDto)
-        (cancellationToken: CancellationToken)
-        =
-        createAndWriteMaterializedStatusWithBeforeDurableWrite previousGraceStatus parseResult boundary cancellationToken ignore
+        for directoryVersionDto in directoryVersionDtos do
+            let directory = directoryVersionDto.DirectoryVersion.ToLocalDirectoryVersion DateTime.UtcNow
+
+            if not (targetIndex.TryAdd(directory.DirectoryVersionId, directory)) then
+                duplicateDirectoryId <- Some directory.DirectoryVersionId
+
+        match duplicateDirectoryId with
+        | Some directoryVersionId -> Error $"The server-selected DirectoryVersion graph repeats '{directoryVersionId}'."
+        | None ->
+            match targetIndex.TryGetValue(boundary.DirectoryId) with
+            | false, _ -> Error "The server-selected DirectoryVersion graph does not contain its selected root."
+            | true, rootDirectory when
+                rootDirectory.RelativePath
+                <> Constants.RootDirectoryPath
+                || rootDirectory.RepositoryId
+                   <> boundary.RepositoryId
+                || rootDirectory.Sha256Hash <> boundary.Sha256Hash
+                || rootDirectory.Blake3Hash <> boundary.Blake3Hash
+                ->
+                Error "The server-selected DirectoryVersion root does not match its materialization boundary."
+            | true, rootDirectory ->
+                if targetIndex.Values
+                   |> Seq.exists (fun directory -> directory.RepositoryId <> boundary.RepositoryId) then
+                    Error "The server-selected DirectoryVersion graph contains a directory from another repository."
+                else
+                    let targetStatus =
+                        {
+                            Index = targetIndex
+                            RootDirectoryId = rootDirectory.DirectoryVersionId
+                            RootDirectorySha256Hash = rootDirectory.Sha256Hash
+                            RootDirectoryBlake3Hash = rootDirectory.Blake3Hash
+                            LastSuccessfulDirectoryVersionUpload = previousStatus.LastSuccessfulDirectoryVersionUpload
+                            LastSuccessfulFileUpload = previousStatus.LastSuccessfulFileUpload
+                        }
+
+                    match LocalStateDb.validateCompleteStatusTree targetStatus with
+                    | Error error -> Error $"The server-selected DirectoryVersion graph is incomplete: {error}"
+                    | Ok () -> Ok targetStatus
+
+    /// Creates the immutable prepared-content declaration for one exact Connect target status.
+    let private createPreparedManifest (targetStatus: GraceStatus) =
+        targetStatus.Index.Values
+        |> Seq.collect (fun directory ->
+            seq {
+                if directory.DirectoryVersionId
+                   <> targetStatus.RootDirectoryId then
+                    yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory directory.RelativePath
+
+                for file in directory.Files do
+                    yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(file.RelativePath, file.Sha256Hash, file.Blake3Hash)
+            })
+        |> WorkingDirectoryUpdateContracts.PreparedManifest.create
+
+    /// Projects the shared update outcome without mixing it with Connect configuration reporting.
+    let private renderWorkingDirectoryOutcome parseResult configuration correlationId outcome =
+        match outcome with
+        | WorkingDirectoryUpdateContracts.Outcome.Updated _ ->
+            writeHumanLine parseResult $"[{Colors.Important}]Updated the working directory to the selected root.[/]"
+            renderConfiguredUpdateSuccess parseResult configuration "Updated" correlationId
+        | WorkingDirectoryUpdateContracts.Outcome.Unchanged _ ->
+            writeHumanLine parseResult $"[{Colors.Deemphasized}]The working directory already matches the selected root.[/]"
+            renderConfiguredUpdateSuccess parseResult configuration "Unchanged" correlationId
+        | WorkingDirectoryUpdateContracts.Outcome.Rejected failure ->
+            GraceError.Create (WorkingDirectoryUpdateContracts.Failure.reason failure) correlationId
+            |> renderConfiguredUpdateFailure parseResult configuration "Rejected"
+        | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure ->
+            GraceError.Create (WorkingDirectoryUpdateContracts.Failure.reason failure) correlationId
+            |> renderConfiguredUpdateFailure parseResult configuration "UpdateIncomplete"
+        | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure) ->
+            GraceError.Create (WorkingDirectoryUpdateContracts.Failure.reason failure) correlationId
+            |> renderConfiguredUpdateFailure parseResult configuration "FinalizationIncomplete"
 
     /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
@@ -833,6 +804,7 @@ module Connect =
         (organizationDto: OrganizationDto)
         (repositoryDto: RepositoryDto)
         (branchDto: BranchDto)
+        (configurationOutput: LocalOutputDto.ConnectDto)
         (cancellationToken: CancellationToken)
         =
         task {
@@ -840,7 +812,7 @@ module Connect =
             let! boundaryResult = resolveTargetMaterializationBoundary parseResult graceIds ownerDto organizationDto repositoryDto branchDto
 
             match boundaryResult with
-            | Error error -> return (Error error |> renderOutput parseResult)
+            | Error error -> return renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed" error
             | Ok boundary ->
                 let directoryVersionId = boundary.DirectoryId
 
@@ -875,49 +847,63 @@ module Connect =
                     writeHumanLine parseResult $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
 
                     let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
+                    let! currentStatus = readGraceStatusFile ()
 
-                    let fileVersions =
-                        directoryVersionDtos
-                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
-                        |> Seq.collect (fun dv -> dv.Files)
-                        |> Seq.toArray
-
-                    let force = parseResult.GetValue(Options.force)
-
-                    let! conflicts, filesToSkip = collectFileConflicts fileVersions force
-
-                    if conflicts.Count > 0 then
-                        writeHumanLine parseResult $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
-
-                        if parseResult |> verbose then
-                            conflicts
-                            |> Seq.sort
-                            |> Seq.iter (fun conflict -> writeHumanLine parseResult $"[{Colors.Error}]{conflict}[/]")
-
+                    match createTargetStatus currentStatus boundary directoryVersionDtos with
+                    | Error error ->
                         return
-                            (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
-                             |> renderOutput parseResult)
-                    else
-                        let fileVersionsByRelativePath = buildFileVersionsByRelativePath fileVersions
+                            GraceError.Create error graceIds.CorrelationId
+                            |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
+                    | Ok targetStatus ->
+                        match createPreparedManifest targetStatus with
+                        | Error error ->
+                            return
+                                GraceError.Create error graceIds.CorrelationId
+                                |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
+                        | Ok manifest ->
+                            let blobClient = BlobClient(getZipFileReturnValue.ReturnValue)
 
-                        let uriWithSharedAccessSignature = getZipFileReturnValue.ReturnValue
+                            writeHumanLine parseResult $"[{Colors.Important}]Downloading and validating the selected zip file.[/]"
 
-                        // Download the .zip file to temp directory.
-                        let blobClient = BlobClient(uriWithSharedAccessSignature)
+                            let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024, cancellationToken = cancellationToken)
+                            let! preparedResult = ConnectZipStaging.prepare manifest zipFile cancellationToken
 
-                        let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024, cancellationToken = cancellationToken)
-                        extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
-                        cancellationToken.ThrowIfCancellationRequested()
+                            match preparedResult with
+                            | Error error ->
+                                return
+                                    GraceError.Create error graceIds.CorrelationId
+                                    |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
+                            | Ok preparedContent ->
+                                match
+                                    WorkingDirectoryUpdateContracts.Target.create
+                                        boundary.RepositoryId
+                                        boundary.BranchId
+                                        boundary.DirectoryId
+                                        boundary.Sha256Hash
+                                        boundary.Blake3Hash
+                                    with
+                                | Error error ->
+                                    WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
 
-                        writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
-                        let! previousGraceStatus = readGraceStatusFile ()
-                        let! graceStatus = createAndWriteMaterializedStatus previousGraceStatus parseResult boundary cancellationToken
+                                    return
+                                        GraceError.Create error graceIds.CorrelationId
+                                        |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
+                                | Ok target ->
+                                    let! outcome =
+                                        WorkingDirectoryUpdate.Connect.run
+                                            target
+                                            currentStatus
+                                            targetStatus
+                                            preparedContent
+                                            boundary.EventCursor
+                                            (parseResult.GetValue(Options.force))
+                                            graceIds.CorrelationId
+                                            cancellationToken
+                                            WorkingDirectoryUpdate.Connect.none
 
-                        writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
-                        do! upsertObjectCache graceStatus.Index.Values
-                        return 0
-                | (Error error, _) -> return (Error error |> renderOutput parseResult)
-                | (_, Error error) -> return (Error error |> renderOutput parseResult)
+                                    return renderWorkingDirectoryOutcome parseResult configurationOutput graceIds.CorrelationId outcome
+                | (Error error, _) -> return renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed" error
+                | (_, Error error) -> return renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed" error
         }
 
     /// Runs the materialization branch only when Connect explicitly requested retrieval.
@@ -928,6 +914,22 @@ module Connect =
                 return Some exitCode
             else
                 return None
+        }
+
+    /// Keeps post-configuration retrieval exceptions inside the separated Connect update result.
+    let private retrieveAfterConfiguration parseResult configurationOutput correlationId retrieve =
+        task {
+            try
+                return! retrieve ()
+            with
+            | :? OperationCanceledException ->
+                return
+                    GraceError.Create "Connect retrieval was cancelled." correlationId
+                    |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
+            | ex ->
+                return
+                    GraceError.Create $"{ExceptionResponse.Create ex}" correlationId
+                    |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
         }
 
     /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.
@@ -980,25 +982,26 @@ module Connect =
                                 writeHumanLine parseResult $"[{Colors.Important}]Wrote new Grace configuration file.[/]"
 
                                 let retrieveDefaultBranch = parseResult.GetValue(Options.retrieveDefaultBranch)
+                                let configurationOutput = toConnectDto ownerDto organizationDto repositoryDto branchDto false
 
                                 let! retrieveExitCode =
                                     retrieveWhenRequested retrieveDefaultBranch (fun () ->
-                                        retrieveDefaultBranchAndWrite parseResult graceIds ownerDto organizationDto repositoryDto branchDto cancellationToken)
+                                        retrieveAfterConfiguration parseResult configurationOutput graceIds.CorrelationId (fun () ->
+                                            retrieveDefaultBranchAndWrite
+                                                parseResult
+                                                graceIds
+                                                ownerDto
+                                                organizationDto
+                                                repositoryDto
+                                                branchDto
+                                                configurationOutput
+                                                cancellationToken))
 
                                 match retrieveExitCode with
-                                | Some 0 ->
-                                    let output = toConnectDto ownerDto organizationDto repositoryDto branchDto true
-
-                                    return
-                                        GraceReturnValue.Create output (getCorrelationId parseResult)
-                                        |> Ok
-                                        |> renderOutput parseResult
                                 | Some exitCode -> return exitCode
                                 | None ->
-                                    let output = toConnectDto ownerDto organizationDto repositoryDto branchDto false
-
                                     return
-                                        GraceReturnValue.Create output (getCorrelationId parseResult)
+                                        GraceReturnValue.Create configurationOutput (getCorrelationId parseResult)
                                         |> Ok
                                         |> renderOutput parseResult
                             | Error error -> return (Error error |> renderOutput parseResult)
