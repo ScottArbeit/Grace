@@ -747,6 +747,32 @@ module BranchCommandTests =
             LatestReference = latestReference
         }
 
+    /// Verifies that post-resolution Branch-name validation accepts the server's case-insensitive match.
+    [<Test; Category("Issue1025")>]
+    let ``Branch selector accepts a stored name that differs only by case`` () =
+        let selectedBranchId = BranchId.NewGuid()
+        let referenceId = ReferenceId.NewGuid()
+        let selectedBranch = branchSelectorDto selectedBranchId "Feature" referenceId (DirectoryVersionId.NewGuid())
+
+        match Branch.tryCreateBranchSelectorReferenceTarget ownerId organizationId repositoryId BranchId.Empty "feature" selectedBranch with
+        | Ok target ->
+            target.ReferenceId |> should equal referenceId
+
+            target.SelectedBranchId
+            |> should equal (Some selectedBranchId)
+        | Error error -> Assert.Fail($"Expected a case-insensitive Branch-name match, but received: {error}")
+
+    /// Verifies that post-resolution Branch-name validation still rejects a genuinely different name.
+    [<Test; Category("Issue1025")>]
+    let ``Branch selector rejects a genuinely different stored name`` () =
+        let selectedBranch = branchSelectorDto (BranchId.NewGuid()) "Feature" (ReferenceId.NewGuid()) (DirectoryVersionId.NewGuid())
+
+        match Branch.tryCreateBranchSelectorReferenceTarget ownerId organizationId repositoryId BranchId.Empty "different" selectedBranch with
+        | Error error ->
+            error
+            |> should equal "The selected Branch response does not match the requested Branch name."
+        | Ok _ -> Assert.Fail("Expected a genuinely different Branch name to be rejected.")
+
     /// Verifies that an absent latest Reference is rejected before target retrieval can begin.
     [<Test; Category("Issue1025")>]
     let ``Branch selector rejects missing latest Reference`` () =

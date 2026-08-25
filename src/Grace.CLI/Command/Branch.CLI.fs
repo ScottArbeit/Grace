@@ -604,8 +604,7 @@ module Branch =
             Error "The selected Branch response does not match the requested Branch ID."
         elif requestedBranchId = BranchId.Empty
              && (String.IsNullOrWhiteSpace requestedBranchName
-                 || selectedBranch.BranchName
-                    <> BranchName requestedBranchName) then
+                 || not (String.Equals(string selectedBranch.BranchName, requestedBranchName, StringComparison.OrdinalIgnoreCase))) then
             Error "The selected Branch response does not match the requested Branch name."
         elif latestReference.ReferenceId = ReferenceId.Empty then
             Error "The selected Branch does not have a latest Reference."
