@@ -188,7 +188,7 @@ module internal WorkingDirectoryUpdate =
 
             rejection, files, directories
 
-        /// Derives complete target file and directory topology from the immutable prepared manifest, including file ancestors.
+        /// Classifies explicit manifest paths before deriving parents so target topology never depends on entry order.
         let private targetTopology manifest =
             let files = Dictionary<string, Sha256Hash * Blake3Hash * RelativePath>(StringComparer.Ordinal)
             let directories = Dictionary<string, RelativePath>(StringComparer.Ordinal)
@@ -207,14 +207,6 @@ module internal WorkingDirectoryUpdate =
                         rejection <- Some { Path = path; Classification = AmbiguousTarget }
                     else
                         directories[key] <- path
-
-                    for parent in parentDirectories path do
-                        let parentKey = pathKey parent
-
-                        if files.ContainsKey(parentKey) then
-                            rejection <- Some { Path = parent; Classification = AmbiguousTarget }
-                        else
-                            directories[parentKey] <- parent
                 | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, sha256Hash, blake3Hash) ->
                     let key = pathKey path
 
@@ -226,13 +218,19 @@ module internal WorkingDirectoryUpdate =
                     else
                         files[key] <- (sha256Hash, blake3Hash, path)
 
-                    for parent in parentDirectories path do
-                        let parentKey = pathKey parent
+            for entry in WorkingDirectoryUpdateContracts.PreparedManifest.entries manifest do
+                let path =
+                    match entry with
+                    | WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory path
+                    | WorkingDirectoryUpdateContracts.PreparedManifestEntry.File (path, _, _) -> path
 
-                        if files.ContainsKey(parentKey) then
-                            rejection <- Some { Path = parent; Classification = AmbiguousTarget }
-                        else
-                            directories[parentKey] <- parent
+                for parent in parentDirectories path do
+                    let parentKey = pathKey parent
+
+                    if files.ContainsKey(parentKey) then
+                        rejection <- Some { Path = parent; Classification = AmbiguousTarget }
+                    else
+                        directories[parentKey] <- parent
 
             rejection, files, directories
 
