@@ -81,7 +81,8 @@ Do not use an epic branch merely to mirror the parent issue or preserve stale an
 Before semantic work:
 
 - pin the exact base SHA and eventual delivery target;
-- run required restore, build, and integration checks;
+- apply the installed `dev-process` evidence-reuse rule: reuse applicable exact-commit or exact-tree CI, build, packet,
+  witness, and integration results, and run only the smallest check needed to close a named gap;
 - inspect issue delta and eventual delivery delta against `main`;
 - classify merge and rebase conflicts; and
 - distinguish source-level salvage from ancestry requirements.
@@ -165,7 +166,10 @@ Use the profile selected in `docs/Development process.md`:
 | `deployment-runtime` | Aspire, emulators, Docker, Azure resources, scripts, and runtime configuration |
 
 Focused proof comes first. GitHub `Validate` is the required broad gate for the final PR head. For a newly composed or
-refreshed integration base, complete the broad admissibility gate before semantic work and before R1.
+refreshed integration base, establish broad admissibility before semantic work and before R1. An existing result covers
+that gate when it names the exact commit or an identical tree and its relevant inputs have not changed. Run a new broad
+local check before the first edit only when the composition lacks that coverage or a concrete drift signal makes the
+existing result inapplicable.
 
 Common commands:
 

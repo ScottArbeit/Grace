@@ -859,12 +859,87 @@ type ReferenceMaterializationBoundarySelectionTests() =
         let parameters = GetReferenceMaterializationBoundaryParameters()
         let branchBase = candidate 0L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Commit true
         let promotion = candidate 5L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Promotion false
+        let laterSave = candidate 7L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Save false
 
-        let promoted = Grace.Server.Branch.trySelectReferenceMaterializationBoundary parameters [| branchBase; promotion |]
+        let promoted = Grace.Server.Branch.trySelectReferenceMaterializationBoundary parameters [| branchBase; promotion; laterSave |]
         let basedOnly = Grace.Server.Branch.trySelectReferenceMaterializationBoundary parameters [| branchBase |]
 
         Assert.That(promoted.Value.DirectoryId, Is.EqualTo(promotion.Reference.DirectoryId))
+        Assert.That(promoted.Value.EventCursor, Is.EqualTo("branch-event-v1:5"))
         Assert.That(basedOnly.Value.DirectoryId, Is.EqualTo(branchBase.Reference.DirectoryId))
+
+    /// A stale Reference cache cannot override the durable DirectoryVersion hashes in the Connect materialization boundary.
+    [<Test>]
+    member _.MaterializationBoundaryUsesCanonicalDurableDirectoryVersionHashes() =
+        let selected = candidate 8L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Promotion false
+
+        let staleBoundary = Grace.Server.Branch.trySelectReferenceMaterializationBoundary (GetReferenceMaterializationBoundaryParameters()) [| selected |]
+
+        let canonicalDirectoryVersion =
+            DirectoryVersion.CreateWithHashes
+                selected.Reference.DirectoryId
+                (Guid.Parse("33333333-8020-4000-8000-333333333333"))
+                (Guid.Parse("44444444-8020-4000-8000-444444444444"))
+                repositoryId
+                RootDirectoryPath
+                (Sha256Hash "canonical-sha256")
+                (Blake3Hash "canonical-blake3")
+                (List<DirectoryVersionId>())
+                (List<FileVersion>())
+                0L
+
+        let result =
+            staleBoundary
+            |> Option.bind (fun boundary -> Grace.Server.Branch.tryCreateCanonicalReferenceMaterializationBoundary boundary canonicalDirectoryVersion)
+
+        Assert.That(result.IsSome, Is.True)
+        Assert.That(staleBoundary.Value.Sha256Hash, Is.Not.EqualTo(canonicalDirectoryVersion.Sha256Hash))
+        Assert.That(staleBoundary.Value.Blake3Hash, Is.Not.EqualTo(canonicalDirectoryVersion.Blake3Hash))
+        Assert.That(result.Value.RepositoryId, Is.EqualTo(selected.RepositoryId))
+        Assert.That(result.Value.BranchId, Is.EqualTo(selected.BranchId))
+        Assert.That(result.Value.DirectoryId, Is.EqualTo(canonicalDirectoryVersion.DirectoryVersionId))
+        Assert.That(result.Value.Sha256Hash, Is.EqualTo(canonicalDirectoryVersion.Sha256Hash))
+        Assert.That(result.Value.Blake3Hash, Is.EqualTo(canonicalDirectoryVersion.Blake3Hash))
+        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:8"))
+
+    /// A boundary cannot be returned when the durable DirectoryVersion violates the selected root contract.
+    [<Test>]
+    member _.MaterializationBoundaryRejectsInvalidDurableDirectoryVersion() =
+        let selected = candidate 9L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Promotion false
+
+        let selectedBoundary = Grace.Server.Branch.trySelectReferenceMaterializationBoundary (GetReferenceMaterializationBoundaryParameters()) [| selected |]
+
+        let invalidCases =
+            [|
+                "mismatched directory identity", (fun (directoryVersion: DirectoryVersion) -> directoryVersion.DirectoryVersionId <- Guid.NewGuid())
+                "mismatched repository", (fun directoryVersion -> directoryVersion.RepositoryId <- Guid.NewGuid())
+                "empty directory identity", (fun directoryVersion -> directoryVersion.DirectoryVersionId <- DirectoryVersionId.Empty)
+                "non-root path", (fun directoryVersion -> directoryVersion.RelativePath <- "src")
+                "empty SHA-256", (fun directoryVersion -> directoryVersion.Sha256Hash <- Sha256Hash String.Empty)
+                "empty BLAKE3", (fun directoryVersion -> directoryVersion.Blake3Hash <- Blake3Hash String.Empty)
+            |]
+
+        for caseName, invalidate in invalidCases do
+            let directoryVersion =
+                DirectoryVersion.CreateWithHashes
+                    selected.Reference.DirectoryId
+                    (Guid.Parse("33333333-8020-4000-8000-333333333333"))
+                    (Guid.Parse("44444444-8020-4000-8000-444444444444"))
+                    repositoryId
+                    RootDirectoryPath
+                    (Sha256Hash "durable-sha256")
+                    (Blake3Hash "durable-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>())
+                    0L
+
+            invalidate directoryVersion
+
+            let result =
+                selectedBoundary
+                |> Option.bind (fun boundary -> Grace.Server.Branch.tryCreateCanonicalReferenceMaterializationBoundary boundary directoryVersion)
+
+            Assert.That(result, Is.EqualTo(None), caseName)
 
     /// The latest exact eligible local root tuple wins even when an earlier eligible event has the same immutable root.
     [<Test>]
