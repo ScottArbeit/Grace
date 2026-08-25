@@ -22,6 +22,7 @@
     <Compile Include="Branch.CLI.Tests.fs" />
     <Compile Include="Connect.CLI.Parsing.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
+    <Compile Include="ConnectZipStaging.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
     <Compile Include="Artifact.SDK.Tests.fs" />
     <Compile Include="ClientIdentity.SDK.Tests.fs" />

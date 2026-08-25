@@ -26,6 +26,7 @@
 		<Compile Include="Log.CLI.fs" />
 		<Compile Include="Text.CLI.fs" />
 		<Compile Include="Command\WorkingDirectoryUpdateContracts.CLI.fs" />
+		<Compile Include="Command\ConnectZipStaging.CLI.fs" />
 		<Compile Include="Command\WorkingDirectoryUpdate.Transition.CLI.fs" />
 		<Compile Include="LocalStateDb.CLI.fs" />
 		<Compile Include="SelectProjection.CLI.fs" />
