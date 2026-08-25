@@ -595,6 +595,40 @@ module internal WorkingDirectoryUpdate =
         /// Allows Connect force to replace only exact eligible target conflicts while preserving every unrelated path.
         let planConnectForce (currentStatus: GraceStatus) manifest = task { return planSynchronously false true currentStatus manifest }
 
+    /// Recognizes only the empty local-state snapshot created before a fresh Connect has a rooted status graph.
+    let private isFreshConnectBootstrapStatus operation (status: GraceStatus) =
+        WorkingDirectoryUpdateContracts.Operation.callerKind operation = WorkingDirectoryUpdateContracts.CallerKind.Connect
+        && not (isNull (box status.Index))
+        && status.Index.Count = 0
+        && status.RootDirectoryId = DirectoryVersionId.Empty
+        && status.RootDirectorySha256Hash = Sha256Hash String.Empty
+        && status.RootDirectoryBlake3Hash = Blake3Hash String.Empty
+
+    /// Validates a complete rooted predecessor or the one pristine sentinel supported by fresh Connect bootstrap.
+    let private validateAdmissibleStatus operation status =
+        if isFreshConnectBootstrapStatus operation status then
+            Ok()
+        else
+            LocalStateDb.validateCompleteStatusTree status
+
+    /// Reads a complete rooted status, except for the exact pristine sentinel admitted only by fresh Connect bootstrap.
+    let private readAdmissibleStatusSnapshot dbPath ownerId organizationId repositoryId operation =
+        task {
+            match! LocalStateDb.readCompleteStatusSnapshotReadOnly dbPath ownerId organizationId repositoryId with
+            | Ok status -> return Ok status
+            | Error error when
+                WorkingDirectoryUpdateContracts.Operation.callerKind operation = WorkingDirectoryUpdateContracts.CallerKind.Connect
+                && File.Exists(dbPath)
+                ->
+                let! status = LocalStateDb.readStatusSnapshot dbPath
+
+                if isFreshConnectBootstrapStatus operation status then
+                    return Ok status
+                else
+                    return Error error
+            | Error error -> return Error error
+        }
+
     /// Applies immutable prepared content through an opaque verified root without deciding selection finalization.
     module internal LocalApplication =
         /// Injects deterministic failures at the finite effect boundaries owned by the tracer tests.
@@ -1067,11 +1101,12 @@ module internal WorkingDirectoryUpdate =
                         let! revisionBefore = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
 
                         let! freshStatusResult =
-                            LocalStateDb.readCompleteStatusSnapshotReadOnly
+                            readAdmissibleStatusSnapshot
                                 dbPath
                                 (Current().OwnerId)
                                 (Current().OrganizationId)
                                 (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                                operation
 
                         let! revisionAfter = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
                         let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation
@@ -1208,11 +1243,12 @@ module internal WorkingDirectoryUpdate =
                                 match! LocalStateDb.readWorkingDirectoryUpdateCompletion dbPath target operation with
                                 | Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal ->
                                     let! freshStatusResult =
-                                        LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                        readAdmissibleStatusSnapshot
                                             dbPath
                                             (Current().OwnerId)
                                             (Current().OrganizationId)
                                             (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                                            operation
 
                                     match freshStatusResult with
                                     | Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
@@ -1263,11 +1299,12 @@ module internal WorkingDirectoryUpdate =
                             let! revisionBeforeRead = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
 
                             let! freshStatusResult =
-                                LocalStateDb.readCompleteStatusSnapshotReadOnly
+                                readAdmissibleStatusSnapshot
                                     dbPath
                                     (Current().OwnerId)
                                     (Current().OrganizationId)
                                     (WorkingDirectoryUpdateContracts.Target.repositoryId target)
+                                    operation
 
                             let! revisionAfterRead = LocalStateDb.readLocalStatusRevisionReadOnly dbPath
 
@@ -1329,7 +1366,7 @@ module internal WorkingDirectoryUpdate =
                                     )
                             | WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
                             | WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch ->
-                                match LocalStateDb.validateCompleteStatusTree freshStatus, LocalStateDb.validateCompleteStatusTree targetStatus with
+                                match validateAdmissibleStatus operation freshStatus, LocalStateDb.validateCompleteStatusTree targetStatus with
                                 | Error error, _
                                 | _, Error error -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(failure error)
                                 | Ok (), Ok () ->

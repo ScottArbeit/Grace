@@ -139,32 +139,29 @@ module ConnectTests =
         root,
         file
 
-    /// Creates a complete empty predecessor status for fresh Connect transaction fixtures.
-    let private emptyStatus (configuration: GraceConfiguration) =
-        let entries = Array.empty<Services.DirectoryVersionPreimageEntry>
+    /// Initializes and reads the production local-state sentinel from a repository that has no local database.
+    let private readFreshConnectStatus (configuration: GraceConfiguration) =
+        task {
+            File.Exists(configuration.GraceStatusFile)
+            |> should equal false
 
-        let root =
-            LocalDirectoryVersion.CreateWithHashes
-                (DirectoryVersionId.NewGuid())
-                configuration.OwnerId
-                configuration.OrganizationId
-                configuration.RepositoryId
-                (RelativePath Constants.RootDirectoryPath)
-                (Services.computeSha256ForDirectoryEntries (RelativePath Constants.RootDirectoryPath) entries)
-                (Services.computeBlake3ForDirectory (RelativePath Constants.RootDirectoryPath) entries)
-                (List<DirectoryVersionId>())
-                (List<LocalFileVersion>())
-                0L
-                DateTime.UtcNow
+            let! status = Services.readGraceStatusFile ()
 
-        let index = GraceIndex()
-        index[root.DirectoryVersionId] <- root
+            File.Exists(configuration.GraceStatusFile)
+            |> should equal true
 
-        { GraceStatus.Default with
-            Index = index
-            RootDirectoryId = root.DirectoryVersionId
-            RootDirectorySha256Hash = root.Sha256Hash
-            RootDirectoryBlake3Hash = root.Blake3Hash
+            status.Index.Count |> should equal 0
+
+            status.RootDirectoryId
+            |> should equal DirectoryVersionId.Empty
+
+            status.RootDirectorySha256Hash
+            |> should equal (Sha256Hash String.Empty)
+
+            status.RootDirectoryBlake3Hash
+            |> should equal (Blake3Hash String.Empty)
+
+            return status
         }
 
     /// Creates exact prepared bytes and the matching private WDU target for one Connect transaction.
@@ -203,9 +200,7 @@ module ConnectTests =
                 let selectedBytes = Encoding.UTF8.GetBytes("selected bytes")
                 let unrelatedBytes = Encoding.UTF8.GetBytes("unrelated bytes")
                 let! targetStatus, targetFile, target, prepared = createConnectInput configuration selectedPath selectedBytes
-                let currentStatus = emptyStatus configuration
-
-                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+                let! currentStatus = readFreshConnectStatus configuration
                 File.WriteAllText(Path.Combine(configuration.RootDirectory, selectedPath), "conflicting bytes")
                 File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "unrelated.txt"), unrelatedBytes)
 
@@ -234,6 +229,9 @@ module ConnectTests =
                 |> should equal unrelatedBytes
 
                 let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches targetStatus persistedStatus
+                |> should equal true
 
                 persistedStatus.RootDirectoryId
                 |> should equal targetStatus.RootDirectoryId
@@ -300,10 +298,9 @@ module ConnectTests =
                 let conflictingBytes = Encoding.UTF8.GetBytes("conflicting bytes")
                 let unrelatedBytes = Encoding.UTF8.GetBytes("unrelated bytes")
                 let! targetStatus, _, target, prepared = createConnectInput configuration selectedPath (Encoding.UTF8.GetBytes("selected bytes"))
-                let currentStatus = emptyStatus configuration
+                let! currentStatus = readFreshConnectStatus configuration
                 let initialCursor = "branch-event-v1:846"
 
-                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
                 File.WriteAllBytes(Path.Combine(configuration.RootDirectory, selectedPath), conflictingBytes)
                 File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "unrelated.txt"), unrelatedBytes)
 
@@ -331,6 +328,9 @@ module ConnectTests =
 
                 let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
 
+                WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches currentStatus persistedStatus
+                |> should equal true
+
                 persistedStatus.RootDirectoryId
                 |> should equal currentStatus.RootDirectoryId
 
@@ -351,10 +351,8 @@ module ConnectTests =
                 let selectedPath = "selected.txt"
                 let nestedBytes = Encoding.UTF8.GetBytes("keep nested content")
                 let! targetStatus, _, target, prepared = createConnectInput configuration selectedPath (Encoding.UTF8.GetBytes("selected bytes"))
-                let currentStatus = emptyStatus configuration
+                let! currentStatus = readFreshConnectStatus configuration
                 let selectedDirectory = Path.Combine(configuration.RootDirectory, selectedPath)
-
-                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
 
                 Directory.CreateDirectory(selectedDirectory)
                 |> ignore
@@ -397,10 +395,8 @@ module ConnectTests =
                 let selectedPath = "selected.txt"
                 let selectedBytes = Encoding.UTF8.GetBytes("selected bytes")
                 let! targetStatus, targetFile, target, prepared = createConnectInput configuration selectedPath selectedBytes
-                let currentStatus = emptyStatus configuration
+                let! currentStatus = readFreshConnectStatus configuration
                 let initialCursor = "branch-event-v1:847"
-
-                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
 
                 let failureInjection =
                     { WorkingDirectoryUpdate.Connect.none with
@@ -432,6 +428,9 @@ module ConnectTests =
                 |> should equal selectedBytes
 
                 let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches currentStatus persistedStatus
+                |> should equal true
 
                 persistedStatus.RootDirectoryId
                 |> should equal currentStatus.RootDirectoryId
