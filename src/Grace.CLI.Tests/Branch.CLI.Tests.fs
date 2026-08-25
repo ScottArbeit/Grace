@@ -560,12 +560,13 @@ module BranchCommandTests =
                             calls.Add("resolve")
                             resolvedParameters <- Some parameters
                             Task.FromResult(Ok(Some route))
+                    ResolveBranchSelector = fun _ -> Task.FromResult(Ok { ReferenceId = targetReferenceId; SelectedBranchId = Some branchId })
                     RunReferenceWithoutSave =
-                        fun _ _ ->
+                        fun _ _ _ ->
                             calls.Add("reference-without-save")
                             Task.FromResult sentinelExitCode
                     RunReferenceWithSave =
-                        fun _ _ ->
+                        fun _ _ _ ->
                             calls.Add("reference-with-save")
                             Task.FromResult sentinelExitCode
                     RunLegacy =
@@ -612,6 +613,313 @@ module BranchCommandTests =
     [<Test>]
     let ``Reference-only switch resumes before routing to WDU when Save is enabled`` () =
         runReferenceOnlySwitchRoute Branch.ReferenceWithSave "reference-with-save" 8712
+
+    /// Runs one Branch selector through the built action and verifies its immutable Reference-selected handoff.
+    let private runBranchSelectorSwitch args route selectedBranchId expectedRequestBranchId expectedBranchName expectedHandler =
+        withTempBranchSwitchRepo (fun () ->
+            let calls = ResizeArray<string>()
+            let exactReferenceId = ReferenceId.NewGuid()
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult None
+                    ResolveReferenceRoute =
+                        fun _ ->
+                            calls.Add("resolve")
+                            Task.FromResult(Ok(Some route))
+                    ResolveBranchSelector =
+                        fun parameters ->
+                            calls.Add("branch-selector")
+
+                            parameters.BranchId
+                            |> should equal expectedRequestBranchId
+
+                            parameters.BranchName
+                            |> should equal expectedBranchName
+
+                            Task.FromResult(Ok { ReferenceId = exactReferenceId; SelectedBranchId = Some selectedBranchId })
+                    RunReferenceWithoutSave =
+                        fun target _ _ ->
+                            calls.Add("reference-without-save")
+
+                            target.ReferenceId
+                            |> should equal exactReferenceId
+
+                            Task.FromResult 1025
+                    RunReferenceWithSave =
+                        fun target _ _ ->
+                            calls.Add("reference-with-save")
+
+                            target.ReferenceId
+                            |> should equal exactReferenceId
+
+                            Task.FromResult 1025
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult 1025
+                }
+
+            let action = Branch.Switch.CreateForTests operations
+
+            let exitCode =
+                action
+                    .InvokeAsync(parse (Array.append [| "branch"; "switch" |] args), CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+
+            exitCode |> should equal 1025
+
+            calls
+            |> Seq.toList
+            |> should
+                equal
+                [
+                    "resume"
+                    "branch-selector"
+                    "resolve"
+                    expectedHandler
+                ])
+
+    /// Verifies that a Branch ID selector reaches the no-Save Reference-selected WDU route.
+    [<Test; Category("Issue1025")>]
+    let ``Branch ID switch routes through no-Save WDU Reference path`` () =
+        let requestedBranchId = BranchId.NewGuid()
+
+        runBranchSelectorSwitch
+            [|
+                "--to-branch-id"
+                requestedBranchId.ToString()
+            |]
+            Branch.ReferenceWithoutSave
+            requestedBranchId
+            (requestedBranchId.ToString())
+            String.Empty
+            "reference-without-save"
+
+    /// Verifies that a Branch name selector reaches the Save-enabled Reference-selected WDU route.
+    [<Test; Category("Issue1025")>]
+    let ``Branch name switch routes through Save-enabled WDU Reference path`` () =
+        let selectedBranchId = BranchId.NewGuid()
+        let branchName = "selected-by-name"
+
+        runBranchSelectorSwitch [| "--to-branch-name"; branchName |] Branch.ReferenceWithSave selectedBranchId String.Empty branchName "reference-with-save"
+
+    /// Verifies that Branch ID suppresses Branch name when both public selectors are supplied.
+    [<Test; Category("Issue1025")>]
+    let ``Branch switch gives ID precedence over name`` () =
+        let requestedBranchId = BranchId.NewGuid()
+
+        runBranchSelectorSwitch
+            [|
+                "--to-branch-id"
+                requestedBranchId.ToString()
+                "--to-branch-name"
+                "ignored-name"
+            |]
+            Branch.ReferenceWithoutSave
+            requestedBranchId
+            (requestedBranchId.ToString())
+            String.Empty
+            "reference-without-save"
+
+    /// Creates a valid selected Branch response for exact latest-Reference validation tests.
+    let private branchSelectorDto selectedBranchId (selectedBranchName: string) referenceId rootDirectoryId =
+        let latestReference =
+            { ReferenceDto.Default with
+                ReferenceId = referenceId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                BranchId = selectedBranchId
+                DirectoryId = rootDirectoryId
+            }
+
+        { BranchDto.Default with
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            BranchId = selectedBranchId
+            BranchName = BranchName selectedBranchName
+            LatestReference = latestReference
+        }
+
+    /// Verifies that an absent latest Reference is rejected before target retrieval can begin.
+    [<Test; Category("Issue1025")>]
+    let ``Branch selector rejects missing latest Reference`` () =
+        let selectedBranchId = BranchId.NewGuid()
+
+        match
+            Branch.tryCreateBranchSelectorReferenceTarget
+                ownerId
+                organizationId
+                repositoryId
+                selectedBranchId
+                String.Empty
+                { BranchDto.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; BranchId = selectedBranchId }
+            with
+        | Error _ -> ()
+        | Ok _ -> Assert.Fail("Expected an empty latest Reference to be rejected.")
+
+    /// Verifies that latest Reference ownership cannot differ from its selected Branch.
+    [<Test; Category("Issue1025")>]
+    let ``Branch selector rejects mismatched latest Reference`` () =
+        let selectedBranchId = BranchId.NewGuid()
+        let selectedBranch = branchSelectorDto selectedBranchId "selected" (ReferenceId.NewGuid()) (DirectoryVersionId.NewGuid())
+
+        match
+            Branch.tryCreateBranchSelectorReferenceTarget
+                ownerId
+                organizationId
+                repositoryId
+                selectedBranchId
+                String.Empty
+                { selectedBranch with LatestReference = { selectedBranch.LatestReference with RepositoryId = RepositoryId.NewGuid() } }
+            with
+        | Error _ -> ()
+        | Ok _ -> Assert.Fail("Expected a mismatched latest Reference to be rejected.")
+
+    /// Verifies that empty or wrong-root target graphs are rejected before content preparation.
+    [<Test; Category("Issue1025")>]
+    let ``Exact Reference rejects incomplete target graph root`` () =
+        let expectedRoot = DirectoryVersionId.NewGuid()
+        let reference = { ReferenceDto.Default with DirectoryId = expectedRoot }
+
+        match Branch.tryValidateReferenceTargetGraphRoot reference Array.empty with
+        | Error _ -> ()
+        | Ok _ -> Assert.Fail("Expected an empty graph to be rejected.")
+
+        match Branch.tryValidateReferenceTargetGraphRoot reference [| DirectoryVersionId.NewGuid() |] with
+        | Error _ -> ()
+        | Ok _ -> Assert.Fail("Expected a mismatched graph root to be rejected.")
+
+    /// Verifies that selector resolution failure cannot reach either WDU route or legacy mutation.
+    [<Test; Category("Issue1025")>]
+    let ``Branch selector resolution failure has no mutation or publication`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let calls = ResizeArray<string>()
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult None
+                    ResolveReferenceRoute =
+                        fun _ ->
+                            calls.Add("resolve")
+                            Task.FromResult(Ok(Some Branch.ReferenceWithoutSave))
+                    ResolveBranchSelector =
+                        fun _ ->
+                            calls.Add("branch-selector")
+                            Task.FromResult(Error(GraceError.Create "invalid latest Reference" correlationId))
+                    RunReferenceWithoutSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-without-save")
+                            Task.FromResult 0
+                    RunReferenceWithSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-with-save")
+                            Task.FromResult 0
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult 0
+                }
+
+            let exitCode =
+                Branch
+                    .Switch
+                    .CreateForTests(operations)
+                    .InvokeAsync(
+                        parse [| "branch"
+                                 "switch"
+                                 "--to-branch-name"
+                                 "invalid" |],
+                        CancellationToken.None
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+
+            exitCode |> should equal -1
+
+            calls
+            |> Seq.toList
+            |> should equal [ "resume"; "branch-selector" ])
+
+    /// Verifies that an exact replay completes before selectors, mutation, or publication are evaluated.
+    [<Test; Category("Issue1025")>]
+    let ``Branch selector exact replay bypasses all routing`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    repositoryId
+                    branchId
+                    (DirectoryVersionId.NewGuid())
+                    (Sha256Hash(String.replicate 64 "a"))
+                    (Blake3Hash(String.replicate 64 "b"))
+                |> Result.defaultWith failwith
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.branchSwitchWithSelection
+                    branchId
+                    (WorkingDirectoryUpdateContracts.BranchSelection.Reference targetReferenceId)
+                    target
+                |> Result.defaultWith failwith
+
+            let receipt =
+                WorkingDirectoryUpdateContracts.Receipt.create target operation false
+                |> Result.defaultWith failwith
+
+            let calls = ResizeArray<string>()
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult(Some(WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt))
+                    ResolveReferenceRoute =
+                        fun _ ->
+                            calls.Add("resolve")
+                            Task.FromResult(Ok None)
+                    ResolveBranchSelector =
+                        fun _ ->
+                            calls.Add("branch-selector")
+                            Task.FromResult(Error(GraceError.Create "unexpected" correlationId))
+                    RunReferenceWithoutSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-without-save")
+                            Task.FromResult -1
+                    RunReferenceWithSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-with-save")
+                            Task.FromResult -1
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult -1
+                }
+
+            let exitCode =
+                Branch
+                    .Switch
+                    .CreateForTests(operations)
+                    .InvokeAsync(
+                        parse [| "branch"
+                                 "switch"
+                                 "--to-branch-id"
+                                 (BranchId.NewGuid()).ToString() |],
+                        CancellationToken.None
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+
+            exitCode |> should equal 0
+            calls |> Seq.toList |> should equal [ "resume" ])
 
     /// Proves the public Save-enabled Reference command persists its edit, prepares the selected graph, and completes through WDU.
     [<Test>]
