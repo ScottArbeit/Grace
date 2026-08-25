@@ -411,6 +411,42 @@ module WorkingDirectoryUpdateTopologyTests =
                 |> should equal true
             | WorkingDirectoryUpdate.Topology.Rejected _ -> Assert.Fail("Expected tracked target directory retention."))
 
+    /// Proves validated explicit directories produce the same plan when a descendant is enumerated before its parent.
+    [<Test>]
+    let ``topology planning is independent of explicit directory manifest order`` () =
+        withTempRepo (fun root configuration ->
+            configuration.GraceFileIgnoreEntries <- Array.empty
+            configuration.GraceDirectoryIgnoreEntries <- Array.empty
+
+            Directory.CreateDirectory(Path.Combine(root, "nested", "deeper"))
+            |> ignore
+
+            let currentStatus = status [ "nested"; "nested/deeper" ] []
+
+            let parent = WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "nested")
+
+            let child = WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory(RelativePath "nested/deeper")
+
+            let plannedActions preparedManifest =
+                match plan currentStatus preparedManifest with
+                | WorkingDirectoryUpdate.Topology.Planned topologyPlan -> WorkingDirectoryUpdate.Topology.Plan.actions topologyPlan
+                | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+                    Assert.Fail(
+                        $"Expected explicit directory order to be accepted; rejected {WorkingDirectoryUpdate.Topology.Rejection.path rejection} as {WorkingDirectoryUpdate.Topology.Rejection.classification rejection}."
+                    )
+
+                    []
+
+            let childFirstActions = plannedActions (manifest [ child; parent ])
+            let parentFirstActions = plannedActions (manifest [ parent; child ])
+
+            childFirstActions
+            |> should equal parentFirstActions
+
+            childFirstActions
+            |> List.isEmpty
+            |> should equal true)
+
     /// Proves a late eligible descendant makes a retained target directory reject before another planned action can be returned.
     [<Test>]
     let ``topology rejects a late untracked descendant beneath a retained target directory without changing the full tree`` () =
