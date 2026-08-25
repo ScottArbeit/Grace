@@ -91,6 +91,46 @@ module CurrentStateCaptureCliTests =
             (files |> Seq.sumBy (fun file -> int64 file.Size))
             DateTime.UtcNow
 
+    /// Builds a directory version whose hashes describe its complete direct-child graph.
+    let private completeDirectoryVersion
+        (configuration: GraceConfiguration)
+        (directoryVersionId: DirectoryVersionId)
+        (relativePath: RelativePath)
+        (directories: LocalDirectoryVersion seq)
+        (files: LocalFileVersion seq)
+        =
+        let directoryArray = directories |> Seq.toArray
+        let fileArray = files |> Seq.toArray
+
+        let entries =
+            seq {
+                yield!
+                    directoryArray
+                    |> Seq.map (fun directory ->
+                        Services.DirectoryVersionPreimageEntry.Directory directory.RelativePath directory.Size directory.Blake3Hash directory.Sha256Hash)
+
+                yield!
+                    fileArray
+                    |> Seq.map (fun file -> Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash)
+            }
+            |> Seq.toArray
+
+        LocalDirectoryVersion.CreateWithHashes
+            directoryVersionId
+            configuration.OwnerId
+            configuration.OrganizationId
+            configuration.RepositoryId
+            relativePath
+            (Services.computeSha256ForDirectoryEntries relativePath entries)
+            (Services.computeBlake3ForDirectory relativePath entries)
+            (List<DirectoryVersionId>(
+                directoryArray
+                |> Seq.map (fun directory -> directory.DirectoryVersionId)
+            ))
+            (List<LocalFileVersion>(fileArray))
+            (entries |> Seq.sumBy (fun entry -> entry.Size))
+            DateTime.UtcNow
+
     /// Builds file version test data used to exercise CLI current State Capture behavior.
     let private fileVersion (relativePath: RelativePath) (contents: string) =
         let bytes = Encoding.UTF8.GetBytes(contents)
@@ -119,6 +159,19 @@ module CurrentStateCaptureCliTests =
             RootDirectorySha256Hash = root.Sha256Hash
             RootDirectoryBlake3Hash = root.Blake3Hash
         }
+
+    /// Enumerates the current directory tree strictly through RootDirectoryId-reachable child identities.
+    let private reachableDirectoryVersions (status: GraceStatus) =
+        let rec visit directoryId =
+            seq {
+                let directory = status.Index[directoryId]
+                yield directory
+
+                for childId in directory.Directories do
+                    yield! visit childId
+            }
+
+        visit status.RootDirectoryId
 
     /// Builds reference dto test data used to exercise CLI current State Capture behavior.
     let private referenceDto referenceId directoryVersionId sha256Hash =
@@ -211,6 +264,64 @@ module CurrentStateCaptureCliTests =
 
         command.Parameters[parameterName].Value <- parameterValue
         Convert.ToInt32(command.ExecuteScalar())
+
+    /// Verifies that a same-batch directory change and descendant file add replace the prior child identity.
+    [<Test>]
+    let ``issue1020 directory change plus descendant file add replaces prior same-path child identity`` () =
+        withTempRepo (fun root configuration ->
+            let nestedRelativePath = RelativePath "src/nested"
+            let addedFileRelativePath = RelativePath "src/nested/added.txt"
+            let nestedPath = Path.Combine(root, "src", "nested")
+            Directory.CreateDirectory(nestedPath) |> ignore
+            File.WriteAllText(Path.Combine(root, string addedFileRelativePath), "added content")
+
+            let nestedId = Guid.NewGuid()
+            let srcId = Guid.NewGuid()
+            let rootId = Guid.NewGuid()
+            let nested = completeDirectoryVersion configuration nestedId nestedRelativePath Seq.empty Seq.empty
+            let src = completeDirectoryVersion configuration srcId (RelativePath "src") [| nested |] Seq.empty
+            let previousRoot = completeDirectoryVersion configuration rootId Constants.RootDirectoryPath [| src |] Seq.empty
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot; src; nested |]
+
+            match LocalStateDb.validateCompleteStatusTree previousStatus with
+            | Ok () -> ()
+            | Error error -> Assert.Fail($"Prior status fixture must be production-valid: {error}")
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.Directory nestedRelativePath
+                        FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File addedFileRelativePath
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            let rebuiltNested =
+                newDirectoryVersions
+                |> Seq.filter (fun directory -> directory.RelativePath = nestedRelativePath)
+                |> Seq.exactlyOne
+
+            let rebuiltSrc =
+                newDirectoryVersions
+                |> Seq.filter (fun directory -> directory.RelativePath = RelativePath "src")
+                |> Seq.exactlyOne
+
+            rebuiltSrc.Directories
+            |> Seq.toArray
+            |> should equal [| rebuiltNested.DirectoryVersionId |]
+
+            reachableDirectoryVersions updatedStatus
+            |> Seq.countBy (fun directory -> directory.RelativePath)
+            |> Seq.filter (fun (_, count) -> count <> 1)
+            |> Seq.toArray
+            |> should equal Array.empty
+
+            match LocalStateDb.validateCompleteStatusTree updatedStatus with
+            | Ok () -> ()
+            | Error error -> Assert.Fail($"Updated status must be one complete rooted graph: {error}"))
 
     /// Verifies that directory delete removes subtree reference from nearest surviving parent.
     [<Test>]
