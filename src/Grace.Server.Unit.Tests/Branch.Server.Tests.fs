@@ -895,36 +895,51 @@ type ReferenceMaterializationBoundarySelectionTests() =
         Assert.That(result.IsSome, Is.True)
         Assert.That(staleBoundary.Value.Sha256Hash, Is.Not.EqualTo(canonicalDirectoryVersion.Sha256Hash))
         Assert.That(staleBoundary.Value.Blake3Hash, Is.Not.EqualTo(canonicalDirectoryVersion.Blake3Hash))
+        Assert.That(result.Value.RepositoryId, Is.EqualTo(selected.RepositoryId))
+        Assert.That(result.Value.BranchId, Is.EqualTo(selected.BranchId))
         Assert.That(result.Value.DirectoryId, Is.EqualTo(canonicalDirectoryVersion.DirectoryVersionId))
         Assert.That(result.Value.Sha256Hash, Is.EqualTo(canonicalDirectoryVersion.Sha256Hash))
         Assert.That(result.Value.Blake3Hash, Is.EqualTo(canonicalDirectoryVersion.Blake3Hash))
         Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:8"))
 
-    /// A boundary cannot be returned when the selected Reference and durable DirectoryVersion identities disagree.
+    /// A boundary cannot be returned when the durable DirectoryVersion violates the selected root contract.
     [<Test>]
-    member _.MaterializationBoundaryRejectsMismatchedDurableDirectoryVersion() =
+    member _.MaterializationBoundaryRejectsInvalidDurableDirectoryVersion() =
         let selected = candidate 9L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Promotion false
 
         let selectedBoundary = Grace.Server.Branch.trySelectReferenceMaterializationBoundary (GetReferenceMaterializationBoundaryParameters()) [| selected |]
 
-        let unrelatedDirectoryVersion =
-            DirectoryVersion.CreateWithHashes
-                (Guid.NewGuid())
-                (Guid.Parse("33333333-8020-4000-8000-333333333333"))
-                (Guid.Parse("44444444-8020-4000-8000-444444444444"))
-                repositoryId
-                RootDirectoryPath
-                (Sha256Hash "unrelated-sha256")
-                (Blake3Hash "unrelated-blake3")
-                (List<DirectoryVersionId>())
-                (List<FileVersion>())
-                0L
+        let invalidCases =
+            [|
+                "mismatched directory identity", (fun (directoryVersion: DirectoryVersion) -> directoryVersion.DirectoryVersionId <- Guid.NewGuid())
+                "mismatched repository", (fun directoryVersion -> directoryVersion.RepositoryId <- Guid.NewGuid())
+                "empty directory identity", (fun directoryVersion -> directoryVersion.DirectoryVersionId <- DirectoryVersionId.Empty)
+                "non-root path", (fun directoryVersion -> directoryVersion.RelativePath <- "src")
+                "empty SHA-256", (fun directoryVersion -> directoryVersion.Sha256Hash <- Sha256Hash String.Empty)
+                "empty BLAKE3", (fun directoryVersion -> directoryVersion.Blake3Hash <- Blake3Hash String.Empty)
+            |]
 
-        let result =
-            selectedBoundary
-            |> Option.bind (fun boundary -> Grace.Server.Branch.tryCreateCanonicalReferenceMaterializationBoundary boundary unrelatedDirectoryVersion)
+        for caseName, invalidate in invalidCases do
+            let directoryVersion =
+                DirectoryVersion.CreateWithHashes
+                    selected.Reference.DirectoryId
+                    (Guid.Parse("33333333-8020-4000-8000-333333333333"))
+                    (Guid.Parse("44444444-8020-4000-8000-444444444444"))
+                    repositoryId
+                    RootDirectoryPath
+                    (Sha256Hash "durable-sha256")
+                    (Blake3Hash "durable-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>())
+                    0L
 
-        Assert.That(result, Is.EqualTo(None))
+            invalidate directoryVersion
+
+            let result =
+                selectedBoundary
+                |> Option.bind (fun boundary -> Grace.Server.Branch.tryCreateCanonicalReferenceMaterializationBoundary boundary directoryVersion)
+
+            Assert.That(result, Is.EqualTo(None), caseName)
 
     /// The latest exact eligible local root tuple wins even when an earlier eligible event has the same immutable root.
     [<Test>]
