@@ -37,6 +37,42 @@ module ConnectParsingTests =
         parseResult.GetValue<bool>(OptionName.RetrieveDefaultBranch)
         |> should equal false
 
+    /// Verifies that Cache-required retrieval is selected by a valueless option.
+    [<Test>]
+    let ``connect cache required parses as a valueless option`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    OptionName.CacheRequired
+                |]
+            )
+
+        parseResult.Errors |> should be Empty
+
+        parseResult.GetValue<bool>(OptionName.CacheRequired)
+        |> should equal true
+
+    /// Verifies that Connect accepts an explicit Cache endpoint for Cache-required retrieval.
+    [<Test>]
+    let ``connect cache uri parses an explicit loopback endpoint`` () =
+        let cacheUri = "http://127.0.0.1:5341/"
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    OptionName.CacheRequired
+                    OptionName.CacheUri
+                    cacheUri
+                |]
+            )
+
+        parseResult.Errors |> should be Empty
+
+        parseResult.GetValue<string>(OptionName.CacheUri)
+        |> should equal cacheUri
+
     /// Verifies that connect directory version selection precedence uses directory version id.
     [<Test>]
     let ``connect directory version selection precedence uses directory version id`` () =

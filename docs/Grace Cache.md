@@ -10,10 +10,10 @@ verified artifact over HTTP on `127.0.0.1`.
 
 - The local artifact lifecycle and loopback read path are implemented.
 - The Server-approved Cache HTTP miss-to-hit path is implemented through Issue #999 and PR #1001.
-- The Cache-required `grace connect` increment is Plan-ready for a mainline slice after the WDU Connect path reaches
-  `main`. No Cache child is ready while that dependency remains on the WDU integration branch.
+- The Cache-required `grace connect` path is implemented by GC-CAL-04 on top of the shared WDU Connect path now on
+  `main`.
 
-## Candidate miss-to-hit outcome
+## Cache-required miss-to-hit outcome
 
 An authenticated user runs `grace connect` for one immutable root. When the exact `DirectoryVersionZip` is absent
 locally, one Server-approved retrieval commits it through the existing `Absent -> Staging -> Complete` lifecycle.
@@ -75,16 +75,13 @@ one-command override.
 Every Cache failure remains visible and terminal except typed `CacheFillCapacityExceeded`, which retains the existing
 bounded 60-second retry. There is no Direct fallback.
 
-### WDU delivery ordering
+### WDU integration boundary
 
-GC-CAL-04 must start from current `main` only after the WDU epic has merged its Connect prepared-content adapter and
-exclusive `WorkingDirectoryUpdate.run` path to `main`. Cache selection then chooses the ZIP source and feeds the exact
-prepared content into that shared transaction. GC-CAL-04 does not call the current `extractZipEntries` mutation path,
-create a Cache-specific working-directory writer, or run concurrently with WDU work that edits `Connect.CLI.fs`.
-
-Issue #835 owns its internal child ordering and post-tracer checkpoints. For Cache, the delivery gate is the merged WDU
-Connect result on `main`, followed by a fresh Issue #597 checkpoint against that revision. GC-CAL-04 then targets
-`main`; no Cache integration branch is created.
+GC-CAL-04 starts from the WDU Connect result on `main`. Cache selection changes only the ZIP source. The independently
+verified Cache `GET` stream enters `ConnectZipStaging.prepare`, and its prepared content enters the existing
+`WorkingDirectoryUpdate.Connect.run` call exactly once. Cache-required Connect does not add an extraction writer,
+Cache-specific working-directory mutation, WDU state, or retry state. Direct retrieval keeps its existing Blob stream
+and follows the same staging and WDU path.
 
 ### Fill admission
 
@@ -196,9 +193,8 @@ instead of creating an unbounded queue. `grace connect` may retry only this Cach
 fresh permit for the retry. It never falls back to Direct.
 
 The retry budget is 60 seconds from the first backpressure response, measured by a monotonic client clock. Retry delays
-use bounded exponential backoff with jitter and a two-second maximum delay. Cache may provide a retry hint, but it
-cannot extend the client budget. Command cancellation stops immediately. Exhausting the budget returns a distinct
-Cache-overloaded result.
+use bounded exponential backoff with a two-second maximum delay. Command cancellation stops immediately. Exhausting
+the budget returns a distinct `CacheFillCapacityExceeded` terminal result.
 
 Source rejection, integrity mismatch, commit failure, post-commit read failure, and every Cache result other than typed
 backpressure are terminal and are never retried automatically.
@@ -275,18 +271,18 @@ fails host startup.
 
 ### Contract propagation map
 
-| Surface | Required change |
+| Surface | Implemented result |
 | --- | --- |
-| Shared contracts | Add the artifact descriptor, public-key, preparation, permit, redemption, and typed Cache problem shapes. |
-| Persistence | Reuse the existing artifact row and state machine; add no permit, waiter, client, or fill-job state. |
-| Grace Cache HTTP | Replace the calibration exact-tuple `GET`; add public-key `GET` and permit-only fill `POST`. |
-| Grace Server HTTP | Add narrow ZIP preparation and permit-redemption operations; leave Direct `getZipFile` unchanged. |
-| ZIP Blob | Write lowercase SHA-256 and exact size as immutable metadata during upload. |
-| `grace connect` | Add `--cache-required`, optional `--cache-uri`, `GET -> prepare -> fill -> GET`, and 60-second typed retry through WDU. |
-| Grace SDK | Add typed calls for the two Server operations; expose neither SAS nor a caller-selected source to CLI code. |
-| OpenAPI and generated artifacts | Regenerate for the new Server contracts and routes; Cache remains a local host contract. |
-| Documentation | Update Cache, connect, configuration, and environment documentation for selection, routes, and failures. |
-| Tests | Cover crypto binding, access revalidation, descriptor metadata, concurrency, retry, restart, and end-to-end connect parity. |
+| Shared contracts | Provide the artifact descriptor, public-key, preparation, permit, redemption, and typed Cache problem shapes. |
+| Persistence | Reuses the existing artifact row and state machine; adds no permit, waiter, client, or fill-job state. |
+| Grace Cache HTTP | Uses the identity-only verified `GET`, public-key `GET`, and permit-only fill `POST`. |
+| Grace Server HTTP | Provides narrow ZIP preparation and permit-redemption operations; leaves Direct `getZipFile` unchanged. |
+| ZIP Blob | Stores lowercase SHA-256 and exact size as immutable metadata during upload. |
+| `grace connect` | Adds `--cache-required`, optional `--cache-uri`, `GET -> prepare -> fill -> GET`, and 60-second typed retry before shared ZIP staging and WDU. |
+| Grace SDK | Provides typed calls for the two Server operations; exposes neither SAS nor a caller-selected source to CLI code. |
+| OpenAPI and generated artifacts | Include the Server contracts and routes; Cache remains a local host contract. |
+| Documentation | Records Cache selection, routes, terminal failures, and the shared staging and WDU delivery boundary. |
+| Tests | Cover crypto binding, access revalidation, descriptor metadata, concurrency, retry, restart, CLI selection, and Cache stream orchestration. |
 
 CLI/API compatibility, migration, and legacy Cache data handling are N/A because the Cache-required mode and its
 contracts are new and Grace has no production Cache data.

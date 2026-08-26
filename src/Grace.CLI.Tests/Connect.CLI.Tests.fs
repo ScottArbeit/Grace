@@ -3,6 +3,7 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
@@ -515,6 +516,46 @@ module ConnectTests =
 
     /// Gets grace config path needed by the test scenario.
     let private getGraceConfigPath root = Path.Combine(root, ".grace", "graceconfig.json")
+
+    /// An unselected Cache URI is rejected before Connect creates or changes local configuration.
+    [<Test>]
+    let ``connect rejects cache uri without cache required before configuration`` () =
+        withTempDir (fun root ->
+            let exitCode, output =
+                runWithCapturedOutput [| "connect"
+                                         OptionName.CacheUri
+                                         "http://localhost:5341/" |]
+
+            exitCode |> should equal -1
+
+            output
+            |> should contain "requires --cache-required"
+
+            File.Exists(getGraceConfigPath root)
+            |> should equal false)
+
+    /// Cache-required Connect rejects a missing CLI and environment URI before local configuration.
+    [<Test>]
+    let ``connect cache required needs a Cache URI before configuration`` () =
+        let originalCacheUri = Environment.GetEnvironmentVariable("GRACE_CACHE_URI")
+
+        try
+            Environment.SetEnvironmentVariable("GRACE_CACHE_URI", null)
+
+            withTempDir (fun root ->
+                let exitCode, output =
+                    runWithCapturedOutput [| "connect"
+                                             OptionName.CacheRequired |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "needs --cache-uri or GRACE_CACHE_URI"
+
+                File.Exists(getGraceConfigPath root)
+                |> should equal false)
+        finally
+            Environment.SetEnvironmentVariable("GRACE_CACHE_URI", originalCacheUri)
 
     /// Creates the persisted Connect configuration result used by output projection tests.
     let private outputConfiguration repositoryId branchId : Grace.CLI.Common.LocalOutputDto.ConnectDto =
