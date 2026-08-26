@@ -796,9 +796,76 @@ module Connect =
             GraceError.Create (WorkingDirectoryUpdateContracts.Failure.reason failure) correlationId
             |> renderConfiguredUpdateFailure parseResult configuration "FinalizationIncomplete"
 
+    /// Identifies the one selected ZIP stream source before shared staging and WDU execution.
+    type internal SelectedZipSource =
+        | DirectZip of UriWithSharedAccessSignature
+        | CacheZip of Uri
+
+    /// Selects the Cache source without evaluating the unchanged Direct ZIP lookup.
+    let internal selectZipSourceWith getDirectZip retrieval =
+        match retrieval with
+        | ConnectCache.Direct ->
+            task {
+                let! result = getDirectZip ()
+                return result |> Result.map DirectZip
+            }
+        | ConnectCache.Required cacheUri -> Task.FromResult(Ok(CacheZip cacheUri))
+
+    /// Supplies the stream, staging, and prepared-content application seams for one selected Connect ZIP source.
+    type internal ZipApplicationDependencies =
+        {
+            OpenDirectZip: UriWithSharedAccessSignature -> CancellationToken -> Task<Stream>
+            UseCacheZip: Uri
+                -> string
+                -> string
+                -> string
+                -> CancellationToken
+                -> (Stream -> Task<Result<WorkingDirectoryUpdateContracts.Outcome, GraceError>>)
+                -> Task<Result<Result<WorkingDirectoryUpdateContracts.Outcome, GraceError>, GraceError>>
+            StageZip: Stream -> CancellationToken -> Task<Result<WorkingDirectoryUpdateContracts.PreparedContent, string>>
+            ApplyPreparedContent: WorkingDirectoryUpdateContracts.PreparedContent
+                -> string
+                -> bool
+                -> string
+                -> CancellationToken
+                -> Task<Result<WorkingDirectoryUpdateContracts.Outcome, GraceError>>
+        }
+
+    /// Routes one selected ZIP source through exact staging and one prepared-content application.
+    let internal applySelectedZipWith
+        (dependencies: ZipApplicationDependencies)
+        zipSource
+        repositoryId
+        directoryVersionId
+        eventCursor
+        force
+        correlationId
+        cancellationToken
+        =
+        task {
+            let stageAndApply zipFile =
+                task {
+                    match! dependencies.StageZip zipFile cancellationToken with
+                    | Error error -> return Error(GraceError.Create error correlationId)
+                    | Ok preparedContent -> return! dependencies.ApplyPreparedContent preparedContent eventCursor force correlationId cancellationToken
+                }
+
+            match zipSource with
+            | DirectZip sourceUri ->
+                let! zipFile = dependencies.OpenDirectZip sourceUri cancellationToken
+                return! stageAndApply zipFile
+            | CacheZip cacheUri ->
+                let! result = dependencies.UseCacheZip cacheUri repositoryId directoryVersionId correlationId cancellationToken stageAndApply
+
+                match result with
+                | Error error -> return Error error
+                | Ok applicationResult -> return applicationResult
+        }
+
     /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
         (parseResult: ParseResult)
+        (retrieval: ConnectCache.Retrieval)
         (graceIds: GraceIds)
         (ownerDto: OwnerDto)
         (organizationDto: OrganizationDto)
@@ -829,21 +896,31 @@ module Connect =
 
                 let! directoryVersionsResult = DirectoryVersion.GetDirectoryVersionsRecursive(getDirectoryContentsParameters)
 
-                let getZipFileParameters =
-                    Parameters.DirectoryVersion.GetZipFileParameters(
-                        OwnerId = $"{ownerDto.OwnerId}",
-                        OrganizationId = $"{organizationDto.OrganizationId}",
-                        RepositoryId = $"{repositoryDto.RepositoryId}",
-                        DirectoryVersionId = $"{directoryVersionId}",
-                        CorrelationId = graceIds.CorrelationId
-                    )
+                let! zipSourceResult =
+                    selectZipSourceWith
+                        (fun () ->
+                            task {
+                                let getZipFileParameters =
+                                    Parameters.DirectoryVersion.GetZipFileParameters(
+                                        OwnerId = $"{ownerDto.OwnerId}",
+                                        OrganizationId = $"{organizationDto.OrganizationId}",
+                                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                                        DirectoryVersionId = $"{directoryVersionId}",
+                                        CorrelationId = graceIds.CorrelationId
+                                    )
 
-                writeHumanLine parseResult $"[{Colors.Important}]Retrieving zip file download uri.[/]"
-                let! getZipFileResult = DirectoryVersion.GetZipFile(getZipFileParameters)
-                writeHumanLine parseResult $"[{Colors.Important}]Finished getting zip file download uri.[/]"
+                                writeHumanLine parseResult $"[{Colors.Important}]Retrieving zip file download uri.[/]"
+                                let! getZipFileResult = DirectoryVersion.GetZipFile(getZipFileParameters)
+                                writeHumanLine parseResult $"[{Colors.Important}]Finished getting zip file download uri.[/]"
 
-                match (directoryVersionsResult, getZipFileResult) with
-                | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
+                                return
+                                    getZipFileResult
+                                    |> Result.map (fun returnValue -> returnValue.ReturnValue)
+                            })
+                        retrieval
+
+                match (directoryVersionsResult, zipSourceResult) with
+                | (Ok directoryVerionsReturnValue, Ok zipSource) ->
                     writeHumanLine parseResult $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
 
                     let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
@@ -861,47 +938,61 @@ module Connect =
                                 GraceError.Create error graceIds.CorrelationId
                                 |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
                         | Ok manifest ->
-                            let blobClient = BlobClient(getZipFileReturnValue.ReturnValue)
-
                             writeHumanLine parseResult $"[{Colors.Important}]Downloading and validating the selected zip file.[/]"
 
-                            let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024, cancellationToken = cancellationToken)
-                            let! preparedResult = ConnectZipStaging.prepare manifest zipFile cancellationToken
+                            let dependencies: ZipApplicationDependencies =
+                                {
+                                    OpenDirectZip =
+                                        fun sourceUri cancellationToken ->
+                                            let blobClient = BlobClient(sourceUri)
+                                            blobClient.OpenReadAsync(bufferSize = 64 * 1024, cancellationToken = cancellationToken)
+                                    UseCacheZip = ConnectCache.useVerifiedZip
+                                    StageZip = fun zipFile cancellationToken -> ConnectZipStaging.prepare manifest zipFile cancellationToken
+                                    ApplyPreparedContent =
+                                        fun preparedContent eventCursor force correlationId cancellationToken ->
+                                            task {
+                                                match
+                                                    WorkingDirectoryUpdateContracts.Target.create
+                                                        boundary.RepositoryId
+                                                        boundary.BranchId
+                                                        boundary.DirectoryId
+                                                        boundary.Sha256Hash
+                                                        boundary.Blake3Hash
+                                                    with
+                                                | Error error ->
+                                                    WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+                                                    return Error(GraceError.Create error correlationId)
+                                                | Ok target ->
+                                                    let! outcome =
+                                                        WorkingDirectoryUpdate.Connect.run
+                                                            target
+                                                            currentStatus
+                                                            targetStatus
+                                                            preparedContent
+                                                            eventCursor
+                                                            force
+                                                            correlationId
+                                                            cancellationToken
+                                                            WorkingDirectoryUpdate.Connect.none
 
-                            match preparedResult with
-                            | Error error ->
-                                return
-                                    GraceError.Create error graceIds.CorrelationId
-                                    |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
-                            | Ok preparedContent ->
-                                match
-                                    WorkingDirectoryUpdateContracts.Target.create
-                                        boundary.RepositoryId
-                                        boundary.BranchId
-                                        boundary.DirectoryId
-                                        boundary.Sha256Hash
-                                        boundary.Blake3Hash
-                                    with
-                                | Error error ->
-                                    WorkingDirectoryUpdateContracts.PreparedContent.dispose preparedContent
+                                                    return Ok outcome
+                                            }
+                                }
 
-                                    return
-                                        GraceError.Create error graceIds.CorrelationId
-                                        |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
-                                | Ok target ->
-                                    let! outcome =
-                                        WorkingDirectoryUpdate.Connect.run
-                                            target
-                                            currentStatus
-                                            targetStatus
-                                            preparedContent
-                                            boundary.EventCursor
-                                            (parseResult.GetValue(Options.force))
-                                            graceIds.CorrelationId
-                                            cancellationToken
-                                            WorkingDirectoryUpdate.Connect.none
+                            let! outcomeResult =
+                                applySelectedZipWith
+                                    dependencies
+                                    zipSource
+                                    (string boundary.RepositoryId)
+                                    (string boundary.DirectoryId)
+                                    boundary.EventCursor
+                                    (parseResult.GetValue(Options.force))
+                                    graceIds.CorrelationId
+                                    cancellationToken
 
-                                    return renderWorkingDirectoryOutcome parseResult configurationOutput graceIds.CorrelationId outcome
+                            match outcomeResult with
+                            | Error error -> return renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed" error
+                            | Ok outcome -> return renderWorkingDirectoryOutcome parseResult configurationOutput graceIds.CorrelationId outcome
                 | (Error error, _) -> return renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed" error
                 | (_, Error error) -> return renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed" error
         }
@@ -932,8 +1023,8 @@ module Connect =
                     |> renderConfiguredUpdateFailure parseResult configurationOutput "RetrievalFailed"
         }
 
-    /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.
-    let private connectImpl (parseResult: ParseResult) (cancellationToken: CancellationToken) : Task<int> =
+    /// Routes one selected retrieval mode through validation, configuration, and the existing Connect workflow.
+    let private connectSelectedImpl retrieval (parseResult: ParseResult) (cancellationToken: CancellationToken) : Task<int> =
         task {
             if parseResult |> verbose then printParseResult parseResult
             ensureConfigurationFileExists ()
@@ -989,6 +1080,7 @@ module Connect =
                                         retrieveAfterConfiguration parseResult configurationOutput graceIds.CorrelationId (fun () ->
                                             retrieveDefaultBranchAndWrite
                                                 parseResult
+                                                retrieval
                                                 graceIds
                                                 ownerDto
                                                 organizationDto
@@ -1006,6 +1098,17 @@ module Connect =
                                         |> renderOutput parseResult
                             | Error error -> return (Error error |> renderOutput parseResult)
                         | Error error -> return (Error error |> renderOutput parseResult)
+        }
+
+    /// Rejects invalid Cache selection before Connect creates or changes repository-local configuration.
+    let private connectImpl (parseResult: ParseResult) (cancellationToken: CancellationToken) : Task<int> =
+        task {
+            match ConnectCache.selectRetrieval parseResult (fun name -> Environment.GetEnvironmentVariable(name)) with
+            | Error error ->
+                return
+                    Error(GraceError.Create error (getCorrelationId parseResult))
+                    |> renderOutput parseResult
+            | Ok retrieval -> return! connectSelectedImpl retrieval parseResult cancellationToken
         }
 
     /// Executes the connect command by binding ParseResult values to the SDK request and CLI output contract.
@@ -1048,6 +1151,8 @@ module Connect =
         connectCommand.Options.Add(Options.serverAddress)
         connectCommand.Options.Add(Options.retrieveDefaultBranch)
         connectCommand.Options.Add(Options.force)
+        connectCommand.Options.Add(ConnectCache.Options.cacheRequired)
+        connectCommand.Options.Add(ConnectCache.Options.cacheUri)
 
         connectCommand.Action <- Connect()
         connectCommand

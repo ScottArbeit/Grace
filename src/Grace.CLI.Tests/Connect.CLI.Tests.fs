@@ -3,6 +3,7 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
@@ -14,7 +15,10 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.IO.Compression
 open System.Collections.Generic
+open System.Net
+open System.Net.Http
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -101,6 +105,27 @@ module ConnectTests =
             |> fun value -> Sha256Hash(value.ToLowerInvariant())
 
         sha256, Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+    /// Creates one real ZIP fixture from exact archive paths and payloads.
+    let private createZip entries =
+        use output = new MemoryStream()
+
+        do
+            use archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen = true)
+
+            entries
+            |> List.iter (fun (path, bytes) ->
+                let entry = archive.CreateEntry(path, CompressionLevel.NoCompression)
+                use stream = entry.Open()
+                stream.Write(bytes, 0, bytes.Length))
+
+        output.ToArray()
+
+    /// Creates one successful Cache artifact response containing supplied ZIP bytes.
+    let private zipResponse bytes =
+        let response = new HttpResponseMessage(HttpStatusCode.OK)
+        response.Content <- new ByteArrayContent(bytes)
+        response
 
     /// Creates a complete one-file target status and its exact root metadata.
     let private oneFileStatus (configuration: GraceConfiguration) (path: string) (bytes: byte array) =
@@ -460,6 +485,279 @@ module ConnectTests =
                 completion |> should equal None
             })
 
+    /// Cache-required Connect composes one Cache GET, real ZIP staging, and one force-aware WDU transaction.
+    [<Test>]
+    let ``cache required Connect stages and applies one verified ZIP without Direct retrieval`` () =
+        withConfiguredTempDir (fun configuration ->
+            task {
+                let selectedPath = "selected.txt"
+                let selectedBytes = Encoding.UTF8.GetBytes("cache selected bytes")
+                let targetStatus, _, targetFile = oneFileStatus configuration selectedPath selectedBytes
+                let! currentStatus = readFreshConnectStatus configuration
+
+                let manifest =
+                    WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                                  targetFile.RelativePath,
+                                                                                  targetFile.Sha256Hash,
+                                                                                  targetFile.Blake3Hash
+                                                                              ) ]
+                    |> required
+
+                let target =
+                    WorkingDirectoryUpdateContracts.Target.create
+                        configuration.RepositoryId
+                        configuration.BranchId
+                        targetStatus.RootDirectoryId
+                        targetStatus.RootDirectorySha256Hash
+                        targetStatus.RootDirectoryBlake3Hash
+                    |> required
+
+                let cacheUri = Uri("http://localhost:5341/")
+                let eventCursor = "branch-event-v1:1031-cache"
+                let correlationId = "connect-1031-cache-composition"
+                let stagingDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-connect-composition-{Guid.NewGuid():N}")
+
+                Directory.CreateDirectory(stagingDirectory)
+                |> ignore
+
+                File.WriteAllText(Path.Combine(configuration.RootDirectory, selectedPath), "conflicting Direct-era bytes")
+
+                let mutable cacheGetCount = 0
+                let mutable directLookupCount = 0
+                let mutable directOpenCount = 0
+                let mutable workingDirectoryUpdateCount = 0
+                let mutable observedCursor = String.Empty
+                let mutable observedForce = false
+
+                try
+                    let cacheDependencies: ConnectCache.Dependencies =
+                        {
+                            Send =
+                                fun request _ ->
+                                    task {
+                                        cacheGetCount <- cacheGetCount + 1
+
+                                        request.Method |> should equal HttpMethod.Get
+
+                                        request.RequestUri.AbsolutePath
+                                        |> should equal $"/repositories/{configuration.RepositoryId}/directory-version-zips/{targetStatus.RootDirectoryId}"
+
+                                        return zipResponse (createZip [ selectedPath, selectedBytes ])
+                                    }
+                            Prepare = fun _ -> Task.FromResult(Error(GraceError.Create "unexpected Cache fill" correlationId))
+                            StartTimer = fun () -> fun () -> TimeSpan.Zero
+                            Delay = fun _ _ -> Task.CompletedTask
+                        }
+
+                    let! sourceResult =
+                        Connect.selectZipSourceWith
+                            (fun () ->
+                                directLookupCount <- directLookupCount + 1
+
+                                Task.FromResult<Result<UriWithSharedAccessSignature, GraceError>>(
+                                    Error(GraceError.Create "unexpected Direct ZIP lookup" correlationId)
+                                ))
+                            (ConnectCache.Required cacheUri)
+
+                    let source =
+                        match sourceResult with
+                        | Ok source -> source
+                        | Error error -> invalidOp error.Error
+
+                    let dependencies: Connect.ZipApplicationDependencies =
+                        {
+                            OpenDirectZip =
+                                fun _ _ ->
+                                    directOpenCount <- directOpenCount + 1
+                                    Task.FromException<Stream>(InvalidOperationException("unexpected Direct ZIP open"))
+                            UseCacheZip =
+                                fun cacheUri repositoryId directoryVersionId correlationId cancellationToken consume ->
+                                    ConnectCache.useVerifiedZipWith
+                                        cacheDependencies
+                                        cacheUri
+                                        repositoryId
+                                        directoryVersionId
+                                        correlationId
+                                        cancellationToken
+                                        consume
+                            StageZip =
+                                fun zipFile cancellationToken -> ConnectZipStaging.prepareInTempDirectory manifest zipFile stagingDirectory cancellationToken
+                            ApplyPreparedContent =
+                                fun preparedContent cursor force correlationId cancellationToken ->
+                                    task {
+                                        workingDirectoryUpdateCount <- workingDirectoryUpdateCount + 1
+                                        observedCursor <- cursor
+                                        observedForce <- force
+
+                                        let! outcome =
+                                            WorkingDirectoryUpdate.Connect.run
+                                                target
+                                                currentStatus
+                                                targetStatus
+                                                preparedContent
+                                                cursor
+                                                force
+                                                correlationId
+                                                cancellationToken
+                                                WorkingDirectoryUpdate.Connect.none
+
+                                        return Ok outcome
+                                    }
+                        }
+
+                    let! result =
+                        Connect.applySelectedZipWith
+                            dependencies
+                            source
+                            (string configuration.RepositoryId)
+                            (string targetStatus.RootDirectoryId)
+                            eventCursor
+                            true
+                            correlationId
+                            CancellationToken.None
+
+                    match result with
+                    | Ok (WorkingDirectoryUpdateContracts.Outcome.Updated _) -> ()
+                    | Ok outcome -> Assert.Fail($"Expected Cache composition Updated, got {outcome}.")
+                    | Error error -> Assert.Fail($"Unexpected Cache composition failure: {error.Error}")
+
+                    File.ReadAllBytes(Path.Combine(configuration.RootDirectory, selectedPath))
+                    |> should equal selectedBytes
+
+                    let! persistedStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                    WorkingDirectoryUpdate.LocalApplication.statusFingerprintMatches targetStatus persistedStatus
+                    |> should equal true
+
+                    let! boundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                    boundary
+                    |> Option.map (fun value -> value.EventCursor)
+                    |> should equal (Some eventCursor)
+
+                    cacheGetCount |> should equal 1
+                    directLookupCount |> should equal 0
+                    directOpenCount |> should equal 0
+                    workingDirectoryUpdateCount |> should equal 1
+                    observedCursor |> should equal eventCursor
+                    observedForce |> should equal true
+
+                    Directory.EnumerateFileSystemEntries(stagingDirectory)
+                    |> Seq.isEmpty
+                    |> should equal true
+                finally
+                    if Directory.Exists(stagingDirectory) then
+                        Directory.Delete(stagingDirectory, recursive = true)
+            })
+
+    /// Invalid Cache ZIP bytes are removed by real staging before WDU or Direct retrieval can run.
+    [<Test>]
+    let ``cache required Connect cleans an invalid ZIP without WDU or Direct retrieval`` () =
+        withConfiguredTempDir (fun configuration ->
+            task {
+                let selectedPath = "selected.txt"
+                let selectedBytes = Encoding.UTF8.GetBytes("expected selected bytes")
+                let targetStatus, _, targetFile = oneFileStatus configuration selectedPath selectedBytes
+
+                let manifest =
+                    WorkingDirectoryUpdateContracts.PreparedManifest.create [ WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                                  targetFile.RelativePath,
+                                                                                  targetFile.Sha256Hash,
+                                                                                  targetFile.Blake3Hash
+                                                                              ) ]
+                    |> required
+
+                let cacheUri = Uri("http://localhost:5341/")
+                let correlationId = "connect-1031-invalid-cache-zip"
+                let stagingDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-connect-invalid-{Guid.NewGuid():N}")
+
+                Directory.CreateDirectory(stagingDirectory)
+                |> ignore
+
+                let mutable directLookupCount = 0
+                let mutable directOpenCount = 0
+                let mutable workingDirectoryUpdateCount = 0
+
+                try
+                    let cacheDependencies: ConnectCache.Dependencies =
+                        {
+                            Send = fun _ _ -> Task.FromResult(zipResponse (Encoding.UTF8.GetBytes("not a ZIP archive")))
+                            Prepare = fun _ -> Task.FromResult(Error(GraceError.Create "unexpected Cache fill" correlationId))
+                            StartTimer = fun () -> fun () -> TimeSpan.Zero
+                            Delay = fun _ _ -> Task.CompletedTask
+                        }
+
+                    let! sourceResult =
+                        Connect.selectZipSourceWith
+                            (fun () ->
+                                directLookupCount <- directLookupCount + 1
+
+                                Task.FromResult<Result<UriWithSharedAccessSignature, GraceError>>(
+                                    Error(GraceError.Create "unexpected Direct ZIP lookup" correlationId)
+                                ))
+                            (ConnectCache.Required cacheUri)
+
+                    let source =
+                        match sourceResult with
+                        | Ok source -> source
+                        | Error error -> invalidOp error.Error
+
+                    let dependencies: Connect.ZipApplicationDependencies =
+                        {
+                            OpenDirectZip =
+                                fun _ _ ->
+                                    directOpenCount <- directOpenCount + 1
+                                    Task.FromException<Stream>(InvalidOperationException("unexpected Direct ZIP open"))
+                            UseCacheZip =
+                                fun cacheUri repositoryId directoryVersionId correlationId cancellationToken consume ->
+                                    ConnectCache.useVerifiedZipWith
+                                        cacheDependencies
+                                        cacheUri
+                                        repositoryId
+                                        directoryVersionId
+                                        correlationId
+                                        cancellationToken
+                                        consume
+                            StageZip =
+                                fun zipFile cancellationToken -> ConnectZipStaging.prepareInTempDirectory manifest zipFile stagingDirectory cancellationToken
+                            ApplyPreparedContent =
+                                fun _ _ _ _ _ ->
+                                    workingDirectoryUpdateCount <- workingDirectoryUpdateCount + 1
+
+                                    Task.FromException<Result<WorkingDirectoryUpdateContracts.Outcome, GraceError>>(
+                                        InvalidOperationException("unexpected WDU invocation")
+                                    )
+                        }
+
+                    let! result =
+                        Connect.applySelectedZipWith
+                            dependencies
+                            source
+                            (string configuration.RepositoryId)
+                            (string targetStatus.RootDirectoryId)
+                            "branch-event-v1:1031-invalid"
+                            true
+                            correlationId
+                            CancellationToken.None
+
+                    match result with
+                    | Ok outcome -> Assert.Fail($"Expected invalid Cache ZIP rejection, got {outcome}.")
+                    | Error error ->
+                        error.Error
+                        |> should contain "Connect zip staging failed"
+
+                    directLookupCount |> should equal 0
+                    directOpenCount |> should equal 0
+                    workingDirectoryUpdateCount |> should equal 0
+
+                    Directory.EnumerateFileSystemEntries(stagingDirectory)
+                    |> Seq.isEmpty
+                    |> should equal true
+                finally
+                    if Directory.Exists(stagingDirectory) then
+                        Directory.Delete(stagingDirectory, recursive = true)
+            })
+
     /// A no-download Connect never enters the retrieval path that can persist a remote boundary.
     [<Test>]
     let ``connect no download does not invoke materialization`` () =
@@ -515,6 +813,46 @@ module ConnectTests =
 
     /// Gets grace config path needed by the test scenario.
     let private getGraceConfigPath root = Path.Combine(root, ".grace", "graceconfig.json")
+
+    /// An unselected Cache URI is rejected before Connect creates or changes local configuration.
+    [<Test>]
+    let ``connect rejects cache uri without cache required before configuration`` () =
+        withTempDir (fun root ->
+            let exitCode, output =
+                runWithCapturedOutput [| "connect"
+                                         OptionName.CacheUri
+                                         "http://localhost:5341/" |]
+
+            exitCode |> should equal -1
+
+            output
+            |> should contain "requires --cache-required"
+
+            File.Exists(getGraceConfigPath root)
+            |> should equal false)
+
+    /// Cache-required Connect rejects a missing CLI and environment URI before local configuration.
+    [<Test>]
+    let ``connect cache required needs a Cache URI before configuration`` () =
+        let originalCacheUri = Environment.GetEnvironmentVariable("GRACE_CACHE_URI")
+
+        try
+            Environment.SetEnvironmentVariable("GRACE_CACHE_URI", null)
+
+            withTempDir (fun root ->
+                let exitCode, output =
+                    runWithCapturedOutput [| "connect"
+                                             OptionName.CacheRequired |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "needs --cache-uri or GRACE_CACHE_URI"
+
+                File.Exists(getGraceConfigPath root)
+                |> should equal false)
+        finally
+            Environment.SetEnvironmentVariable("GRACE_CACHE_URI", originalCacheUri)
 
     /// Creates the persisted Connect configuration result used by output projection tests.
     let private outputConfiguration repositoryId branchId : Grace.CLI.Common.LocalOutputDto.ConnectDto =

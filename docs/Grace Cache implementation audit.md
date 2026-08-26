@@ -31,7 +31,7 @@ The implemented route still requires caller-supplied `canonicalIdentity`, `sha25
 has no fill route. Current `CacheArtifactStore.commit` also holds the global operation gate across staging, streaming,
 hashing, and publication, so it is not the target implementation for many-client network fill.
 
-## Design-ready miss-to-hit increment
+## Accepted miss-to-hit design
 
 The accepted Product V1 increment replaces the exact-tuple read route with an identity-only repository and immutable
 directory-version route. `grace connect` first asks Cache for a verified hit. On a miss, it obtains a Server-signed
@@ -65,17 +65,17 @@ should retain only a short serialized publication section that reclassifies the 
 verified same-root file, and transitions to `Complete`. Restart continues to classify SQLite plus filesystem state and
 never resumes a network stream.
 
-### Planned implementation seams
+### Implemented seams
 
-| Area | Planned change |
+| Area | Implemented result |
 | --- | --- |
-| `Grace.Cache.Storage` | Split download/staging from a short exact publication operation; retain existing restart classifications. |
-| `Grace.Cache` | Add ephemeral P-256 identity, identity-only read, permit-only fill, coalescing, bounded capacity, and typed errors. |
-| `Grace.Server` | Add narrow ZIP preparation and signed-permit redemption while leaving Direct `getZipFile` unchanged. |
-| Directory-version ZIP producer | Calculate lowercase SHA-256 and exact size and upload both as Blob metadata with the ZIP. |
-| `Grace.SDK` and shared contracts | Add preparation/redemption DTOs and typed calls without exposing the SAS to CLI code. |
-| `Grace.CLI` | Add explicit Cache-required connect flow and the bounded 60-second backpressure retry. |
-| Tests and generated surfaces | Cover bindings, access revalidation, effects, restart, concurrency, parity, and regenerate affected API artifacts. |
+| `Grace.Cache.Storage` | Separates network staging from short exact publication and retains existing restart classifications. |
+| `Grace.Cache` | Provides ephemeral P-256 identity, identity-only read, permit-only fill, coalescing, bounded capacity, and typed errors. |
+| `Grace.Server` | Provides narrow ZIP preparation and signed-permit redemption while leaving Direct `getZipFile` unchanged. |
+| Directory-version ZIP producer | Writes lowercase SHA-256 and exact size as Blob metadata with the ZIP. |
+| `Grace.SDK` and shared contracts | Provide preparation and redemption DTOs and typed calls without exposing the SAS to CLI code. |
+| `Grace.CLI` | Provides explicit Cache-required Connect selection, Cache stream orchestration, and bounded typed backpressure retry. |
+| Tests and generated surfaces | Cover bindings, access revalidation, effects, restart, concurrency, generated API artifacts, CLI selection, and Cache stream orchestration. |
 
 Persistent identity, enrollment, liveness, assignment, revocation, recursive metadata, complete-root publication,
 prefetch, scheduling, durable retry queues, reconciliation, and generalized recovery remain deferred.
@@ -85,11 +85,11 @@ prefetch, scheduling, durable retry queues, reconciliation, and generalized reco
 Issue #999, merged by PR #1001, delivered the Server-approved HTTP miss-to-hit path on `main`. The current Cache host
 now supports identity-only verified reads, ephemeral process-key publication, permit-only fill, Server redemption,
 independent integrity validation, bounded distinct fills, same-artifact coalescing, and a separate post-commit `GET`.
-Direct `directory/getZipFile` behavior and `grace connect` remain unchanged.
+At the GC-CAL-03 checkpoint, Direct `directory/getZipFile` behavior and `grace connect` remained unchanged.
 
-## GC-CAL-04 readiness result
+## GC-CAL-04 delivery result
 
-The Cache-required Connect contract is Plan-ready, with these fixed integration choices:
+Issue #1031 implements the Cache-required Connect contract with these fixed integration choices:
 
 - Syntax: `grace connect <repository> --cache-required`; absence means Direct.
 - Selection: per invocation only. No configuration or environment value silently selects Cache, and no
@@ -98,17 +98,15 @@ The Cache-required Connect contract is Plan-ready, with these fixed integration 
   absolute loopback HTTP URI with an explicit port and is never persisted in repository configuration.
 - Failure: every Cache failure is terminal except the accepted 60-second retry for typed capacity backpressure. There
   is no Direct fallback.
-- Local update: Cache-produced prepared content must enter the shared WDU transaction. GC-CAL-04 must not retain or
-  duplicate `Connect.extractZipEntries` as a mutation path.
-- Delivery: merge the WDU Connect path through Issue #835 to `main`, then run a fresh Issue #597 checkpoint and create
-  one GC-CAL-04 mainline child from that current revision.
+- Cache sequence: exact verified `GET`; on `404`, public-key `GET`, authenticated Server preparation, permit-only fill
+  `POST`, and an independent verified `GET`.
+- Retry: only HTTP `429` with problem code `CacheFillCapacityExceeded` retries. Each retry obtains a fresh Server permit
+  and uses a monotonic 60-second budget with bounded exponential delay capped at two seconds.
+- Local update: both Direct and Cache ZIP streams enter `ConnectZipStaging.prepare`; prepared content then enters the
+  existing `WorkingDirectoryUpdate.Connect.run` call exactly once.
+- Unchanged surfaces: Direct retrieval, WDU contracts and algorithms, Cache and Server routes, SDK and shared contracts,
+  OpenAPI and generated artifacts, persisted configuration, and local status shapes do not change in GC-CAL-04.
 
-The current source still retrieves a Direct Blob SAS and mutates working and object files inside
-`Connect.extractZipEntries`. Issue #845 owns replacing that behavior with `WorkingDirectoryUpdate.run`, but the WDU
-epic currently selects Issue #960 as its only next child. Therefore GC-CAL-04 is not issue-ready today. Creating it now
-would either freeze a stale implementation seam or permit concurrent edits to `Connect.CLI.fs`.
-
-The post-WDU child should own only the Connect Cache HTTP client, the two new CLI options and URI validation, the
-Cache-required source sequence, typed capacity retry, and the adapter from verified Cache ZIP bytes into WDU prepared
-content. Direct behavior, WDU state and algorithms, CachePreferred, repository-persisted Cache location, and any second
-working-directory writer remain outside that child.
+GC-CAL-04 owns only the Connect Cache HTTP client, the two CLI options and URI validation, Cache-required source
+selection and orchestration, typed capacity retry, focused CLI tests, and these two Cache documents. CachePreferred,
+repository-persisted Cache location, durable retry, and any second working-directory writer remain outside this slice.

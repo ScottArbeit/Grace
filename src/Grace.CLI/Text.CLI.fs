@@ -21,6 +21,12 @@ module Text =
         let BranchName = "--branch-name"
 
         [<Literal>]
+        let CacheRequired = "--cache-required"
+
+        [<Literal>]
+        let CacheUri = "--cache-uri"
+
+        [<Literal>]
         let Check = "--check"
 
         [<Literal>]
