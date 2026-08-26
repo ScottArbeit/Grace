@@ -13,8 +13,8 @@ Working Directory Update transaction used by Direct Connect. Direct remains the 
 - Issue #999, merged by PR #1001, delivered the Server-approved Cache HTTP miss-to-hit path.
 - Issue #1031, merged by PR #1032 as `05e7dd6c5fab8c2f613d9bb97c8d1395606be0c5`, delivered Cache-required Connect
   through the shared WDU path.
-- Issue #597 has no remaining Tier 2 implementation child. Only current-state documentation reconciliation remains;
-  the deferred capabilities below remain deferred.
+- PR #1033 merged the current-state documentation reconciliation and closed Issue #597 as completed. No next Tier 2
+  implementation child was selected; the deferred capabilities below remain deferred.
 
 ## Cache-required miss-to-hit outcome
 
