@@ -726,6 +726,71 @@ module BranchCommandTests =
             String.Empty
             "reference-without-save"
 
+    /// Verifies that a Branch selector combined with a Reference is rejected after pending completion and before routing effects.
+    [<TestCase(true); TestCase(false); Category("Issue1025")>]
+    let ``Branch switch rejects Branch plus Reference selectors before routing`` useBranchId =
+        withTempBranchSwitchRepo (fun () ->
+            let calls = ResizeArray<string>()
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult None
+                    ResolveReferenceRoute =
+                        fun _ ->
+                            calls.Add("resolve")
+                            Task.FromResult(Ok(Some Branch.ReferenceWithoutSave))
+                    ResolveBranchSelector =
+                        fun _ ->
+                            calls.Add("branch-selector")
+                            Task.FromResult(Ok { ReferenceId = ReferenceId.NewGuid(); SelectedBranchId = Some(BranchId.NewGuid()) })
+                    RunReferenceWithoutSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-without-save")
+                            Task.FromResult 0
+                    RunReferenceWithSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-with-save")
+                            Task.FromResult 0
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult 0
+                }
+
+            let branchSelector =
+                if useBranchId then
+                    [|
+                        "--to-branch-id"
+                        (BranchId.NewGuid()).ToString()
+                    |]
+                else
+                    [|
+                        "--to-branch-name"
+                        "ambiguous-branch"
+                    |]
+
+            let arguments =
+                Array.concat [ [| "branch"; "switch" |]
+                               branchSelector
+                               [|
+                                   "--reference-id"
+                                   (ReferenceId.NewGuid()).ToString()
+                               |] ]
+
+            let exitCode =
+                Branch
+                    .Switch
+                    .CreateForTests(operations)
+                    .InvokeAsync(parse arguments, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+
+            exitCode |> should equal -1
+            calls |> Seq.toList |> should equal [ "resume" ])
+
     /// Creates a valid selected Branch response for exact latest-Reference validation tests.
     let private branchSelectorDto selectedBranchId (selectedBranchName: string) referenceId rootDirectoryId =
         let latestReference =

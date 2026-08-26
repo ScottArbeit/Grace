@@ -5070,6 +5070,10 @@ module Branch =
                         logToConsole $"Branch working directory {outcomeName}: persisted Reference finalization.{suffix}"
 
                     return exitCode
+                | None when hasBranchSelector && hasReferenceSelector ->
+                    let error = GraceError.Create "Branch switch cannot combine a Branch selector with a Reference selector." (getCorrelationId parseResult)
+
+                    return renderOutput parseResult (GraceResult.Error error)
                 | None ->
                     let isExactBranchSelector =
                         hasBranchSelector
