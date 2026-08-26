@@ -1,10 +1,11 @@
 # Working Directory Update
 
-**Status:** Implemented for Branch through Issue #1025, Watch replay through Issue #843, Connect retrieval through
-Issue #845, and Doctor recovery through Issue #842
+**Lifecycle state:** Plan-ready
+**Delivery status:** Implemented for Branch through Issue #1025, Watch replay through Issue #843, Connect retrieval
+through Issue #845, and Doctor recovery through Issue #842
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-25, Issue #846 audit on epic base `e7bdde34`
+**Evidence current through:** 2026-08-25, Issue #846 final audit and Issue #1025 on epic head `df28913`
 
 ## 1. Outcome and scope
 
