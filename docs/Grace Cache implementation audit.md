@@ -127,8 +127,8 @@ repository-persisted Cache location, durable retry, and any second working-direc
 ### Issue #597 completion verdict
 
 No next Tier 2 child is selected. The accepted Product V1 outcome is implemented, reviewed, validated, and present on
-`main`. Issue #597 now needs only the current-state reconciliation in this document and `docs/Grace Cache.md` before it
-can close. Future Cache capabilities require fresh design and issue-readiness work against then-current evidence.
+`main`. PR #1033 merged the current-state reconciliation in this document and `docs/Grace Cache.md`, closing Issue #597
+as completed. Future Cache capabilities require fresh design and issue-readiness work against then-current evidence.
 
 Historical Cache issues, branches, pull requests, worktrees, and dirty state remain preserved. Persistent identity,
 enrollment, liveness, assignment, revocation, recursive metadata, complete-root publication, prefetch, scheduling,
