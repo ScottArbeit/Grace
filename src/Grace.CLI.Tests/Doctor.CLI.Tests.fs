@@ -388,6 +388,9 @@ module DoctorCliTests =
                 let configuration, previousBranchId, selectedBranchId, target, operation, _, persistPending =
                     seedPendingReferenceRepair repositoryRoot bytes false
 
+                let originalParseResult = Services.parseResult
+                Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+
                 let scope =
                     WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
                     |> required
@@ -434,6 +437,7 @@ module DoctorCliTests =
                 finally
                     if not leaseDisposed then WorkingDirectoryUpdateCoordination.Lease.dispose lease
 
+                    Services.parseResult <- originalParseResult
                     Configuration.resetConfiguration ()
                     SqliteConnection.ClearAllPools()))
 

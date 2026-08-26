@@ -3331,7 +3331,7 @@ module Branch =
     let internal deleteBranchSwitchWorkflowLeaseIfOwned (switchLeaseFileName: string) (leaseText: string) =
         deleteBranchSwitchUpdateMarkerIfOwned switchLeaseFileName leaseText
 
-    /// Runs a branch-switch workflow under precompute and materialization leases before state is computed.
+    /// Runs a branch-switch workflow under its precompute lease before state is computed.
     let internal runBranchSwitchWorkflowWithLease
         (operations: BranchSwitchWatchCleanPreflightOperations)
         correlationId
@@ -3375,17 +3375,11 @@ module Branch =
                     match! runBranchSwitchWatchCleanPreflight operations correlationId with
                     | Error error -> return Error error
                     | Ok () ->
-                        let! result =
-                            WorkingDirectoryMaterialization.runWithLease (fun () ->
-                                task {
-                                    match! runBranchSwitchWatchCleanPreflight operations correlationId with
-                                    | Error error -> return Error error
-                                    | Ok () ->
-                                        let! workflowResult = workflow ()
-                                        return Ok workflowResult
-                                })
-
-                        return result
+                        match! runBranchSwitchWatchCleanPreflight operations correlationId with
+                        | Error error -> return Error error
+                        | Ok () ->
+                            let! workflowResult = workflow ()
+                            return Ok workflowResult
                 finally
                     if leaseCreatedByThisInvocation then
                         deleteBranchSwitchWorkflowLeaseIfOwned switchLeaseFileName leaseText
