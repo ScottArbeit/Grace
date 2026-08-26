@@ -24,15 +24,13 @@ parity, and non-version SHA-256 uses that intentionally stay SHA-256.
 _Avoid_: FileContentHash, ChunkAddress, ContentBlockAddress, ManifestAddress
 
 **Working Directory Update**:
-The Design-ready contract for a Grace-controlled operation that will change indexed working-directory content and
-durable local state to match one selected server root, then commit caller-specific progress only after verifying that
-match. After implementation, Branch switching, Watch current-Reference replay, and Connect retrieval will use this
-shared operation while retaining their own admission and presentation policies.
-Its canonical compiler owns the 19 requirements, 70 lifecycle rows, and fifteen artifact assignments. That compiler
-becomes an input to #929 only after PR #930 merges; the live projection packet and the #921 implementation gate remain
-pending #929. After `VerifiedLocalRoot`, ephemeral `bytesChanged` selects explicit
-DirectoryVersion `Updated` or `Unchanged` terminal rows without adding persisted state; Reference uses its own ordinary
-post-completion rows.
+The Grace-controlled operation that changes indexed working-directory content and durable local state to match one
+selected server root, then commits caller-specific progress only after verifying that match. Branch hash, Reference,
+ID, and name switching, Watch current-Reference replay, Connect retrieval, and Doctor retry use this shared operation
+while retaining their own admission and presentation policies. Its compiler owns 19 requirements, 66 lifecycle rows,
+244 applicability keys, and 15 artifact assignments; the complete exported packet matches those generated projections.
+After `VerifiedLocalRoot`, ephemeral `bytesChanged` selects explicit DirectoryVersion `Updated` or `Unchanged` terminal
+rows without adding persisted state; Reference uses its own ordinary post-completion rows.
 _Avoid_: WorkingDirectoryMaterialization, exact materialization, caller-owned filesystem transaction
 
 **FileManifest**:

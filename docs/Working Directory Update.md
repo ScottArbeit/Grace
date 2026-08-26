@@ -1,10 +1,10 @@
 # Working Directory Update
 
-**Status:** Implemented for Branch through merged Issue #872 / PR #1015, Watch replay through Issue #843, and Connect
-retrieval through Issue #845; Branch selector mapping accepted for Issue #1025
+**Status:** Implemented for Branch through Issue #1025, Watch replay through Issue #843, Connect retrieval through
+Issue #845, and Doctor recovery through Issue #842
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-25, Issue #1025 Branch selector mapping on epic base `6ba6e695`
+**Evidence current through:** 2026-08-25, Issue #846 audit on epic base `e7bdde34`
 
 ## 1. Outcome and scope
 
@@ -365,8 +365,8 @@ dependency, checklist, assignment, or primary-delivery role. Issue #960 replaces
 | Connect retrieval composition | #845 | Persist configuration first, stage the exact selected ZIP outside the lease, apply only through WDU, and atomically commit status, object metadata, initial cursor, local-root scope, and terminal completion. |
 | DirectoryVersion terminalization and hash wiring | #900 and #901 | Superseded by Issue #960 because terminalization is part of the verified-status transaction and the public command is the tracer boundary. |
 
-The compiler result is the sole primary-requirement mapping. Issue #871 is complete; Issue #872 is the current selected
-Save-admission child after its exact live packet passes.
+The compiler result is the sole primary-requirement mapping. Issues #871 and #872 are complete, and Issue #1025 routes
+Branch ID and name selection through the same exact-Reference transaction for both Save modes.
 
 ### Selected Product V1 boundaries
 
@@ -409,9 +409,10 @@ restart. Only Issue #871 may project `Updated`, `Unchanged`, or `FinalizationInc
 finalization evidence. No caller finalizer or in-memory retry dependency is added.
 
 The lease inventory is also finite. No-Save admission, hash-prefix resolution, target graph retrieval, Connect archive
-download, and immutable preparation hold none of the Branch workflow, legacy materialization, or WDU leases. The sealed phase
-handoff holds none. Only the WDU transaction holds `working-directory-update.lease` during local reread, mutation,
-SQLite completion, and terminal outcome. Marker and sidecar files are evidence, never leases; no second lease is added.
+download, and immutable preparation hold no WDU lease. Branch may retain its caller workflow lease across admission and
+completion, but only the WDU transaction holds `working-directory-update.lease` during local reread, mutation, SQLite
+completion, and terminal outcome. The sealed phase handoff holds no WDU lease. Marker and sidecar files are evidence,
+never leases; no second local-mutation lease exists.
 
 DirectoryVersion cannot create pending finalization. After its terminal SQLite transaction, exact marker cleanup is
 best effort. Cleanup failure leaves the marker but does not downgrade `Updated` or `Unchanged`. Exact replay returns
@@ -431,12 +432,6 @@ replaces only marker-delimited projections in the fifteen declared artifacts. Th
 freshness, while runtime tests remain responsible for outcomes, marker handling, cancellation, and Reference recovery.
 Behavioral tests must use production-reachable persisted facts and deterministic seams; source-string assertions,
 sleeps, and impossible hand-built states are insufficient.
-
-<!-- grace:wdu-lifecycle-projection-plan:start -->
-```json
-{"schema":"grace.wdu.lifecycle-projection-plan/v1","compilerInput":"docs/Working Directory Update.md#normative-branch-lifecycle-table","publicationState":"issue-871-reference-finalization"}
-```
-<!-- grace:wdu-lifecycle-projection-plan:end -->
 
 The following consumers carry generated projections rather than competing lifecycle sequences:
 
@@ -459,6 +454,53 @@ The following consumers carry generated projections rather than competing lifecy
 ADR 0011 and the declared issue bodies remain contextual consumers. Their marker-delimited projections are rendered
 from this revision without interpreting surrounding Markdown. Closed predecessor records remain packet artifacts only
 where the machine metadata preserves their supersession context.
+
+### Issue #846 final audit
+
+The compiled packet contains 66 lifecycle rows, 244 applicability keys, 19 requirements, and 15 artifacts. The current
+source, focused tests, built commands, and documents account for every requirement without changing Product V1 behavior:
+
+| Requirement | Primary issue | Current disposition |
+| --- | --- | --- |
+| REQ-001 | #960 | The five-input seam remains in `WorkingDirectoryUpdate.run`; contract tests reject alternate request shapes. |
+| REQ-002 | #869 | Typed target and operation identities remain in the shared contracts and runtime tests. |
+| REQ-003 | #837 | Prepared content remains immutable and is covered by focused prepared-content tests. |
+| REQ-004 | #839 | The stable local-root scope remains the WDU coordination boundary and is covered by coordination tests. |
+| REQ-005 | #869 | Typed marker evidence remains inside WDU contracts, coordination, and runtime tests. |
+| REQ-006 | #898 | Fresh planning and local-content safety remain covered by topology and runtime tests. |
+| REQ-007 | #960 | Object verification precedes application in WDU and is covered by prepared-content and runtime tests. |
+| REQ-008 | #960 | Complete relevant-root verification remains covered by topology and runtime tests. |
+| REQ-009 | #838 | Atomic local completion remains in `LocalStateDb` and its focused tests. |
+| REQ-010 | #838 | Pending and terminal completion remain bounded by the existing SQLite model and tests. |
+| REQ-011 | #871 | Reference completion and replay remain repeatable through WDU lifecycle and caller tests. |
+| REQ-012 | #871 | Outcomes, exit behavior, and Doctor guidance remain covered by output and Doctor tests. |
+| REQ-013 | #960 | Cancellation precedence remains covered at the WDU effect boundaries. |
+| REQ-014 | #960 | Same-operation adoption and fresh reconciliation remain covered by runtime replay tests. |
+| REQ-015 | #842 | Doctor repairs Branch local state without working-file mutation through the shared retry path. |
+| REQ-016 | #871 | Branch, Watch, and Connect retain their documented caller-specific effect ordering. |
+| REQ-017 | #846 | This document, ADR 0011, and `CONTEXT.md` describe the current shared path and exact packet counts. |
+| REQ-018 | #928 | The complete relevant-topology boundary remains compiled and covered by topology tests. |
+| REQ-019 | #960 | Verified-root completion and ephemeral `bytesChanged` outcomes remain covered by runtime and output tests. |
+
+The lifecycle renderer also reports an exact match for every declared packet artifact:
+
+| Artifact ID | Current disposition |
+| --- | --- |
+| `adr-0011` | ADR 0011 contains the exact rendered projection and current implementation context. |
+| `epic-835` | Issue #835 contains the exact rendered projection. |
+| `issue-842` | Issue #842 contains the exact rendered projection. |
+| `issue-843` | Issue #843 contains the exact rendered projection. |
+| `issue-846` | Issue #846 contains the exact rendered projection. |
+| `issue-869` | Issue #869 contains the exact rendered projection. |
+| `issue-898` | Issue #898 contains the exact rendered projection. |
+| `issue-928` | Issue #928 contains the exact rendered projection. |
+| `issue-960` | Issue #960 contains the exact rendered projection. |
+| `issue-922` | Issue #922 contains the exact rendered projection. |
+| `issue-923` | Issue #923 contains the exact rendered projection. |
+| `issue-900` | Issue #900 contains the exact rendered projection. |
+| `issue-901` | Issue #901 contains the exact rendered projection. |
+| `issue-871` | Issue #871 contains the exact rendered projection. |
+| `issue-872` | Issue #872 contains the exact rendered projection. |
 
 The bounded Product V1 residual risk remains interruption after working-tree mutation but before `VerifiedLocalRoot`,
 and the final check-to-operation race after synchronous precondition validation. `WDU-LC-002` and `WDU-LC-007` require
