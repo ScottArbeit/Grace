@@ -726,6 +726,71 @@ module BranchCommandTests =
             String.Empty
             "reference-without-save"
 
+    /// Verifies that a Branch selector combined with a Reference is rejected after pending completion and before routing effects.
+    [<TestCase(true); TestCase(false); Category("Issue1025")>]
+    let ``Branch switch rejects Branch plus Reference selectors before routing`` useBranchId =
+        withTempBranchSwitchRepo (fun () ->
+            let calls = ResizeArray<string>()
+
+            let operations: Branch.SwitchTestOperations =
+                {
+                    ResumePending =
+                        fun _ ->
+                            calls.Add("resume")
+                            Task.FromResult None
+                    ResolveReferenceRoute =
+                        fun _ ->
+                            calls.Add("resolve")
+                            Task.FromResult(Ok(Some Branch.ReferenceWithoutSave))
+                    ResolveBranchSelector =
+                        fun _ ->
+                            calls.Add("branch-selector")
+                            Task.FromResult(Ok { ReferenceId = ReferenceId.NewGuid(); SelectedBranchId = Some(BranchId.NewGuid()) })
+                    RunReferenceWithoutSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-without-save")
+                            Task.FromResult 0
+                    RunReferenceWithSave =
+                        fun _ _ _ ->
+                            calls.Add("reference-with-save")
+                            Task.FromResult 0
+                    RunLegacy =
+                        fun _ _ ->
+                            calls.Add("legacy")
+                            Task.FromResult 0
+                }
+
+            let branchSelector =
+                if useBranchId then
+                    [|
+                        "--to-branch-id"
+                        (BranchId.NewGuid()).ToString()
+                    |]
+                else
+                    [|
+                        "--to-branch-name"
+                        "ambiguous-branch"
+                    |]
+
+            let arguments =
+                Array.concat [ [| "branch"; "switch" |]
+                               branchSelector
+                               [|
+                                   "--reference-id"
+                                   (ReferenceId.NewGuid()).ToString()
+                               |] ]
+
+            let exitCode =
+                Branch
+                    .Switch
+                    .CreateForTests(operations)
+                    .InvokeAsync(parse arguments, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+
+            exitCode |> should equal -1
+            calls |> Seq.toList |> should equal [ "resume" ])
+
     /// Creates a valid selected Branch response for exact latest-Reference validation tests.
     let private branchSelectorDto selectedBranchId (selectedBranchName: string) referenceId rootDirectoryId =
         let latestReference =
@@ -1639,7 +1704,6 @@ module BranchCommandTests =
             let mutable inspectionCount = 0
             let mutable workflowRan = false
             let mutable leaseSeenByWorkflow = false
-            let mutable materializationLeaseHeldByWorkflow = false
             let mutable markerSeenByWorkflow = false
 
             let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
@@ -1663,15 +1727,6 @@ module BranchCommandTests =
                     task {
                         workflowRan <- true
                         leaseSeenByWorkflow <- File.Exists(switchLeaseFile)
-                        let materializationLeaseFile = WorkingDirectoryMaterialization.leaseFileName ()
-
-                        materializationLeaseHeldByWorkflow <-
-                            try
-                                use _probe = new FileStream(materializationLeaseFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-                                false
-                            with
-                            | :? IOException -> true
-
                         markerSeenByWorkflow <- File.Exists(updateMarkerFile)
                         return "computed"
                     }))
@@ -1685,89 +1740,7 @@ module BranchCommandTests =
             inspectionCount |> should equal 2
             workflowRan |> should equal true
             leaseSeenByWorkflow |> should equal true
-
-            materializationLeaseHeldByWorkflow
-            |> should equal true
-
             markerSeenByWorkflow |> should equal false
-
-            File.Exists(switchLeaseFile) |> should equal false
-
-            File.Exists(updateMarkerFile)
-            |> should equal false)
-
-    /// Verifies that stale Watch-clean evidence cannot start switch work after the materialization lease wait.
-    [<Test>]
-    let ``branch switch workflow lease rechecks Watch preflight after materialization lease wait`` () =
-        withTempBranchSwitchRepo (fun () ->
-            let updateMarkerFile = Services.updateInProgressFileName ()
-            let switchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName updateMarkerFile
-            let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
-            let dirtyStatus = { branchSwitchWatchStatus () with HasPendingWatchWork = true; IsWorkingTreeClean = false }
-            let materializationLeaseFile = WorkingDirectoryMaterialization.leaseFileName ()
-            let mutable inspectionCount = 0
-            let mutable postLeasePreflightHeldMaterializationLease = false
-            let mutable workflowRan = false
-
-            Directory.CreateDirectory(Path.GetDirectoryName(materializationLeaseFile))
-            |> ignore
-
-            use blockingLease = new FileStream(materializationLeaseFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
-                {
-                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
-                    InspectWatchStatus =
-                        fun () ->
-                            inspectionCount <- inspectionCount + 1
-
-                            if inspectionCount = 2 then
-                                postLeasePreflightHeldMaterializationLease <-
-                                    try
-                                        use _probe = new FileStream(materializationLeaseFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-                                        false
-                                    with
-                                    | :? IOException -> true
-
-                                Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) dirtyStatus)
-                            else
-                                Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
-                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
-                }
-
-            let switchTask =
-                Task.Run (fun () ->
-                    (Branch.runBranchSwitchWorkflowWithLease operations correlationId switchLeaseFile switchLeaseText (fun () ->
-                        task {
-                            workflowRan <- true
-                            return "must-not-run"
-                        }))
-                        .GetAwaiter()
-                        .GetResult())
-
-            Task.Delay(150).Wait()
-
-            switchTask.IsCompleted |> should equal false
-
-            blockingLease.Dispose()
-
-            Task.WaitAll([| switchTask :> Task |], 5000)
-            |> should equal true
-
-            match switchTask.Result with
-            | Error error ->
-                error.Error
-                |> should contain "Branch switch refused before mutation"
-
-                error.Error |> should contain "dirty working tree"
-            | Ok _ -> Assert.Fail("Expected post-lease dirty Watch preflight to refuse branch switch.")
-
-            inspectionCount |> should equal 2
-
-            postLeasePreflightHeldMaterializationLease
-            |> should equal true
-
-            workflowRan |> should equal false
 
             File.Exists(switchLeaseFile) |> should equal false
 

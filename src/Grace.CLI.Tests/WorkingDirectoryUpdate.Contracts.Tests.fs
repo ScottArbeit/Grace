@@ -48,6 +48,9 @@ module WorkingDirectoryUpdateContractsTests =
     /// Supplies a second deterministic absolute local root for Connect identity sensitivity proof.
     let private otherLocalRootPath = if OperatingSystem.IsWindows() then @"C:\Grace\other" else "/Grace/other"
 
+    /// Resolves the repository root used by the focused WDU source-boundary audit.
+    let private repositoryRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", ".."))
+
     /// Builds the fixed complete target whose operation vectors are pinned below.
     let private selectedTarget () = target repositoryId branchId rootDirectoryVersionId sha256Hash blake3Hash
 
@@ -339,6 +342,32 @@ module WorkingDirectoryUpdateContractsTests =
 
         WorkingDirectoryUpdate.Operation.value operation
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
+
+    /// Guards the supported caller source boundary while the focused caller suites prove executable behavior.
+    [<Test>]
+    let ``supported callers expose no retired WDU bypass source`` () =
+        let commandDirectory = Path.Combine(repositoryRoot, "src", "Grace.CLI", "Command")
+        let projectSource = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Grace.CLI", "Grace.CLI.fsproj"))
+        let branchSource = File.ReadAllText(Path.Combine(commandDirectory, "Branch.CLI.fs"))
+        let watchSource = File.ReadAllText(Path.Combine(commandDirectory, "Watch.CLI.fs"))
+        let connectSource = File.ReadAllText(Path.Combine(commandDirectory, "Connect.CLI.fs"))
+        let doctorSource = File.ReadAllText(Path.Combine(commandDirectory, "Doctor.CLI.fs"))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(File.Exists(Path.Combine(commandDirectory, "WorkingDirectoryMaterialization.CLI.fs")), Is.False)
+                Assert.That(projectSource.Contains("WorkingDirectoryMaterialization.CLI.fs", StringComparison.Ordinal), Is.False)
+                Assert.That(branchSource.Contains("WorkingDirectoryMaterialization", StringComparison.Ordinal), Is.False)
+                Assert.That(watchSource.Contains("WorkingDirectoryMaterialization", StringComparison.Ordinal), Is.False)
+                Assert.That(watchSource.Contains("CurrentBranchRemoteMaterializationApplyClients", StringComparison.Ordinal), Is.False)
+                Assert.That(watchSource.Contains("applyCurrentBranchMaterializationTargets", StringComparison.Ordinal), Is.False)
+                Assert.That(watchSource.Contains("applyCurrentBranchReferenceMaterializationWithClientsForWatchTests", StringComparison.Ordinal), Is.False)
+                Assert.That(branchSource.Contains("WorkingDirectoryUpdate.run", StringComparison.Ordinal), Is.True)
+                Assert.That(branchSource.Contains("WorkingDirectoryUpdate.BranchDirectoryVersion.runAtRevision", StringComparison.Ordinal), Is.True)
+                Assert.That(watchSource.Contains("WorkingDirectoryUpdate.Watch.runAtRevision", StringComparison.Ordinal), Is.True)
+                Assert.That(connectSource.Contains("WorkingDirectoryUpdate.Connect.run", StringComparison.Ordinal), Is.True)
+                Assert.That(doctorSource.Contains("WorkingDirectoryUpdate.repairPendingReferenceFinalization", StringComparison.Ordinal), Is.True))
+        )
 
     /// Verifies Branch and Connect requests and receipts cannot substitute any root identity fact.
     [<Test>]

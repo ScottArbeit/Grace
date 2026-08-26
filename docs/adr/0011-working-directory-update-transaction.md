@@ -9,16 +9,16 @@ consulted:
 
 # Use one verified Working Directory Update transaction
 
-Grace will route Branch switching, Watch current-Reference replay, and Connect retrieval through one deep internal
+Grace routes Branch switching, Watch current-Reference replay, and Connect retrieval through one deep internal
 `WorkingDirectoryUpdate` module. The module owns the ordering-sensitive local transaction while each caller retains
 admission, target selection, remote retrieval, scheduling, and presentation.
 
 ## Context
 
-The legacy `WorkingDirectoryMaterialization` module serializes arbitrary callbacks but does not own planning, marker
+The retired `WorkingDirectoryMaterialization` module serialized arbitrary callbacks but did not own planning, marker
 behavior, filesystem mutation, content verification, durable local state, finalization, or failure classification.
-Branch hash and explicit-Reference switching, Watch replay, and Connect retrieval route those effects through Working
-Directory Update. The remaining Branch ID and name selector path still uses the legacy mutation route.
+Branch hash, explicit-Reference, ID, and name switching, Watch replay, and Connect retrieval now route those effects
+through Working Directory Update. No caller-local working-file mutation or completion path remains.
 
 These paths can change the same local directory and SQLite state. Their differences are real—Watch advances an ordered
 cursor, Branch publishes selected branch identity, and Connect preserves zip retrieval—but those differences do not
@@ -74,13 +74,14 @@ Issue #960 supplied the first public tracer across topology composition, held-le
 terminal SQLite completion, marker cleanup, and `grace branch switch --sha256-hash` or `--blake3-hash`. Issues #922,
 Issue #923, Issue #871, and Issue #872 completed shared local application and Branch Reference completion. Issue #843 now consumes those
 states for ordered Watch replay. Issue #1025 maps the existing Branch ID and name selectors to that exact-Reference path.
-Issue #900 and Issue #901 remain superseded by Issue #960.
+Issue #900 and Issue #901 remain superseded by Issue #960. Issue #846 removed the retired callback wrapper and Watch's
+test-only direct-mutation hooks after focused caller and WDU tests confirmed that supported behavior already used WDU.
 
-Remote hash resolution, target retrieval, download, and immutable preparation hold none of the Branch workflow,
-legacy materialization, or WDU leases. Only the WDU transaction holds its local lease for fresh reread, mutation,
-`VerifiedLocalRoot`, SQLite completion, and terminal outcome. Cancellation controls through the transition into
-`VerifiedLocalRoot`, including zero-action reconciliation; it is non-controlling during SQLite completion. Markers and
-sidecars are evidence, not leases.
+Remote hash resolution, target retrieval, download, and immutable preparation hold no WDU lease. Branch may retain its
+caller workflow lease across admission and completion, but only the WDU transaction holds its local lease for fresh
+reread, mutation, `VerifiedLocalRoot`, SQLite completion, and terminal outcome. Cancellation controls through the
+transition into `VerifiedLocalRoot`, including zero-action reconciliation; it is non-controlling during SQLite
+completion. Markers and sidecars are evidence, not leases.
 
 SQLite terminal completion is decisive durable truth. Marker and sidecar evidence cannot manufacture, downgrade, or
 replace it. For DirectoryVersion, the verified-status transaction also records terminal completion. Exact marker
@@ -95,8 +96,8 @@ The complete requirements, state model, propagation map, and proof contract are 
 
 ## Lifecycle projection
 
-The projection below is an existing contextual consumer, not proof that the replacement packet has been published.
-Issue #929 rewrites and compares all fifteen exact projection blocks from the compiler result after PR #930 merges.
+The projection below is one of fifteen exact packet consumers. The lifecycle renderer compares every marker-delimited
+block with the compiler result; Issue #846 reran that check across the complete exported packet.
 
 <!-- grace:wdu-lifecycle-projection:adr-0011:start -->
 ```json
@@ -106,7 +107,7 @@ Issue #929 rewrites and compares all fifteen exact projection blocks from the co
 
 ## Consequences
 
-The module becomes deep: a small typed interface hides cross-process serialization, stale-state rejection, fresh
+The module is deep: a small typed interface hides cross-process serialization, stale-state rejection, fresh
 planning, marker ownership, object publication, working-directory mutation, verification, SQLite commit, cleanup,
 finalization, cancellation, and outcome classification.
 

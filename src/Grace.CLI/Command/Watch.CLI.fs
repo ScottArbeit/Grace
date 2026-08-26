@@ -5486,21 +5486,6 @@ module Watch =
     let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
         handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
 
-    /// Provides injectable operations for applying one exact current-branch Reference from local object-cache content.
-    type internal CurrentBranchRemoteMaterializationApplyClients =
-        {
-            GetRemoteDirectoryVersions: DirectoryVersionId -> CorrelationId -> Task<Result<DirectoryVersion array, GraceError>>
-            ReadGraceStatus: unit -> Task<GraceStatus>
-            WriteGraceStatus: GraceStatus -> Task<unit>
-            RequestResync: string -> unit
-            TryCreateUpdateMarker: string -> string -> bool
-            IsUpdateMarkerOwned: string -> string -> bool
-            BeforeTargetMutation: string -> unit
-            DeleteUpdateMarker: string -> unit
-            BeforeFinalVerification: unit -> Task<unit>
-            BeforeStatusReplacementVerification: unit -> Task<unit>
-        }
-
     /// Lists the exact target paths that a remote Reference materialization will mutate.
     type internal CurrentBranchRemoteMaterializationPlan =
         {
@@ -5666,56 +5651,6 @@ module Watch =
             || parent <> Constants.RootDirectoryPath
                && child.StartsWith(parent + "/", watchPathComparison)
                && not (child.Substring(parent.Length + 1).Contains('/')))
-
-    /// Persists completion evidence and retires the marker while preserving the first cleanup failure.
-    let internal completeCurrentBranchMaterializationMarkerForWatchTests writeCompletion deleteMarker =
-        let mutable completionFailure = None
-
-        try
-            writeCompletion ()
-        with
-        | ex -> completionFailure <- Some ex
-
-        try
-            deleteMarker ()
-        with
-        | ex when completionFailure.IsNone -> completionFailure <- Some ex
-        | _ -> ()
-
-        match completionFailure with
-        | Some ex -> raise ex
-        | None -> ()
-
-    /// Creates the shared update marker without replacing a marker owned by another Grace command.
-    let internal tryCreateCurrentBranchMaterializationMarkerForWatchTests (markerFileName: string) (content: string) =
-        let mutable markerCreated = false
-
-        try
-            use stream = new FileStream(markerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.Read)
-            markerCreated <- true
-            use writer = new StreamWriter(stream, UTF8Encoding(false))
-            writer.Write(content)
-            writer.Flush()
-            stream.Flush(true)
-            true
-        with
-        | :? IOException when not markerCreated -> false
-        | ex ->
-            if markerCreated then
-                try
-                    File.Delete(markerFileName)
-                with
-                | _ -> ()
-
-            raise ex
-
-    /// Reports whether the shared marker still contains the purpose value written by this materialization.
-    let private currentBranchMaterializationMarkerIsOwned markerFileName expectedContent =
-        try
-            File.Exists(markerFileName)
-            && String.Equals(File.ReadAllText(markerFileName), expectedContent, StringComparison.Ordinal)
-        with
-        | _ -> false
 
     /// Reports whether a child materialization path is within a parent materialization path.
     let private materializationPathIsUnder parentPath childPath =
@@ -6381,295 +6316,6 @@ module Watch =
                     invalidOp $"Remote materialization binary classification does not match retained working-tree bytes for {fileVersion.RelativePath}."
         }
 
-    /// Applies exact target mutations from local object-cache files while the update marker is present.
-    let private applyCurrentBranchMaterializationTargets (clients: CurrentBranchRemoteMaterializationApplyClients) currentStatus remoteStatus plan =
-        task {
-            let markerFileName = updateInProgressFileName ()
-            let completedFileName = updateMarkerCompletedFileName ()
-            let markerContent = "`grace watch` remote materialization is in progress."
-
-            Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
-            |> ignore
-
-            let markerOwned = clients.TryCreateUpdateMarker markerFileName markerContent
-
-            if not markerOwned then
-                invalidOp "Remote materialization cannot start because another Grace command created the shared update marker."
-
-            let ensureMarkerOwned mutation =
-                clients.BeforeTargetMutation mutation
-
-                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
-                    invalidOp "Remote materialization cannot continue because its shared update marker was replaced."
-
-            let mutable applyFailure = None
-
-            try
-                try
-                    do! clients.BeforeFinalVerification()
-
-                    ensureMarkerOwned "final verification"
-
-                    do! verifyCurrentBranchMaterializationObjectCache plan
-                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
-                    do! verifyCurrentBranchMaterializationRetainedFiles plan
-                    do! verifyCurrentBranchMaterializationRetainedDirectories currentStatus plan
-                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
-                    let currentFiles = materializationFilesByPath currentStatus
-
-                    for relativePath in plan.FileDeletes do
-                        let fullPath = materializationTargetFullPath relativePath
-                        let path = normalizedMaterializationPath relativePath
-                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
-
-                        if currentFiles.TryGetValue(path, &currentFile) then
-                            let! matchesStatus = targetFileStillMatchesStatus currentFile
-
-                            if not matchesStatus then
-                                invalidOp $"Remote materialization delete target changed at mutation boundary: {relativePath}."
-
-                        if File.Exists(fullPath) then
-                            ensureMarkerOwned $"delete file {relativePath}"
-                            File.Delete(fullPath)
-
-                    for relativePath in
-                        plan.DirectoryDeletes
-                        |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
-                        let fullPath = materializationTargetFullPath relativePath
-                        let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
-
-                        if not matchesStatus then
-                            invalidOp $"Remote materialization directory target changed at mutation boundary: {relativePath}."
-
-                        if Directory.Exists(fullPath) then
-                            ensureMarkerOwned $"delete directory {relativePath}"
-                            Directory.Delete(fullPath, true)
-
-                    for relativePath in plan.DirectoryCreates do
-                        let fullPath = materializationTargetFullPath relativePath
-
-                        verifyCurrentBranchMaterializationRetainedAncestorsForTarget plan relativePath
-
-                        if
-                            File.Exists(fullPath)
-                            || Directory.Exists(fullPath)
-                        then
-                            invalidOp $"Remote materialization directory create target appeared at mutation boundary: {relativePath}."
-
-                        ensureMarkerOwned $"create directory {relativePath}"
-                        Directory.CreateDirectory(fullPath) |> ignore
-
-                    for fileVersion in plan.FileWrites do
-                        let targetPath = materializationTargetFullPath fileVersion.RelativePath
-                        let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
-                        let path = normalizedMaterializationPath fileVersion.RelativePath
-                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
-
-                        let removedByDirectoryDelete =
-                            plan.DirectoryDeletes
-                            |> Array.exists (fun directoryPath ->
-                                normalizedMaterializationPath directoryPath = path
-                                || materializationPathIsUnder directoryPath fileVersion.RelativePath)
-
-                        if
-                            currentFiles.TryGetValue(path, &currentFile)
-                            && not removedByDirectoryDelete
-                        then
-                            let! matchesStatus = targetFileStillMatchesStatus currentFile
-
-                            if not matchesStatus then
-                                invalidOp $"Remote materialization write target changed at mutation boundary: {fileVersion.RelativePath}."
-                        elif
-                            File.Exists(targetPath)
-                            || Directory.Exists(targetPath)
-                        then
-                            invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
-
-                        do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
-
-                        verifyCurrentBranchMaterializationRetainedAncestorsForTarget plan fileVersion.RelativePath
-
-                        ensureMarkerOwned $"create parent directory {fileVersion.RelativePath}"
-
-                        Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
-                        |> ignore
-
-                        ensureMarkerOwned $"copy file {fileVersion.RelativePath}"
-                        File.Copy(sourcePath, targetPath, true)
-                        ensureMarkerOwned $"set file timestamp {fileVersion.RelativePath}"
-                        File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
-
-                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
-
-                        if not copiedTargetMatches then
-                            invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
-
-                    do! clients.BeforeStatusReplacementVerification()
-                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
-                    do! verifyCurrentBranchMaterializationRetainedFiles plan
-
-                    for fileVersion in plan.FileWrites do
-                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
-
-                        if not copiedTargetMatches then
-                            invalidOp $"Remote materialization copied target changed before status replacement: {fileVersion.RelativePath}."
-
-                    ensureMarkerOwned "write replacement status"
-                    do! clients.WriteGraceStatus remoteStatus
-                    ensureMarkerOwned "publish replacement status in memory"
-                    graceStatus <- remoteStatus
-                    updateGraceStatusDirectoryIds remoteStatus
-                with
-                | ex -> applyFailure <- Some ex
-
-                if clients.IsUpdateMarkerOwned markerFileName markerContent then
-                    let completedUtc = DateTime.UtcNow
-
-                    try
-                        completeCurrentBranchMaterializationMarkerForWatchTests
-                            (fun () ->
-                                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
-                                    invalidOp "Remote materialization cannot complete because its shared update marker was replaced."
-
-                                File.WriteAllText(
-                                    completedFileName,
-                                    serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
-                                )
-
-                                recordGraceUpdateMarkerCompletedUtc completedUtc)
-                            (fun () ->
-                                if clients.IsUpdateMarkerOwned markerFileName markerContent then
-                                    clients.DeleteUpdateMarker markerFileName)
-                    with
-                    | ex when applyFailure.IsNone -> applyFailure <- Some ex
-                    | _ -> ()
-            with
-            | ex when applyFailure.IsNone -> applyFailure <- Some ex
-            | _ -> ()
-
-            match applyFailure with
-            | Some ex -> raise ex
-            | None -> ()
-        }
-
-    /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
-    let private applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients (payload: CurrentBranchReferenceNotification) acceptedStatus =
-        task {
-            configureWatchPathComparisonForCurrentRepository ()
-
-            match! clients.GetRemoteDirectoryVersions payload.DirectoryId payload.CorrelationId with
-            | Error error ->
-                clients.RequestResync $"remote materialization metadata fetch failed before exact apply: {error.Error}"
-                raise (InvalidOperationException(error.Error))
-            | Ok remoteDirectoryVersions ->
-                let! currentStatus =
-                    task {
-                        try
-                            return! clients.ReadGraceStatus()
-                        with
-                        | ex ->
-                            clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
-                            return raise ex
-                    }
-
-                try
-                    validateCurrentBranchMaterializationAcceptedStatus acceptedStatus currentStatus
-                    validateCurrentBranchMaterializationAcceptedMetadata remoteDirectoryVersions
-                    validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
-                    validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
-                    validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
-                with
-                | ex ->
-                    clients.RequestResync $"remote materialization metadata incomplete before exact apply: {ex.Message}"
-                    raise ex
-
-                let remoteStatus =
-                    try
-                        createRemoteGraceStatus currentStatus remoteDirectoryVersions
-                    with
-                    | ex ->
-                        clients.RequestResync $"remote materialization metadata invalid before exact apply: {ex.Message}"
-                        raise ex
-
-                if remoteStatus.RootDirectoryId
-                   <> payload.DirectoryId then
-                    clients.RequestResync $"remote materialization metadata missing requested root before exact apply: {payload.DirectoryId}"
-                    invalidOp $"Remote materialization metadata did not include the requested root DirectoryVersionId {payload.DirectoryId}."
-
-                let plan =
-                    try
-                        buildCurrentBranchRemoteMaterializationPlanForWatchTests currentStatus remoteStatus
-                    with
-                    | ex ->
-                        clients.RequestResync $"remote materialization plan construction failed before exact apply: {ex.Message}"
-                        raise ex
-
-                try
-                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
-                    do! verifyCurrentBranchMaterializationRetainedFiles plan
-                with
-                | ex ->
-                    clients.RequestResync $"remote materialization target changed before exact apply: {ex.Message}"
-                    raise ex
-
-                try
-                    do! verifyCurrentBranchMaterializationObjectCache plan
-                with
-                | ex ->
-                    clients.RequestResync $"remote materialization object cache invalid before exact apply: {ex.Message}"
-                    raise ex
-
-                try
-                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
-                with
-                | ex ->
-                    clients.RequestResync $"remote materialization binary metadata invalid before exact apply: {ex.Message}"
-                    raise ex
-
-                try
-                    do! applyCurrentBranchMaterializationTargets clients currentStatus remoteStatus plan
-                with
-                | ex ->
-                    clients.RequestResync $"remote materialization failed during exact target apply: {ex.Message}"
-                    raise ex
-        }
-
-    /// Applies exact materialization with an explicitly supplied coordinator-accepted status snapshot.
-    let internal applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests clients payload acceptedStatus =
-        applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
-
-    /// Preserves the direct apply test boundary by deriving an equivalent accepted snapshot from its configured local status.
-    let internal applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients payload =
-        task {
-            let! currentStatus =
-                task {
-                    try
-                        return! clients.ReadGraceStatus()
-                    with
-                    | ex ->
-                        clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
-                        return raise ex
-                }
-
-            let current = Current()
-
-            let acceptedStatus =
-                { GraceWatchStatus.Default with
-                    UpdatedAt = getCurrentInstant ()
-                    RepositoryId = current.RepositoryId
-                    RepositoryName = current.RepositoryName
-                    BranchId = current.BranchId
-                    BranchName = current.BranchName
-                    RootDirectory = current.RootDirectory
-                    RootDirectoryId = currentStatus.RootDirectoryId
-                    RootDirectorySha256Hash = currentStatus.RootDirectorySha256Hash
-                    RootDirectoryBlake3Hash = currentStatus.RootDirectoryBlake3Hash
-                    DirectoryIds = currentStatus.Index.Keys.ToHashSet()
-                }
-
-            return! applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
-        }
-
     /// Supplies immutable WDU preparation bytes from verified cache content or the accepted retained working file.
     type private CurrentBranchWatchPreparedContentReader(targetStatus: GraceStatus, plan: CurrentBranchRemoteMaterializationPlan) =
         let comparer = materializationStringComparer ()
@@ -6942,6 +6588,9 @@ module Watch =
             Reason: CurrentBranchMaterializationCoordinatorOutcomeReason
             Decision: LatestCurrentBranchReferenceDecision option
         }
+
+    /// Serializes current-branch Reference coordination inside this Watch process.
+    let private currentBranchMaterializationCoordinatorLane = new SemaphoreSlim(1, 1)
 
     /// Names the local status gate that decides whether a BranchDto-latest Reference may reach apply.
     type internal CurrentBranchMaterializationStatusGate =
@@ -7323,14 +6972,20 @@ module Watch =
                 return
                     { ReferenceId = payload.ReferenceId; Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed; Decision = None }
             else
-                let! outcome = WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+                do! currentBranchMaterializationCoordinatorLane.WaitAsync()
 
-                match outcome.Reason with
-                | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-                | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync -> ()
-                | _ -> retireCurrentBranchWaitTransition payload
+                try
+                    let! outcome = processCurrentBranchMaterializationNotification clients payload
 
-                return outcome
+                    match outcome.Reason with
+                    | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                    | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync -> ()
+                    | _ -> retireCurrentBranchWaitTransition payload
+
+                    return outcome
+                finally
+                    currentBranchMaterializationCoordinatorLane.Release()
+                    |> ignore
         }
 
     /// Names the terminal result of one cursor-backed replay wake.
