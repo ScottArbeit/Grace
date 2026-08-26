@@ -549,6 +549,151 @@ module ConnectCacheTests =
             |> should equal [| TimeSpan.FromMilliseconds(50.0) |]
         }
 
+    /// A retry whose Server preparation consumes the remaining budget never reaches another Cache fill.
+    [<Test>]
+    let ``cache fill does not post when retry preparation crosses the deadline`` () =
+        task {
+            let repositoryId = Guid.NewGuid()
+            let directoryVersionId = Guid.NewGuid()
+            let mutable requestNumber = 0
+            let mutable preparationCount = 0
+            let mutable elapsed = TimeSpan.Zero
+            let delays = ResizeArray<TimeSpan>()
+
+            let preparationForPermit permit = createPreparation repositoryId directoryVersionId permit "f" 1L
+
+            let dependencies: ConnectCache.Dependencies =
+                {
+                    Send =
+                        fun _ _ ->
+                            task {
+                                requestNumber <- requestNumber + 1
+
+                                match requestNumber with
+                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
+                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 3 ->
+                                    return
+                                        jsonResponse
+                                            HttpStatusCode.TooManyRequests
+                                            { Code = "CacheFillCapacityExceeded"; Detail = "Distinct fill capacity is full." }
+                                | other -> return raise (InvalidOperationException($"Unexpected Cache request {other}."))
+                            }
+                    Prepare =
+                        fun _ ->
+                            preparationCount <- preparationCount + 1
+
+                            if preparationCount = 2 then elapsed <- TimeSpan.FromSeconds(60.0)
+
+                            Task.FromResult(Ok(GraceReturnValue.Create (preparationForPermit $"permit-{preparationCount}") "cache-late-preparation"))
+                    StartTimer = fun () -> fun () -> elapsed
+                    Delay =
+                        fun delay _ ->
+                            delays.Add(delay)
+                            elapsed <- elapsed + delay
+                            Task.CompletedTask
+                }
+
+            let! result =
+                ConnectCache.useVerifiedZipWith
+                    dependencies
+                    (Uri("http://localhost:5341/"))
+                    (string repositoryId)
+                    (string directoryVersionId)
+                    "cache-late-preparation"
+                    CancellationToken.None
+                    (fun _ -> Task.FromResult())
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected Cache fill retry budget failure.")
+            | Error error ->
+                error.Error
+                |> should contain "expired after 60 seconds"
+
+            preparationCount |> should equal 2
+            requestNumber |> should equal 3
+
+            delays
+            |> Seq.toArray
+            |> should equal [| TimeSpan.FromMilliseconds(100.0) |]
+        }
+
+    /// Cancellation promptly detaches Connect from an unfinished Server preparation without starting later effects.
+    [<Test>]
+    let ``cache fill cancellation detaches from in-flight preparation`` () =
+        task {
+            let repositoryId = Guid.NewGuid()
+            let directoryVersionId = Guid.NewGuid()
+            let mutable requestNumber = 0
+            let mutable zipStagingCount = 0
+            let mutable workingDirectoryUpdateCount = 0
+            use cancellation = new CancellationTokenSource()
+
+            let preparationStarted = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let preparationCompletion =
+                TaskCompletionSource<Result<GraceReturnValue<DirectoryVersionZipPreparation>, GraceError>>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let preparation = createPreparation repositoryId directoryVersionId "permit-cancelled" "g" 1L
+
+            let dependencies: ConnectCache.Dependencies =
+                {
+                    Send =
+                        fun _ _ ->
+                            task {
+                                requestNumber <- requestNumber + 1
+
+                                match requestNumber with
+                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
+                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | other -> return raise (InvalidOperationException($"Unexpected Cache request {other}."))
+                            }
+                    Prepare =
+                        fun _ ->
+                            preparationStarted.SetResult()
+                            preparationCompletion.Task
+                    StartTimer = fun () -> fun () -> TimeSpan.Zero
+                    Delay = fun _ _ -> Task.CompletedTask
+                }
+
+            let operation =
+                ConnectCache.useVerifiedZipWith
+                    dependencies
+                    (Uri("http://localhost:5341/"))
+                    (string repositoryId)
+                    (string directoryVersionId)
+                    "cache-cancelled-preparation"
+                    cancellation.Token
+                    (fun _ ->
+                        zipStagingCount <- zipStagingCount + 1
+                        workingDirectoryUpdateCount <- workingDirectoryUpdateCount + 1
+                        Task.FromResult())
+
+            do! preparationStarted.Task.WaitAsync(TimeSpan.FromSeconds(1.0))
+            cancellation.Cancel()
+
+            let! completion =
+                task {
+                    try
+                        let! _ = operation.WaitAsync(TimeSpan.FromSeconds(1.0))
+                        return Ok()
+                    with
+                    | ex -> return Error ex
+                }
+
+            match completion with
+            | Error (:? OperationCanceledException) -> ()
+            | Error ex -> Assert.Fail($"Expected prompt cancellation, got {ex.GetType().Name}: {ex.Message}")
+            | Ok () -> Assert.Fail("Expected Cache preparation cancellation.")
+
+            preparationCompletion.SetResult(Ok(GraceReturnValue.Create preparation "cache-cancelled-preparation"))
+            do! Task.Yield()
+
+            requestNumber |> should equal 2
+            zipStagingCount |> should equal 0
+            workingDirectoryUpdateCount |> should equal 0
+        }
+
     /// A successful fill never substitutes for the required independent verified GET.
     [<Test>]
     let ``post-fill Cache GET failure is terminal without consuming ZIP bytes`` () =

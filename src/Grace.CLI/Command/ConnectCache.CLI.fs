@@ -244,6 +244,31 @@ module internal ConnectCache =
 
         dependencies.Prepare parameters
 
+    /// Waits cancellably for Server preparation and applies the remaining retry budget when capacity retry is active.
+    let private awaitPreparation
+        dependencies
+        repositoryId
+        directoryVersionId
+        publicKey
+        correlationId
+        (remaining: TimeSpan option)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let preparation = prepareFill dependencies repositoryId directoryVersionId publicKey correlationId
+
+            match remaining with
+            | None ->
+                let! result = preparation.WaitAsync(cancellationToken)
+                return Ok result
+            | Some remaining ->
+                try
+                    let! result = preparation.WaitAsync(remaining, cancellationToken)
+                    return Ok result
+                with
+                | :? TimeoutException -> return Error()
+        }
+
     /// Retries only Cache fill-capacity rejection and obtains a fresh Server permit for every attempt.
     let rec private fillUntilAvailable
         (dependencies: Dependencies)
@@ -260,15 +285,25 @@ module internal ConnectCache =
             cancellationToken.ThrowIfCancellationRequested()
             let budget = TimeSpan.FromSeconds(60.0)
 
-            if elapsed
-               |> Option.exists (fun readElapsed -> readElapsed () >= budget) then
+            let remaining =
+                elapsed
+                |> Option.map (fun readElapsed -> budget - readElapsed ())
+
+            if remaining
+               |> Option.exists (fun value -> value <= TimeSpan.Zero) then
                 return Error(retryBudgetError correlationId)
             else
-                let! preparationResult = prepareFill dependencies repositoryId directoryVersionId publicKey correlationId
+                let! awaitedPreparation = awaitPreparation dependencies repositoryId directoryVersionId publicKey correlationId remaining cancellationToken
 
-                match preparationResult with
-                | Error error -> return Error error
-                | Ok preparation ->
+                match awaitedPreparation with
+                | Error () -> return Error(retryBudgetError correlationId)
+                | Ok _ when
+                    elapsed
+                    |> Option.exists (fun readElapsed -> readElapsed () >= budget)
+                    ->
+                    return Error(retryBudgetError correlationId)
+                | Ok (Error error) -> return Error error
+                | Ok (Ok preparation) ->
                     use! fillResponse =
                         sendFill dependencies (fillUri cacheUri repositoryId directoryVersionId) preparation.ReturnValue.Permit cancellationToken
 
