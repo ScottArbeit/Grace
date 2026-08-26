@@ -14,31 +14,6 @@ open System.Net.Http
 /// Groups shared helpers for webhook test helpers.
 module private WebhookTestHelpers =
 
-    /// Restarts Grace.Server with a scenario label for process-local webhook assertions.
-    let restartGraceServerAsync restartContext =
-        let state =
-            match App with
-            | Some app ->
-                {
-                    App = app
-                    Client = Client
-                    GraceServerBaseAddress = graceServerBaseAddress
-                    CosmosConnectionString = String.Empty
-                    CosmosDatabaseName = String.Empty
-                    CosmosContainerName = String.Empty
-                    ServiceBusConnectionString = serviceBusConnectionString
-                    ServiceBusTopic = serviceBusTopic
-                    ServiceBusServerSubscription = serviceBusServerSubscription
-                    ServiceBusTestSubscription = serviceBusTestSubscription
-                    OperationalFactsTopic = operationalFactsTopic
-                    OperationsSqlConnectionString = operationsSqlConnectionString
-                }
-            | None ->
-                Assert.Fail("Aspire test host was not started by the shared setup fixture.")
-                Unchecked.defaultof<TestHostState>
-
-        AspireTestHost.restartGraceServerAsync state restartContext
-
     /// Builds a deterministic authenticated client for integration setup fixture for the server integration webhook assertions.
     let createAuthenticatedClient (userId: string) =
         let client = new HttpClient()
@@ -285,87 +260,6 @@ type WebhookApiIntegrationTests() =
             Assert.That(deleted.Status, Is.EqualTo(WebhookRuleStatus.Deleted))
         }
 
-    /// Verifies the webhook rule and HTTP observable deliveries are process local across restart scenario.
-    [<Test>]
-    [<NonParallelizable>]
-    member _.WebhookRuleAndHttpObservableDeliveriesAreProcessLocalAcrossRestart() =
-        task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let adminUser = $"{Guid.NewGuid()}"
-
-            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
-            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
-
-            use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser
-            let! created = WebhookTestHelpers.createRuleAsync adminClient repositoryId branchId
-
-            let enableParameters =
-                WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.EnableWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
-
-            let! enableResponse = adminClient.PostAsync("/webhook/rule/enable", createJsonContent enableParameters)
-            let! enableText = enableResponse.Content.ReadAsStringAsync()
-            Assert.That(enableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), enableText)
-
-            let testParameters =
-                WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.TestWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
-
-            testParameters.DedupeKey <- $"restart-contract-{Guid.NewGuid():N}"
-            let! testResponse = adminClient.PostAsync("/webhook/rule/test", createJsonContent testParameters)
-            let! testText = testResponse.Content.ReadAsStringAsync()
-            Assert.That(testResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), testText)
-            let createdDelivery = deserialize<WebhookDelivery> testText
-
-            let! deliveriesBeforeRestart =
-                adminClient.PostAsync(
-                    "/webhook/delivery/list",
-                    createJsonContent (WebhookTestHelpers.listDeliveryParameters repositoryId branchId (created.WebhookRuleId.ToString()))
-                )
-
-            Assert.That(deliveriesBeforeRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK))
-            let! listedBeforeRestart = deserializeContent<WebhookDelivery array> deliveriesBeforeRestart
-
-            Assert.That(
-                listedBeforeRestart
-                |> Array.map (fun delivery -> delivery.WebhookDeliveryId),
-                Does.Contain(createdDelivery.WebhookDeliveryId)
-            )
-
-            do! WebhookTestHelpers.restartGraceServerAsync "Webhook.WebhookRuleAndHttpObservableDeliveriesAreProcessLocalAcrossRestart"
-
-            // Contract: webhook rules are process-local. HTTP-observable pending deliveries are intentionally
-            // unavailable after restart; retry-scheduled deliveries share the same process-local store by
-            // implementation contract, but this public route remains rule-dependent.
-            let! rulesAfterRestart =
-                adminClient.PostAsync("/webhook/rule/list", createJsonContent (WebhookTestHelpers.listRuleParameters repositoryId branchId))
-
-            let! rulesAfterRestartText = rulesAfterRestart.Content.ReadAsStringAsync()
-            Assert.That(rulesAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), rulesAfterRestartText)
-            let listedRulesAfterRestart = deserialize<WebhookRule array> rulesAfterRestartText
-
-            Assert.That(
-                listedRulesAfterRestart
-                |> Array.exists (fun rule -> rule.WebhookRuleId = created.WebhookRuleId),
-                Is.False
-            )
-
-            let! deliveriesAfterRestart =
-                adminClient.PostAsync(
-                    "/webhook/delivery/list",
-                    createJsonContent (WebhookTestHelpers.listDeliveryParameters repositoryId branchId (created.WebhookRuleId.ToString()))
-                )
-
-            let! deliveriesAfterRestartText = deliveriesAfterRestart.Content.ReadAsStringAsync()
-            Assert.That(deliveriesAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), deliveriesAfterRestartText)
-            let listedDeliveriesAfterRestart = deserialize<WebhookDelivery array> deliveriesAfterRestartText
-
-            Assert.That(
-                listedDeliveriesAfterRestart
-                |> Array.exists (fun delivery -> delivery.WebhookDeliveryId = createdDelivery.WebhookDeliveryId),
-                Is.False
-            )
-        }
-
     /// Verifies the create rejects unsafe public URL scenario.
     [<Test>]
     member _.CreateRejectsUnsafePublicUrl() =
@@ -479,4 +373,106 @@ type WebhookApiIntegrationTests() =
             use client = WebhookTestHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
             let! response = client.PostAsync("/approval/notification-delivery/list", createJsonContent (obj ()))
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+        }
+
+/// Owns Webhook state carried across the shared Grace.Server restart fixture.
+module internal WebhookRestartScenario =
+
+    /// Identifies the process-local rule and HTTP-observable delivery prepared before restart.
+    type Context = { RepositoryId: string; BranchId: string; AdminUser: string; WebhookRuleId: Guid; WebhookDeliveryId: Guid }
+
+    /// Creates and observes a Webhook rule and delivery before the shared Grace.Server restart.
+    let prepareAsync () =
+        task {
+            try
+                let repositoryId = repositoryIds[0]
+                let branchId = repositoryDefaultBranchIds[0]
+                let adminUser = $"{Guid.NewGuid()}"
+
+                let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
+
+                Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+                use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser
+                let! created = WebhookTestHelpers.createRuleAsync adminClient repositoryId branchId
+
+                let enableParameters =
+                    WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.EnableWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
+
+                let! enableResponse = adminClient.PostAsync("/webhook/rule/enable", createJsonContent enableParameters)
+                let! enableText = enableResponse.Content.ReadAsStringAsync()
+                Assert.That(enableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), enableText)
+
+                let testParameters =
+                    WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.TestWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
+
+                testParameters.DedupeKey <- $"restart-contract-{Guid.NewGuid():N}"
+                let! testResponse = adminClient.PostAsync("/webhook/rule/test", createJsonContent testParameters)
+                let! testText = testResponse.Content.ReadAsStringAsync()
+                Assert.That(testResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), testText)
+                let createdDelivery = deserialize<WebhookDelivery> testText
+
+                let! deliveriesBeforeRestart =
+                    adminClient.PostAsync(
+                        "/webhook/delivery/list",
+                        createJsonContent (WebhookTestHelpers.listDeliveryParameters repositoryId branchId (created.WebhookRuleId.ToString()))
+                    )
+
+                Assert.That(deliveriesBeforeRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+                let! listedBeforeRestart = deserializeContent<WebhookDelivery array> deliveriesBeforeRestart
+
+                Assert.That(
+                    listedBeforeRestart
+                    |> Array.map (fun delivery -> delivery.WebhookDeliveryId),
+                    Does.Contain(createdDelivery.WebhookDeliveryId)
+                )
+
+                return
+                    {
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        AdminUser = adminUser
+                        WebhookRuleId = created.WebhookRuleId
+                        WebhookDeliveryId = createdDelivery.WebhookDeliveryId
+                    }
+            with
+            | ex -> return raise (InvalidOperationException("Shared Grace.Server restart Webhook preparation failed.", ex))
+        }
+
+    /// Confirms the prepared Webhook rule and delivery are absent after the shared Grace.Server restart.
+    let verifyAfterRestartAsync context =
+        task {
+            use adminClient = WebhookTestHelpers.createAuthenticatedClient context.AdminUser
+
+            // Contract: webhook rules are process-local. HTTP-observable pending deliveries are intentionally
+            // unavailable after restart; retry-scheduled deliveries share the same process-local store by
+            // implementation contract, but this public route remains rule-dependent.
+            let! rulesAfterRestart =
+                adminClient.PostAsync("/webhook/rule/list", createJsonContent (WebhookTestHelpers.listRuleParameters context.RepositoryId context.BranchId))
+
+            let! rulesAfterRestartText = rulesAfterRestart.Content.ReadAsStringAsync()
+            Assert.That(rulesAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), rulesAfterRestartText)
+            let listedRulesAfterRestart = deserialize<WebhookRule array> rulesAfterRestartText
+
+            Assert.That(
+                listedRulesAfterRestart
+                |> Array.exists (fun rule -> rule.WebhookRuleId = context.WebhookRuleId),
+                Is.False
+            )
+
+            let! deliveriesAfterRestart =
+                adminClient.PostAsync(
+                    "/webhook/delivery/list",
+                    createJsonContent (WebhookTestHelpers.listDeliveryParameters context.RepositoryId context.BranchId (context.WebhookRuleId.ToString()))
+                )
+
+            let! deliveriesAfterRestartText = deliveriesAfterRestart.Content.ReadAsStringAsync()
+            Assert.That(deliveriesAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), deliveriesAfterRestartText)
+            let listedDeliveriesAfterRestart = deserialize<WebhookDelivery array> deliveriesAfterRestartText
+
+            Assert.That(
+                listedDeliveriesAfterRestart
+                |> Array.exists (fun delivery -> delivery.WebhookDeliveryId = context.WebhookDeliveryId),
+                Is.False
+            )
         }

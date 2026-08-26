@@ -87,9 +87,6 @@ module RestartDurabilityHelpers =
             Assert.Fail("Aspire test host was not started by the shared setup fixture.")
             Unchecked.defaultof<TestHostState>
 
-    /// Restarts Grace.Server with a scenario label for durability assertions.
-    let restartGraceServerAsync restartContext = AspireTestHost.restartGraceServerAsync (getSharedHostState ()) restartContext
-
     /// Builds a deterministic repository for integration setup fixture for the server integration restart Durability assertions.
     let createRepositoryAsync repositoryNamePrefix =
         task {
@@ -369,73 +366,194 @@ module RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
-/// Covers restart durability server scenarios.
-[<NonParallelizable>]
-type RestartDurabilityServer() =
+/// Owns durable actor state carried across the shared Grace.Server restart fixture.
+module internal RestartDurabilityScenario =
 
-    /// Verifies the grace server project resource restarts and returns healthy responses scenario.
-    [<Test>]
-    [<Order(1)>]
-    member _.GraceServerProjectResourceRestartsAndReturnsHealthyResponses() =
-        task {
-            let! before = Client.GetAsync("/healthz")
-            Assert.That(before.StatusCode, Is.EqualTo(HttpStatusCode.OK))
-
-            do! RestartDurabilityHelpers.restartGraceServerAsync "RestartDurabilityServer.GraceServerProjectResourceRestartsAndReturnsHealthyResponses"
-
-            let! after = Client.GetAsync("/healthz")
-            Assert.That(after.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+    /// Identifies the durable values that must remain usable after restart.
+    type Context =
+        {
+            RepositoryId: string
+            RepositoryBeforeRestart: Repository.RepositoryDto
+            FirstWorkItemId: string
+            FirstWorkItem: WorkItemDto
+            UploadCorrelationId: string
+            UploadSessionId: Guid
+            Block: ContentBlockFormat.EncodedContentBlock
+            Manifest: FileManifest
+            ReminderActorName: string
+            ReminderActorId: string
+            ReminderFireAt: Instant
+            ReminderId: Guid
         }
 
-    /// Verifies the durable actor state rehydrates across grace server project restart scenario.
-    [<Test>]
-    [<Order(2)>]
-    member _.DurableActorStateRehydratesAcrossGraceServerProjectRestart() =
+    /// Creates and observes durable actor state before the shared Grace.Server restart.
+    let prepareAsync () =
         task {
-            let! repositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-proof"
-            let! repositoryBeforeRestart = RestartDurabilityHelpers.getRepositoryAsync repositoryId
-            let! firstWorkItemId = RestartDurabilityHelpers.createWorkItemAsync repositoryId "before restart"
-            let! firstWorkItem = RestartDurabilityHelpers.getWorkItemAsync repositoryId firstWorkItemId
+            try
+                let! repositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-proof"
+                let! repositoryBeforeRestart = RestartDurabilityHelpers.getRepositoryAsync repositoryId
+                let! firstWorkItemId = RestartDurabilityHelpers.createWorkItemAsync repositoryId "before restart"
+                let! firstWorkItem = RestartDurabilityHelpers.getWorkItemAsync repositoryId firstWorkItemId
 
-            let! uploadCorrelationId, uploadSessionId, block, manifest = RestartDurabilityHelpers.createConfirmedUploadSessionAsync repositoryId
+                let! uploadCorrelationId, uploadSessionId, block, manifest = RestartDurabilityHelpers.createConfirmedUploadSessionAsync repositoryId
 
-            let reminderActorName = "DirectoryVersionActor"
-            let reminderActorId = $"{Guid.NewGuid()}"
-            let reminderFireAt = Instant.FromUtc(2035, 6, 1, 12, 0, 0)
-            let! reminderId = RestartDurabilityHelpers.createReminderAsync reminderActorName reminderActorId reminderFireAt
+                let reminderActorName = "DirectoryVersionActor"
+                let reminderActorId = $"{Guid.NewGuid()}"
+                let reminderFireAt = Instant.FromUtc(2035, 6, 1, 12, 0, 0)
+                let! reminderId = RestartDurabilityHelpers.createReminderAsync reminderActorName reminderActorId reminderFireAt
 
-            do! RestartDurabilityHelpers.restartGraceServerAsync "RestartDurabilityServer.DurableActorStateRehydratesAcrossGraceServerProjectRestart"
+                return
+                    {
+                        RepositoryId = repositoryId
+                        RepositoryBeforeRestart = repositoryBeforeRestart
+                        FirstWorkItemId = firstWorkItemId
+                        FirstWorkItem = firstWorkItem
+                        UploadCorrelationId = uploadCorrelationId
+                        UploadSessionId = uploadSessionId
+                        Block = block
+                        Manifest = manifest
+                        ReminderActorName = reminderActorName
+                        ReminderActorId = reminderActorId
+                        ReminderFireAt = reminderFireAt
+                        ReminderId = reminderId
+                    }
+            with
+            | ex -> return raise (InvalidOperationException("Shared Grace.Server restart durable actor preparation failed.", ex))
+        }
 
+    /// Confirms the prepared actor state rehydrates and continues correctly after restart.
+    let verifyAfterRestartAsync context =
+        task {
             let! ownerAfterRestart = RestartDurabilityHelpers.getOwnerAsync ()
             Assert.That(ownerAfterRestart.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))
 
-            let! repositoryAfterRestart = RestartDurabilityHelpers.getRepositoryAsync repositoryId
-            Assert.That(repositoryAfterRestart.RepositoryId, Is.EqualTo(repositoryBeforeRestart.RepositoryId))
+            let! repositoryAfterRestart = RestartDurabilityHelpers.getRepositoryAsync context.RepositoryId
+            Assert.That(repositoryAfterRestart.RepositoryId, Is.EqualTo(context.RepositoryBeforeRestart.RepositoryId))
 
-            let! firstWorkItemAfterRestart = RestartDurabilityHelpers.getWorkItemAsync repositoryId firstWorkItemId
+            let! firstWorkItemAfterRestart = RestartDurabilityHelpers.getWorkItemAsync context.RepositoryId context.FirstWorkItemId
 
-            Assert.That(firstWorkItemAfterRestart.WorkItemId, Is.EqualTo(firstWorkItem.WorkItemId))
-            Assert.That(firstWorkItemAfterRestart.WorkItemNumber, Is.EqualTo(firstWorkItem.WorkItemNumber))
+            Assert.That(firstWorkItemAfterRestart.WorkItemId, Is.EqualTo(context.FirstWorkItem.WorkItemId))
+            Assert.That(firstWorkItemAfterRestart.WorkItemNumber, Is.EqualTo(context.FirstWorkItem.WorkItemNumber))
 
-            let! secondWorkItemId = RestartDurabilityHelpers.createWorkItemAsync repositoryId "after restart"
-            let! secondWorkItem = RestartDurabilityHelpers.getWorkItemAsync repositoryId secondWorkItemId
-            Assert.That(secondWorkItem.WorkItemNumber, Is.EqualTo(firstWorkItem.WorkItemNumber + 1L))
+            let! secondWorkItemId = RestartDurabilityHelpers.createWorkItemAsync context.RepositoryId "after restart"
+            let! secondWorkItem = RestartDurabilityHelpers.getWorkItemAsync context.RepositoryId secondWorkItemId
+            Assert.That(secondWorkItem.WorkItemNumber, Is.EqualTo(context.FirstWorkItem.WorkItemNumber + 1L))
 
-            let! finalizedSession = RestartDurabilityHelpers.finalizeManifestUploadAsync repositoryId uploadCorrelationId uploadSessionId manifest
+            let! finalizedSession =
+                RestartDurabilityHelpers.finalizeManifestUploadAsync context.RepositoryId context.UploadCorrelationId context.UploadSessionId context.Manifest
 
-            Assert.That(finalizedSession.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            Assert.That(finalizedSession.FinalizedManifestAddress, Is.EqualTo(Some context.Manifest.ManifestAddress))
             Assert.That(finalizedSession.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
 
             Assert.That(
                 finalizedSession.ConfirmedBlockUploads
-                |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address),
+                |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = context.Block.Address),
                 Is.True
             )
 
-            let! reminderAfterRestart = RestartDurabilityHelpers.getReminderAsync reminderId
-            Assert.That(reminderAfterRestart.ReminderId, Is.EqualTo(reminderId))
-            Assert.That(reminderAfterRestart.ActorName, Is.EqualTo(reminderActorName))
-            Assert.That(reminderAfterRestart.ActorId, Is.EqualTo(reminderActorId))
+            let! reminderAfterRestart = RestartDurabilityHelpers.getReminderAsync context.ReminderId
+            Assert.That(reminderAfterRestart.ReminderId, Is.EqualTo(context.ReminderId))
+            Assert.That(reminderAfterRestart.ActorName, Is.EqualTo(context.ReminderActorName))
+            Assert.That(reminderAfterRestart.ActorId, Is.EqualTo(context.ReminderActorId))
             Assert.That(reminderAfterRestart.ReminderType, Is.EqualTo(ReminderTypes.Maintenance))
-            Assert.That(reminderAfterRestart.ReminderTime, Is.EqualTo(reminderFireAt))
+            Assert.That(reminderAfterRestart.ReminderTime, Is.EqualTo(context.ReminderFireAt))
         }
+
+/// Exercises the five ordinary restart expectations around one deliberate Grace.Server restart.
+[<TestFixture>]
+[<NonParallelizable>]
+[<FixtureLifeCycle(LifeCycle.SingleInstance)>]
+type SharedGraceServerRestartScenarios() =
+    let mutable agentSessionContext: AgentSessionRestartScenario.Context option = None
+    let mutable approvalContext: ApprovalRestartScenario.Context option = None
+    let mutable webhookContext: WebhookRestartScenario.Context option = None
+    let mutable durabilityContext: RestartDurabilityScenario.Context option = None
+    let mutable restartEvidence: GraceServerRestartEvidence option = None
+
+    /// Requires preparation state produced by this fixture's one-time setup.
+    let requireContext scenarioName context =
+        context
+        |> Option.defaultWith (fun () -> invalidOp $"Shared Grace.Server restart context was unavailable for {scenarioName} post-restart verification.")
+
+    /// Prepares every scenario against one server process, then performs the fixture's only restart.
+    [<OneTimeSetUp>]
+    member _.PrepareAndRestartAsync() =
+        task {
+            try
+                let! beforeRestartHealth = Client.GetAsync("/healthz")
+                let! beforeRestartHealthBody = beforeRestartHealth.Content.ReadAsStringAsync()
+                Assert.That(beforeRestartHealth.StatusCode, Is.EqualTo(HttpStatusCode.OK), beforeRestartHealthBody)
+            with
+            | ex -> return raise (InvalidOperationException("Shared Grace.Server restart server-health preparation failed.", ex))
+
+            let! preparedAgentSession = AgentSessionRestartScenario.prepareAsync ()
+            agentSessionContext <- Some preparedAgentSession
+
+            let! preparedApproval = ApprovalRestartScenario.prepareAsync ()
+            approvalContext <- Some preparedApproval
+
+            let! preparedWebhook = WebhookRestartScenario.prepareAsync ()
+            webhookContext <- Some preparedWebhook
+
+            let! preparedDurability = RestartDurabilityScenario.prepareAsync ()
+            durabilityContext <- Some preparedDurability
+
+            let! observedRestart =
+                task {
+                    try
+                        return!
+                            AspireTestHost.restartGraceServerWithEvidenceAsync
+                                (RestartDurabilityHelpers.getSharedHostState ())
+                                "SharedGraceServerRestartScenarios.PrepareAndRestartAsync"
+                    with
+                    | ex -> return raise (InvalidOperationException("Shared Grace.Server restart phase failed.", ex))
+                }
+
+            restartEvidence <- Some observedRestart
+        }
+
+    /// Verifies fresh restart transitions, HTTP readiness, and `/healthz` after the shared restart.
+    [<Test>]
+    member _.GraceServerRestartRetainsFreshReadinessAndHealthEvidence() =
+        task {
+            let restart = requireContext "server health" restartEvidence
+            use _ = Assert.EnterMultipleScope()
+
+            Assert.That(restart.CommandCompletedAt, Is.GreaterThanOrEqualTo(restart.CommandStartedAt))
+            Assert.That(restart.NonReadyEventObservedAt, Is.GreaterThan(restart.CommandCompletedAt))
+
+            Assert.That(
+                String.Equals(restart.NonReadyResourceState, "Running", StringComparison.OrdinalIgnoreCase)
+                && String.Equals(restart.NonReadyHealthStatus, "Healthy", StringComparison.OrdinalIgnoreCase),
+                Is.False,
+                $"Expected a fresh non-ready observation, got state={restart.NonReadyResourceState}; health={restart.NonReadyHealthStatus}."
+            )
+
+            Assert.That(restart.ResourceEventObservedAt, Is.GreaterThan(restart.NonReadyEventObservedAt))
+            Assert.That(restart.ResourceState, Is.EqualTo("Healthy"))
+            Assert.That(restart.HttpReadyObservedAt, Is.GreaterThan(restart.ResourceEventObservedAt))
+
+            let! afterRestartHealth = Client.GetAsync("/healthz")
+            let! afterRestartHealthBody = afterRestartHealth.Content.ReadAsStringAsync()
+            Assert.That(afterRestartHealth.StatusCode, Is.EqualTo(HttpStatusCode.OK), afterRestartHealthBody)
+        }
+
+    /// Verifies active Agent Sessions remain process-local across the shared restart.
+    [<Test>]
+    member _.ActiveAgentSessionsAreProcessLocalAcrossRestart() =
+        AgentSessionRestartScenario.verifyAfterRestartAsync (requireContext "Agent Session" agentSessionContext)
+
+    /// Verifies Approval policies are lost while generated requests remain actor-backed across the shared restart.
+    [<Test>]
+    member _.ApprovalPolicyStoreIsProcessLocalWhileGeneratedRequestsRemainActorBackedAcrossRestart() =
+        ApprovalRestartScenario.verifyAfterRestartAsync (requireContext "Approval" approvalContext)
+
+    /// Verifies Webhook rules and HTTP-observable deliveries remain process-local across the shared restart.
+    [<Test>]
+    member _.WebhookRuleAndHttpObservableDeliveriesAreProcessLocalAcrossRestart() =
+        WebhookRestartScenario.verifyAfterRestartAsync (requireContext "Webhook" webhookContext)
+
+    /// Verifies durable actor state rehydrates and continues across the shared restart.
+    [<Test>]
+    member _.DurableActorStateRehydratesAcrossGraceServerProjectRestart() =
+        RestartDurabilityScenario.verifyAfterRestartAsync (requireContext "durable actor state" durabilityContext)

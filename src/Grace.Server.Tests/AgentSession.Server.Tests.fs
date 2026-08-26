@@ -14,31 +14,6 @@ open System.Threading.Tasks
 /// Groups shared helpers for agent session test helpers.
 module private AgentSessionTestHelpers =
 
-    /// Restarts Grace.Server with a scenario label for process-local state assertions.
-    let restartGraceServerAsync restartContext =
-        let state =
-            match App with
-            | Some app ->
-                {
-                    App = app
-                    Client = Client
-                    GraceServerBaseAddress = graceServerBaseAddress
-                    CosmosConnectionString = String.Empty
-                    CosmosDatabaseName = String.Empty
-                    CosmosContainerName = String.Empty
-                    ServiceBusConnectionString = serviceBusConnectionString
-                    ServiceBusTopic = serviceBusTopic
-                    ServiceBusServerSubscription = serviceBusServerSubscription
-                    ServiceBusTestSubscription = serviceBusTestSubscription
-                    OperationalFactsTopic = operationalFactsTopic
-                    OperationsSqlConnectionString = operationsSqlConnectionString
-                }
-            | None ->
-                Assert.Fail("Aspire test host was not started by the shared setup fixture.")
-                Unchecked.defaultof<TestHostState>
-
-        AspireTestHost.restartGraceServerAsync state restartContext
-
     /// Posts session to the running test server.
     let private postSessionAsync<'TResponse> (path: string) (parameters: obj) =
         task {
@@ -272,42 +247,59 @@ type AgentSessionServerTests() =
                 return raise ex
         }
 
-    /// Verifies the active agent sessions are process local across restart scenario.
-    [<Test>]
-    [<NonParallelizable>]
-    member _.ActiveAgentSessionsAreProcessLocalAcrossRestart() =
+/// Owns the Agent Session state carried across the shared Grace.Server restart fixture.
+module internal AgentSessionRestartScenario =
+
+    /// Identifies the active session whose process-local state must disappear after restart.
+    type Context = { RepositoryId: string; AgentId: string; WorkItemId: string; SessionId: string }
+
+    /// Creates and observes an active Agent Session before the shared Grace.Server restart.
+    let prepareAsync () =
         task {
-            let repositoryId = repositoryIds[0]
-            let agentId = $"agent-{Guid.NewGuid():N}"
-            let workItemId = "264"
-            let startOperationId = $"start-{Guid.NewGuid():N}"
+            try
+                let repositoryId = repositoryIds[0]
+                let agentId = $"agent-{Guid.NewGuid():N}"
+                let workItemId = "264"
+                let startOperationId = $"start-{Guid.NewGuid():N}"
 
-            let! started = AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId workItemId startOperationId)
+                let! started = AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId workItemId startOperationId)
 
-            Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
-            Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+                Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+                Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
 
-            let! activeBeforeRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
-            Assert.That(activeBeforeRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
-            Assert.That(activeBeforeRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+                let! activeBeforeRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
 
-            do! AgentSessionTestHelpers.restartGraceServerAsync "AgentSession.ActiveAgentSessionsAreProcessLocalAcrossRestart"
+                Assert.That(activeBeforeRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+                Assert.That(activeBeforeRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
 
+                return { RepositoryId = repositoryId; AgentId = agentId; WorkItemId = workItemId; SessionId = startOperationId }
+            with
+            | ex -> return raise (InvalidOperationException("Shared Grace.Server restart Agent Session preparation failed.", ex))
+        }
+
+    /// Confirms the prepared Agent Session is absent after the shared Grace.Server restart.
+    let verifyAfterRestartAsync context =
+        task {
             // Contract: active agent sessions are process-local coordination state and are intentionally lost on restart.
             let! statusAfterRestart =
-                AgentSessionTestHelpers.statusAsync (AgentSessionTestHelpers.statusParameters repositoryId agentId startOperationId workItemId)
+                AgentSessionTestHelpers.statusAsync (
+                    AgentSessionTestHelpers.statusParameters context.RepositoryId context.AgentId context.SessionId context.WorkItemId
+                )
 
-            Assert.That(statusAfterRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(statusAfterRestart.ReturnValue.Session.SessionId, Is.EqualTo(context.SessionId))
             Assert.That(statusAfterRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
 
-            let! activeAfterRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
+            let! activeAfterRestart =
+                AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters context.RepositoryId context.AgentId context.WorkItemId)
+
             Assert.That(activeAfterRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
 
-            let! listedAfterRestart = AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters repositoryId agentId 10)
+            let! listedAfterRestart =
+                AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters context.RepositoryId context.AgentId 10)
 
             Assert.That(
                 listedAfterRestart.ReturnValue.Sessions
-                |> List.exists (fun session -> session.SessionId = startOperationId),
+                |> List.exists (fun session -> session.SessionId = context.SessionId),
                 Is.False
             )
         }
