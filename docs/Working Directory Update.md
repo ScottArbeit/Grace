@@ -1,640 +1,536 @@
 # Working Directory Update
 
-**Status:** Plan-ready  
-**Quality contract:** Product V1  
-**Canonical source:** `docs/Working Directory Update.md`  
-**Evidence current through:** 2026-08-11, `main` at `c477d09529b1bf0cc789d512c9e8c43731cda6f1`
-
-## 1. Outcome
-
-Working Directory Update is the Grace-controlled operation that makes an indexed working directory and its durable
-local state match one selected server root. Branch switching, Watch current-Reference replay, and Connect retrieval use
-one deep internal module for serialization, stale-state rejection, content verification, filesystem mutation, local
-commit, cleanup, and truthful outcomes.
-
-The module commits caller-specific progress only after it proves the selected root. Branch and Watch then perform an
-idempotent finalization step. Connect commits its initial event cursor with the matching local status and object-cache
-metadata.
-
-## 2. Intent, scope, and non-goals
-
-### Why this matters
-
-Grace currently spreads working-directory mutation across large Branch, Watch, and Connect command implementations.
-The shared `WorkingDirectoryMaterialization` module serializes arbitrary callbacks but does not own the transaction it
-names. The result is duplicated planning, marker, verification, cancellation, and persistence behavior at the highest
-local-integrity risk surface in the CLI.
-
-Working Directory Update gives those callers one coherent contract while leaving their admission, target selection,
-remote retrieval, scheduling, and presentation policies where they belong.
-
-### Supported actors, workflows, and environments
-
-- `grace switch` changing the selected branch and its working-directory root.
-- `grace watch` replaying one current-branch Reference from server-ordered events.
-- `grace connect` optionally retrieving its selected branch through the existing zip download.
-- `grace doctor --repair-local-state` explicitly resolving a recorded incomplete finalization or reconstructing exact
-  local state without changing working-directory content.
-- Grace CLI on its currently supported local filesystem and SQLite environment. Windows path comparison remains
-  supported; implementation must preserve existing platform abstractions for other supported systems.
-
-### Required now
-
-- One internal `WorkingDirectoryUpdate` module with `run` and `retryFinalization` operations.
-- Caller-specific request constructors over one private normalized request.
-- Object-cache, Connect zip, and deterministic prepared-content adapters.
-- Repository-and-working-root scoped cross-process lease, marker, and completion sidecar.
-- Exact selected-target and local-state revalidation after lease acquisition.
-- Fresh planning, filesystem mutation, dual-hash verification, final-root verification, and one canonical SQLite
-  completion transaction.
-- The five outcomes `Unchanged`, `Updated`, `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete`.
-- Idempotent Branch and Watch finalization, blocking while finalization is incomplete, and Doctor recovery.
-- Human and machine-readable result projection with truthful nonzero exit status for incomplete outcomes.
-
-### Deferred, rejected, and out of scope
-
-- Automatic recovery for every interrupted phase.
-- Filesystem rollback after mutation starts.
-- Durable per-file planning or mutation journals.
-- Multiple queued incomplete finalizations for one working directory.
-- Hostile-local-process defense beyond file-lease and ownership-token correctness.
-- Availability, failover, load, multi-host coordination, or broad cross-platform hardening beyond supported CLI use.
-- Network reads while the update lease is held.
-- Unbounded completion history or time-based record expiry.
-- Compatibility, migration, or backfill for development-only local SQLite data. The schema may be replaced cleanly.
-- A public planning or preview interface.
-- A generic transaction-participant or SQL-callback extension mechanism.
-
-## 3. Current-state evidence
-
-| Evidence | Current behavior or contract | Relevance | Confidence or verification |
-| -------- | ---------------------------- | --------- | -------------------------- |
-| `src/Grace.CLI/Command/WorkingDirectoryMaterialization.CLI.fs` | A 75-line module provides an in-process lane and exclusive file lease around arbitrary callbacks. | The replacement must deepen this module rather than preserve the callback seam. | Current source. |
-| `src/Grace.CLI/Command/Branch.CLI.fs` | Branch owns a workflow lease, Watch-clean preflight, marker handling, working-directory updates, local status, branch identity, and cache refresh. | Branch is the first public tracer and has a real post-update finalizer. | Current source around `runBranchSwitchWorkflowWithLease` and `updateWorkingDirectory`. |
-| `src/Grace.CLI/Command/Watch.CLI.fs` | Watch has private plan/apply clients, an object-cache apply path, marker sidecars, serialized replay, and cursor acknowledgement. | Watch supplies the most demanding ordering and retry scenarios. | Current source around `CurrentBranchRemoteMaterializationPlan`, `applyCurrentBranchMaterializationTargets`, and cursor replay. |
-| `src/Grace.CLI/Command/Connect.CLI.fs` | Connect writes configuration before optional retrieval, streams a server zip, writes working and object files together, and ignores undeclared zip files. | The design preserves zip retrieval while replacing extraction, verification, and outcome behavior. | Current source around `extractZipEntries` and `connectImpl`. |
-| `src/Grace.CLI/LocalStateDb.CLI.fs` | Schema version 9 stores status, object-cache metadata, and remote-reference boundaries. Boundary writes require complete root identity matching. | Schema replacement adds bounded update completion rows and extends atomic commit operations. | Current source around `replaceStatusSnapshotWithRevisionCore` and cursor operations. |
-| `src/Grace.CLI/Command/Doctor.CLI.fs` | `--repair-local-state` proves an unchanged working tree against server root and branch history before atomic reconstruction. | Doctor is the sole explicit recovery gesture and will gain recorded-finalization retry. | Current source around `repairLocalState`. |
-| `src/Grace.Types/Reference.Types.fs` | `ReferenceMaterializationBoundaryDto` combines target root identity with an event cursor. | The internal update target must separate root identity from caller progress. | Current source at `ReferenceMaterializationBoundaryDto`. |
-| `src/Grace.CLI/Grace.CLI.fsproj` | Connect currently compiles before the shared module. | The new module and adapters must compile before Connect, Branch, Watch, and Doctor. | Current project file. |
-| ADR 0009 and ADR 0010 | Watch branch-transition refresh and current-branch materialization define existing caller-specific trust rules. | Working Directory Update must preserve and centralize their local mutation invariants without erasing caller policy. | Accepted repository decisions. |
-
-The intended design deliberately supersedes current callback-based and Connect extraction behavior. It does not describe
-those changes as already implemented.
-
-## 4. Quality contract and accepted risk
-
-The active profile is Product V1.
-
-- **Data and compatibility:** Grace is not in production. Local schema replacement and fixture regeneration are
-  allowed; no migration, dual read, or compatibility layer is required.
-- **Integrity:** Working-directory bytes, object-cache bytes, selected root, local status, cursor, and completion state
-  must never claim success without dual-hash and ordering proof.
-- **Concurrency:** Branch, Watch, and Connect updates affecting the same local directory serialize across processes.
-- **Recovery:** Exact same-operation retry, finalization-only retry, and explicit Doctor recovery are required. General
-  rollback and automatic phase recovery are not.
-- **Threat model:** Ordinary local process races, crashes, malformed prepared content, and stale selections are in
-  scope. A malicious local process intentionally replacing coordination files is not.
-- **Availability and scale:** No multi-host availability or load promises are added. Completion storage remains
-  bounded.
-- **Review and proof:** Real temporary filesystems and SQLite are required at the module seam. Public CLI output,
-  ordering, cancellation, restart, and cleanup receive focused proof.
-- **Complexity stop:** Do not add a durable running-operation state, per-file journal, rollback engine, generic plugin
-  protocol, or recovery scheduler to satisfy this specification.
-
-Accepted Product V1 risks include a random prepared zip remaining in the system temp directory after abrupt process
-termination and manual intervention when interrupted bytes match no known server root.
-
-## 5. Decisions and capability inventory
-
-### Decision ledger
-
-| ID | Lane | Status | Accepted decision | Implementation impact | Proof impact |
-| -- | ---- | ------ | ----------------- | --------------------- | ------------ |
-| DEC-001 | domain | accepted | Name the operation Working Directory Update. | Rename and deepen the shared module; add the term to `CONTEXT.md`. | Public and contributor docs use one term. |
-| DEC-002 | scope | accepted | Product V1 is the quality contract; rollback, journals, broad automatic recovery, and hardening remain out of scope. | Keep the state machine bounded. | Prove selected V1 failure and restart paths only. |
-| DEC-003 | architecture | accepted | Use a hybrid interface: generic `run` and `retryFinalization` operations with caller-specific request constructors. | One private engine serves Branch, Watch, and Connect. | All callers cross the same stable module seam. |
-| DEC-004 | domain | accepted | Target identity is repository, branch, root DirectoryVersion, SHA-256, and BLAKE3; caller operation identity is separate and deterministic. | Do not use the event-boundary DTO as the internal target. | Same target/same operation and same target/new operation receive distinct proof. |
-| DEC-005 | architecture | accepted | Prepared adapters expose immutable manifest entries and readable bytes, never mutation plans. | Zip, object-cache, and deterministic adapters share one content contract. | Adapter contract suites plus real module integration. |
-| DEC-006 | architecture | accepted | Lease, marker, and sidecar use repository ID plus a normalized local-root-path hash, excluding branch identity. | Add a stable repository/root temp-scope helper. | Separate local roots do not block; branch changes do not move evidence. |
-| DEC-007 | architecture | accepted | SQLite local completion is the irreversible point; the sidecar is derived Watch notification evidence. | Commit matching status, cache metadata, Connect cursor, and completion row atomically. | Crash tests at every commit and cleanup edge. |
-| DEC-008 | product | accepted | `FinalizationIncomplete` blocks different updates until exact retry or Doctor recovery. | Persist one pending finalization and reject later operations. | Ordering and blocking tests across processes. |
-| DEC-009 | architecture | accepted | SQLite stores no pre-completion operation state and retains only the latest terminal row per caller plus one pending row. | No running row, operation log, or expiry clock. | Retention and supersession proof. |
-| DEC-010 | product | accepted | Doctor first retries recorded finalization without filesystem mutation, then may perform exact reconstruction. | Persist minimum typed finalization facts and extend Doctor. | Branch, Watch, unknown-marker, and refusal cases. |
-| DEC-011 | product | accepted | Connect keeps zip download, stages locally, validates exact manifest coverage, writes verified objects first, and performs no network reads under lease. | Replace `extractZipEntries`; add zip adapter and local staging. | Per-file triple-location dual-hash and malformed-archive proof. |
-| DEC-012 | product | accepted | Connect `--force` replaces conflicts only at target paths and never deletes unrelated eligible content. | Caller admission supplies approved target conflicts; module rejects unexpected paths. | Force, no-force, unrelated, ignored, and path-type tests. |
-| DEC-013 | product | accepted | Connect configuration persists before optional retrieval and output reports configuration separately from update result. | Preserve config ordering; extend Connect result projection. | Retrieval-disabled and failed-update behavior. |
-| DEC-014 | architecture | accepted | The same deterministic operation may adopt a known orphaned marker after lease acquisition and fresh replanning. | Separate operation ID from random attempt token. | Same, different, malformed, and completed marker tests. |
-| DEC-015 | product | accepted | Incomplete outcomes use nonzero exit status; `FinalizationIncomplete` says bytes were updated and recommends Doctor. | Add typed human and machine projections. | Exit-code, JSON, and no-mixed-output proof. |
-| DEC-016 | proof | accepted | `grace switch` is the first value-bearing tracer. | Build the core module through one object-backed Branch path before Watch and Connect migration. | Public tracer proves the shared transaction and finalization. |
-
-### Capability inventory
-
-| Capability | Disposition | User-visible outcome | Surfaces | Intrinsic obligations | Complexity impact | Reason |
-| ---------- | ----------- | -------------------- | -------- | --------------------- | ----------------- | ------ |
-| Shared update transaction | Required now | Three callers report the same truthful outcomes. | CLI internals, filesystem, SQLite | Serialization, revalidation, integrity, cleanup | Replaces duplicated logic | Core value. |
-| Branch finalization | Required now | Selected branch identity follows verified bytes. | Branch CLI, config, SQLite | Idempotency and blocking | Small typed finalizer | Required by tracer. |
-| Watch finalization | Required now | Cursor advances only after verified bytes. | Watch replay, SQLite, IPC status | Ordered replay and idempotency | Small typed finalizer | Required current behavior. |
-| Connect zip adapter | Required now | Existing zip retrieval produces verified object and working bytes. | Connect CLI, temp zip, object cache | Exact manifest and dual hashes | Dedicated adapter | Required current workflow. |
-| Doctor recovery | Required now | One documented command resolves exact recoverable states. | Doctor CLI, SQLite, marker | No file mutation, exact proof | Extends existing repair | Required operator path. |
-| Filesystem rollback | Rejected | None promised. | Not applicable | Would require durable inverse plans | High | Outside Product V1. |
-| Per-file durable journal | Rejected | None promised. | Not applicable | Restart and compaction lifecycle | High | Marker plus exact retry is sufficient. |
-| Automatic general recovery | Deferred | Manual Doctor remains required for ambiguous states. | Future maintenance | Classification and scheduling | High | No V1 value beyond selected paths. |
-| Temp-file scavenging after crashes | Deferred | Handled exits clean up; abrupt exits may leave random zip files. | System temp | Age, ownership, and deletion safety | Moderate | Accepted Product V1 risk. |
-| Hostile local coordination-file defense | Out of scope | No promise. | Local temp files | Identity and access hardening | High | Not in current threat model. |
-| Public update-planning interface | Rejected | No preview or plan manipulation. | CLI/API | Stable plan format and compatibility | High | Would make the module shallow. |
-
-## 6. Domain language and model
-
-### Canonical operation term
-
-A Grace-controlled operation that changes indexed working-directory content and durable local state to match one
-selected server root, then commits caller-specific progress only after verifying that match.
-
-### Selected target
-
-The immutable tuple of RepositoryId, BranchId, root DirectoryVersionId, root SHA-256, and root BLAKE3 selected by the
-caller. An event cursor is not part of the target.
-
-### Operation identity
-
-The deterministic caller-specific tuple that distinguishes retry, stale work, and a new operation. Grace hashes a
-canonical serialization of the tuple. Correlation IDs are diagnostic and do not affect idempotency.
-
-- Watch: caller kind, repository, branch, and exact event cursor.
-- Branch: caller kind, repository, previous branch, selected branch, selected Reference, and target root.
-- Connect: caller kind, repository, selected branch, target root, initial cursor, and local root scope.
-
-### Attempt token
-
-A random token identifying one execution attempt. It owns one marker instance and is never used as logical operation
-identity.
-
-### Prepared content
-
-An immutable target manifest plus readable uncompressed file bytes. Its adapter owns zip, object-cache, or test
-resources and is disposed by the module. It cannot supply a mutation plan.
-
-### Local completion
-
-The SQLite transaction that atomically records matching status, required object-cache metadata, Connect's initial
-cursor when applicable, and the operation completion row. This is the irreversible point.
-
-### Finalization
-
-An idempotent caller action performed after local completion while the lease remains held. Branch persists selected
-branch identity. Watch advances the exact cursor. Connect ordinarily has no separate finalization.
-
-### Local root scope
-
-The lowercase SHA-256 of the normalized absolute working-directory path, combined with repository identity to scope
-lease, marker, and sidecar files. It is not a DirectoryVersion identity.
-
-## 7. Supported scenarios and workflows
-
-### Successful Branch tracer
-
-Branch completes admission and content preparation, constructs a deterministic request, and calls `run`. The module
-acquires the lease, revalidates selection and clean local state, plans from current bytes, marks, applies from verified
-objects, verifies the target, commits local completion, removes the marker, and finalizes selected branch identity.
-The command returns `Updated` with exit code 0.
-
-### Already-matching target
-
-If current working bytes and status already match the target, the module performs no filesystem mutation. The same
-operation returns its existing completion; a new operation receives its own local completion and finalization.
-
-### Watch replay
-
-Watch retains replay admission and server ordering. The module applies one selected Reference from verified object
-content. Only after local completion does the finalizer advance the expected cursor to the accepted cursor. A newer
-event selecting the same root is a new operation and still finalizes its cursor.
-
-### Connect retrieval
-
-Connect persists valid configuration, resolves target and cursor, downloads the complete zip locally, validates exact
-manifest coverage and hashes, and calls `run`. Under the lease, the module verifies or creates object files first,
-copies verified objects into approved target paths, verifies the final root, and commits status, cache metadata, initial
-cursor, and completion together.
-
-### Connect without retrieval
-
-`--retrieve-default-branch false` persists configuration and does not call the module, establish a materialized root,
-or record an event cursor.
-
-### Local conflict
-
-Without `--force`, Connect rejects a mismatching selected target path before mutation. With `--force`, it may replace
-that path. Eligible content outside the target is always rejected. Ignored content remains untouched.
-
-### Failure after mutation
-
-After the first filesystem mutation, cancellation is deferred. If verified local completion cannot be reached, the
-module returns `UpdateIncomplete`, records no completion row, and removes only its owned marker on handled failure.
-A retry revalidates and creates a new plan.
-
-### Finalization failure
-
-The module commits local completion, writes derived notification evidence, removes its marker, and attempts finalization.
-Failure returns `FinalizationIncomplete`, a nonzero exit, and a Doctor recommendation. A different update is blocked.
-
-### Same-operation restart
-
-After acquiring the lease, the same deterministic operation may adopt a known orphaned marker. It never continues an
-old plan; it validates content and current state and plans again. A different or unrecognized marker is rejected and
-requires Doctor.
-
-### Doctor recovery
-
-Doctor acquires the update lease. For a pending finalization, it proves the recorded target and retries only the typed
-idempotent finalizer. If that is not applicable, Doctor may use its existing exact working-tree reconstruction path.
-It never changes working-directory content and preserves evidence when proof fails.
-
-## 8. Functional requirements and invariants
-
-### REQ-001 — One deep internal module
-
-- Branch, Watch, and Connect must cross `WorkingDirectoryUpdate.run` for working-directory mutation.
-- Finalization-only recovery must cross `WorkingDirectoryUpdate.retryFinalization`.
-- Callers retain admission, target selection, remote access, scheduling, and rendering.
-- Callers must not pass mutation plans, filesystem writers, database handles, or transaction callbacks.
-
-### REQ-002 — Complete target and operation identity
-
-- Target identity must contain repository, branch, root DirectoryVersion, SHA-256, and BLAKE3.
-- Operation identity must be deterministic from the accepted caller tuple.
-- Marker attempt tokens must be random and independent from operation identity.
-- Empty, incomplete, mismatched, or noncanonical identity must be rejected before mutation.
-
-### REQ-003 — Exact prepared content
-
-- Prepared content must cover every target file exactly once and no undeclared non-directory content.
-- Paths must be normalized, relative, representable, contained, and collision-free under active path comparison.
-- Each uncompressed file must match its declared SHA-256 and BLAKE3 before lease acquisition.
-- The adapter must be disposed on every terminal path.
-
-### REQ-004 — Stable serialization scope
-
-- The lease, marker, and sidecar must use repository identity plus local root scope and exclude branch identity.
-- Only one update may hold the scope lease.
-- A caller must revalidate selected target, configuration, local status, pending finalization, and relevant filesystem
-  state after acquiring the lease and before mutation.
-
-### REQ-005 — Versioned owned marker
-
-- The marker must contain schema version, attempt token, caller kind, operation identity, repository and branch facts,
-  target root, start time, and diagnostic process ID.
-- It must not contain credentials, zip URLs, or unnecessary absolute paths.
-- Cleanup must remove only the marker matching the current attempt token.
-- Malformed, unsupported, or different-operation markers require Doctor.
-
-### REQ-006 — Fresh plan and local-content safety
-
-- The module must build the mutation plan only after lease acquisition and revalidation.
-- The plan may delete only paths proven by accepted prior status to be Grace-tracked and absent from the target.
-- Unexpected eligible content must reject the operation.
-- Connect `--force` may replace only conflicts at selected target paths.
-- Ignored content must remain untouched and outside selected-root comparison.
-
-### REQ-007 — Verified object-first application
-
-- Connect must complete its zip download and validation before lease acquisition.
-- No remote access may occur while the lease is held.
-- Every object file must be dual-hash verified before use; a mismatched existing object must be replaced from validated
-  content through an atomic local-file publication step.
-- Working files must be copied only from verified objects and verified again after copy.
-
-### REQ-008 — Final-root verification
-
-- The module must independently verify retained paths, applied files, directory structure, and both final root hashes.
-- The selected DirectoryVersion identity must be used only when computed root hashes match the selected target.
-- No durable status or completion record may be written for an unverified root.
-
-### REQ-009 — Canonical local completion
-
-- One SQLite transaction must commit matching status, required cache metadata, Connect's initial cursor when present,
-  and the operation completion row.
-- No SQLite operation row may exist before this transaction.
-- The sidecar is derived notification evidence and cannot override SQLite truth.
-- A crash after commit must remain discoverable as locally complete even if sidecar or marker cleanup did not finish.
-
-### REQ-010 — Bounded completion state
-
-- The table must retain the single pending finalization and the latest terminal row per caller kind.
-- Pending finalization must never be pruned or superseded.
-- A newer terminal operation may prune the older terminal row for the same caller.
-- No time-based expiry or unbounded history is allowed.
-
-### REQ-011 — Idempotent finalization and blocking
-
-- Branch and Watch finalizers must be idempotent for the operation identity.
-- Initial finalization occurs while the lease remains held.
-- A pending finalization blocks every different update in the same scope.
-- Finalization retry must reacquire the lease, prove the same target, perform no filesystem mutation, and retry only the
-  finalizer.
-
-### REQ-012 — Truthful outcomes and exit status
-
-- `Unchanged` and `Updated` are success outcomes with exit code 0.
-- `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` are nonzero outcomes.
-- `FinalizationIncomplete` must state that working-directory bytes were updated and recommend
-  `grace doctor --repair-local-state`.
-- Human and JSON output must distinguish configured Connect identity from update outcome.
-- Parse, authentication, and transport errors remain normal `GraceError` failures rather than update outcomes.
-
-### REQ-013 — Cancellation and progress
-
-- Cancellation is honored during admission, download, preparation, lease waiting, and before first mutation.
-- After first mutation, cancellation is deferred until verified local completion or unavoidable update failure.
-- Cancellation may apply again during finalization and produce `FinalizationIncomplete`.
-- Progress is coarse: preparing, waiting, applying, verifying, committing, and finalizing.
-- Progress failure cannot control or fail the transaction.
-
-### REQ-014 — Same-operation marker adoption
-
-- Adoption is allowed only after acquiring the lease and matching marker schema, operation identity, scope, and target.
-- A matching completion row routes to cleanup and finalization-only retry.
-- No completion row routes to complete revalidation and fresh planning.
-- Adoption replaces the old attempt token; it never resumes an old plan.
-
-### REQ-015 — Explicit Doctor recovery
-
-- Doctor must use the same update lease and refuse active competing work.
-- It must first attempt an exact filesystem-free retry of a recorded pending finalization.
-- Fallback reconstruction must preserve current bytes and prove a complete known server root and event boundary.
-- Doctor must not guess targets, resume archive extraction, roll back content, or delete unrecognized evidence without
-  exact reconciliation.
-
-### REQ-016 — Caller-specific ordering
-
-- Branch must not publish selected branch identity before local completion.
-- Watch must not advance its cursor before local completion and must preserve ordered replay.
-- Connect must not write an initial cursor without matching status and root.
-- Connect configuration remains independently valid when retrieval is not requested or does not complete.
-
-### REQ-017 — Public and contributor documentation
-
-- The canonical specification and ADR must define the current intended contract.
-- CLI help, Doctor documentation, machine-readable output documentation, Watch documentation, and `CONTEXT.md` must be
-  updated with implementation.
-- Design-only cross-references must not claim behavior is already implemented.
-
-## 9. Interfaces, contracts, and propagation
-
-### Internal interface shape
-
-The implementation may refine names while preserving this shape:
-
-```fsharp
-module internal WorkingDirectoryUpdate =
-    type Target = private Target of repositoryId: RepositoryId * branchId: BranchId * root: RootIdentity
-    type Operation = private Operation of string
-    type Request = private Request
-    type FinalizationRequest = private FinalizationRequest
-
-    type Outcome =
-        | Unchanged of Receipt
-        | Updated of Receipt
-        | Rejected of Failure
-        | UpdateIncomplete of Failure
-        | FinalizationIncomplete of Receipt * Failure
-
-    val run: Request -> CancellationToken -> Task<Outcome>
-    val retryFinalization: FinalizationRequest -> CancellationToken -> Task<Outcome>
+**Lifecycle state:** Plan-ready
+**Delivery status:** Implemented for Branch through Issue #1025, Watch replay through Issue #843, Connect retrieval
+through Issue #845, and Doctor recovery through Issue #842
+**Quality contract:** Product V1
+**Specification source:** `docs/Working Directory Update.md`
+**Evidence current through:** 2026-08-25, Issue #846 final audit and Issue #1025 on epic head `df28913`
+
+## 1. Outcome and scope
+
+Working Directory Update is the bounded local transaction used by `grace branch switch`, optional `grace connect`
+retrieval, and ordered `grace watch` current-Reference replay to make a Grace-indexed working directory and local SQLite
+state match one exact selected root.
+It verifies prepared objects, applies only the tracked plan, proves the complete final root, commits local completion,
+and completes the caller's typed finalization.
+
+Merged Issue #960 supplies the first public tracer: hash selection resolves
+one exact `DirectoryVersion`, updates the working directory, retains the current Branch identity, and records terminal
+completion atomically with verified local status. Merged Issue #922 extracts the selection-neutral local-application
+stage through opaque `VerifiedLocalRoot`. Merged Issue #1005 makes BLAKE3 the sole WDU byte-equality check while retaining
+SHA-256 selectors and metadata. Merged Issue #923 / PR #1009 supplies the five-input composition and persists a typed
+Reference pending completion after verified local completion. Merged Issue #871 consumes that pending fact to publish the
+selected Branch identity and record terminal completion. Merged Issue #872 adds Save-enabled phase construction.
+Issue #842 routes explicit Doctor repair through the same completion algorithm. Issue #843 routes accepted ordered Watch
+replay through the shared local-application stage, typed pending completion, and restart-safe terminal recording.
+Issue #845 routes optional Connect retrieval through immutable ZIP staging and the same local transaction. Migration, rollback,
+journals, automatic recovery, and multi-platform parity remain out of scope.
+
+Branch, Connect, and Watch share the local-application and completion transaction. One lifecycle contract prevents Grace from
+publishing caller completion after marker cleanup fails, keeps partial failures truthful and recoverable, and gives
+implementation workers one user-safety goal when lower-level details are incomplete.
+
+## 2. Accepted decisions
+
+| ID | Decision | Lasting consequence | Owner |
+| --- | --- | --- | --- |
+| DEC-001 | Branch selection is typed as `Reference` or exact-root `DirectoryVersion`. | Reference may change Branch identity; DirectoryVersion retains the current Branch and has no Reference ID. | #869 |
+| DEC-002 | Successful Save or no-Save admission seals the sole accepted baseline. | `AcceptedBranchPhase` carries SQLite revision and complete-status fingerprint through preparation. | #923 and #872 |
+| DEC-003 | Marker evidence retains typed dispositions. | Missing, exact, different operation, malformed, unsupported, unreadable, and exact-cleanup-failed never collapse to a Boolean. | #869 |
+| DEC-004 | Reference finalization is repeatable from persisted typed facts. | Previous Branch publishes once, selected Branch proves prior publication, and a third Branch retains pending. | #871 |
+| DEC-005 | Planning and verification cover complete relevant tracked topology. | Every selected entry and tracked predecessor entry is compared; unrelated ignored/untracked content is preserved and excluded unless it is a destructive collision. | #898, #959, and #960 |
+| DEC-006 | The lifecycle table is the sole ordering authority. | Cancellation, cleanup, publication/proof, terminal recording, outcomes, and retry follow `WDU-LC-*` rows only. | #881 |
+| DEC-007 | The Branch module has one exact five-input seam. | Inputs are sealed phase, typed selection, exact target graph, immutable prepared content, and diagnostic correlation; internal `VerifiedLocalRoot` never becomes durable or public. | #960 |
+| DEC-008 | Tests retain stable internal boundaries inside the public tracer. | Pure reconciliation, real filesystem application, atomic completion, and built-command selector tests remain independently reachable without adding enabling pull requests. | #960 |
+| DEC-009 | #868 and PR #873 are superseded planning evidence. | Their review findings inform this table but their commits and competing prose are not implementation authority. | #881 |
+| DEC-010 | `DirectoryVersion` completion is terminal in the verified-status SQLite transaction. | Hash-selected switching cannot create pending finalization; exact marker cleanup follows the terminal commit and cannot downgrade success. | #960 |
+| DEC-011 | Merged Issue #923 keeps local completion private and typed. | `LocalCompletion` distinguishes `ReferencePending` from `DirectoryVersionTerminal`, carries the existing `Receipt`, and never crosses the WDU module interface. | #923 / PR #1009 |
+| DEC-012 | The five inputs are the only replaceable Branch facts. | Cancellation remains invocation control and deterministic failure injection is a private test seam; neither becomes a sixth product fact, overload, context bag, or caller callback. | #923 / PR #1009 |
+| DEC-013 | Merged Issue #923 owns the first no-Save `AcceptedBranchPhase` producer and exact target-graph value. | The phase seals accepted status, SQLite revision, and complete-status fingerprint before target preparation; Issue #872 later adds Save-enabled production without changing the five-input seam. | #923 / PR #1009 and #872 |
+| DEC-014 | Connect configuration is independent from optional retrieval, while the selected root, prepared bytes, cursor, status, object metadata, and terminal completion share one WDU commit point. | Connect saves and reports configuration first, stages the exact ZIP without a WDU lease, applies only through WDU, and reports update failure without rolling configuration back. | #845 |
+| DEC-015 | Branch ID and name selectors map to the selected Branch's exact latest Reference, with Branch ID taking precedence when both selectors are supplied. | Grace validates repository and Branch identity, selects one nonempty Reference ID from that Branch response, and binds that exact Reference, Branch, root, prepared graph, operation, SQLite completion, and Branch publication through the existing `Reference` transaction. | #1025 |
+
+The post-Issue #1005 checkpoint makes these planning selections without changing the compiled lifecycle rows:
+
+- Final local-application admission occurs after prepared-object publication. No revision, status, completion, marker,
+  topology snapshot, or plan computed before publication may authorize the first working-tree mutation or zero-action
+  `VerifiedLocalRoot`.
+- The extracted local-application stage is selection-neutral, while completion is selection-specific. Merged Issue #923
+  records Reference pending completion after opaque `VerifiedLocalRoot` and delegates DirectoryVersion to the merged
+  terminal behavior unchanged.
+- `LocalCompletion` is private non-durable evidence inside WDU. It distinguishes the persisted Reference-pending and
+  DirectoryVersion-terminal results without exposing `VerifiedLocalRoot` or asking callers to reconstruct SQLite truth.
+  Retry still reconstructs from persisted typed facts rather than this in-memory value.
+- Merged Issue #871 consumes only the persisted typed Reference pending fact. It does not expose `VerifiedLocalRoot`, local
+  paths, status snapshots, database handles, mutation plans, finalizers, or callbacks.
+- Issue #843 supplies a private Watch adapter over the same local-application stage. Watch retains event admission,
+  replay ordering, cursor compare-and-set, SignalR wake policy, IPC publication, and foreground output.
+- Issue #845 supplies a private Connect adapter over the same local-application stage. Connect retains server target
+  selection, archive download, exact staging, configuration persistence, and command output outside the WDU lease.
+- Issue #1025 maps the existing Branch ID and name selectors to the same private Reference adapter. It preserves Branch
+  ID precedence, validates the selected Branch response against the configured repository and requested Branch identity,
+  and reads that response's exact latest nonempty Reference ID once.
+
+No product or architecture decision remains open for the delivered Issue #871, Issue #872, Issue #843, and Issue #845
+slices. Issue #842 adds
+explicit Doctor completion for an applicable pending Reference while retaining exact reconstruction as the no-pending
+fallback.
+
+## 3. Domain facts and interface
+
+`AcceptedBranchPhase` is opaque and sealed immediately after successful Save or no-Save admission. It contains the
+accepted complete status, SQLite revision, and complete-status fingerprint. Merged Issue #923 adds the no-Save
+constructor used by the hash-selected producer. Issue #872 later adds Save-enabled construction without changing the
+type or the run interface. Preparation carries the same phase unchanged.
+
+`ResolvedTargetGraph` is an opaque target plus the exact target status, required object metadata, and prepared-manifest
+identity. Construction rejects a selection, target, graph, or manifest mismatch before the value reaches WDU. Callers
+cannot pass these pieces independently.
+
+`WorkingDirectoryUpdate.run` accepts exactly five Branch facts:
+
+1. Sealed `AcceptedBranchPhase`.
+2. Typed `Reference` or exact-root `DirectoryVersion` selection.
+3. Exact resolved target graph corresponding to that selection.
+4. Immutable prepared content for that graph.
+5. Diagnostic correlation.
+
+The module derives configuration and paths, fresh scan input, operation identity, completion and marker facts, and typed
+Branch finalization facts. It accepts no caller finalizer, callback, progress observer in place of correlation, status
+graph, path or reader bundle, generic context bag, mutation plan, filesystem writer, or database handle. Retry
+reconstructs solely from persisted typed operation facts.
+
+Cancellation remains explicit invocation control. A private deterministic failure seam remains available to focused
+tests. Neither is a caller-replaceable Branch fact and neither permits an overload that omits or substitutes one of the
+five inputs.
+
+For `grace branch switch --to-branch-id` and `--to-branch-name`, the selected Branch response is the remote source of
+truth at target-resolution time. Branch ID takes precedence when both options are present. Grace validates the returned
+repository and Branch identity, requires a nonempty latest Reference ID, and then resolves the target graph by that exact
+Reference ID. It does not chase a newer Reference after selection. A missing or mismatched latest Reference, or an
+incomplete target graph, fails before working-file mutation, SQLite completion, or Branch publication. No-Save and
+Save-enabled callers then use their existing accepted-phase producers and the same `BranchSelection.Reference`
+transaction.
+
+Connect first persists repository configuration. It then resolves the server boundary and complete target graph,
+downloads the selected ZIP, and validates immutable prepared content before entering WDU. The private Connect adapter
+derives the configured local-root scope, constructs the existing Connect operation from the target and initial cursor,
+and commits matching status, object metadata, remote boundary cursor, and terminal completion in one SQLite transaction.
+No retrieval failure rolls configuration back.
+
+Issue #922 supplies one private stage behind this interface. Its inputs are the held lease, exact owned marker attempt,
+sealed phase and selection facts, exact target graph, and immutable prepared content already validated against the
+manifest. It publishes required object-cache copies, performs final admission from freshly read local facts, derives one
+fresh plan, applies it, verifies the complete relevant root, and returns only `Rejected`, `UpdateIncomplete`, or opaque
+non-durable `VerifiedLocalRoot`. It neither writes SQLite completion nor decides Branch finalization.
+
+The first working-tree mutation and SQLite local completion are distinct boundaries. For `Reference`, local completion
+atomically writes verified status, object metadata, and a pending Branch operation. For `DirectoryVersion`, the same
+transaction records verified status, object metadata, and terminal completion because Branch identity does not change.
+For Connect, the transaction also records the matching initial remote cursor and configured local-root scope with terminal
+completion.
+It is never called merely “commit” in lifecycle evidence.
+
+Issue #923 composes those paths behind a private five-input local-transaction seam:
+
+- `DirectoryVersion` atomically retains the merged Issue #960 terminal transaction and returns private
+  `DirectoryVersionTerminal(Receipt)` to the existing post-commit marker cleanup and `Updated` or `Unchanged` projection.
+- `Reference` invokes the merged selection-neutral application, then atomically stores verified status, object metadata,
+  and `BranchFinalization` pending facts. Success returns private `ReferencePending(Receipt)` for Issue #871 to consume
+  inside WDU.
+- `Rejected` remains possible only before mutation or `VerifiedLocalRoot`. A completion failure after
+  `VerifiedLocalRoot` is `UpdateIncomplete` and retains exact marker evidence.
+
+`LocalCompletion` never crosses into `Branch.CLI`, never becomes durable state, and never becomes retry input. The
+Reference path is not wired into the public Branch command until Issue #871 consumes `ReferencePending` for repeatable
+finalization. This keeps the epic branch safe and prevents a half-active Reference switch while allowing direct
+real-filesystem and SQLite tests at the stable private seam.
+
+## 4. Normative Branch lifecycle table
+
+This fenced JSON block is the sole normative lifecycle ordering contract. Human prose, ADRs, implementation issues, and
+tests cite `WDU-LC-*` row IDs; they must not restate or reorder the transition sequence. #889 checks its closed
+structural grammar, graph, and canonical digest; consumers must not infer aliases, wildcard behavior, or row precedence.
+
+<!-- grace:wdu-lifecycle-contract:start -->
+```json
+{
+  "schema": "grace.wdu.branch-lifecycle/v1",
+  "artifactIdentity": "issue-928",
+  "canonicalContentDigest": "ccd29ba6b55dde396be5c1c9244958999e7cc8173c0e5e8243f1b57fe4bc3c92",
+  "boundaries": {
+    "firstWorkingTreeMutation": "first tracked working-path mutation",
+    "verifiedLocalRoot": "opaque non-durable relevant-topology proof immediately before pending SQLite completion",
+    "sqliteLocalCompletion": "atomic verified status, object metadata, and pending-operation write",
+    "firstApplicableRetryWrite": "exactCleanup, branchPublication, or terminalRecording selected from persisted facts"
+  },
+  "retryAdmission": {
+    "source": "exact persisted pending operation, selection, marker evidence, and current Branch evidence",
+    "requiredActions": ["reconstructPersistedTypedFacts", "acquireLocalLease", "rereadMarkerAndCurrentBranch", "selectRowFromFreshEvidence"],
+    "staleEvidenceAction": "retainPendingAndDisallowedEvidenceWithoutBranchPublication"
+  },
+  "doctorCommand": "grace doctor --repair-local-state",
+  "order": [
+    "sqliteLocalCompletion",
+    "postCompletionMarkerInspection",
+    "conditionalExactCleanup",
+    "typedBranchPublicationOrProof",
+    "terminalRecording"
+  ],
+  "machineGrammar": {
+    "predicateAxes": ["invocation", "trigger", "marker", "selectionState"],
+    "encoding": {
+      "one": {"jsonShape":{"kind":"one","value":"<concrete-enum-member>"},"meaning":"one concrete value"},
+      "set": {"jsonShape":{"kind":"set","values":["<concrete-enum-member>"]},"meaning":"nonempty duplicate-free union of concrete values"},
+      "aggregate": {"jsonShape":{"kind":"aggregate","name":"<declared-axis-aggregate>"},"meaning":"exact declared expansion; aggregates cannot nest"}
+    },
+    "concreteEnums": {
+      "invocation": ["initial", "terminalReplay", "finalizationRetry"],
+      "trigger": ["afterSqliteLocalCompletion", "afterSqliteLocalCompletionBytesChanged", "afterSqliteLocalCompletionBytesUnchanged", "branchPublicationFails", "branchPublicationFailsAfterExactCleanup", "cancelAfterBranchPublicationBegins", "cancelAfterExactCleanupBegins", "cancelAfterFirstWorkingTreeMutation", "cancelAfterOwnedMarkerBeforeFirstWorkingTreeMutation", "cancelAfterTerminalRecordingBegins", "cancelBeforeFirstWorkingTreeMutation", "cancelImmediatelyBeforeFirstApplicableRetryWrite", "disallowedMarker", "exactCleanupAndTerminalSucceedAfterSelectedBranchProof", "exactCleanupFails", "exactCleanupPublicationAndTerminalSucceed", "exactSameOperationAdoption", "exactTerminalCompletionRegardlessOfInvocationCancellation", "failureAfterFirstWorkingTreeMutationBeforeVerifiedLocalRoot", "failureAfterVerifiedLocalRootBeforeSqliteLocalCompletion", "failureBeforeFirstWorkingTreeMutation", "finalPreMutationRereadCleanupFails", "finalPreMutationRereadMatches", "finalPreMutationRereadRejects", "firstWorkingTreeMutationBegins", "missingMarkerFreshAdmission", "ownedMarkerCleanupFailsBeforeFirstWorkingTreeMutation", "postTerminalExactCleanupFailsBytesChanged", "postTerminalExactCleanupFailsBytesUnchanged", "preLocalAdmissionRefused", "publicationAndTerminalSucceed", "terminalOwnedDifferentOperationAdmission", "terminalRecordingFailsAfterExactCleanupAndPublicationProof", "terminalRecordingFailsAfterExactCleanupAndSelectedBranchProof", "terminalRecordingFailsAfterPublicationProof", "terminalRecordingSucceedsAfterPublicationProof", "thirdBranchBlocksAfterExactCleanup", "thirdBranchBlocksFinalization", "verifiedDirectoryVersionRootReadyForSqliteTerminalCompletion", "verifiedRootReadyForSqliteLocalCompletion"],
+      "marker": ["notApplicable", "missing", "exact", "differentOperation", "malformed", "unsupported", "unreadable", "exactCleanupFailed"],
+      "selectionState": ["referencePrevious", "referenceSelected", "referenceThird", "directoryVersion"],
+      "firstApplicableRetryWrite": ["none", "exactCleanup", "branchPublication", "terminalRecording"],
+      "exitClass": ["success", "nonzero"],
+      "admissionMode": ["freshMissingMarker", "adoptedExactOperation"],
+      "reconciliationState": ["needsApply", "alreadySatisfied"]
+    },
+    "aggregates": {
+      "marker": {
+        "none": ["notApplicable"],
+        "any": ["notApplicable", "missing", "exact", "differentOperation", "malformed", "unsupported", "unreadable", "exactCleanupFailed"],
+        "ownedOrNone": ["notApplicable", "missing", "exact"],
+        "actualEvidence": ["missing", "exact", "differentOperation", "malformed", "unsupported", "unreadable", "exactCleanupFailed"],
+        "postCompletionEvidence": ["missing", "exact", "differentOperation", "malformed", "unsupported", "unreadable", "exactCleanupFailed"]
+      },
+      "selectionState": {
+        "any": ["referencePrevious", "referenceSelected", "referenceThird", "directoryVersion"],
+        "references": ["referencePrevious", "referenceSelected", "referenceThird"],
+        "persisted": ["referencePrevious", "referenceSelected", "referenceThird", "directoryVersion"]
+      }
+    },
+    "expansion": {
+      "rule": "Resolve each match axis by its kind, then take the Cartesian product across all four axes.",
+      "setMembers": "Set values are concrete members of that axis only; unknown values, empty sets, duplicates, and mixed shapes are invalid.",
+      "aggregateMembers": "Aggregate names are valid only on the axis where declared; unknown names and aggregate tokens inside sets are invalid.",
+      "example": "WDU-LC-100 expands five marker values times three Reference states into 15 applicable cells; WDU-LC-026/028 and WDU-LC-036/038 are the explicit DirectoryVersion bytesChanged split."
+    },
+    "overlap": {
+      "applicabilityKey": ["invocation", "trigger", "marker", "selectionState"],
+      "rule": "Expanded applicability keys must be disjoint; duplicate keys are invalid and there is no first-row-wins precedence.",
+      "routing": "A routing row selects only its declared nextRows after its own key matches; nextRows do not create precedence."
+    },
+    "terminalReplay": {
+      "row": "WDU-LC-003",
+      "selectionExpansion": "persisted expands to all four concrete persisted selection states",
+      "markerExpansion": "any expands to all recognized marker values because exact terminal SQLite evidence is authoritative",
+      "effects": "No marker, working-file, Branch, completion, or retry write occurs; invocation cancellation is ignored and the outcome is Unchanged."
+    },
+    "rowVector": ["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-008","WDU-LC-007","WDU-LC-003","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-020","WDU-LC-021","WDU-LC-022","WDU-LC-023","WDU-LC-024","WDU-LC-025","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-030","WDU-LC-031","WDU-LC-032","WDU-LC-033","WDU-LC-034","WDU-LC-035","WDU-LC-036","WDU-LC-037","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109","WDU-LC-110","WDU-LC-111","WDU-LC-112","WDU-LC-113","WDU-LC-114","WDU-LC-120","WDU-LC-121","WDU-LC-122","WDU-LC-123","WDU-LC-130"]
+  },
+  "machineMetadata": {
+    "decisionIds": ["DEC-001","DEC-002","DEC-003","DEC-004","DEC-005","DEC-006","DEC-007","DEC-008","DEC-009","DEC-010"],
+    "requirements": [
+      {"id":"REQ-001","owner":"#960"},{"id":"REQ-002","owner":"#869"},{"id":"REQ-003","owner":"#837"},{"id":"REQ-004","owner":"#839"},{"id":"REQ-005","owner":"#869"},{"id":"REQ-006","owner":"#898"},{"id":"REQ-007","owner":"#960"},{"id":"REQ-008","owner":"#960"},{"id":"REQ-009","owner":"#838"},{"id":"REQ-010","owner":"#838"},{"id":"REQ-011","owner":"#871"},{"id":"REQ-012","owner":"#871"},{"id":"REQ-013","owner":"#960"},{"id":"REQ-014","owner":"#960"},{"id":"REQ-015","owner":"#842"},{"id":"REQ-016","owner":"#871"},{"id":"REQ-017","owner":"#846"},{"id":"REQ-018","owner":"#928"},{"id":"REQ-019","owner":"#960"}
+    ],
+    "artifacts": [
+      {"id":"adr-0011","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-008","WDU-LC-007","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-023","WDU-LC-025","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-030","WDU-LC-033","WDU-LC-035","WDU-LC-036","WDU-LC-037","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-003"]},
+      {"id":"epic-835","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-008","WDU-LC-007","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-030","WDU-LC-036","WDU-LC-037","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-003"]},
+      {"id":"issue-842","rowIds":["WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109","WDU-LC-110","WDU-LC-111","WDU-LC-112","WDU-LC-113","WDU-LC-114","WDU-LC-120","WDU-LC-121","WDU-LC-122","WDU-LC-123","WDU-LC-130","WDU-LC-003"]},
+      {"id":"issue-843","rowIds":["WDU-LC-003","WDU-LC-100","WDU-LC-101","WDU-LC-103"]},
+      {"id":"issue-846","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-008","WDU-LC-007","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-030","WDU-LC-036","WDU-LC-037","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-003"]},
+      {"id":"issue-869","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212","WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-100"]},
+      {"id":"issue-898","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212"]},
+      {"id":"issue-928","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-209","WDU-LC-210","WDU-LC-002","WDU-LC-006","WDU-LC-008","WDU-LC-007"]},
+      {"id":"issue-960","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-008","WDU-LC-007","WDU-LC-003","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-036","WDU-LC-037","WDU-LC-038"]},
+      {"id":"issue-922","rowIds":["WDU-LC-209","WDU-LC-210","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-008","WDU-LC-007"]},
+      {"id":"issue-923","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-202","WDU-LC-203","WDU-LC-204","WDU-LC-205","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-007"]},
+      {"id":"issue-900","rowIds":["WDU-LC-213","WDU-LC-008","WDU-LC-003","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-036","WDU-LC-037","WDU-LC-038"]},
+      {"id":"issue-901","rowIds":["WDU-LC-001","WDU-LC-002","WDU-LC-004","WDU-LC-008","WDU-LC-007","WDU-LC-003","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-036","WDU-LC-037","WDU-LC-038"]},
+      {"id":"issue-871","rowIds":["WDU-LC-020","WDU-LC-021","WDU-LC-022","WDU-LC-023","WDU-LC-024","WDU-LC-025","WDU-LC-030","WDU-LC-031","WDU-LC-032","WDU-LC-033","WDU-LC-034","WDU-LC-035","WDU-LC-100","WDU-LC-101","WDU-LC-102","WDU-LC-103","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109","WDU-LC-110","WDU-LC-111","WDU-LC-112","WDU-LC-113","WDU-LC-114","WDU-LC-120","WDU-LC-121","WDU-LC-122","WDU-LC-123","WDU-LC-130","WDU-LC-003"]},
+      {"id":"issue-872","rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-211","WDU-LC-212","WDU-LC-001","WDU-LC-005","WDU-LC-002","WDU-LC-004","WDU-LC-006","WDU-LC-007","WDU-LC-003"]}
+    ],
+    "expectedCounts": {"decisionCount":10,"requirementCount":19,"artifactCount":15,"rowCount":66,"applicabilityKeyCount":244}
+  },
+  "rows": [
+    {"id":"WDU-LC-200","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"missingMarkerFreshAdmission"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["createExactOwnedMarkerWithFreshAttemptToken","rereadCompleteLocalStatusAndMarker","buildFreshPlanFromCurrentTrackedGraph","reconcileFreshAdmissionAsNeedsApplyOnly","discardEveryPriorPlan"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":null,"exitClass":null,"doctorGuidance":null,"resultingMarker":"exact","nextRows":["WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212"]},
+    {"id":"WDU-LC-201","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"exactSameOperationAdoption"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["verifyMarkerSchema","verifyRepositoryAndLocalRootScope","verifyExactOperationIdentity","verifyExactTargetIdentity","replaceAttemptTokenWithFreshAttemptToken","rereadCompleteLocalStatusAndMarker","buildFreshPlanFromCurrentTrackedGraph","reconcileExactAdoptionAsNeedsApplyOrAlreadySatisfied","discardEveryPriorPlan"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":null,"exitClass":null,"doctorGuidance":null,"resultingMarker":"exact","nextRows":["WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212"]},
+    {"id":"WDU-LC-213","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"terminalOwnedDifferentOperationAdmission"},"marker":{"kind":"one","value":"differentOperation"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["readPriorMarkerIdentity","requireTerminalSqliteOperationAndTargetMatchPriorMarker","requireCurrentStatusRootMatchesPriorMarkerTarget","replacePriorMarkerWithExactOwnedMarkerAndFreshAttemptToken","rereadCompleteLocalStatusAndMarker","buildFreshPlanFromCurrentTrackedGraph","reconcileFreshAdmissionAsNeedsApplyOnly","discardEveryPriorPlan"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"previousTerminalRetained","outcome":null,"exitClass":null,"doctorGuidance":null,"resultingMarker":"exact","nextRows":["WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-211","WDU-LC-212"]},
+    {"id":"WDU-LC-202","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"preLocalAdmissionRefused"},"marker":{"kind":"one","value":"differentOperation"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-203","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"preLocalAdmissionRefused"},"marker":{"kind":"one","value":"malformed"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-204","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"preLocalAdmissionRefused"},"marker":{"kind":"one","value":"unsupported"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-205","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"preLocalAdmissionRefused"},"marker":{"kind":"one","value":"unreadable"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-206","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"preLocalAdmissionRefused"},"marker":{"kind":"one","value":"exactCleanupFailed"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-207","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"cancelAfterOwnedMarkerBeforeFirstWorkingTreeMutation"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanOnlyExactOwnedMarker"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-208","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"ownedMarkerCleanupFailsBeforeFirstWorkingTreeMutation"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["attemptCleanOnlyExactOwnedMarker","retainExactMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"exactCleanupFailed"},
+    {"id":"WDU-LC-209","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"finalPreMutationRereadMatches"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["rereadAcceptedRevisionAndCompleteStatusFingerprint","rereadMarkerSchemaScopeOperationTargetAndAttemptToken","verifyFreshPlanAgainstReread","compareCompleteRelevantTopologyWithPrefixAdvancedExpectedState","checkCancellationImmediatelyBeforeVerifiedLocalRootOrFirstMutation","routeZeroActionToVerifiedLocalRootOrMutatingPlanToFirstAction"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-207","WDU-LC-208","WDU-LC-210","WDU-LC-006","WDU-LC-008","WDU-LC-007"]},
+    {"id":"WDU-LC-210","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"firstWorkingTreeMutationBegins"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["beginTrackedWorkingTreeMutation","ignoreCancellation","compareCompleteRelevantTopologyWithPrefixAdvancedExpectedStateBeforeEveryLaterAction","applyFreshPlan","verifyCompleteRelevantTrackedTopology","transitionToVerifiedLocalRoot"],"workingFiles":"actualEvidence","branchIdentity":"unchanged","durableResult":null,"outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-002","WDU-LC-006","WDU-LC-008","WDU-LC-007"]},
+    {"id":"WDU-LC-211","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"finalPreMutationRereadRejects"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["rejectStaleRevisionFingerprintMarkerOperationTargetOrPlan","cleanOnlyExactOwnedMarker"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-212","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"finalPreMutationRereadCleanupFails"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["rejectStaleRevisionFingerprintMarkerOperationTargetOrPlan","attemptCleanOnlyExactOwnedMarker","retainExactMarkerEvidence"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"exactCleanupFailed"},
+
+    {"id":"WDU-LC-001","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"cancelBeforeFirstWorkingTreeMutation"},"marker":{"kind":"aggregate","name":"none"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":[],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":false},
+    {"id":"WDU-LC-005","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"failureBeforeFirstWorkingTreeMutation"},"marker":{"kind":"aggregate","name":"none"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":[],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"Rejected","exitClass":"nonzero","doctorGuidance":false},
+    {"id":"WDU-LC-002","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"failureAfterFirstWorkingTreeMutationBeforeVerifiedLocalRoot"},"marker":{"kind":"aggregate","name":"ownedOrNone"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMutationEvidence"],"workingFiles":"mayDiffer","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"UpdateIncomplete","exitClass":"nonzero","doctorGuidance":false},
+    {"id":"WDU-LC-004","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"cancelAfterFirstWorkingTreeMutation"},"marker":{"kind":"aggregate","name":"actualEvidence"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["ignoreCancellation","continueByActualEvidence"],"workingFiles":"actualEvidence","branchIdentity":"actualEvidence","durableResult":null,"outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-002","WDU-LC-006","WDU-LC-008","WDU-LC-007"]},
+    {"id":"WDU-LC-006","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"verifiedRootReadyForSqliteLocalCompletion"},"marker":{"kind":"aggregate","name":"postCompletionEvidence"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["ignoreCancellation","recordSqlitePendingLocalCompletion","returnLocalCompletionWithEphemeralBytesChanged","inspectPostCompletionMarker"],"workingFiles":"verifiedRelevantTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-010","WDU-LC-011","WDU-LC-012","WDU-LC-013","WDU-LC-014","WDU-LC-015","WDU-LC-020","WDU-LC-021","WDU-LC-022","WDU-LC-023","WDU-LC-024","WDU-LC-025","WDU-LC-030","WDU-LC-031","WDU-LC-032","WDU-LC-033","WDU-LC-034","WDU-LC-035"]},
+    {"id":"WDU-LC-008","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"verifiedDirectoryVersionRootReadyForSqliteTerminalCompletion"},"marker":{"kind":"aggregate","name":"postCompletionEvidence"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":["ignoreCancellation","proveCurrentBranchUnchanged","recordVerifiedStatusObjectMetadataAndTerminalCompletionAtomically","returnTerminalCompletionWithEphemeralBytesChanged","inspectPostCompletionMarker"],"workingFiles":"verifiedRelevantTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-036","WDU-LC-037","WDU-LC-038"]},
+    {"id":"WDU-LC-007","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"failureAfterVerifiedLocalRootBeforeSqliteLocalCompletion"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"any"}},"firstApplicableRetryWrite":"none","requiredActions":["ignoreCancellation","retainExactMarkerEvidence"],"workingFiles":"verifiedRelevantTarget","branchIdentity":"unchanged","durableResult":"noCompletion","outcome":"UpdateIncomplete","exitClass":"nonzero","doctorGuidance":false},
+    {"id":"WDU-LC-003","match":{"invocation":{"kind":"one","value":"terminalReplay"},"trigger":{"kind":"one","value":"exactTerminalCompletionRegardlessOfInvocationCancellation"},"marker":{"kind":"aggregate","name":"any"},"selectionState":{"kind":"aggregate","name":"persisted"}},"firstApplicableRetryWrite":"none","requiredActions":[],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"existingTerminal","outcome":"Unchanged","exitClass":"success","doctorGuidance":false},
+
+    {"id":"WDU-LC-010","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"differentOperation"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarker","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-011","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"malformed"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarker","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-012","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"unsupported"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["retainMarker","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-013","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"unreadable"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["retainEvidence","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-014","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"exactCleanupFails"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["attemptCleanExactMarker","retainExactMarker","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"exactCleanupFailed"},
+    {"id":"WDU-LC-015","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"exactCleanupFailed"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["retainExactMarker","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+
+    {"id":"WDU-LC-020","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"none","requiredActions":["publishSelectedBranch","provePublication","recordTerminal"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false},
+    {"id":"WDU-LC-021","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"branchPublicationFails"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"none","requiredActions":["attemptPublishSelectedBranch","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"previousOrUnknown","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-022","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterPublicationProof"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"none","requiredActions":["publishSelectedBranch","provePublication","attemptTerminalRecording","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-023","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"none","requiredActions":["proveSelectedBranch","recordTerminal"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false},
+    {"id":"WDU-LC-024","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterPublicationProof"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"none","requiredActions":["proveSelectedBranch","attemptTerminalRecording","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-025","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceThird"}},"firstApplicableRetryWrite":"none","requiredActions":["retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"third","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-026","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletionBytesChanged"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":[],"workingFiles":"verifiedTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false},
+    {"id":"WDU-LC-027","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"postTerminalExactCleanupFailsBytesChanged"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":["attemptCleanExactMarker","retainTerminalOwnedMarker"],"workingFiles":"verifiedTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false,"resultingMarker":"exactCleanupFailed"},
+    {"id":"WDU-LC-028","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletionBytesUnchanged"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":[],"workingFiles":"verifiedTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":"Unchanged","exitClass":"success","doctorGuidance":false},
+
+    {"id":"WDU-LC-030","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker","publishSelectedBranch","provePublication","recordTerminal"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-031","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"branchPublicationFailsAfterExactCleanup"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker","attemptPublishSelectedBranch","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"previousOrUnknown","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-032","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterExactCleanupAndPublicationProof"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker","publishSelectedBranch","provePublication","attemptTerminalRecording","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-033","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker","proveSelectedBranch","recordTerminal"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-034","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterExactCleanupAndPublicationProof"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker","proveSelectedBranch","attemptTerminalRecording","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-035","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletion"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referenceThird"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker","retainPending"],"workingFiles":"verifiedTarget","branchIdentity":"third","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-036","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletionBytesChanged"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker"],"workingFiles":"verifiedTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-037","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"postTerminalExactCleanupFailsBytesUnchanged"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":["attemptCleanExactMarker","retainTerminalOwnedMarker"],"workingFiles":"verifiedTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":"Unchanged","exitClass":"success","doctorGuidance":false,"resultingMarker":"exactCleanupFailed"},
+    {"id":"WDU-LC-038","match":{"invocation":{"kind":"one","value":"initial"},"trigger":{"kind":"one","value":"afterSqliteLocalCompletionBytesUnchanged"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"directoryVersion"}},"firstApplicableRetryWrite":"none","requiredActions":["cleanExactMarker"],"workingFiles":"verifiedTarget","branchIdentity":"currentUnchanged","durableResult":"terminal","outcome":"Unchanged","exitClass":"success","doctorGuidance":false,"resultingMarker":"missing"},
+
+    {"id":"WDU-LC-100","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"disallowedMarker"},"marker":{"kind":"set","values":["differentOperation","malformed","unsupported","unreadable","exactCleanupFailed"]},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"none","requiredActions":["retainEvidence","retainPending"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-101","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"cancelImmediatelyBeforeFirstApplicableRetryWrite"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["retainExactMarker","retainPending"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-102","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"exactCleanupFails"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["attemptCleanExactMarker","retainExactMarker","retainPending"],"workingFiles":"unchanged","branchIdentity":"unchanged","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"exactCleanupFailed"},
+    {"id":"WDU-LC-103","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"cancelAfterExactCleanupBegins"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"aggregate","name":"references"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["ignoreCancellation","continueByActualEvidence","neverRepublishWithoutProof"],"workingFiles":"unchanged","branchIdentity":"actualEvidence","durableResult":null,"outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-102","WDU-LC-104","WDU-LC-105","WDU-LC-106","WDU-LC-107","WDU-LC-108","WDU-LC-109"]},
+    {"id":"WDU-LC-104","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"exactCleanupPublicationAndTerminalSucceed"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["cleanExactMarker","publishSelectedBranch","provePublication","recordTerminal"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-105","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"branchPublicationFailsAfterExactCleanup"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["cleanExactMarker","attemptPublishSelectedBranch","retainPending"],"workingFiles":"unchanged","branchIdentity":"previousOrUnknown","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-106","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterExactCleanupAndPublicationProof"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["cleanExactMarker","publishSelectedBranch","provePublication","attemptTerminalRecording","retainPending"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-107","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"exactCleanupAndTerminalSucceedAfterSelectedBranchProof"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["cleanExactMarker","proveSelectedBranch","recordTerminal"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false,"resultingMarker":"missing"},
+    {"id":"WDU-LC-108","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterExactCleanupAndSelectedBranchProof"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["cleanExactMarker","proveSelectedBranch","attemptTerminalRecording","retainPending"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-109","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"thirdBranchBlocksAfterExactCleanup"},"marker":{"kind":"one","value":"exact"},"selectionState":{"kind":"one","value":"referenceThird"}},"firstApplicableRetryWrite":"exactCleanup","requiredActions":["cleanExactMarker","retainPending"],"workingFiles":"unchanged","branchIdentity":"third","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true,"resultingMarker":"missing"},
+    {"id":"WDU-LC-110","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"cancelImmediatelyBeforeFirstApplicableRetryWrite"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"branchPublication","requiredActions":["retainPending"],"workingFiles":"unchanged","branchIdentity":"previous","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-111","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"publicationAndTerminalSucceed"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"branchPublication","requiredActions":["publishSelectedBranch","provePublication","recordTerminal"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false},
+    {"id":"WDU-LC-112","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"branchPublicationFails"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"branchPublication","requiredActions":["attemptPublishSelectedBranch","retainPending"],"workingFiles":"unchanged","branchIdentity":"previousOrUnknown","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-113","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterPublicationProof"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"branchPublication","requiredActions":["publishSelectedBranch","provePublication","attemptTerminalRecording","retainPending"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-114","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"cancelAfterBranchPublicationBegins"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referencePrevious"}},"firstApplicableRetryWrite":"branchPublication","requiredActions":["ignoreCancellation","continueByActualEvidence"],"workingFiles":"unchanged","branchIdentity":"actualEvidence","durableResult":null,"outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-111","WDU-LC-112","WDU-LC-113"]},
+
+    {"id":"WDU-LC-120","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"cancelImmediatelyBeforeFirstApplicableRetryWrite"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"terminalRecording","requiredActions":["retainPending"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-121","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"terminalRecordingSucceedsAfterPublicationProof"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"terminalRecording","requiredActions":["proveSelectedBranch","recordTerminal"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"terminal","outcome":"Updated","exitClass":"success","doctorGuidance":false},
+    {"id":"WDU-LC-122","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"terminalRecordingFailsAfterPublicationProof"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"terminalRecording","requiredActions":["proveSelectedBranch","attemptTerminalRecording","retainPending"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true},
+    {"id":"WDU-LC-123","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"cancelAfterTerminalRecordingBegins"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceSelected"}},"firstApplicableRetryWrite":"terminalRecording","requiredActions":["ignoreCancellation","continueByActualEvidence"],"workingFiles":"unchanged","branchIdentity":"selected","durableResult":null,"outcome":null,"exitClass":null,"doctorGuidance":null,"nextRows":["WDU-LC-121","WDU-LC-122"]},
+
+    {"id":"WDU-LC-130","match":{"invocation":{"kind":"one","value":"finalizationRetry"},"trigger":{"kind":"one","value":"thirdBranchBlocksFinalization"},"marker":{"kind":"one","value":"missing"},"selectionState":{"kind":"one","value":"referenceThird"}},"firstApplicableRetryWrite":"none","requiredActions":["retainPending"],"workingFiles":"unchanged","branchIdentity":"third","durableResult":"pending","outcome":"FinalizationIncomplete","exitClass":"nonzero","doctorGuidance":true}
+
+  ]
+}
 ```
+<!-- grace:wdu-lifecycle-contract:end -->
 
-`Request.branchSwitch`, `Request.watchReplay`, and `Request.connectBootstrap` are constructors, not separate transaction
-implementations. `IPreparedContent`, selected-target reading, and idempotent finalization are the only caller-facing
-variation seams.
+Rows `WDU-LC-200`–`WDU-LC-213` own pre-local marker admission, exact adoption, terminal-owned residue replacement,
+refusal, cleanup, fresh planning, and the final pre-mutation reread. `WDU-LC-006` records pending Reference completion;
+`WDU-LC-008` records terminal `DirectoryVersion` completion atomically with verified status. Rows `WDU-LC-026`–
+`WDU-LC-028` and `WDU-LC-036`–`WDU-LC-038` report the hash-selected outcome and perform best-effort exact marker
+cleanup. Rows `WDU-LC-010`–`WDU-LC-015`, `WDU-LC-020`–`WDU-LC-025`, `WDU-LC-030`–`WDU-LC-035`, and
+`WDU-LC-100`–`WDU-LC-130` apply only to Reference pending completion and finalization.
 
-### Contract propagation matrix
+## 5. Requirements and ownership
 
-| Surface | Owner or artifact | Accepted and rejected values | Persistence impact | Compatibility posture | Disposition | Proof |
-| ------- | ----------------- | ---------------------------- | ------------------ | --------------------- | ----------- | ----- |
-| Internal module | New `WorkingDirectoryUpdate*.CLI.fs` files | Private typed requests and five outcomes; reject incomplete identity and arbitrary callbacks | None directly | Clean replacement | Updated | Shared integration suite. |
-| F# compile order | `Grace.CLI.fsproj` | Core and adapters precede all consumers | None | No compatibility concern | Updated | Release build. |
-| SQLite | `LocalStateDb.CLI.fs` | Bounded completion rows and typed finalization facts | Schema replacement from development schema 9 | No migration or dual read | Updated | Real SQLite schema, transaction, restart, and retention tests. |
-| Coordination files | Services and update module | Versioned known marker; reject malformed or conflicting marker | Temp lease, marker, sidecar | Replace branch-scoped marker | Updated | Cross-process and restart tests. |
-| Branch CLI | `Branch.CLI.fs`, output DTO/registry | Typed update outcomes; Branch finalizer | Selected branch follows local completion | Current behavior replaced cleanly | Updated | `grace switch` tracer, JSON, exit-code tests. |
-| Watch | `Watch.CLI.fs`, existing check projection | Internal outcomes; foreground Watch remains continuous | Cursor finalization and existing IPC status | Preserve existing event and check shapes unless proof requires additive reason text | Updated | Ordered replay, same-root event, blocked status, restart tests. |
-| Connect CLI | `Connect.CLI.fs`, `ConnectDto` or replacement projection | Exact zip; target-only `--force`; optional retrieval | Config separate; status/cache/cursor/completion atomic | Clean current-contract replacement | Updated | Zip, force, no-retrieval, JSON, and exit-code tests. |
-| Doctor CLI | `Doctor.CLI.fs`, `DoctorReportDto` | Exact finalization retry or exact reconstruction only | Finalized/recovered completion status | Extend current explicit option | Updated | Pending Branch/Watch, refusal, and JSON tests. |
-| Machine output registry | `CommandOutputContract.CLI.fs` | Stable outcome DTOs; invalid command shape remains `GraceError` | None | `branch.switch` leaves current V2 deferral when implementation lands | Updated | Schema, example, select, single-document, and exit tests. |
-| Shared Types and SDK | `Grace.Types`, `Grace.SDK` | Existing server target and cursor DTOs remain | None | No change | Unchanged with reason | Build and scoped diff. |
-| HTTP/OpenAPI/generated clients | Server routes and generated artifacts | No new route or wire behavior | None | No change | Not applicable with reason | Generated freshness and scoped diff. |
-| Configuration | Grace local config | Connect identity may exist without retrieved root | Existing config file | Preserve supported no-retrieval behavior | Updated documentation; runtime ordering preserved | Connect scenarios. |
-| Documentation | This specification, ADR 0011, context and user docs | One canonical term and planned/current distinction | None | Update with implementation | Updated | MarkdownLint and review. |
+The ordered requirement identifiers and their exact primary owners are machine-owned by the
+`machineMetadata.requirements` array in the normative lifecycle block. It is the sole owner registry; this prose does
+not restate the vector. The exact marker-delimited projections are regenerated from that array.
 
-## 10. Source, identity, state, time, and outcomes
+The requirement contract remains: one deep Branch transaction; typed selection and immutable content; one stable
+local-root serialization boundary; marker, planning, verification, atomic local-completion, finalization, outcomes,
+cancellation, recovery, ordering, documentation, relevant-topology, and verified-root proof. The compiler binds each
+requirement to exactly one primary issue in its closed result.
 
-### Source and identity model
+### Serial supersession ownership
 
-| Concern | Contract |
-| ------- | -------- |
-| Selected target source | Caller-selected immutable server Reference/root facts, reread through the caller's typed selected-target seam. |
-| Current local source | Fresh configuration snapshot, SQLite status and completion rows, held scope lease, marker, and actual filesystem bytes. |
-| Same operation | Equal deterministic caller tuple within the same repository/root scope. |
-| Same target, new operation | Equal target tuple but different deterministic operation tuple; no file mutation, new completion/finalization. |
-| Stale work | Selected target, configuration, prior status, expected cursor, or branch facts differ at post-lease revalidation. |
-| Conflicting work | Another pending finalization, a different known marker, or unexpected eligible filesystem content. |
-| Attempt ownership | Held lease plus exact random token in the current marker. Process ID is diagnostic only. |
-| Revalidation point | After lease acquisition and again immediately before mutation or finalization-only commit. |
+Closed Issue #870 and PR #895 are historical counterexamples only. They have no active requirement, lifecycle-row,
+dependency, checklist, assignment, or primary-delivery role. Issue #960 replaces the horizontal DirectoryVersion chain:
 
-### State model
+| Existing result or former leaf | Exact active owner | Primary scope |
+| --- | --- | --- |
+| Collision-safe topology classification and immutable plan | #898 | The finite pre-mutation matrix; it neither acquires a lease nor changes files. |
+| Lifecycle correction, relevant-topology definition, and assignment packet | #928 | DEC-005, exact-adoption reconciliation, zero-action routing, and verified-root failure classification. |
+| Per-path transition algebra | #959 | The merged pure classifier remains the one transition table. |
+| Hash-selected public tracer | #960 | Compose topology, apply under the WDU lease, verify the exact root, atomically record terminal SQLite completion, clean exact marker residue, and project `grace branch switch`. |
+| Selection-neutral local application | #922 | Extract the merged tracer's object publication, final admission, prefix-checked application, and verified-root transition without changing public behavior. |
+| Five-input composition and Reference pending completion | #923 | Add the missing opaque inputs, route DirectoryVersion through its merged terminal path, and atomically record Reference pending completion after `VerifiedLocalRoot`. |
+| Connect retrieval composition | #845 | Persist configuration first, stage the exact selected ZIP outside the lease, apply only through WDU, and atomically commit status, object metadata, initial cursor, local-root scope, and terminal completion. |
+| DirectoryVersion terminalization and hash wiring | #900 and #901 | Superseded by Issue #960 because terminalization is part of the verified-status transaction and the public command is the tracer boundary. |
 
-| State | Entry condition | Durable truth | Allowed transitions | Terminal? | Restart behavior | Published result |
-| ----- | --------------- | ------------- | ------------------- | --------- | ---------------- | ---------------- |
-| Preparing | Caller is selecting and preparing content. | No update row. | Waiting, Rejected | No | Caller restarts preparation. | Coarse progress only. |
-| Waiting | Valid request is waiting for scope lease. | No update row. | Applying, Rejected | No | Caller resubmits. | Coarse progress only. |
-| Applying | Lease held, revalidation passed, owned marker written, first mutation may occur. | Marker only. | Verifying, UpdateIncomplete | No | Same operation may adopt known marker and replan. | No success publication. |
-| Verifying | Planned writes completed; content and root are being proven. | Marker only. | Committing, UpdateIncomplete | No | Same as Applying. | No success publication. |
-| Committing | Verified root is entering canonical SQLite transaction. | Marker; row appears only on successful commit. | FinalizationPending, UpdateIncomplete | No | Presence of completion row decides the path. | No success publication. |
-| FinalizationPending | Local completion transaction committed. | Completion row with finalization pending. | Finalized, RecoveredByDoctor, FinalizationIncomplete | No | Retry only finalization after exact proof. | Incomplete result if finalizer fails. |
-| Finalized | Required finalization completed. | Latest terminal row for caller plus caller progress. | Superseded by newer same-caller terminal row | Yes | Same operation returns existing completion. | `Updated` or `Unchanged`. |
-| RecoveredByDoctor | Doctor explicitly reconciled exact local state. | Terminal recovery row and exact local state. | Superseded by newer same-caller terminal row | Yes | Normal later operations may proceed. | Doctor recovery result. |
-| Rejected | No mutation began. | No update row. | Caller fixes reason and resubmits. | Yes | Nothing to recover unless foreign marker remains. | `Rejected`. |
-| UpdateIncomplete | Mutation began but local completion did not commit. | No completion row; handled marker removed, crash marker may remain. | Fresh same-operation retry or Doctor | Yes | Revalidate and replan. | `UpdateIncomplete`. |
-| FinalizationIncomplete | Local completion committed but caller progress did not finish. | Pending completion row. | Same-operation finalization retry or Doctor | Yes | Blocks different operations. | `FinalizationIncomplete`. |
+The compiler result is the sole primary-requirement mapping. Issues #871 and #872 are complete, and Issue #1025 routes
+Branch ID and name selection through the same exact-Reference transaction for both Save modes.
 
-No state has an expiry timer. Timestamps use UTC for diagnostics and completion evidence; they do not decide operation
-ownership, adoption, or pruning.
+### Selected Product V1 boundaries
 
-### Side-effect ordering
+The finite collision matrix is mandatory before mutation. Complete relevant topology includes every selected target
+entry and every tracked predecessor entry that must be retained, replaced, or removed. A target file may replace only
+an absent or verified tracked file, or a tracked directory whose complete tracked descendants are scheduled removals;
+a target directory may replace only absence, a tracked directory, or a tracked file scheduled for removal. Unrelated
+ignored or untracked content is excluded and preserved, including descendants of retained target directories. It rejects
+only when it aliases or occupies a required target path, or lies in a subtree that the plan must remove or replace.
+Tracked empty-directory removal is deepest-first, creation is shallowest-first, and case-insensitive duplicate or
+ambiguous target shapes reject. Only tracked blockers named by the immutable plan may be removed.
 
-```text
-prepare and validate content
-→ acquire scope lease
-→ inspect completion and marker state
-→ revalidate target and local state
-→ build fresh plan
-→ create or adopt owned marker
-→ verify or publish object files atomically
-→ mutate approved working-directory paths
-→ verify applied files and final root
-→ atomically commit status + cache metadata + Connect cursor + completion row
-→ write derived completion sidecar
-→ remove owned marker
-→ run idempotent Branch or Watch finalization
-→ mark completion terminal
-→ release lease
-→ dispose prepared content
-```
+Fresh marker admission classifies every selected requirement as `NeedsApply`; it does not accept unexpected target
+bytes in place of accepted tracked identity. Exact same-operation adoption reconciles the current real relevant topology
+into `NeedsApply` or `AlreadySatisfied`: a file is satisfied only when its bytes match the prepared BLAKE3 value.
+SHA-256 remains retained metadata for selected snapshot comparisons rather than WDU byte equality. An already-removed
+tracked entry or already-created target directory may also be satisfied. A mixed partial update skips
+only satisfied requirements. Before the first action and every later action, the complete relevant topology must match
+the prefix-advanced expected state. The final capture-to-filesystem-call race remains deferred Product V1 hardening.
 
-### Failure and outcome matrix
+The merged Issue #960 tracer validates revision, complete status, completion, and marker facts and derives its plan
+before publishing prepared bytes into the object cache. Its per-action prefix checks prevent topology drift from winning,
+but object publication can outlive the global facts used for admission. Issue #922 therefore makes publication a strict
+barrier: publish and BLAKE3-verify every required object-cache copy, then reread the accepted SQLite revision,
+complete-status fingerprint, completion state, and exact marker attempt under the same lease. Derive the only applicable
+plan from those fresh facts. A mismatch is `Rejected` before mutation and cleans only the marker attempt owned by the
+invocation. No pre-publication global snapshot or plan may cross this barrier.
 
-| Outcome | Filesystem mutation | Durable truth | Retry | Cleanup and user result |
-| ------- | ------------------- | ------------- | ----- | ----------------------- |
-| `Unchanged` | None | Matching terminal completion and caller progress | Safe same-operation replay | Exit 0. |
-| `Updated` | Completed and verified | Matching terminal completion and caller progress | Safe same-operation replay | Exit 0. |
-| `Rejected` | None | No completion row | Fix classified reason; Doctor for unrecognized marker | Remove only owned marker; nonzero. |
-| `UpdateIncomplete` | Began or may have begun | No completion row | Revalidate and replan; same operation may adopt crash marker | Nonzero; never claim matching root. |
-| `FinalizationIncomplete` | Completed and verified | Pending completion row | Finalization-only retry or Doctor | Nonzero; say bytes updated and recommend Doctor. |
+`VerifiedLocalRoot` is opaque and non-durable. Cancellation controls through the transition into it, including a
+zero-action plan. After that transition cancellation is non-controlling through SQLite completion. A failure after a
+mutation but before `VerifiedLocalRoot` follows `WDU-LC-002`; a failure after `VerifiedLocalRoot` and before successful
+SQLite completion follows `WDU-LC-007`, retains exact marker evidence for both zero and nonzero actions, and never
+returns `Rejected`. Reference completion follows `WDU-LC-006` and records pending. DirectoryVersion completion follows
+`WDU-LC-008` and atomically records verified status, required object metadata, and terminal operation facts.
+`bytesChanged` remains ephemeral: true selects `Updated`, false selects `Unchanged`, and neither value is persisted.
 
-### Cancellation and cleanup
+For Issue #923, successful Reference pending completion produces private `ReferencePending(Receipt)` inside WDU. The
+Merged Issue #871 consumes it during the original invocation and consumes the matching persisted pending facts after
+restart. Only Issue #871 may project `Updated`, `Unchanged`, or `FinalizationIncomplete` after evaluating actual
+finalization evidence. No caller finalizer or in-memory retry dependency is added.
 
-Cancellation is active through preparation, lease wait, and the final pre-mutation check. Once the first filesystem
-mutation begins, the module defers cancellation until it reaches verified local completion or unavoidable failure. The
-token may apply again to finalization. Prepared content is disposed after lease release on every handled path. Marker
-and sidecar deletion never erase SQLite completion truth.
+The lease inventory is also finite. No-Save admission, hash-prefix resolution, target graph retrieval, Connect archive
+download, and immutable preparation hold no WDU lease. Branch may retain its caller workflow lease across admission and
+completion, but only the WDU transaction holds `working-directory-update.lease` during local reread, mutation, SQLite
+completion, and terminal outcome. The sealed phase handoff holds no WDU lease. Marker and sidecar files are evidence,
+never leases; no second local-mutation lease exists.
 
-## 11. Non-functional, security, durability, and operations
+DirectoryVersion cannot create pending finalization. After its terminal SQLite transaction, exact marker cleanup is
+best effort. Cleanup failure leaves the marker but does not downgrade `Updated` or `Unchanged`. Exact replay returns
+`Unchanged` without another write. A different operation may replace the leftover marker only when the terminal SQLite
+operation and target match the marker exactly and current status still names that target root. Malformed, unreadable,
+unsupported, unowned, or status-mismatched marker evidence still rejects without mutation.
 
-- Hash every accepted uncompressed file with SHA-256 and BLAKE3 during preparation, object publication, and final
-  working-file verification as applicable.
-- Publish object files through temporary files and atomic local replacement so no reader observes partially written
-  content at its expected object filename.
-- Do not log file contents, credentials, signed download URLs, or unnecessary absolute paths.
-- Keep remote access outside the update lease. Target rereads required for pre-mutation validation must be bounded and
-  occur before the marker or first mutation; if the caller cannot perform that reread, reject rather than use stale
-  selection.
-- Use real exclusive file handles for cross-process serialization and the existing in-process lane only as a local
-  efficiency measure.
-- Treat progress as optional presentation. Progress callbacks cannot change ordering or outcomes.
-- Preserve one JSON document on stdout in JSON mode; human progress and diagnostics stay off JSON stdout.
-- Development databases and test fixtures may reset for the new schema. Documentation must not promise migration.
-- Operational recovery is explicit. Doctor refuses when exact proof cannot be established and preserves evidence.
+SQLite completion is decisive durable truth. Terminal SQLite wins over stale marker or sidecar evidence; pending SQLite
+requires the exact Reference retry path; markers and sidecars are readable evidence only and cannot create, downgrade,
+or replace SQLite completion. Runtime tests invoke the real five-input transaction with real filesystem and SQLite facts.
+Helper-only, source-string, sleep-based, and impossible-state fixtures do not establish this contract.
 
-## 12. Proof strategy
+## 6. Proof, propagation, and readiness
 
-| Invariant | RED evidence | Positive proof | Negative and boundary proof | Stable seam |
-| --------- | ------------ | -------------- | --------------------------- | ----------- |
-| One shared transaction | Current callers bypass the callback-only module. | Branch tracer, Watch, and Connect all call `run`. | Scoped source test rejects direct mutation entry points after retirement. | Internal module plus public caller tests. |
-| Post-lease revalidation | Current preparation and mutation checks are distributed. | Target and local facts reread after held lease. | Change selection, status, marker, path, or cursor while waiting; assert no mutation. | Real temp filesystem and SQLite. |
-| Prepared-content integrity | Current Connect ignores extra entries and does not verify object bytes. | Exact zip and object adapters pass dual hashes. | Missing, extra, duplicate, unsafe, corrupt, case-colliding, file/directory-swap content rejects. | Adapter contract suite. |
-| Object-first verified apply | Current Connect writes working and object paths together. | Objects verify before working copies. | Corrupt existing object, interrupted object write, changed object before copy. | Zip adapter plus real files. |
-| Final-root truth | Current callers use different verification paths. | Every caller commits selected dual-hash root. | Mutate retained/applied file before commit; assert no completion row. | Module integration. |
-| Atomic local completion | Completion row does not exist today. | Status, cache, Connect cursor, and completion appear together. | Failure before commit leaves none; crash after commit remains locally complete. | Real SQLite restart tests. |
-| Finalization blocking | No shared pending-finalization state exists today. | Same operation retries idempotently. | Different caller and operation reject while pending; finalizer success before row update safely repeats. | Module and Doctor integration. |
-| Marker adoption | Current markers are text and branch-scoped. | Same operation adopts after lease and replans. | Different target, operation, token, schema, or malformed file requires Doctor. | Cross-process lease tests. |
-| Cancellation | Current Connect checks cancellation after extraction. | Pre-mutation cancellation stops cleanly; post-mutation cancellation defers. | Cancel at object, first working write, verification, commit, and finalization seams. | Deterministic failure seams around real operations. |
-| Doctor recovery | Current Doctor reconstructs only current configured branch state. | Recorded Branch and Watch finalization retries without file mutation. | Changed bytes, config, target, active Watch, unknown marker, or SQLite generation refuses. | Doctor CLI integration. |
-| CLI truth | Current Branch JSON remains deferred and no shared DTO exists. | Outcome DTOs, exit codes, and Doctor recommendation match. | No mixed JSON output; transport errors remain `GraceError`; Watch continuous mode unchanged. | Built executable help/schema/examples and CLI tests. |
-| Retention | No completion rows exist today. | Latest terminal per caller retained. | Pending never pruned; newer same-caller terminal removes only older terminal. | SQLite tests. |
+The lifecycle compiler checks the structural grammar, graph, exact count vector, and content digest. The packet renderer
+replaces only marker-delimited projections in the fifteen declared artifacts. These tools establish exact projection
+freshness, while runtime tests remain responsible for outcomes, marker handling, cancellation, and Reference recovery.
+Behavioral tests must use production-reachable persisted facts and deterministic seams; source-string assertions,
+sleeps, and impossible hand-built states are insufficient.
 
-The repository's focused Release build/test profile is the expected implementation proof. Broad Fast or Full validation
-is selected only under repository guidance; required pull-request `Validate` remains the broad current-revision gate.
+The following consumers carry generated projections rather than competing lifecycle sequences:
 
-## 13. Requirements traceability ledger
+- #869 persists selection and marker predicates.
+- #898 proves collision-safe planning without mutation.
+- #928 supplies the compiled lifecycle and machine metadata.
+- #959 supplies the finite per-path transition algebra.
+- #960 owns the merged hash-selected public tracer through terminal DirectoryVersion completion.
+- #922 owns the merged selection-neutral extraction through `VerifiedLocalRoot`.
+- #1005 owns merged BLAKE3-only byte validation across every WDU application boundary.
+- #923 / PR #1009 provide the merged five-input composition and Reference pending-completion slice.
+- #900 and #901 are superseded by #960.
+- #871 completed Reference pending-completion consumption during the original invocation and after restart.
+- #872 completed Save/no-Save admission and reaches the same initial rows.
+- #842 completes Branch-only retry rows through explicit Doctor repair without working-file mutation.
+- #843 consumes the transaction contract for ordered Watch current-Reference replay.
+- #844 supplies exact Connect ZIP staging, and #845 consumes it through the transaction contract.
+- #846 audits public output, Doctor guidance, row references, and absence of retired paths.
 
-| ID | Requirement | Source | Type | Status | Implementation seam | Proof seam | Candidate planning owner | Residual risk |
-| -- | ----------- | ------ | ---- | ------ | ------------------- | ---------- | ------------------------ | ------------- |
-| REQ-001 | One deep internal module | DEC-003 | behavior | Required | `WorkingDirectoryUpdate.CLI.fs` | Branch/Watch/Connect integration | Core/tracer slice | Interface could regain callback breadth. |
-| REQ-002 | Complete target and operation identity | DEC-004, DEC-014 | contract | Required | Request constructors and marker serializer | Identity and replay tests | Core/tracer slice | Canonical tuple encoding must be stable. |
-| REQ-003 | Exact prepared content | DEC-005, DEC-011 | security | Required | Prepared adapters | Shared adapter contract tests | Adapter slices | Zip format assumptions require source fixtures. |
-| REQ-004 | Stable serialization scope | DEC-006 | non-functional | Required | Services scope helper and lease | Cross-process scope tests | Core/tracer slice | Platform path normalization drift. |
-| REQ-005 | Versioned owned marker | DEC-006, DEC-014 | behavior | Required | Marker store | Ownership, schema, crash tests | Core/tracer slice | Filesystem notification ordering differs by platform. |
-| REQ-006 | Fresh plan and local-content safety | DEC-012 | security | Required | Planner and caller admission facts | Conflict, race, delete-scope tests | Core/tracer and Connect slices | Existing ignore semantics are complex. |
-| REQ-007 | Verified object-first application | DEC-011 | behavior | Required | Zip/object adapters and apply engine | Corrupt object and copy tests | Connect slice | Triple hashing costs local I/O. |
-| REQ-008 | Final-root verification | DEC-004, DEC-007 | behavior | Required | Verifier | Changed retained/applied path tests | Core/tracer slice | Large-tree test cost. |
-| REQ-009 | Canonical local completion | DEC-007, DEC-009 | contract | Required | `LocalStateDb` transaction | Atomicity and restart tests | Core/tracer slice | SQLite schema fans into many tests. |
-| REQ-010 | Bounded completion state | DEC-009 | non-functional | Required | Completion row retention | Retention tests | Core/tracer slice | Latest-per-caller assumption depends on caller ordering. |
-| REQ-011 | Idempotent finalization and blocking | DEC-008, DEC-010 | behavior | Required | Finalizer and completion store | Branch/Watch retry and blocking tests | Branch, Watch, Doctor slices | Finalizer reconstruction facts must stay minimal. |
-| REQ-012 | Truthful outcomes and exit status | DEC-015 | contract | Required | Common DTOs, renderers, registry | JSON, human, exit, schema tests | Output/Doctor slice | Current Branch JSON deferral must be removed coherently. |
-| REQ-013 | Cancellation and progress | DEC-002 | behavior | Required | Core engine | Phase cancellation tests | Core/tracer slice | Timing seams can become over-injected. |
-| REQ-014 | Same-operation marker adoption | DEC-014 | workflow | Required | Core engine and marker store | Crash/adoption tests | Core/tracer slice | Adoption must never skip fresh planning. |
-| REQ-015 | Explicit Doctor recovery | DEC-010 | workflow | Required | Doctor and retry interface | Exact recovery/refusal tests | Doctor slice | Ambiguous bytes remain manual by design. |
-| REQ-016 | Caller-specific ordering | DEC-007, DEC-008, DEC-013 | behavior | Required | Branch, Watch, Connect constructors/finalizers | Caller ordering tests | Caller slices | Existing caller code is large and intertwined. |
-| REQ-017 | Public and contributor documentation | DEC-001, DEC-015 | documentation | Required | Approved docs | MarkdownLint and review | Final audit slice | Docs can drift during staged migration. |
+ADR 0011 and the declared issue bodies remain contextual consumers. Their marker-delimited projections are rendered
+from this revision without interpreting surrounding Markdown. Closed predecessor records remain packet artifacts only
+where the machine metadata preserves their supersession context.
 
-No required row lacks an implementation or proof seam.
+### Issue #846 final audit
 
-## 14. Implementation-planning handoff
+The compiled packet contains 66 lifecycle rows, 244 applicability keys, 19 requirements, and 15 artifacts. The current
+source, focused tests, built commands, and documents account for every requirement without changing Product V1 behavior:
 
-### Value-bearing tracer
+| Requirement | Primary issue | Current disposition |
+| --- | --- | --- |
+| REQ-001 | #960 | The five-input seam remains in `WorkingDirectoryUpdate.run`; contract tests reject alternate request shapes. |
+| REQ-002 | #869 | Typed target and operation identities remain in the shared contracts and runtime tests. |
+| REQ-003 | #837 | Prepared content remains immutable and is covered by focused prepared-content tests. |
+| REQ-004 | #839 | The stable local-root scope remains the WDU coordination boundary and is covered by coordination tests. |
+| REQ-005 | #869 | Typed marker evidence remains inside WDU contracts, coordination, and runtime tests. |
+| REQ-006 | #898 | Fresh planning and local-content safety remain covered by topology and runtime tests. |
+| REQ-007 | #960 | Object verification precedes application in WDU and is covered by prepared-content and runtime tests. |
+| REQ-008 | #960 | Complete relevant-root verification remains covered by topology and runtime tests. |
+| REQ-009 | #838 | Atomic local completion remains in `LocalStateDb` and its focused tests. |
+| REQ-010 | #838 | Pending and terminal completion remain bounded by the existing SQLite model and tests. |
+| REQ-011 | #871 | Reference completion and replay remain repeatable through WDU lifecycle and caller tests. |
+| REQ-012 | #871 | Outcomes, exit behavior, and Doctor guidance remain covered by output and Doctor tests. |
+| REQ-013 | #960 | Cancellation precedence remains covered at the WDU effect boundaries. |
+| REQ-014 | #960 | Same-operation adoption and fresh reconciliation remain covered by runtime replay tests. |
+| REQ-015 | #842 | Doctor repairs Branch local state without working-file mutation through the shared retry path. |
+| REQ-016 | #871 | Branch, Watch, and Connect retain their documented caller-specific effect ordering. |
+| REQ-017 | #846 | This document, ADR 0011, and `CONTEXT.md` describe the current shared path and exact packet counts. |
+| REQ-018 | #928 | The complete relevant-topology boundary remains compiled and covered by topology tests. |
+| REQ-019 | #960 | Verified-root completion and ephemeral `bytesChanged` outcomes remain covered by runtime and output tests. |
 
-The first tracer is `grace switch` between two branches when required target objects are already prepared. It must cross
-the public command, generic request, lease and marker, real filesystem, SQLite completion, selected-branch finalizer,
-typed output, and focused proof. A controlled finalizer failure must prove blocking and Doctor recovery before the
-tracer is considered complete.
+The lifecycle renderer also reports an exact match for every declared packet artifact:
 
-### Likely vertical slices and dependencies
+| Artifact ID | Current disposition |
+| --- | --- |
+| `adr-0011` | ADR 0011 contains the exact rendered projection and current implementation context. |
+| `epic-835` | Issue #835 contains the exact rendered projection. |
+| `issue-842` | Issue #842 contains the exact rendered projection. |
+| `issue-843` | Issue #843 contains the exact rendered projection. |
+| `issue-846` | Issue #846 contains the exact rendered projection. |
+| `issue-869` | Issue #869 contains the exact rendered projection. |
+| `issue-898` | Issue #898 contains the exact rendered projection. |
+| `issue-928` | Issue #928 contains the exact rendered projection. |
+| `issue-960` | Issue #960 contains the exact rendered projection. |
+| `issue-922` | Issue #922 contains the exact rendered projection. |
+| `issue-923` | Issue #923 contains the exact rendered projection. |
+| `issue-900` | Issue #900 contains the exact rendered projection. |
+| `issue-901` | Issue #901 contains the exact rendered projection. |
+| `issue-871` | Issue #871 contains the exact rendered projection. |
+| `issue-872` | Issue #872 contains the exact rendered projection. |
 
-1. **Core plus Branch tracer:** schema replacement, compile-order scaffold, shared module, object adapter, stable
-   coordination scope, Branch request/finalizer, five outcomes, and tracer proof.
-1. **Watch integration:** replace current-reference plan/apply internals with the shared module while preserving replay,
-   IPC, SignalR, and cursor policy.
-1. **Connect integration:** local zip staging, exact adapter validation, object-first apply, target-only `--force`,
-   configuration/result separation, and atomic initial cursor.
-1. **Doctor and public output:** finalization retry, exact fallback recovery, outcome DTOs, help, schema/examples, exit
-   behavior, and Watch blocked diagnostics.
-1. **Consolidation and audit:** remove superseded helpers and internal-hook tests after parity, finish docs, run contract
-   propagation review, and record final proof.
+The bounded Product V1 residual risk remains interruption after working-tree mutation but before `VerifiedLocalRoot`,
+and the final check-to-operation race after synchronous precondition validation. `WDU-LC-002` and `WDU-LC-007` require
+truthful `UpdateIncomplete`; Grace does not guess, roll back, or add a broader recovery system.
 
-The first slice may include a small compile-item scaffold before semantic work, but it must still deliver the complete
-Branch tracer rather than stopping at abstractions.
+### Issue #871, Issue #872, and Issue #843 delivery contract
 
-### High-conflict and shared surfaces
+Merged Issue #871 fit the Product V1 budget by consuming, but not extending, the merged pending-completion mechanism:
 
-- `src/Grace.CLI/Grace.CLI.fsproj`
-- `src/Grace.CLI/LocalStateDb.CLI.fs`
-- `src/Grace.CLI/Command/Services.CLI.fs`
-- `src/Grace.CLI/Command/Common.CLI.fs`
-- Shared CLI test project files and helpers
-- This specification and ADR 0011
+- One outcome: after verified local completion, publish the selected Branch identity and terminalize the matching SQLite
+  pending row. A retry reconstructs only from that row and the durable Branch configuration.
+- One primary invariant: Reference completion follows verified local completion, cleans only exact marker evidence
+  before publication, and is repeatable without rewriting a working file or republishing an already selected Branch.
+- No new durable lifecycle: the existing SQLite `Pending` and `Terminal` states and lifecycle rows remain unchanged.
+- One source for each decision: SQLite selects the pending completion; disk Branch configuration classifies previous,
+  selected, third, or unreadable identity; the lease serializes the completion effects.
+- Existing algorithm evidence: Issues #960, #922, merged Issue #923 / PR #1009, merged Issue #871 / PR #1014, and merged
+  Issue #872 / PR #1015 establish local application, completion, pending facts, bounded publication, terminal recording,
+  and Save-enabled phase construction.
 
-Slices touching these surfaces should be serialized or intentionally integrated. Watch and Connect migration should
-not overlap when both edit the shared module or SQLite schema.
+Issue #871 retains pending state with `FinalizationIncomplete` and Doctor guidance for disallowed marker evidence,
+configuration read failure, third Branch identity, publication failure, or terminal-recording failure. Cancellation is
+invocation control only until cleanup, publication, or terminal recording starts. Issue #842 routes explicit Doctor
+repair through that completion algorithm after lease-held status and byte validation. Stop if delivery needs a new
+persisted state, schema, configuration-write interface, retry file mutation, another lease, a caller finalizer, a second
+transaction interface, changed Save behavior, or a DirectoryVersion semantic change.
 
-### Contract propagation obligations
-
-- Promote `branch.switch` from its current machine-output deferral only when its stable outcome DTO is implemented.
-- Keep server, SDK, static OpenAPI, and generated clients unchanged unless current implementation evidence reveals a
-  genuine cross-project dependency.
-- Replace the local SQLite schema cleanly and regenerate fixtures; do not add migration code.
-- Update help and current-behavior docs in the same slice that changes their command behavior.
-- Preserve ADR 0009 and ADR 0010 caller-specific decisions and link them to ADR 0011.
-
-### Owner-interruption triggers
-
-Return to the owner before adding:
-
-- Any sixth public outcome or another durable update state.
-- More than one pending finalization per working directory.
-- A new public command, flag, server route, SDK method, or OpenAPI shape.
-- Filesystem rollback, a per-file journal, automatic recovery scheduling, or time-based expiry.
-- Permission for `--force` to delete unrelated content.
-- Network I/O under the update lease.
-- A quality-contract change from Product V1.
-
-## 15. Completion semantics and self-critique
-
-The feature is complete only when every required traceability row is implemented and proven or explicitly returned to
-the owner. A partially migrated caller does not satisfy the specification merely because the shared module exists.
-
-- **Strongest design element:** SQLite local completion cleanly separates verified bytes from caller finalization and
-  makes `FinalizationIncomplete` truthful and recoverable.
-- **Most likely wrong assumption:** The latest terminal row per caller may prove insufficient if a caller later permits
-  out-of-order operations. Current Branch and Watch ordering forbids that behavior.
-- **Highest-risk dependency:** Existing Watch and Branch code combines policy, mutation, tests, and mutable process state
-  in large files. Migration can accidentally move caller policy into the shared module.
-- **Easiest way to overbuild:** Add a durable running-operation ledger, generalized recovery engine, or public plan
-  format.
-- **Easiest way to under-test:** Mock filesystem and SQLite behavior or prove only final hashes without failures between
-  mutation, commit, marker cleanup, and finalization.
-- **Simpler alternative considered:** Keep only the current serialization wrapper and align callers informally. It was
-  rejected because it provides no leverage over the ordering and failure semantics this work exists to centralize.
-- **Residual Product V1 risk:** Abrupt termination can leave a prepared zip or a partially updated working directory
-  that matches no known root. Grace preserves evidence and requires explicit user action rather than guessing.
-
-This specification is ready for `dev-process` spec-to-plan compilation. It does not create issues, branches, or
-implementation work.
+Issue #843 reuses the same `Pending` and `Terminal` completion states for exact repository, branch, target, and event
+cursor identity. Watch applies or verifies the accepted root through WDU, records pending local completion, cleans only
+exact marker evidence, and records terminal completion before advancing the prior remote cursor by compare-and-set.
+Only then may Watch publish clean IPC. Restart reconstructs the pending cursor and completion without rewriting working
+files. Issue #845 uses the existing terminal completion for Connect and adds no lifecycle state or recovery path.

@@ -1366,7 +1366,7 @@ module Doctor =
                 Id = "state.repair-local-state"
                 Category = "Local state"
                 Title = "Exact local-state repair"
-                Description = "Rebuilds local status only from an unchanged working tree with an exact server root and event boundary."
+                Description = "Completes recorded Reference finalization or rebuilds local status from an unchanged exact server root and event boundary."
                 DefaultEnabled = false
                 SupportsOffline = false
             }
@@ -1400,6 +1400,45 @@ module Doctor =
             }
 
         report
+
+    /// Reports one completed pending Reference repair or preserves its existing failure reason as a command error.
+    let private pendingReferenceRepairReport =
+        function
+        | WorkingDirectoryUpdateContracts.Outcome.Updated receipt ->
+            let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
+
+            repairReport
+                "Ok"
+                $"Completed pending Reference finalization for Branch {WorkingDirectoryUpdateContracts.Target.branchId target} at root {WorkingDirectoryUpdateContracts.Target.rootDirectoryVersionId target}; working-tree content was unchanged."
+                0
+        | WorkingDirectoryUpdateContracts.Outcome.Unchanged receipt ->
+            let target = WorkingDirectoryUpdateContracts.Receipt.target receipt
+
+            repairReport
+                "Ok"
+                $"Pending Reference finalization for Branch {WorkingDirectoryUpdateContracts.Target.branchId target} was already terminal; working-tree content was unchanged."
+                0
+        | WorkingDirectoryUpdateContracts.Outcome.FinalizationIncomplete (_, failure)
+        | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete failure
+        | WorkingDirectoryUpdateContracts.Outcome.Rejected failure ->
+            WorkingDirectoryUpdateContracts.Failure.reason failure
+            |> invalidOp
+
+    /// Applies Doctor's existing repair admission checks before attempting lease-held Reference completion.
+    let private tryRepairPendingReferenceFinalization (cancellationToken: CancellationToken) =
+        task {
+            cancellationToken.ThrowIfCancellationRequested()
+            let current = Current()
+            let operationalConfiguration = Grace.CLI.Services.captureOperationalConfigurationSnapshot "Doctor" current
+            let! watchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
+
+            if watchInspection.IsFresh
+               && watchInspection.HasCurrentRepositoryIdentity then
+                invalidOp "Grace Doctor refused local-state repair because Grace Watch is active for this repository and branch."
+
+            Grace.CLI.Services.requireOperationalConfigurationSnapshotCurrent "Doctor" current operationalConfiguration
+            return! WorkingDirectoryUpdate.repairPendingReferenceFinalization cancellationToken
+        }
 
     /// Converts the immutable server directory closure into the exact local status identities used by later saves.
     let private statusFromServerClosure rootDirectoryId (directoryVersions: Grace.Types.DirectoryVersion.DirectoryVersionDto array) =
@@ -1641,7 +1680,13 @@ module Doctor =
 
                 if parseResult.GetValue(Options.repairLocalState) then
                     try
-                        let! report = repairLocalState parseResult cancellationToken
+                        let! pendingReferenceRepair = tryRepairPendingReferenceFinalization cancellationToken
+
+                        let! report =
+                            match pendingReferenceRepair with
+                            | Some outcome -> Task.FromResult(pendingReferenceRepairReport outcome)
+                            | None -> repairLocalState parseResult cancellationToken
+
                         let renderResult = renderOutput parseResult (Ok(GraceReturnValue.Create report (getCorrelationId parseResult)))
 
                         if renderResult = 0

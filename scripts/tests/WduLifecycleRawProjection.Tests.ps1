@@ -1,0 +1,358 @@
+[CmdletBinding()]
+param()
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$modulePath = Join-Path $repositoryRoot 'scripts/modules/WduLifecycleRawProjection.psm1'
+$contractModulePath = Join-Path $repositoryRoot 'scripts/modules/WduLifecycleContract.psm1'
+$canonicalPath = Join-Path $repositoryRoot 'docs/Working Directory Update.md'
+
+function Assert-True {
+    param([bool] $Condition, [string] $Message)
+    if (-not $Condition) { throw "Assertion failed: $Message" }
+}
+
+function Assert-Fails {
+    param([scriptblock] $Body, [string] $Contains)
+    try { & $Body | Out-Null }
+    catch {
+        Assert-True $_.Exception.Message.Contains($Contains, [StringComparison]::Ordinal) "failure should contain '$Contains': $($_.Exception.Message)"
+        return
+    }
+    throw "Expected failure containing '$Contains'"
+}
+
+function Invoke-Case {
+    param([string] $Name, [scriptblock] $Body)
+    try { & $Body; $script:Passed++; Write-Host "PASS $Name" }
+    catch { $script:Failed++; Write-Host "FAIL $Name`: $($_.Exception.Message)" -ForegroundColor Red }
+}
+
+function Get-Utf8 {
+    param([string] $Json)
+    return [ReadOnlyMemory[byte]]::new([Text.UTF8Encoding]::new($false, $true).GetBytes($Json))
+}
+
+function Get-Json {
+    param([object] $Projection)
+    return [Text.UTF8Encoding]::new($false, $true).GetString($Projection.Utf8Json.ToArray())
+}
+
+function Replace-Once {
+    param([string] $Text, [string] $Old, [string] $New)
+    $index = $Text.IndexOf($Old, [StringComparison]::Ordinal)
+    if ($index -lt 0) { throw "Test anchor not found: $Old" }
+    return $Text.Remove($index, $Old.Length).Insert($index, $New)
+}
+
+function Replace-ArrayValue {
+    param([string] $Json, [string] $Name, [string] $Replacement)
+    $prefix = '"' + $Name + '":['
+    $start = $Json.IndexOf($prefix, [StringComparison]::Ordinal)
+    if ($start -lt 0) { throw "Test array anchor not found: $Name" }
+    $open = $start + $prefix.Length - 1
+    $depth = 0
+    $inString = $false
+    $escaped = $false
+    for ($index = $open; $index -lt $Json.Length; $index++) {
+        $character = $Json[$index]
+        if ($inString) {
+            if ($escaped) { $escaped = $false; continue }
+            if ($character -eq '\') { $escaped = $true; continue }
+            if ($character -eq '"') { $inString = $false }
+            continue
+        }
+        if ($character -eq '"') { $inString = $true; continue }
+        if ($character -eq '[') { $depth++; continue }
+        if ($character -eq ']') {
+            $depth--
+            if ($depth -eq 0) { return $Json.Remove($open, $index - $open + 1).Insert($open, $Replacement) }
+        }
+    }
+    throw "Test array has no closing bracket: $Name"
+}
+
+function Invoke-Mutation {
+    param([object] $Projection, [scriptblock] $Mutation, [string] $Expected)
+    $json = Get-Json $Projection
+    $mutated = & $Mutation $json
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $mutated) } $Expected
+}
+
+function Assert-IndependentRawPayload {
+    param([object] $Projection, [object] $ExpectedArtifact, [object] $Compiled)
+    $document = [Text.Json.JsonDocument]::Parse($Projection.Utf8Json)
+    try {
+        $root = $document.RootElement
+        Assert-True ([StringComparer]::Ordinal.Equals($Projection.Artifact, $ExpectedArtifact.Id)) "returned Artifact equals requested $($ExpectedArtifact.Id)"
+        Assert-True ($root.ValueKind -eq [Text.Json.JsonValueKind]::Object) "$($ExpectedArtifact.Id) root is an object"
+        $properties = @($root.EnumerateObject())
+        $expectedNames = @('schema', 'artifact', 'canonical', 'canonicalContentDigest', 'assignmentDigest', 'rowCount', 'applicabilityKeyCount', 'requirementCount', 'artifactCount', 'requirements', 'artifactIds', 'assignment')
+        Assert-True ($properties.Count -eq $expectedNames.Count) "$($ExpectedArtifact.Id) has twelve root properties"
+        for ($index = 0; $index -lt $expectedNames.Count; $index++) {
+            Assert-True ([StringComparer]::Ordinal.Equals($properties[$index].Name, $expectedNames[$index])) "$($ExpectedArtifact.Id) root property $index is ordered"
+        }
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[0].Value.GetString(), 'grace.wdu.lifecycle-projection/v2')) "$($ExpectedArtifact.Id) schema is fixed"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[1].Value.GetString(), $ExpectedArtifact.Id)) "raw $.artifact equals requested $($ExpectedArtifact.Id)"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[2].Value.GetString(), 'docs/Working Directory Update.md#normative-branch-lifecycle-table')) "$($ExpectedArtifact.Id) canonical anchor is fixed"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[3].Value.GetString(), $Compiled.Digest)) "$($ExpectedArtifact.Id) digest comes from compiler"
+        Assert-True ([StringComparer]::Ordinal.Equals($properties[4].Value.GetString(), $Compiled.AssignmentDigest)) "$($ExpectedArtifact.Id) assignment digest comes from compiler"
+        $expectedCounts = @($Compiled.Counts.rowCount, $Compiled.Counts.applicabilityKeyCount, $Compiled.Counts.requirementCount, $Compiled.Counts.artifactCount)
+        foreach ($index in 5..8) {
+            Assert-True ($properties[$index].Value.ValueKind -eq [Text.Json.JsonValueKind]::Number) "$($ExpectedArtifact.Id) count $index is numeric"
+            Assert-True ($properties[$index].Value.GetRawText() -ceq [Convert]::ToString($expectedCounts[$index - 5], [Globalization.CultureInfo]::InvariantCulture)) "$($ExpectedArtifact.Id) count $index is exact"
+        }
+        $requirements = @($properties[9].Value.EnumerateArray())
+        Assert-True ($requirements.Count -eq $Compiled.Requirements.Count) "$($ExpectedArtifact.Id) has all requirement pairs"
+        for ($index = 0; $index -lt $requirements.Count; $index++) {
+            $pair = @($requirements[$index].EnumerateObject())
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[0].Name, 'id')) "$($ExpectedArtifact.Id) requirement $index ID name"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[1].Name, 'owner')) "$($ExpectedArtifact.Id) requirement $index owner name"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[0].Value.GetString(), $Compiled.Requirements[$index].Id)) "$($ExpectedArtifact.Id) requirement $index ID"
+            Assert-True ([StringComparer]::Ordinal.Equals($pair[1].Value.GetString(), $Compiled.Requirements[$index].Owner)) "$($ExpectedArtifact.Id) requirement $index owner"
+        }
+        $artifactIds = @($properties[10].Value.EnumerateArray())
+        Assert-True ($artifactIds.Count -eq $Compiled.Artifacts.Count) "$($ExpectedArtifact.Id) has all artifact IDs"
+        for ($index = 0; $index -lt $artifactIds.Count; $index++) {
+            Assert-True ([StringComparer]::Ordinal.Equals($artifactIds[$index].GetString(), $Compiled.Artifacts[$index].Id)) "$($ExpectedArtifact.Id) artifact ID $index"
+        }
+        $assignmentProperties = @($properties[11].Value.EnumerateObject())
+        Assert-True ($properties[11].Value.ValueKind -eq [Text.Json.JsonValueKind]::Object) "$($ExpectedArtifact.Id) assignment is an object"
+        Assert-True ($assignmentProperties.Count -eq 1) "$($ExpectedArtifact.Id) assignment has one property"
+        Assert-True ([StringComparer]::Ordinal.Equals($assignmentProperties[0].Name, 'rowIds')) "$($ExpectedArtifact.Id) assignment property is rowIds"
+        Assert-True ($assignmentProperties[0].Value.ValueKind -eq [Text.Json.JsonValueKind]::Array) "$($ExpectedArtifact.Id) row IDs are an array"
+        $rowIds = @($assignmentProperties[0].Value.EnumerateArray())
+        Assert-True ($rowIds.Count -eq $ExpectedArtifact.RowIds.Count) "$($ExpectedArtifact.Id) assignment count"
+        for ($index = 0; $index -lt $rowIds.Count; $index++) {
+            Assert-True ([StringComparer]::Ordinal.Equals($rowIds[$index].GetString(), $ExpectedArtifact.RowIds[$index])) "raw assignment $($ExpectedArtifact.Id) row ID $index equals requested artifact"
+        }
+    }
+    finally { $document.Dispose() }
+}
+
+function Assert-ReturnedArtifactBindings {
+    param([object[]] $ProjectionBindings)
+    for ($index = 0; $index -lt $ProjectionBindings.Count; $index++) {
+        $binding = $ProjectionBindings[$index]
+        Assert-True ([StringComparer]::Ordinal.Equals($binding.Projection.Artifact, $binding.ExpectedArtifact.Id)) "projection $index returned Artifact equals requested $($binding.ExpectedArtifact.Id)"
+    }
+}
+
+function Assert-ExactArtifactOrder {
+    param([string[]] $ActualArtifactIds, [string[]] $ExpectedArtifactIds)
+    Assert-True ($ActualArtifactIds.Count -eq $ExpectedArtifactIds.Count) 'returned artifact vector has exactly fifteen IDs'
+    for ($index = 0; $index -lt $ExpectedArtifactIds.Count; $index++) {
+        Assert-True ([StringComparer]::Ordinal.Equals($ActualArtifactIds[$index], $ExpectedArtifactIds[$index])) "returned artifact order $index equals compiler order"
+    }
+}
+
+function Assert-UniqueArtifactIds {
+    param([string[]] $ArtifactIds)
+    $uniqueIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($artifactId in $ArtifactIds) {
+        Assert-True ($uniqueIds.Add($artifactId)) "returned artifact IDs must be unique: $artifactId"
+    }
+}
+
+function Assert-ExactProjectionBindings {
+    param([object[]] $ProjectionBindings, [object] $Compiled)
+    Assert-True ($ProjectionBindings.Count -eq $Compiled.Artifacts.Count) 'projection bindings retain all fifteen requested artifacts'
+    Assert-ReturnedArtifactBindings $ProjectionBindings
+    $actualArtifactIds = @($ProjectionBindings | ForEach-Object { $_.Projection.Artifact })
+    $expectedArtifactIds = @($Compiled.Artifacts | ForEach-Object { $_.Id })
+    Assert-ExactArtifactOrder $actualArtifactIds $expectedArtifactIds
+    Assert-UniqueArtifactIds $actualArtifactIds
+    foreach ($binding in $ProjectionBindings) {
+        Assert-IndependentRawPayload $binding.Projection $binding.ExpectedArtifact $Compiled
+    }
+}
+
+Import-Module $modulePath -Force
+Import-Module $contractModulePath -Force
+$script:Compiled = Read-WduLifecycleContract -Path $canonicalPath
+$script:ProjectionBindings = @(
+    foreach ($expectedArtifact in $script:Compiled.Artifacts) {
+        $projection = New-WduLifecycleRawProjection -Compiled $script:Compiled -Artifact $expectedArtifact.Id
+        [pscustomobject]@{ ExpectedArtifact = $expectedArtifact; Projection = $projection }
+    }
+)
+$script:Projections = @($script:ProjectionBindings | ForEach-Object { $_.Projection })
+$script:Passed = 0
+$script:Failed = 0
+
+Invoke-Case 'exports only the raw compiler and validator' {
+    $exports = @(Get-Command -Module WduLifecycleRawProjection | Select-Object -ExpandProperty Name)
+    Assert-True ($exports.Count -eq 2) 'module has two public commands'
+    Assert-True ($exports -contains 'New-WduLifecycleRawProjection') 'compiler is exported'
+    Assert-True ($exports -contains 'Test-WduLifecycleRawProjection') 'validator is exported'
+}
+
+Invoke-Case 'compiles all fifteen artifacts deterministically and validates raw tokens' {
+    Assert-True ($script:Compiled.Counts.rowCount -eq 66) 'compiler row count is 66'
+    Assert-True ($script:Compiled.Counts.applicabilityKeyCount -eq 244) 'compiler applicability count is 244'
+    Assert-True ($script:Compiled.Requirements.Count -eq 19) 'compiler requirement count is 19'
+    Assert-True ($script:Compiled.Artifacts.Count -eq 15) 'compiler artifact count is 15'
+    Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.Digest, 'ccd29ba6b55dde396be5c1c9244958999e7cc8173c0e5e8243f1b57fe4bc3c92')) 'compiler digest is exact'
+    Assert-True ([StringComparer]::Ordinal.Equals($script:Compiled.AssignmentDigest, 'fb20589eaffb4c7a7c8db2b1c215fe751bef3d41145fef925f07d7648f501053')) 'assignment digest is exact'
+    foreach ($binding in $script:ProjectionBindings) {
+        $expectedArtifact = $binding.ExpectedArtifact
+        $projection = $binding.Projection
+        $second = New-WduLifecycleRawProjection -Compiled $script:Compiled -Artifact $expectedArtifact.Id
+        Assert-True ([Convert]::ToHexString($projection.Utf8Json.ToArray()) -ceq [Convert]::ToHexString($second.Utf8Json.ToArray())) "$($expectedArtifact.Id) bytes are deterministic"
+        $validated = Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json $projection.Utf8Json
+        Assert-True ([StringComparer]::Ordinal.Equals($validated.Artifact, $expectedArtifact.Id)) "$($expectedArtifact.Id) validates itself"
+    }
+    Assert-ExactProjectionBindings $script:ProjectionBindings $script:Compiled
+}
+
+Invoke-Case 'rejects replacement of all requested outputs with the first valid projection' {
+    $firstProjection = $script:ProjectionBindings[0].Projection
+    $replacedBindings = @(
+        foreach ($binding in $script:ProjectionBindings) {
+            [pscustomobject]@{ ExpectedArtifact = $binding.ExpectedArtifact; Projection = $firstProjection }
+        }
+    )
+    $expectedArtifactIds = @($script:Compiled.Artifacts | ForEach-Object { $_.Id })
+    $replacedArtifactIds = @($replacedBindings | ForEach-Object { $_.Projection.Artifact })
+    Assert-True ($replacedBindings.Count -eq 15) 'replacement reproducer contains fifteen outputs'
+    Assert-Fails { Assert-ReturnedArtifactBindings $replacedBindings } 'returned Artifact equals requested'
+    Assert-Fails { Assert-ExactArtifactOrder $replacedArtifactIds $expectedArtifactIds } 'returned artifact order'
+    Assert-Fails { Assert-UniqueArtifactIds $replacedArtifactIds } 'returned artifact IDs must be unique'
+}
+
+$baseline = $script:Projections[0]
+Invoke-Case 'rejects root array and scalar raw values' {
+    $json = Get-Json $baseline
+    foreach ($candidate in @("[$json]", 'null', '"projection"', '70')) {
+        Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $candidate) } 'JSON object'
+    }
+}
+
+Invoke-Case 'rejects duplicate and case-equivalent root and nested properties' {
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2",' '"schema":"grace.wdu.lifecycle-projection/v2","schema":"grace.wdu.lifecycle-projection/v2",' } 'duplicate case-equivalent'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2",' '"schema":"grace.wdu.lifecycle-projection/v2","Schema":"grace.wdu.lifecycle-projection/v2",' } 'duplicate case-equivalent'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#960"' '"id":"REQ-001","Id":"REQ-001","owner":"#960"' } 'duplicate case-equivalent'
+}
+
+Invoke-Case 'rejects missing extra genuinely reordered and incorrectly cased properties' {
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table",' '' } 'ordered properties'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2",' '"schema":"grace.wdu.lifecycle-projection/v2","extra":true,' } 'ordered properties'
+    $rootPairSwap = Replace-Once (Get-Json $baseline) '"schema":"grace.wdu.lifecycle-projection/v2","artifact":"adr-0011"' '"artifact":"adr-0011","schema":"grace.wdu.lifecycle-projection/v2"'
+    $baselineDocument = [Text.Json.JsonDocument]::Parse((Get-Json $baseline))
+    $rootDocument = [Text.Json.JsonDocument]::Parse($rootPairSwap)
+    try {
+        $baselineRootProperties = @($baselineDocument.RootElement.EnumerateObject())
+        $rootProperties = @($rootDocument.RootElement.EnumerateObject())
+        Assert-True ($rootProperties.Count -eq 12) 'root pair swap retains all twelve properties'
+        foreach ($rootProperty in $rootProperties) {
+            $baselineProperty = @($baselineRootProperties | Where-Object { [StringComparer]::Ordinal.Equals($_.Name, $rootProperty.Name) })
+            Assert-True ($baselineProperty.Count -eq 1) "root pair swap retains property $($rootProperty.Name)"
+            Assert-True ($rootProperty.Value.GetRawText() -ceq $baselineProperty[0].Value.GetRawText()) "root pair swap retains exact $($rootProperty.Name) value"
+        }
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[0].Name, 'artifact')) 'root pair swap moves complete artifact pair first'
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[0].Value.GetString(), 'adr-0011')) 'root pair swap retains artifact value'
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[1].Name, 'schema')) 'root pair swap moves complete schema pair second'
+        Assert-True ([StringComparer]::Ordinal.Equals($rootProperties[1].Value.GetString(), 'grace.wdu.lifecycle-projection/v2')) 'root pair swap retains schema value'
+    }
+    finally {
+        $rootDocument.Dispose()
+        $baselineDocument.Dispose()
+    }
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $rootPairSwap) } "WDU raw lifecycle projection '$': property at ordinal 0 must be 'schema'"
+    $nestedPairSwap = Replace-Once (Get-Json $baseline) '"id":"REQ-001","owner":"#960"' '"owner":"#960","id":"REQ-001"'
+    $nestedBaselineDocument = [Text.Json.JsonDocument]::Parse((Get-Json $baseline))
+    $nestedDocument = [Text.Json.JsonDocument]::Parse($nestedPairSwap)
+    try {
+        $nestedBaselineProperties = @($nestedBaselineDocument.RootElement.GetProperty('requirements')[0].EnumerateObject())
+        $nestedProperties = @($nestedDocument.RootElement.GetProperty('requirements')[0].EnumerateObject())
+        Assert-True ($nestedProperties.Count -eq 2) 'nested pair swap retains both requirement properties'
+        foreach ($nestedProperty in $nestedProperties) {
+            $nestedBaselineProperty = @($nestedBaselineProperties | Where-Object { [StringComparer]::Ordinal.Equals($_.Name, $nestedProperty.Name) })
+            Assert-True ($nestedBaselineProperty.Count -eq 1) "nested pair swap retains property $($nestedProperty.Name)"
+            Assert-True ($nestedProperty.Value.GetRawText() -ceq $nestedBaselineProperty[0].Value.GetRawText()) "nested pair swap retains exact $($nestedProperty.Name) value"
+        }
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Name, 'owner')) 'nested pair swap moves complete owner pair first'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[0].Value.GetString(), '#960')) 'nested pair swap retains owner value'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[1].Name, 'id')) 'nested pair swap moves complete ID pair second'
+        Assert-True ([StringComparer]::Ordinal.Equals($nestedProperties[1].Value.GetString(), 'REQ-001')) 'nested pair swap retains ID value'
+    }
+    finally {
+        $nestedDocument.Dispose()
+        $nestedBaselineDocument.Dispose()
+    }
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $nestedPairSwap) } "WDU raw lifecycle projection '$.requirements[0]': property at ordinal 0 must be 'id'"
+    $oldDeletionMutation = Replace-Once (Get-Json $baseline) '"schema":"grace.wdu.lifecycle-projection/v2","artifact"' '"artifact"'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $oldDeletionMutation) } 'must contain exactly 12 ordered properties'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"schema":"grace.wdu.lifecycle-projection/v2"' '"Schema":"grace.wdu.lifecycle-projection/v2"' } 'property at ordinal'
+}
+
+Invoke-Case 'rejects count coercion token kinds and values' {
+    foreach ($replacement in @('"66"', '66.0', '6.6e1', 'null', '67')) {
+        Invoke-Mutation $baseline { param($json) Replace-Once $json '"rowCount":66' ('"rowCount":' + $replacement) } 'rowCount'
+    }
+}
+
+Invoke-Case 'rejects scalar object and null where every required array belongs' {
+    foreach ($name in @('requirements', 'artifactIds')) {
+        foreach ($replacement in @('"joined"', '{}', 'null')) {
+            Invoke-Mutation $baseline { param($json) Replace-ArrayValue $json $name $replacement } $name
+        }
+    }
+    foreach ($replacement in @('"joined"', '{}', 'null')) {
+        Invoke-Mutation $baseline { param($json) Replace-ArrayValue $json 'rowIds' $replacement } 'rowIds'
+    }
+}
+
+Invoke-Case 'rejects requirement and artifact vector drift' {
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#960"},' '' } 'requirements'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#960"},{"id":"REQ-002","owner":"#869"}' '{"id":"REQ-002","owner":"#869"},{"id":"REQ-001","owner":"#960"}' } 'requirements[0].id'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '{"id":"REQ-001","owner":"#960"},' '{"id":"REQ-001","owner":"#960"},{"id":"REQ-001","owner":"#960"},' } 'requirements'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#960"' '"id":"REQ-001","owner":"#999"' } 'requirements[0].owner'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"id":"REQ-001","owner":"#960"' '"id":"REQ-001","owner":"#960","extra":true' } 'ordered properties'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"REQ-001"' '"req-001"' } 'requirements[0].id'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"adr-0011","epic-835"' '"epic-835","adr-0011"' } 'artifactIds[0]'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"artifactIds":["adr-0011",' '"artifactIds":[' } 'artifactIds'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"artifactIds":["adr-0011",' '"artifactIds":["adr-0011","adr-0011",' } 'artifactIds'
+    Invoke-Mutation $baseline { param($json) Replace-Once $json '"artifactIds":["adr-0011"' '"artifactIds":["ADR-0011"' } 'artifactIds[0]'
+}
+
+Invoke-Case 'rejects assignment row drift for every compiler artifact' {
+    foreach ($projection in $script:Projections) {
+        $artifact = @($script:Compiled.Artifacts | Where-Object { [StringComparer]::Ordinal.Equals($_.Id, $projection.Artifact) })[0]
+        $first = $artifact.RowIds[0]
+        $second = $artifact.RowIds[1]
+        Invoke-Mutation $projection { param($json) Replace-Once $json ('"' + $first + '",') '' } 'assignment.rowIds'
+        Invoke-Mutation $projection { param($json) Replace-Once $json ('"' + $first + '","' + $second + '"') ('"' + $second + '","' + $first + '"') } 'assignment.rowIds[0]'
+        Invoke-Mutation $projection { param($json) Replace-Once $json ('"' + $first + '",') ('"' + $first + '","' + $first + '",') } 'assignment.rowIds'
+        Invoke-Mutation $projection { param($json) Replace-Once $json ('"' + $first + '"') ('"' + $first.ToLowerInvariant() + '"') } 'assignment.rowIds[0]'
+    }
+}
+
+Invoke-Case 'rejects trailing tokens comments BOM and malformed UTF-8' {
+    $json = Get-Json $baseline
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 ($json + '{}')) } 'one valid UTF-8 JSON value'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 ($json + '/*comment*/')) } 'one valid UTF-8 JSON value'
+    $bom = [byte[]](0xEF, 0xBB, 0xBF) + $baseline.Utf8Json.ToArray()
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json ([ReadOnlyMemory[byte]]::new($bom)) } 'UTF-8 BOM'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json ([ReadOnlyMemory[byte]]::new([byte[]](0xFF))) } 'one valid UTF-8 JSON value'
+}
+
+Invoke-Case 'rejects raw shapes PowerShell can coerce into apparent equality' {
+    $json = Get-Json $baseline
+    $array = "[$json]" | ConvertFrom-Json
+    Assert-True ([StringComparer]::Ordinal.Equals($array.schema, 'grace.wdu.lifecycle-projection/v2')) 'PowerShell unwraps one element array property access'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 "[$json]") } 'JSON object'
+    $stringCountJson = Replace-Once $json '"rowCount":66' '"rowCount":"66"'
+    $stringCount = $stringCountJson | ConvertFrom-Json
+    Assert-True ($stringCount.rowCount -eq 66) 'PowerShell coerces the string count in comparison'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $stringCountJson) } 'rowCount'
+    $scalarArrayJson = Replace-ArrayValue $json 'artifactIds' '"adr-0011,epic-835"'
+    $scalarArray = $scalarArrayJson | ConvertFrom-Json
+    Assert-True ($scalarArray.artifactIds -is [string]) 'PowerShell exposes a scalar where the JSON contract requires an array'
+    Assert-Fails { Test-WduLifecycleRawProjection -Compiled $script:Compiled -Utf8Json (Get-Utf8 $scalarArrayJson) } 'artifactIds'
+}
+
+Write-Host "Result: $script:Passed passed; $script:Failed failed"
+if ($script:Failed -ne 0) { exit 1 }

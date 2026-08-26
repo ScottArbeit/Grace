@@ -477,12 +477,10 @@ module WatchTests =
             Watch.resetWatchIgnoreSnapshotForWatchTests ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             Watch.setLocalObservationCandidateSchedulingForWatchTests false
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             Watch.resetWatchIgnoreSnapshotForWatchTests ()
             Services.clearShouldIgnoreCache ()
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
@@ -970,34 +968,6 @@ module WatchTests =
         }
 
     /// Builds default local clients for current-branch remote materialization tests.
-    let private remoteMaterializationClients
-        (remoteDirectoryVersions: DirectoryVersion array)
-        (currentStatus: GraceStatus)
-        (writtenStatuses: ResizeArray<GraceStatus>)
-        (resyncRequests: ResizeArray<string>)
-        : Watch.CurrentBranchRemoteMaterializationApplyClients
-        =
-        {
-            GetRemoteDirectoryVersions = fun _ _ -> Task.FromResult<Result<DirectoryVersion array, GraceError>>(Ok remoteDirectoryVersions)
-            ReadGraceStatus = fun () -> Task.FromResult currentStatus
-            WriteGraceStatus =
-                fun status ->
-                    task {
-                        writtenStatuses.Add(status)
-                        do! Services.writeGraceStatusFile status
-                    }
-            RequestResync = fun reason -> resyncRequests.Add(reason)
-            TryCreateUpdateMarker = Watch.tryCreateCurrentBranchMaterializationMarkerForWatchTests
-            IsUpdateMarkerOwned =
-                fun markerFileName expectedContent ->
-                    File.Exists(markerFileName)
-                    && File.ReadAllText(markerFileName) = expectedContent
-            BeforeTargetMutation = ignore
-            DeleteUpdateMarker = File.Delete
-            BeforeFinalVerification = fun () -> Task.FromResult(())
-            BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
-        }
-
     /// Builds the clean IPC snapshot that exact materialization must remain bound to through apply.
     let private acceptedMaterializationStatus (status: GraceStatus) =
         let current = Current()
@@ -2873,7 +2843,6 @@ module WatchTests =
             let updateMarkerFile = Services.updateInProgressFileName ()
             let completedUtc = DateTime.UtcNow
 
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             let mutable replayRequests = 0
             Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
 
@@ -2897,9 +2866,6 @@ module WatchTests =
                 File.Delete(updateMarkerFile)
                 Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
-                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal None
-
                 replayRequests
                 |> should equal (if observeCreation then 1 else 0)
 
@@ -2912,18 +2878,15 @@ module WatchTests =
                 subscription.ParentBranchId
                 |> should equal parentBranchId
             finally
-                Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
-                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+                Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ())
 
-    /// Verifies a recent sidecar from an earlier marker cannot authorize current Reference catch-up.
+    /// Verifies a recent sidecar from an earlier marker cannot authorize current Reference replay.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``recent earlier reference completion sidecar forces exact recovery instead of catch-up`` () =
+    let ``recent earlier reference completion sidecar forces exact recovery instead of replay`` () =
         withTempRepo (fun _ ->
             let updateMarkerFile = Services.updateInProgressFileName ()
             let currentMarkerUtc = DateTime.UtcNow
             let earlierCompletionUtc = currentMarkerUtc.AddSeconds(-1.0)
-
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
 
             try
                 Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
@@ -2941,13 +2904,10 @@ module WatchTests =
                 File.Delete(updateMarkerFile)
                 Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
-                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal None
-
                 Watch.isGraceWatchResyncPendingForWatchTests ()
                 |> should equal true
             finally
-                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+                ())
 
     /// Verifies absent, legacy, unknown, and malformed purpose evidence cannot authorize branch-transition completion.
     [<TestCase("2026-07-10T12:00:00.0000000Z")>]
@@ -2982,7 +2942,6 @@ module WatchTests =
     [<Test>]
     let ``update marker deletion reloads branch config and publishes new branch ipc`` () =
         withTempRepo (fun root ->
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             let repositoryId = Guid.NewGuid()
             let branchAId = Guid.NewGuid()
             let branchBId = Guid.NewGuid()
@@ -3019,9 +2978,6 @@ module WatchTests =
             Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
 
             recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
-
-            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-            |> should equal None
 
             replayRequests |> should equal 1
 
@@ -3063,8 +3019,7 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None
 
-            Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+            Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ())
 
     /// Verifies that branch transition completion refreshes SignalR parent identity before auto-rebase events resume.
     [<Test>]
@@ -3080,7 +3035,6 @@ module WatchTests =
             let branchBName = "branch-b"
 
             try
-                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
                 writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
                 resetConfiguration ()
                 Current() |> ignore
@@ -3130,9 +3084,6 @@ module WatchTests =
                 refreshObservedStatusRoots.ToArray()
                 |> should equal [| None |]
 
-                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal None
-
                 replayRequests |> should equal 1
 
                 let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
@@ -3167,8 +3118,7 @@ module WatchTests =
                     |]
             finally
                 Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
-                Watch.resetSignalRSubscriptionRefreshForWatchTests ()
-                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
 
     /// Verifies that stale parent events cannot auto-rebase after target branch config reload begins.
     [<Test>]
@@ -3540,33 +3490,33 @@ module WatchTests =
             Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentId
             |> should equal false)
 
-    /// Verifies that reconnect runs current-branch catch-up only after the active SignalR groups recover.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``signalr reconnect runs current branch catch-up after subscription recovery`` () =
+    /// Verifies that reconnect runs current-branch replay only after the active SignalR groups recover.
+    [<Test; Category("CurrentBranchReferenceReplay")>]
+    let ``signalr reconnect runs current branch replay after subscription recovery`` () =
         let ordering = ResizeArray<string>()
 
         let recovered =
-            (Watch.completeSignalRReconnectWithCatchUpForWatchTests
+            (Watch.completeSignalRReconnectWithReplayForWatchTests
                 (fun () ->
                     ordering.Add("subscriptions")
                     true)
-                (fun () -> task { ordering.Add("catch-up") }))
+                (fun () -> task { ordering.Add("replay") }))
                 .GetAwaiter()
                 .GetResult()
 
         recovered |> should equal true
 
         ordering.ToArray()
-        |> should equal [| "subscriptions"; "catch-up" |]
+        |> should equal [| "subscriptions"; "replay" |]
 
         ordering.Clear()
 
         let failed =
-            (Watch.completeSignalRReconnectWithCatchUpForWatchTests
+            (Watch.completeSignalRReconnectWithReplayForWatchTests
                 (fun () ->
                     ordering.Add("subscriptions-failed")
                     false)
-                (fun () -> Task.FromException<unit>(InvalidOperationException("Failed subscription recovery must not start catch-up."))))
+                (fun () -> Task.FromException<unit>(InvalidOperationException("Failed subscription recovery must not start replay."))))
                 .GetAwaiter()
                 .GetResult()
 
@@ -7665,9 +7615,6 @@ module WatchTests =
 
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false
-
-            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-            |> should equal None
 
             Watch.localStatusRevisionCheckPendingForWatchTests ()
             |> should equal true
@@ -17392,9 +17339,6 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false
 
-            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-            |> should equal None
-
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
             |> should equal false
 
@@ -17450,9 +17394,6 @@ module WatchTests =
 
                         Watch.isGraceWatchResyncPendingForWatchTests ()
                         |> should equal false
-
-                        Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                        |> should equal None
 
                         Watch.lastPublishedWatchObservationScopeForWatchTests ()
                         |> should equal initialScope
@@ -17528,9 +17469,6 @@ module WatchTests =
 
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false
-
-            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-            |> should equal None
 
             Watch.lastPublishedWatchObservationScopeForWatchTests ()
             |> should equal initialScope
@@ -17982,9 +17920,9 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should not' (equal None))
 
-    /// Verifies that startup starts remote catch-up only after local reconciliation published verified clean IPC.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``watch startup runs current branch catch-up after safe local publication`` () =
+    /// Verifies that startup starts remote replay only after local reconciliation published verified clean IPC.
+    [<Test; Category("CurrentBranchReferenceReplay")>]
+    let ``watch startup runs current branch replay after safe local publication`` () =
         withTempRepo (fun _ ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
@@ -18006,7 +17944,7 @@ module WatchTests =
                     do! Services.updateGraceWatchInterprocessFile publishedStatus publishedDirectoryIds
                 }
 
-            let catchUpCurrentBranchReference () =
+            let replayCurrentBranchReferences () =
                 task {
                     readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
                     |> should equal false
@@ -18014,19 +17952,19 @@ module WatchTests =
                     readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
                     |> should equal true
 
-                    ordering.Add("catch-up")
+                    ordering.Add("replay")
                 }
 
-            (Watch.completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
+            (Watch.completeStartupRecoveryIfPendingWorkDrainedWithReplayForWatchTests
                 (fun () -> Task.FromResult(status))
                 updateIpc
                 (fun () -> Task.FromResult(()))
-                catchUpCurrentBranchReference)
+                replayCurrentBranchReferences)
                 .GetAwaiter()
                 .GetResult()
 
             ordering.ToArray()
-            |> should equal [| "ipc"; "catch-up" |])
+            |> should equal [| "ipc"; "replay" |])
 
     /// Verifies that processing pending Watch work publishes the dirty-to-clean IPC transition.
     [<Test>]
@@ -21091,681 +21029,45 @@ module WatchTests =
 
         handles |> should haveLength 3
 
-    /// Verifies that exact direct SignalR echoes stop before every coordinator side effect or callback seam.
-    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
-    let ``exact direct self-reference echo is consumed before coordinator work`` () =
+    /// Verifies that an exact local self-reference echo is consumed before active cursor replay reaches coordinator clients.
+    [<Test; Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchReferenceReplay")>]
+    let ``exact replay self-reference echo is consumed before coordinator work`` () =
         withTempRepo (fun root ->
             Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ()
 
             try
                 let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-                let payload = localSelfReferenceNotification repositoryId branchId "direct-self-reference"
+                let payload = localSelfReferenceNotification repositoryId branchId "replay-self-reference"
                 let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
                 Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
                 let mutable coordinatorCalls = 0
-                let mutable handlerResult = Unchecked.defaultof<Services.LatestCurrentBranchReferenceDecision option>
-
-                let callbackOutput =
-                    captureAnsiConsoleOutput (fun () ->
-                        handlerResult <-
-                            (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests
-                                (fun () ->
-                                    coordinatorCalls <- coordinatorCalls + 1
-                                    Task.FromResult(Error(GraceError.Create "Exact self echo reached BranchDto fetch." payload.CorrelationId)))
-                                (fun () ->
-                                    coordinatorCalls <- coordinatorCalls + 1
-                                    Task.FromResult(None))
-                                payload)
-                                .GetAwaiter()
-                                .GetResult())
-
-                coordinatorCalls |> should equal 0
-                handlerResult |> should equal None
-                callbackOutput |> should equal String.Empty
-
-                Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
-                |> should equal 1
-            finally
-                Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
-
-    /// Verifies that BranchDto lifecycle catch-up restores the local correlation and uses the same coordinator suppression gate.
-    [<Test; Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchCatchUp")>]
-    let ``exact lifecycle catch-up self-reference uses shared coordinator gate`` () =
-        withTempRepo (fun root ->
-            Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ()
-
-            try
-                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-                let payload = localSelfReferenceNotification repositoryId branchId "catch-up-self-reference"
-                let branchDto = branchDtoWithLatestCurrentBranchReference payload
-                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
-                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
-                let mutable coordinatorCalls = 0
-                let observedCorrelations = ResizeArray<CorrelationId>()
 
                 let unexpected name =
                     coordinatorCalls <- coordinatorCalls + 1
-                    Task.FromException<'T>(InvalidOperationException($"Exact catch-up self echo reached {name}."))
+                    Task.FromException<'T>(InvalidOperationException($"Exact replay self echo reached {name}."))
 
-                let processReference catchUpPayload =
-                    task {
-                        observedCorrelations.Add(catchUpPayload.CorrelationId)
-
-                        let! outcome =
-                            Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                                (fun () -> unexpected "BranchDto fetch")
-                                (fun () -> unexpected "local-status inspection")
-                                (fun _ -> coordinatorCalls <- coordinatorCalls + 1)
-                                (fun _ _ -> unexpected "safe-point wait")
-                                (fun _ _ -> unexpected "IPC reestablishment")
-                                (fun _ _ -> unexpected "materialization apply")
-                                catchUpPayload
-
-                        return outcome.Value
-                    }
-
-                let result, outcome =
-                    (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
-                        (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-self-reference-source")))
-                        processReference)
+                let outcome =
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests
+                        (fun () -> unexpected "local-status inspection")
+                        (fun _ -> coordinatorCalls <- coordinatorCalls + 1)
+                        (fun _ _ -> unexpected "materialization apply")
+                        payload)
                         .GetAwaiter()
                         .GetResult()
-
-                result
-                |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
 
                 outcome.Value.Reason
                 |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed
 
-                observedCorrelations.ToArray()
-                |> should equal [| payload.CorrelationId |]
-
                 coordinatorCalls |> should equal 0
             finally
                 Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
 
-    /// Verifies that lifecycle and direct delivery order cannot expose an exact completed local Reference to coordinator or Watch work.
-    [<TestCase(true); TestCase(false); Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchCatchUp")>]
-    let ``exact self-reference stays silent across lifecycle and direct duplicate delivery order`` lifecycleFirst =
-        withTempRepo (fun root ->
-            Watch.clearPendingWatchWorkForTests ()
-
-            try
-                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-                let payload = localSelfReferenceNotification repositoryId branchId "duplicate-delivery-self-reference"
-                let branchDto = branchDtoWithLatestCurrentBranchReference payload
-                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
-                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
-
-                let pendingBefore = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
-                let candidatesBefore = Watch.localObservationCandidateSnapshotForWatchTests ()
-
-                let catchUpGenerationBefore = Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-
-                let coordinatorEffects = ResizeArray<string>()
-
-                /// Fails the test if either delivery enters any injected coordinator side-effect seam.
-                let unexpected name =
-                    coordinatorEffects.Add(name)
-                    Task.FromException<'T>(InvalidOperationException($"Exact duplicate self echo reached {name}."))
-
-                /// Routes the real direct-notification seam while capturing any user-visible Watch output.
-                let runDirectDelivery () =
-                    let mutable result = Unchecked.defaultof<Services.LatestCurrentBranchReferenceDecision option>
-
-                    let output =
-                        captureAnsiConsoleOutput (fun () ->
-                            result <-
-                                (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests
-                                    (fun () -> unexpected "direct BranchDto fetch")
-                                    (fun () -> unexpected "direct local-status read")
-                                    payload)
-                                    .GetAwaiter()
-                                    .GetResult())
-
-                    result, output
-
-                /// Routes the BranchDto-derived lifecycle seam through the same coordinator and captures any Watch output.
-                let runLifecycleDelivery () =
-                    /// Sends the BranchDto-derived payload through the production coordinator admission gate.
-                    let processReference catchUpPayload =
-                        task {
-                            let! outcome =
-                                Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                                    (fun () -> unexpected "lifecycle BranchDto fetch")
-                                    (fun () -> unexpected "lifecycle local-status inspection")
-                                    (fun _ -> coordinatorEffects.Add("lifecycle degraded resync"))
-                                    (fun _ _ -> unexpected "lifecycle safe-point wait")
-                                    (fun _ _ -> unexpected "lifecycle IPC reestablishment")
-                                    (fun _ _ -> unexpected "lifecycle materialization apply")
-                                    catchUpPayload
-
-                            return outcome.Value
-                        }
-
-                    let mutable result =
-                        Unchecked.defaultof<Watch.CurrentBranchReferenceCatchUpResult * Watch.CurrentBranchMaterializationCoordinatorOutcome option>
-
-                    let output =
-                        captureAnsiConsoleOutput (fun () ->
-                            result <-
-                                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
-                                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "duplicate-delivery-catch-up-source")))
-                                    processReference)
-                                    .GetAwaiter()
-                                    .GetResult())
-
-                    result, output
-
-                let directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput =
-                    if lifecycleFirst then
-                        let (lifecycleResult, lifecycleOutcome), lifecycleOutput = runLifecycleDelivery ()
-                        let directResult, directOutput = runDirectDelivery ()
-                        directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput
-                    else
-                        let directResult, directOutput = runDirectDelivery ()
-                        let (lifecycleResult, lifecycleOutcome), lifecycleOutput = runLifecycleDelivery ()
-                        directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput
-
-                directResult |> should equal None
-                directOutput |> should equal String.Empty
-
-                lifecycleResult
-                |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
-
-                lifecycleOutcome.Value.Reason
-                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed
-
-                lifecycleOutput |> should equal String.Empty
-
-                coordinatorEffects.ToArray() |> should be Empty
-
-                Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
-                |> should equal pendingBefore
-
-                Watch.localObservationCandidateSnapshotForWatchTests ()
-                |> should equal candidatesBefore
-
-                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal catchUpGenerationBefore
-
-                Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
-                |> should equal 1
-            finally
-                Watch.clearPendingWatchWorkForTests ())
-
-    /// Verifies that lifecycle catch-up derives the exact coordinator input from BranchDto rather than a prior notification.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up routes BranchDto latest reference through coordinator`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let latestNotification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Commit
-                    (Guid.NewGuid())
-                    (Sha256Hash "catch-up-root")
-                    (Blake3Hash "catch-up-root-blake3")
-
-            let branchDto = branchDtoWithLatestCurrentBranchReference latestNotification
-            let observedPayloads = ResizeArray<CurrentBranchReferenceNotification>()
-
-            let getCurrentBranch () = Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-source-test"))
-
-            let processReference payload =
-                task {
-                    observedPayloads.Add(payload)
-
-                    let outcome: Watch.CurrentBranchMaterializationCoordinatorOutcome =
-                        { ReferenceId = payload.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }
-
-                    return outcome
-                }
-
-            let result, outcome =
-                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-            result
-            |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
-
-            outcome |> should not' (equal None)
-
-            observedPayloads.ToArray() |> should haveLength 1
-
-            let payload = observedPayloads[0]
-
-            payload.ReferenceId
-            |> should equal latestNotification.ReferenceId
-
-            payload.DirectoryId
-            |> should equal latestNotification.DirectoryId
-
-            payload.Sha256Hash
-            |> should equal latestNotification.Sha256Hash
-
-            payload.Blake3Hash
-            |> should equal latestNotification.Blake3Hash
-
-            payload.ReferenceType
-            |> should equal latestNotification.ReferenceType)
-
-    /// Verifies that a completed same-branch materialization marker wakes cursor replay after legacy catch-up retries stopped.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``reference materialization marker deletion routes cursor replay after bounded catch-up exhaustion`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
-            let startedUtc = DateTime.UtcNow
-
-            let blockedReference =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Commit
-                    (Guid.NewGuid())
-                    (Sha256Hash "blocked-catch-up-root")
-                    (Blake3Hash "blocked-catch-up-root-blake3")
-
-            let blockedBranchDto = branchDtoWithLatestCurrentBranchReference blockedReference
-            let blockedCoordinatorCalls = ResizeArray<CurrentBranchReferenceNotification>()
-
-            let getBlockedBranch () = Task.FromResult(Ok(GraceReturnValue.Create blockedBranchDto "blocked-catch-up-source-test"))
-
-            let processBlockedReference (payload: CurrentBranchReferenceNotification) : Task<Watch.CurrentBranchMaterializationCoordinatorOutcome> =
-                task {
-                    blockedCoordinatorCalls.Add(payload)
-
-                    return
-                        {
-                            ReferenceId = payload.ReferenceId
-                            Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-                            Decision = None
-                        }
-                }
-
-            scheduler.Request() |> should equal 1L
-
-            for nowUtc in
-                [|
-                    startedUtc
-                    startedUtc.AddSeconds(2.0)
-                    startedUtc.AddSeconds(6.0)
-                |] do
-                (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsAtForWatchTests scheduler nowUtc getBlockedBranch processBlockedReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-            blockedCoordinatorCalls.ToArray()
-            |> should haveLength 3
-
-            scheduler.PendingGeneration |> should equal None
-
-            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsAtForWatchTests
-                scheduler
-                (startedUtc.AddMinutes(1.0))
-                getBlockedBranch
-                processBlockedReference)
-                .GetAwaiter()
-                .GetResult()
-
-            blockedCoordinatorCalls.ToArray()
-            |> should haveLength 3
-
-            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
-
-            try
-                let updateMarkerFile = Services.updateInProgressFileName ()
-                let completedUtc = DateTime.UtcNow
-                let mutable replayRequests = 0
-                Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
-
-                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
-                |> ignore
-
-                File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
-                File.SetLastWriteTimeUtc(updateMarkerFile, completedUtc.AddSeconds(-1.0))
-                Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
-
-                File.WriteAllText(
-                    updateMarkerFile + ".completed",
-                    Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
-                )
-
-                File.Delete(updateMarkerFile)
-                Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
-
-                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal None
-
-                replayRequests |> should equal 1
-            finally
-                Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
-                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
-
-    /// Verifies that a BranchDto without a concrete latest Reference never invents deferred catch-up work.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up treats missing latest reference as a no-op`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let branchDto =
-                { Grace.Types.Branch.BranchDto.Default with
-                    RepositoryId = currentRepositoryId
-                    BranchId = currentBranchId
-                    BranchName = BranchName "current-branch"
-                }
-
-            let getCurrentBranch () = Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-empty-latest-test"))
-
-            let processReference _ =
-                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                    InvalidOperationException("A missing latest Reference must not enter the coordinator.")
-                )
-
-            let result, outcome =
-                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-            result
-            |> should equal Watch.CurrentBranchReferenceCatchUpResult.NoReference
-
-            outcome |> should equal None)
-
-    /// Verifies that a non-materializable overall latest Reference does not create current-branch apply work.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up ignores non-materializable latest reference types`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let latestReference =
-                { ReferenceDto.Default with
-                    ReferenceId = Guid.NewGuid()
-                    RepositoryId = currentRepositoryId
-                    BranchId = currentBranchId
-                    ReferenceType = ReferenceType.Promotion
-                }
-
-            let branchDto =
-                { Grace.Types.Branch.BranchDto.Default with
-                    RepositoryId = currentRepositoryId
-                    BranchId = currentBranchId
-                    BranchName = BranchName "current-branch"
-                    LatestReference = latestReference
-                }
-
-            let getCurrentBranch () = Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-non-materializable-latest-test"))
-
-            let processReference _ =
-                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                    InvalidOperationException("A non-materializable latest Reference must not enter the coordinator.")
-                )
-
-            let result, outcome =
-                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-            result
-            |> should equal Watch.CurrentBranchReferenceCatchUpResult.NoReference
-
-            outcome |> should equal None)
-
-    /// Verifies that catch-up routes the latest eligible Reference even when a later tag occupies BranchDto LatestReference.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up uses latest eligible reference when later tag exists`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let saveNotification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "catch-up-save-with-later-tag")
-                    (Blake3Hash "catch-up-save-with-later-tag-blake3")
-
-            let laterTag =
-                { ReferenceDto.Default with
-                    ReferenceId = Guid.NewGuid()
-                    RepositoryId = currentRepositoryId
-                    BranchId = currentBranchId
-                    ReferenceType = ReferenceType.Tag
-                }
-
-            let branchDto =
-                { branchDtoWithLatestCurrentBranchReference saveNotification with BranchName = BranchName "current-branch"; LatestReference = laterTag }
-
-            let observedReferences = ResizeArray<ReferenceId>()
-
-            let processReference payload =
-                observedReferences.Add(payload.ReferenceId)
-
-                Task.FromResult(
-                    ({ ReferenceId = payload.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
-                )
-
-            let result, outcome =
-                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
-                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-later-tag-test")))
-                    processReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-            result
-            |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
-
-            outcome
-            |> Option.map (fun result -> result.ReferenceId)
-            |> should equal (Some saveNotification.ReferenceId)
-
-            observedReferences.ToArray()
-            |> should equal [| saveNotification.ReferenceId |])
-
-    /// Verifies that a failed BranchDto refresh remains a retryable lifecycle result without creating payload-backed work.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up reports BranchDto refresh failure without coordinator work`` () =
-        withTempRepo (fun root ->
-            configureCurrentWatchIdentity root "current-repo" "current-branch"
-            |> ignore
-
-            let getCurrentBranch () = Task.FromResult(Error(GraceError.Create "catch-up BranchDto refresh failed" "catch-up-refresh-failure-test"))
-
-            let processReference _ =
-                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                    InvalidOperationException("A failed BranchDto refresh must not enter the coordinator.")
-                )
-
-            let result, outcome =
-                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-            result
-            |> should equal Watch.CurrentBranchReferenceCatchUpResult.RefreshFailed
-
-            outcome |> should equal None)
-
-    /// Verifies that a newer lifecycle request survives while an older request is still reading a BranchDto that has no Reference.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up preserves newer generation after older BranchDto no-reference completion`` () =
-        withTempRepo (fun _ ->
-            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
-            let readStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-
-            let olderBranchRead =
-                TaskCompletionSource<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>(TaskCreationOptions.RunContinuationsAsynchronously)
-
-            let getOlderBranch () =
-                readStarted.TrySetResult(()) |> ignore
-
-                olderBranchRead.Task
-
-            let processReference _ =
-                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                    InvalidOperationException("A BranchDto with no Reference must not enter the coordinator.")
-                )
-
-            scheduler.Request() |> should equal 1L
-
-            let olderRun = Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests scheduler getOlderBranch processReference
-
-            readStarted.Task.GetAwaiter().GetResult()
-
-            scheduler.Request() |> should equal 2L
-
-            olderBranchRead.SetResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "older-no-reference"))
-            olderRun.GetAwaiter().GetResult()
-
-            scheduler.PendingGeneration
-            |> should equal (Some 2L)
-
-            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-                scheduler
-                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-no-reference")))
-                processReference)
-                .GetAwaiter()
-                .GetResult()
-
-            scheduler.PendingGeneration |> should equal None)
-
-    /// Verifies that a newer lifecycle request survives an older same-root coordinator result.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up preserves newer generation after older same-root completion`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
-
-            let latestReference =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Commit
-                    (Guid.NewGuid())
-                    (Sha256Hash "same-root-catch-up")
-                    (Blake3Hash "same-root-catch-up-blake3")
-
-            let processStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-            let olderCompletion = TaskCompletionSource<Watch.CurrentBranchMaterializationCoordinatorOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
-
-            let processOlderReference _ =
-                processStarted.TrySetResult(()) |> ignore
-
-                olderCompletion.Task
-
-            scheduler.Request() |> should equal 1L
-
-            let olderRun =
-                Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-                    scheduler
-                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference latestReference) "older-same-root")))
-                    processOlderReference
-
-            processStarted.Task.GetAwaiter().GetResult()
-
-            scheduler.Request() |> should equal 2L
-
-            olderCompletion.SetResult(
-                {
-                    ReferenceId = latestReference.ReferenceId
-                    Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
-                    Decision =
-                        Some
-                            {
-                                NeedsMaterialization = false
-                                Reason = Services.LatestCurrentBranchReferenceDecisionReason.SameRoot
-                                Reference = Some latestReference
-                            }
-                }
-            )
-
-            olderRun.GetAwaiter().GetResult()
-
-            scheduler.PendingGeneration
-            |> should equal (Some 2L)
-
-            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-                scheduler
-                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-same-root")))
-                (fun _ ->
-                    Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                        InvalidOperationException("The newer no-reference BranchDto must not enter the coordinator.")
-                    )))
-                .GetAwaiter()
-                .GetResult()
-
-            scheduler.PendingGeneration |> should equal None)
-
-    /// Verifies that a newer lifecycle request survives an older serialized materialization-lane completion.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``current branch catch-up preserves newer generation after older serialized apply completion`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
-
-            let latestReference =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Commit
-                    (Guid.NewGuid())
-                    (Sha256Hash "serialized-apply-catch-up")
-                    (Blake3Hash "serialized-apply-catch-up-blake3")
-
-            let laneEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-            let olderCompletion = TaskCompletionSource<Watch.CurrentBranchMaterializationCoordinatorOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
-
-            let processOlderReference payload =
-                laneEntered.TrySetResult(()) |> ignore
-
-                olderCompletion.Task
-
-            scheduler.Request() |> should equal 1L
-
-            let olderRun =
-                Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-                    scheduler
-                    (fun () ->
-                        Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference latestReference) "older-serialized-apply")))
-                    processOlderReference
-
-            laneEntered.Task.GetAwaiter().GetResult()
-
-            scheduler.Request() |> should equal 2L
-
-            olderCompletion.SetResult(
-                { ReferenceId = latestReference.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }
-            )
-
-            olderRun.GetAwaiter().GetResult()
-
-            scheduler.PendingGeneration
-            |> should equal (Some 2L)
-
-            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-                scheduler
-                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-after-serialized-apply")))
-                (fun _ ->
-                    Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                        InvalidOperationException("The newer no-reference BranchDto must not enter the coordinator.")
-                    )))
-                .GetAwaiter()
-                .GetResult()
-
-            scheduler.PendingGeneration |> should equal None)
-
-    /// Verifies that a GraceStatus refresh samples pending work before clearing it and schedules one non-phantom recovery generation.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``GraceStatus refresh preserves blocked-to-safe catch-up generation without phantom rerun`` () =
-        let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+    /// Verifies that timer recovery samples pending work before clearing it and requests one replay wake after the work drains.
+    [<Test; Category("CurrentBranchReferenceReplay")>]
+    let ``GraceStatus refresh requests one replay wake after pending work drains`` () =
         let events = ResizeArray<string>()
         let mutable pendingWork = true
-        let mutable requestedGenerations = 0
+        let mutable replayRequests = 0
 
         let refreshGraceStatusIfChanged () =
             task {
@@ -21777,68 +21079,44 @@ module WatchTests =
             events.Add("sample-pending")
             pendingWork
 
-        let requestCatchUp _ =
-            requestedGenerations <- requestedGenerations + 1
-            scheduler.Request() |> ignore
+        let requestReplay _ =
+            replayRequests <- replayRequests + 1
             Task.FromResult(())
 
-        (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+        (Watch.processWatchTimerLocalRecoveryWithReplayForWatchTests
             refreshGraceStatusIfChanged
             (fun () -> Task.FromResult(()))
             (fun () -> Task.FromResult(()))
             hasPendingWork
             (fun () -> false)
-            requestCatchUp)
+            requestReplay)
             .GetAwaiter()
             .GetResult()
 
         events.IndexOf("sample-pending")
         |> should be (lessThan (events.IndexOf("refresh")))
 
-        requestedGenerations |> should equal 1
+        replayRequests |> should equal 1
 
-        scheduler.PendingGeneration
-        |> should equal (Some 1L)
-
-        withTempRepo (fun _ ->
-            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-                scheduler
-                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "refresh-recovery")))
-                (fun _ ->
-                    Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                        InvalidOperationException("A missing latest Reference must not enter the coordinator.")
-                    )))
-                .GetAwaiter()
-                .GetResult())
-
-        scheduler.PendingGeneration |> should equal None
-
-        (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+        (Watch.processWatchTimerLocalRecoveryWithReplayForWatchTests
             (fun () -> Task.FromResult(()))
             (fun () -> Task.FromResult(()))
             (fun () -> Task.FromResult(()))
             hasPendingWork
             (fun () -> false)
-            requestCatchUp)
+            requestReplay)
             .GetAwaiter()
             .GetResult()
 
-        requestedGenerations |> should equal 1
-        scheduler.PendingGeneration |> should equal None
+        replayRequests |> should equal 1
 
-    /// Verifies that failed or still-dirty GraceStatus refresh processing cannot request a premature recovery generation.
-    [<Test; Category("CurrentBranchCatchUp")>]
-    let ``GraceStatus refresh that remains dirty does not request premature catch-up`` () =
-        let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+    /// Verifies that timer recovery does not request replay while local work remains pending.
+    [<Test; Category("CurrentBranchReferenceReplay")>]
+    let ``GraceStatus refresh that remains dirty does not request replay`` () =
         let mutable pendingWork = true
-        let mutable requestedGenerations = 0
+        let mutable replayRequests = 0
 
-        let requestCatchUp _ =
-            requestedGenerations <- requestedGenerations + 1
-            scheduler.Request() |> ignore
-            Task.FromResult(())
-
-        (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+        (Watch.processWatchTimerLocalRecoveryWithReplayForWatchTests
             (fun () ->
                 task {
                     // Failed publication and a still-dirty refresh both retain pending-work evidence.
@@ -21848,12 +21126,13 @@ module WatchTests =
             (fun () -> Task.FromResult(()))
             (fun () -> pendingWork)
             (fun () -> false)
-            requestCatchUp)
+            (fun _ ->
+                replayRequests <- replayRequests + 1
+                Task.FromResult(())))
             .GetAwaiter()
             .GetResult()
 
-        requestedGenerations |> should equal 0
-        scheduler.PendingGeneration |> should equal None
+        replayRequests |> should equal 0
 
     /// Verifies that protocol-invalid current-branch notifications are rejected before BranchDto latest authority.
     [<Test>]
@@ -21912,13 +21191,6 @@ module WatchTests =
                     (Blake3Hash "remote-root-blake3")
 
             let calls = ResizeArray<string>()
-            let branchDto = branchDtoWithLatestCurrentBranchReference payload
-
-            let getBranch () =
-                task {
-                    calls.Add("branch")
-                    return Ok(GraceReturnValue.Create branchDto "branch-fetch-before-status")
-                }
 
             let inspectStatus () =
                 task {
@@ -21927,8 +21199,6 @@ module WatchTests =
                 }
 
             let requestDegradedResync _ = Assert.Fail("Clean status must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
 
             let applyReference appliedPayload _ =
                 task {
@@ -21939,14 +21209,7 @@ module WatchTests =
                 }
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    payload)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference payload)
                     .Result
 
             outcome.Value.Reason
@@ -22359,26 +21622,12 @@ module WatchTests =
                     (Sha256Hash "remote-root-b")
                     (Blake3Hash "remote-root-b-blake3")
 
-            let branchDtos = Queue<Grace.Types.Branch.BranchDto>()
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference referenceA)
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference referenceB)
-
-            let branchFetches = ResizeArray<ReferenceId>()
             let appliedReferences = ResizeArray<ReferenceId>()
             use applyStarted = new ManualResetEventSlim(false)
             use releaseApply = new ManualResetEventSlim(false)
 
-            let getBranch () =
-                task {
-                    let branchDto = branchDtos.Dequeue()
-                    branchFetches.Add(branchDto.LatestReference.ReferenceId)
-                    return Ok(GraceReturnValue.Create branchDto "serialized-materialization-test")
-                }
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
 
             let applyReference payload _ =
                 task {
@@ -22391,14 +21640,7 @@ module WatchTests =
 
             let taskA =
                 Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        referenceA)
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference referenceA)
                         .GetAwaiter()
                         .GetResult())
 
@@ -22409,21 +21651,12 @@ module WatchTests =
 
                 taskB <-
                     Task.Run (fun () ->
-                        (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                            getBranch
-                            inspectStatus
-                            requestDegradedResync
-                            waitForSafePoint
-                            reestablishIpc
-                            applyReference
-                            referenceB)
+                        (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference referenceB)
                             .GetAwaiter()
                             .GetResult())
 
                 Task.Delay(150).Wait()
 
-                branchFetches.ToArray()
-                |> should equal Array.empty<ReferenceId>
             finally
                 releaseApply.Set()
 
@@ -22432,9 +21665,6 @@ module WatchTests =
             Task.WaitAll(tasksToWait, 5000)
             |> should equal true
 
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
             appliedReferences.ToArray()
             |> should
                 equal
@@ -22442,309 +21672,6 @@ module WatchTests =
                     referenceA.ReferenceId
                     referenceB.ReferenceId
                 |])
-
-    /// Verifies that the repository/worktree lease blocks materialization in another lane owner.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``working directory materialization lane waits for repository lease`` () =
-        withTempRepo (fun root ->
-            configureCurrentWatchIdentity root "current-repo" "current-branch"
-            |> ignore
-
-            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
-
-            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
-            |> ignore
-
-            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-            use operationEntered = new ManualResetEventSlim(false)
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (WorkingDirectoryMaterialization.runSerialized (fun () -> task { operationEntered.Set() |> ignore }))
-                        .GetAwaiter()
-                        .GetResult())
-
-            try
-                Task.Delay(150).Wait()
-
-                operationEntered.IsSet |> should equal false
-            finally
-                blockingLease.Dispose()
-
-            Task.WaitAll([| materializationTask |], 5000)
-            |> should equal true
-
-            operationEntered.IsSet |> should equal true)
-
-    /// Verifies that a Watch notification blocked on a local safe point does not own the repository file lease.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator releases file lease while waiting for safe point`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let dirtyStatus = { liveWatchStatus (Guid.NewGuid()) with HasPendingWatchWork = true; IsWorkingTreeClean = false }
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "safe-point-lease-test"))
-            let inspectStatus () = Task.FromResult(watchStatusInspection dirtyStatus)
-            let requestDegradedResync _ = Assert.Fail("Dirty IPC should wait for a safe point.")
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("dirty local status must not apply"))
-            use waitStarted = new ManualResetEventSlim(false)
-            use releaseWait = new ManualResetEventSlim(false)
-
-            let waitForSafePoint _ _ =
-                task {
-                    waitStarted.Set() |> ignore
-                    releaseWait.Wait()
-                }
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                        .GetAwaiter()
-                        .GetResult())
-
-            try
-                waitStarted.Wait(5000) |> should equal true
-
-                use _leaseProbe = new FileStream(WorkingDirectoryMaterialization.leaseFileName (), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-                Task.Delay(150).Wait()
-
-                materializationTask.IsCompleted
-                |> should equal false
-            finally
-                releaseWait.Set() |> ignore
-
-            Task.WaitAll([| materializationTask :> Task |], 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint)
-
-    /// Verifies that a Watch notification blocked on degraded IPC retry does not own the repository file lease.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator releases file lease while retrying degraded ipc`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "degraded-lease-test"))
-
-            let inspectStatus () = Task.FromResult(missingWatchStatusInspection)
-            let requestDegradedResync _ = ()
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("missing IPC must not apply"))
-            use retryStarted = new ManualResetEventSlim(false)
-            use releaseRetry = new ManualResetEventSlim(false)
-
-            let reestablishIpc _ _ =
-                task {
-                    retryStarted.Set() |> ignore
-                    releaseRetry.Wait()
-                }
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                        .GetAwaiter()
-                        .GetResult())
-
-            try
-                retryStarted.Wait(5000) |> should equal true
-
-                use _leaseProbe = new FileStream(WorkingDirectoryMaterialization.leaseFileName (), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-                Task.Delay(150).Wait()
-
-                materializationTask.IsCompleted
-                |> should equal false
-            finally
-                releaseRetry.Set() |> ignore
-
-            Task.WaitAll([| materializationTask :> Task |], 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync)
-
-    /// Verifies that branch-switch working-tree materialization waits behind an active Reference materialization.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator blocks branch switch lane until active reference completes`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "branch-switch-lane-test"))
-
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            use applyStarted = new ManualResetEventSlim(false)
-            use releaseApply = new ManualResetEventSlim(false)
-            use branchSwitchEntered = new ManualResetEventSlim(false)
-
-            let applyReference _ _ =
-                task {
-                    applyStarted.Set() |> ignore
-
-                    releaseApply.Wait()
-                }
-
-            let referenceTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                        .GetAwaiter()
-                        .GetResult())
-
-            let mutable branchSwitchTask: Task = null
-
-            try
-                applyStarted.Wait(5000) |> should equal true
-
-                branchSwitchTask <-
-                    Task.Run (fun () ->
-                        (WorkingDirectoryMaterialization.runSerialized (fun () -> task { branchSwitchEntered.Set() |> ignore }))
-                            .GetAwaiter()
-                            .GetResult())
-
-                Task.Delay(150).Wait()
-
-                branchSwitchEntered.IsSet |> should equal false
-            finally
-                releaseApply.Set() |> ignore
-
-            let tasksToWait =
-                if isNull branchSwitchTask then
-                    [| referenceTask :> Task |]
-                else
-                    [|
-                        referenceTask :> Task
-                        branchSwitchTask
-                    |]
-
-            Task.WaitAll(tasksToWait, 5000)
-            |> should equal true
-
-            referenceTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            branchSwitchEntered.IsSet |> should equal true)
-
-    /// Verifies that clean status observed before the repository lease cannot reach apply after local work arrives.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator rechecks clean gate after lease wait`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cleanStatus = liveWatchStatus (Guid.NewGuid())
-            let dirtyStatus = { cleanStatus with HasPendingWatchWork = true; IsWorkingTreeClean = false }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "post-lease-gate-test"))
-            let mutable inspectionCount = 0
-
-            let inspectStatus () =
-                inspectionCount <- inspectionCount + 1
-
-                if inspectionCount < 3 then
-                    Task.FromResult(watchStatusInspection cleanStatus)
-                else
-                    Task.FromResult(watchStatusInspection dirtyStatus)
-
-            let requestDegradedResync _ = Assert.Fail("Dirty post-lease status should wait for a safe point.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("post-lease dirty status must not apply"))
-            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
-
-            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
-            |> ignore
-
-            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                        .GetAwaiter()
-                        .GetResult())
-
-            Task.Delay(150).Wait()
-
-            materializationTask.IsCompleted
-            |> should equal false
-
-            blockingLease.Dispose()
-
-            Task.WaitAll([| materializationTask :> Task |], 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-
-            inspectionCount
-            |> should be (greaterThanOrEqualTo 3))
 
     /// Verifies that local Watch work arriving after dirty publication blocks mutation at the final pre-apply inspection.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
@@ -22763,8 +21690,6 @@ module WatchTests =
                     (Sha256Hash "post-pending-root")
                     (Blake3Hash "post-pending-root-blake3")
 
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "post-pending-gate-test"))
-
             let mutable inspectionCount = 0
 
             let inspectStatus () =
@@ -22776,19 +21701,10 @@ module WatchTests =
                     Task.FromResult(watchStatusInspection dirtyStatus)
 
             let requestDegradedResync _ = Assert.Fail("New local work must wait for a safe point rather than request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("post-pending local work must not apply"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .GetAwaiter()
                     .GetResult()
 
@@ -22797,214 +21713,6 @@ module WatchTests =
 
             inspectionCount
             |> should be (greaterThanOrEqualTo 4))
-
-    /// Verifies a cursor-admitted Reference completes before a later same-branch event arriving during its lease wait.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator preserves accepted reference while later event waits`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let acceptedReference =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "accepted-root")
-                    (Blake3Hash "accepted-root-blake3")
-
-            let newerReference =
-                { acceptedReference with
-                    ReferenceId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "newer-root"
-                    Blake3Hash = Blake3Hash "newer-root-blake3"
-                }
-
-            let branchDtos = Queue<Grace.Types.Branch.BranchDto>()
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference acceptedReference)
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference newerReference)
-
-            let branchFetches = ResizeArray<ReferenceId>()
-            use admissionInspected = new ManualResetEventSlim(false)
-
-            let getBranch () =
-                task {
-                    let branchDto = branchDtos.Dequeue()
-                    branchFetches.Add(branchDto.LatestReference.ReferenceId)
-
-                    return Ok(GraceReturnValue.Create branchDto "post-lease-accepted-reference-test")
-                }
-
-            let inspectStatus () =
-                admissionInspected.Set() |> ignore
-                Task.FromResult(watchStatusInspection status)
-
-            let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let appliedReferences = ResizeArray<ReferenceId>()
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
-
-            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
-            |> ignore
-
-            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        acceptedReference)
-                        .GetAwaiter()
-                        .GetResult())
-
-            let mutable laterMaterializationTask: Task<Watch.CurrentBranchMaterializationCoordinatorOutcome option> = null
-
-            try
-                admissionInspected.Wait(5000) |> should equal true
-
-                branchFetches.ToArray()
-                |> should equal Array.empty<ReferenceId>
-
-                laterMaterializationTask <-
-                    Task.Run (fun () ->
-                        (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                            getBranch
-                            inspectStatus
-                            requestDegradedResync
-                            waitForSafePoint
-                            reestablishIpc
-                            applyReference
-                            newerReference)
-                            .GetAwaiter()
-                            .GetResult())
-
-                Task.Delay(150).Wait()
-
-                branchFetches.ToArray()
-                |> should equal Array.empty<ReferenceId>
-            finally
-                blockingLease.Dispose()
-
-            let tasksToWait =
-                if isNull laterMaterializationTask then
-                    [| materializationTask :> Task |]
-                else
-                    [|
-                        materializationTask :> Task
-                        laterMaterializationTask :> Task
-                    |]
-
-            Task.WaitAll(tasksToWait, 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            laterMaterializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            appliedReferences.ToArray()
-            |> should
-                equal
-                [|
-                    acceptedReference.ReferenceId
-                    newerReference.ReferenceId
-                |])
-
-    /// Verifies that lease acquisition refreshes accepted-request root evidence before any local mutation begins.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator skips mutation when accepted root is already local after lease wait`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let acceptedReference =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "accepted-root-already-local")
-                    (Blake3Hash "accepted-root-already-local-blake3")
-
-            let initialStatus = liveWatchStatus (Guid.NewGuid())
-
-            let acceptedRootStatus =
-                { liveWatchStatus acceptedReference.DirectoryId with
-                    RootDirectorySha256Hash = acceptedReference.Sha256Hash
-                    RootDirectoryBlake3Hash = acceptedReference.Blake3Hash
-                }
-
-            let mutable currentStatus = initialStatus
-            let branchFetches = ResizeArray<ReferenceId>()
-            use preLeaseInspected = new ManualResetEventSlim(false)
-
-            let getBranch () =
-                branchFetches.Add(acceptedReference.ReferenceId)
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference acceptedReference) "accepted-root-revalidation-test"))
-
-            let mutable inspectionCount = 0
-
-            let inspectStatus () =
-                inspectionCount <- inspectionCount + 1
-
-                if inspectionCount >= 2 then preLeaseInspected.Set() |> ignore
-
-                Task.FromResult(watchStatusInspection currentStatus)
-
-            let requestDegradedResync _ = Assert.Fail("Readable current Watch evidence must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let appliedReferences = ResizeArray<ReferenceId>()
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
-
-            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
-            |> ignore
-
-            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        acceptedReference)
-                        .GetAwaiter()
-                        .GetResult())
-
-            try
-                preLeaseInspected.Wait(5000) |> should equal true
-                currentStatus <- acceptedRootStatus
-            finally
-                blockingLease.Dispose()
-
-            Task.WaitAll([| materializationTask :> Task |], 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            appliedReferences.ToArray()
-            |> should equal Array.empty<ReferenceId>)
 
     /// Verifies queued cursor-admitted References preserve their exact payloads without consulting BranchDto.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -23031,45 +21739,17 @@ module WatchTests =
                     (Sha256Hash "remote-root-b")
                     (Blake3Hash "remote-root-b-blake3")
 
-            let branchDtos = Queue<Grace.Types.Branch.BranchDto>()
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference referenceA)
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference referenceB)
-
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                task {
-                    let branchDto = branchDtos.Dequeue()
-                    branchFetches.Add(branchDto.LatestReference.ReferenceId)
-                    return Ok(GraceReturnValue.Create branchDto "queued-revalidation-test")
-                }
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromResult(())
+            let appliedReferences = ResizeArray<ReferenceId>()
+            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
 
             let outcomeA =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    referenceA)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference referenceA)
                     .Result
 
             let outcomeB =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    referenceB)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference referenceB)
                     .Result
 
             outcomeA.Value.Reason
@@ -23078,8 +21758,13 @@ module WatchTests =
             outcomeB.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>)
+            appliedReferences.ToArray()
+            |> should
+                equal
+                [|
+                    referenceA.ReferenceId
+                    referenceB.ReferenceId
+                |])
 
     /// Verifies that dirty local Watch state blocks remote apply and leaves local files untouched.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -23100,22 +21785,12 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-gate-test"))
             let inspectStatus () = Task.FromResult(watchStatusInspection dirtyStatus)
             let requestDegradedResync _ = Assert.Fail("Dirty but readable IPC should wait, not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("dirty local state must not apply remote materialization"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
@@ -23140,7 +21815,6 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "branch-switch-gate-test"))
             let mutable inspectionCount = 0
 
             let inspectStatus () =
@@ -23156,19 +21830,10 @@ module WatchTests =
                     Task.FromResult(watchStatusInspection (liveWatchStatus (Guid.NewGuid())))
 
             let requestDegradedResync _ = Assert.Fail("Clean IPC for the new branch should not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("old-branch Reference must not reach apply after branch switch"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
@@ -23206,14 +21871,9 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-ipc-before-apply-test"))
-
             let inspectStatus () = Services.inspectGraceWatchStatus ()
             let degradedResyncReasons = ResizeArray<string>()
             let requestDegradedResync reason = degradedResyncReasons.Add(reason)
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
 
             let applyReference _ (acceptedStatus: Services.GraceWatchStatus) =
                 task {
@@ -23242,14 +21902,7 @@ module WatchTests =
                 }
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             degradedResyncReasons.ToArray()
@@ -23257,610 +21910,6 @@ module WatchTests =
 
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied)
-
-    /// Verifies that apply cannot substitute a later persisted status for the clean snapshot accepted by the coordinator.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization remains bound to coordinator accepted status`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "unchanged.txt")
-            File.WriteAllText(targetPath, "local")
-
-            let acceptedRootId = Guid.NewGuid()
-            let acceptedStatus = graceStatusFromWorkingTree root acceptedRootId [| "unchanged.txt" |] Array.empty
-            let replacementStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "unchanged.txt" |] Array.empty
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] replacementStatus writtenStatuses resyncRequests with
-                    TryCreateUpdateMarker =
-                        fun _ _ ->
-                            Assert.Fail("A changed gated snapshot must fail before marker creation.")
-                            false
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation =
-                Func<Task> (fun () ->
-                    (Watch.applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
-                        clients
-                        notification
-                        (acceptedMaterializationStatus acceptedStatus))
-                    :> Task)
-
-            let error = Assert.ThrowsAsync<InvalidOperationException>(operation)
-
-            error.Message
-            |> should startWith "Remote materialization persisted status no longer matches the clean snapshot accepted by the coordinator gate"
-
-            File.ReadAllText(targetPath)
-            |> should equal "local"
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-
-            resyncRequests[0]
-            |> should contain "no longer matches")
-
-    /// Verifies that each repository identity component is checked independently across fetched metadata.
-    [<TestCase("owner")>]
-    [<TestCase("organization")>]
-    [<TestCase("repository")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects cross repository metadata`` mismatch =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty
-
-            match mismatch with
-            | "owner" -> remoteRoot.OwnerId <- Guid.NewGuid()
-            | "organization" -> remoteRoot.OrganizationId <- Guid.NewGuid()
-            | "repository" -> remoteRoot.RepositoryId <- Guid.NewGuid()
-            | value -> invalidArg (nameof mismatch) value
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation =
-                Func<Task> (fun () ->
-                    (Watch.applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
-                        clients
-                        notification
-                        (acceptedMaterializationStatus currentStatus))
-                    :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-
-            resyncRequests[0]
-            |> should contain $"mismatched {mismatch}")
-
-    /// Verifies that canonical-looking metadata still cannot target configured Grace local-state paths.
-    [<TestCase(".grace")>]
-    [<TestCase(".grace/objects")>]
-    [<TestCase(".grace/directory-versions")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects Grace local paths`` reservedPath =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-            let child = remoteDirectoryVersion (Guid.NewGuid()) reservedPath Array.empty Array.empty
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath [| child.DirectoryVersionId |] Array.empty
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| child |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot; child |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation =
-                Func<Task> (fun () ->
-                    (Watch.applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
-                        clients
-                        notification
-                        (acceptedMaterializationStatus currentStatus))
-                    :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.Exists(Services.updateInProgressFileName ())
-            |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-
-            resyncRequests[0]
-            |> should contain "Grace local storage")
-
-    /// Verifies that empty-directory metadata must already use Watch's unambiguous repository-relative path form.
-    [<TestCase("")>]
-    [<TestCase("nested\\child")>]
-    [<TestCase("nested//child")>]
-    [<TestCase("nested/")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects noncanonical empty directory paths`` invalidPath =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-            let child = remoteDirectoryVersion (Guid.NewGuid()) invalidPath Array.empty Array.empty
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath [| child.DirectoryVersionId |] Array.empty
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| child |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot; child |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation =
-                Func<Task> (fun () ->
-                    (Watch.applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
-                        clients
-                        notification
-                        (acceptedMaterializationStatus currentStatus))
-                    :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-
-            resyncRequests[0]
-            |> should contain "canonical repository-relative form")
-
-    /// Verifies that file metadata uses the same canonical repository-relative representation as directory metadata.
-    [<TestCase("")>]
-    [<TestCase("nested\\file.txt")>]
-    [<TestCase("nested//file.txt")>]
-    [<TestCase("nested/file.txt/")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects noncanonical file paths`` (invalidPath: string) =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-            let remoteFile = cacheRemoteFileVersion root "canonical-file.txt" "remote payload"
-            remoteFile.RelativePath <- RelativePath invalidPath
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation =
-                Func<Task> (fun () ->
-                    (Watch.applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
-                        clients
-                        notification
-                        (acceptedMaterializationStatus currentStatus))
-                    :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.Exists(Services.updateInProgressFileName ())
-            |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-
-            resyncRequests[0]
-            |> should contain "canonical repository-relative form")
-
-    /// Verifies that missing object-cache content stops exact remote materialization before target mutation.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization refuses missing object cache before target mutation`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            let objectCachePath = Services.getLocalObjectCachePathForFileVersion remoteFile
-            File.Delete(objectCachePath)
-            File.WriteAllText(targetPath, "local payload")
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(targetPath)
-            |> should equal "local payload"
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should not' (equal Array.empty<string>))
-
-    /// Verifies corrupt object-cache content stops exact remote materialization before target mutation.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization refuses corrupt object cache before target mutation`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            let objectCachePath = Services.getLocalObjectCachePathForFileVersion remoteFile
-            File.WriteAllText(targetPath, "local payload")
-            File.WriteAllText(objectCachePath, "corrupt cached payload")
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(targetPath)
-            |> should equal "local payload"
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should not' (equal Array.empty<string>))
-
-    /// Verifies recursive metadata fetch failures request recovery before surfacing the error.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization requests resync when metadata fetch fails`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients Array.empty currentStatus writtenStatuses resyncRequests with
-                    GetRemoteDirectoryVersions =
-                        fun _ correlationId ->
-                            Task.FromResult<Result<DirectoryVersion array, GraceError>>(Error(GraceError.Create "metadata unavailable" correlationId))
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "expected-root-sha")
-                    (Blake3Hash "expected-root-blake3")
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should
-                equal
-                [|
-                    "remote materialization metadata fetch failed before exact apply: metadata unavailable"
-                |])
-
-    /// Verifies the fetched root hash identity must match the accepted Reference payload.
-    [<TestCase("sha256")>]
-    [<TestCase("blake3")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects mismatched root payload identity`` mismatchedHash =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let expectedSha256Hash =
-                if mismatchedHash = "sha256" then
-                    Sha256Hash "mismatched-root-sha"
-                else
-                    remoteRoot.Sha256Hash
-
-            let expectedBlake3Hash =
-                if mismatchedHash = "blake3" then
-                    Blake3Hash "mismatched-root-blake3"
-                else
-                    remoteRoot.Blake3Hash
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    expectedSha256Hash
-                    expectedBlake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies retained files must still match the clean snapshot before replacement status is written.
-    [<TestCase("deleted")>]
-    [<TestCase("changed")>]
-    [<TestCase("replaced-by-directory")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization refuses invalid retained file`` retainedMutation =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let retainedPath = Path.Combine(root, "retained.txt")
-            let remoteFile = cacheRemoteFileVersion root "retained.txt" "retained payload"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "retained.txt" |] Array.empty<string>
-
-            match retainedMutation with
-            | "deleted" -> File.Delete(retainedPath)
-            | "changed" -> File.WriteAllText(retainedPath, "local retained edit")
-            | "replaced-by-directory" ->
-                File.Delete(retainedPath)
-                Directory.CreateDirectory(retainedPath) |> ignore
-            | unexpected -> Assert.Fail($"Unexpected retained-file mutation: {unexpected}")
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies case-colliding remote targets are not represented as one physical file on case-insensitive worktrees.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects case colliding remote paths`` () =
-        withTempRepo (fun root ->
-            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cachedUpper = cacheRemoteFileVersion root "upper-source.tmp" "upper payload"
-            let cachedLower = cacheRemoteFileVersion root "lower-source.tmp" "lower payload"
-            File.Delete(Path.Combine(root, "upper-source.tmp"))
-            File.Delete(Path.Combine(root, "lower-source.tmp"))
-
-            let remoteUpper =
-                FileVersion.CreateWithHashes
-                    (RelativePath "Case.txt")
-                    cachedUpper.Sha256Hash
-                    cachedUpper.Blake3Hash
-                    String.Empty
-                    cachedUpper.IsBinary
-                    cachedUpper.Size
-
-            let remoteLower =
-                FileVersion.CreateWithHashes
-                    (RelativePath "case.txt")
-                    cachedLower.Sha256Hash
-                    cachedLower.Blake3Hash
-                    String.Empty
-                    cachedLower.IsBinary
-                    cachedLower.Size
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteUpper; remoteLower |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            let thrown = Assert.ThrowsAsync<InvalidOperationException>(operation)
-            thrown.Message |> should contain "case-colliding"
-
-            File.Exists(Path.Combine(root, "Case.txt"))
-            |> should equal false
-
-            File.Exists(Path.Combine(root, "case.txt"))
-            |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies a path absent from the clean snapshot cannot be created locally before the remote copy.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization refuses newly created absent target before copy`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.Delete(targetPath)
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            File.WriteAllText(targetPath, "local create after clean gate")
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(targetPath)
-            |> should equal "local create after clean gate"
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should not' (equal Array.empty<string>))
-
-    /// Verifies recursive DirectoryVersion metadata must include every declared child before planning mutations.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization refuses partial directory version closure before mutation`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.Delete(targetPath)
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-
-            let missingChildId = Guid.NewGuid()
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| missingChildId |] [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.Exists(targetPath) |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should not' (equal Array.empty<string>))
-
-    /// Verifies completion persistence failures cannot prevent best-effort shared-marker cleanup or replace the original error.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization cleanup preserves sidecar failure and attempts marker deletion`` () =
-        let markerPath = Path.GetTempFileName()
-        let markerDeletionAttempts = ResizeArray<unit>()
-        let sidecarFailure = InvalidOperationException("injected completion sidecar failure")
-
-        let operation =
-            Action (fun () ->
-                Watch.completeCurrentBranchMaterializationMarkerForWatchTests
-                    (fun () -> raise sidecarFailure)
-                    (fun () ->
-                        markerDeletionAttempts.Add()
-                        File.Delete(markerPath)
-                        raise (IOException("injected marker deletion failure")))
-                |> ignore)
-
-        let observed = Assert.Throws<InvalidOperationException>(operation)
-        observed |> should be (sameAs sidecarFailure)
-        markerDeletionAttempts.Count |> should equal 1
-        File.Exists(markerPath) |> should equal false
 
     /// Verifies SHA-only expected file identities accept any computed BLAKE3 while retaining strict SHA and present-BLAKE3 checks.
     [<TestCase("matching-sha", "", "computed-blake3", true)>]
@@ -23949,330 +21998,6 @@ module WatchTests =
     let ``current branch remote materialization validates immediate child paths`` (parentPath: string) (childPath: string) expected =
         Watch.currentBranchMaterializationPathIsImmediateChildForWatchTests (RelativePath parentPath) (RelativePath childPath)
         |> should equal expected
-
-    /// Verifies replacement status accepts binary metadata only when it matches the trusted content bytes.
-    [<TestCase("object-cache")>]
-    [<TestCase("retained-working-tree")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects mismatched binary metadata before mutation`` evidenceSource =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let relativePath = "binary.dat"
-            let targetPath = Path.Combine(root, relativePath)
-            let remoteFile = cacheRemoteFileVersion root relativePath "binary\u0000content"
-            remoteFile.IsBinary |> should equal true
-            remoteFile.IsBinary <- false
-
-            let currentStatus =
-                match evidenceSource with
-                | "object-cache" ->
-                    File.Delete(targetPath)
-                    graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-                | "retained-working-tree" -> graceStatusFromWorkingTree root (Guid.NewGuid()) [| relativePath |] Array.empty
-                | value -> invalidArg (nameof evidenceSource) value
-
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    TryCreateUpdateMarker =
-                        fun _ _ ->
-                            Assert.Fail("Mismatched binary metadata must fail before target mutation starts.")
-                            false
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-            resyncRequests[0] |> should contain "binary"
-
-            match evidenceSource with
-            | "object-cache" -> File.Exists(targetPath) |> should equal false
-            | "retained-working-tree" ->
-                File.ReadAllText(targetPath)
-                |> should equal "binary\u0000content"
-            | _ -> ())
-
-    /// Verifies every fetched directory reports the direct-file total used by Grace directory versions.
-    [<TestCase("root")>]
-    [<TestCase("child")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects impossible direct file directory size before mutation`` invalidDirectory =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-            let remoteFile = cacheRemoteFileVersion root "child/file.txt" "remote bytes"
-            Directory.Delete(Path.Combine(root, "child"), true)
-            let child = remoteDirectoryVersion (Guid.NewGuid()) "child" Array.empty [| remoteFile |]
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath [| child.DirectoryVersionId |] Array.empty
-
-            match invalidDirectory with
-            | "child" -> child.Size <- child.Size + 1L
-            | "root" -> ()
-            | value -> invalidArg (nameof invalidDirectory) value
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| child |]
-            |> ignore
-
-            if invalidDirectory = "root" then remoteRoot.Size <- 1L
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot; child |] currentStatus writtenStatuses resyncRequests with
-                    TryCreateUpdateMarker =
-                        fun _ _ ->
-                            Assert.Fail("Impossible directory size must fail before target mutation starts.")
-                            false
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            Directory.Exists(Path.Combine(root, "child"))
-            |> should equal false
-
-            File.Exists(Path.Combine(root, "child", "file.txt"))
-            |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-            resyncRequests[0] |> should contain "size")
-
-    /// Verifies SHA-only child metadata is rejected before mutation and requests the established recovery path.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects empty child BLAKE3 before mutation`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
-            let remoteFile = cacheRemoteFileVersion root "child/file.txt" "remote bytes"
-            let targetPath = Path.Combine(root, "child", "file.txt")
-            File.Delete(targetPath)
-            let child = remoteDirectoryVersion (Guid.NewGuid()) "child" Array.empty [| remoteFile |]
-            child.Blake3Hash <- Blake3Hash String.Empty
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath [| child.DirectoryVersionId |] Array.empty
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| child |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot; child |] currentStatus writtenStatuses resyncRequests with
-                    TryCreateUpdateMarker =
-                        fun _ _ ->
-                            Assert.Fail("Empty child BLAKE3 must fail before target mutation starts.")
-                            false
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.Exists(targetPath) |> should equal false
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1
-            resyncRequests[0] |> should contain "BLAKE3")
-
-    /// Verifies recursive metadata is one exact acyclic root closure before status planning.
-    [<TestCase("unreachable")>]
-    [<TestCase("duplicate")>]
-    [<TestCase("cycle")>]
-    [<TestCase("missing")>]
-    [<TestCase("child-hash")>]
-    [<TestCase("root-hash")>]
-    [<TestCase("unrelated-path")>]
-    [<TestCase("traversal-path")>]
-    [<TestCase("absolute-path")>]
-    [<TestCase("skipped-level-path")>]
-    [<TestCase("nested-file-path")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects untrusted recursive metadata before mutation`` invalidShape =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let childId = Guid.NewGuid()
-            let rootId = Guid.NewGuid()
-
-            let childPath =
-                match invalidShape with
-                | "unrelated-path" -> "other/child"
-                | "traversal-path" -> "parent/../child"
-                | "absolute-path" -> Path.Combine(Path.GetPathRoot(root), "absolute-child")
-                | "skipped-level-path" -> "parent/child/grandchild"
-                | _ -> "child"
-
-            let parentPath =
-                match invalidShape with
-                | "unrelated-path"
-                | "traversal-path"
-                | "skipped-level-path" -> "parent"
-                | _ -> Constants.RootDirectoryPath
-
-            let child = remoteDirectoryVersion childId childPath Array.empty Array.empty<FileVersion>
-            let remoteRoot = remoteDirectoryVersion rootId Constants.RootDirectoryPath [| childId |] Array.empty<FileVersion>
-
-            let remoteParent =
-                if parentPath = Constants.RootDirectoryPath then
-                    remoteRoot
-                else
-                    remoteDirectoryVersion (Guid.NewGuid()) parentPath [| childId |] Array.empty<FileVersion>
-
-            if invalidShape = "nested-file-path" then
-                let nestedFile =
-                    FileVersion.CreateWithHashes
-                        (RelativePath "child/nested/file.txt")
-                        (Sha256Hash "nested-file-sha")
-                        (Blake3Hash "nested-file-blake3")
-                        String.Empty
-                        false
-                        1L
-
-                child.Files <- List<FileVersion>([| nestedFile |])
-
-                setCanonicalRemoteDirectoryHashes child Array.empty
-                |> ignore
-
-            setCanonicalRemoteDirectoryHashes remoteParent [| child |]
-            |> ignore
-
-            if remoteParent.DirectoryVersionId
-               <> remoteRoot.DirectoryVersionId then
-                remoteRoot.Directories <- List<DirectoryVersionId>([| remoteParent.DirectoryVersionId |])
-
-                setCanonicalRemoteDirectoryHashes remoteRoot [| remoteParent |]
-                |> ignore
-
-            let acceptedSha256Hash = remoteRoot.Sha256Hash
-            let acceptedBlake3Hash = remoteRoot.Blake3Hash
-
-            let remoteVersions =
-                match invalidShape with
-                | "unreachable" ->
-                    let extra = remoteDirectoryVersion (Guid.NewGuid()) "extra" Array.empty Array.empty<FileVersion>
-
-                    [|
-                        remoteRoot
-                        remoteParent
-                        child
-                        extra
-                    |]
-                    |> Array.distinctBy (fun directoryVersion -> directoryVersion.DirectoryVersionId)
-                | "duplicate" -> [| remoteRoot; child; child |]
-                | "cycle" ->
-                    child.Directories <- List<DirectoryVersionId>([| rootId |])
-                    [| remoteRoot; child |]
-                | "missing" -> [| remoteRoot |]
-                | "child-hash" ->
-                    child.Sha256Hash <- Sha256Hash "corrupt-child"
-                    [| remoteRoot; child |]
-                | "root-hash" ->
-                    remoteRoot.Blake3Hash <- Blake3Hash "corrupt-root"
-                    [| remoteRoot; child |]
-                | "unrelated-path"
-                | "traversal-path"
-                | "absolute-path"
-                | "skipped-level-path" ->
-                    [| remoteRoot; remoteParent; child |]
-                    |> Array.distinctBy (fun directoryVersion -> directoryVersion.DirectoryVersionId)
-                | "nested-file-path" -> [| remoteRoot; child |]
-                | _ -> failwith $"Unexpected invalid metadata shape: {invalidShape}."
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients remoteVersions currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification currentRepositoryId currentBranchId ReferenceType.Save rootId acceptedSha256Hash acceptedBlake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should be (greaterThan 0))
-
-    /// Verifies canonical root-only and nested responses pass closure and bottom-up hash proof.
-    [<TestCase(false)>]
-    [<TestCase(true)>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization accepts canonical recursive metadata`` nested =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let rootId = Guid.NewGuid()
-
-            let remoteVersions, remoteRoot =
-                if nested then
-                    let child = remoteDirectoryVersion (Guid.NewGuid()) "child" Array.empty Array.empty<FileVersion>
-                    let rootVersion = remoteDirectoryVersion rootId Constants.RootDirectoryPath [| child.DirectoryVersionId |] Array.empty<FileVersion>
-
-                    setCanonicalRemoteDirectoryHashes rootVersion [| child |]
-                    |> ignore
-
-                    [| rootVersion; child |], rootVersion
-                else
-                    let rootVersion = remoteDirectoryVersion rootId Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-                    [| rootVersion |], rootVersion
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients remoteVersions currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    rootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
-                .GetAwaiter()
-                .GetResult()
-
-            writtenStatuses.Count |> should equal 1
-            resyncRequests.Count |> should equal 0)
 
     /// Verifies materialization planning does not collapse case-distinct paths under case-sensitive repository rules.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
@@ -24441,1135 +22166,6 @@ module WatchTests =
             finally
                 Watch.clearPendingWatchWorkForTests ())
 
-    /// Verifies case-sensitive containment rejects paths that differ only by the root directory casing.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization containment respects case-sensitive root paths`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-
-            let rootName =
-                Path.GetFileName(
-                    root.TrimEnd(
-                        [|
-                            Path.DirectorySeparatorChar
-                            Path.AltDirectorySeparatorChar
-                        |]
-                    )
-                )
-
-            let differentlyCasedRootName = requireDifferentlyCasedPath rootName
-            let escapedRelativePath = RelativePath $"../{differentlyCasedRootName}/target.txt"
-
-            let remoteFile = FileVersion.CreateWithHashes escapedRelativePath (Sha256Hash "remote-sha") (Blake3Hash "remote-blake3") String.Empty false 1L
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            try
-                Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
-                let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-                Assert.ThrowsAsync<InvalidOperationException>(operation)
-                |> ignore
-
-                writtenStatuses.Count |> should equal 0
-
-                resyncRequests.ToArray()
-                |> should not' (equal Array.empty<string>)
-            finally
-                Watch.clearPendingWatchWorkForTests ())
-
-    /// Verifies exact remote materialization handles file/directory swaps and leaves unchanged files alone.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization applies exact targets without touching unchanged files`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFileForDirectoryPath = cacheRemoteFileVersion root "local-dir" "remote file replaces local directory"
-            File.Delete(Path.Combine(root, "local-dir"))
-
-            Directory.CreateDirectory(Path.Combine(root, "local-dir"))
-            |> ignore
-
-            let remoteChangedFile = cacheRemoteFileVersion root "changed.txt" "remote changed payload"
-            File.WriteAllText(Path.Combine(root, "changed.txt"), "local changed payload")
-
-            let unchangedFile = cacheRemoteFileVersion root "unchanged.txt" "same payload"
-            let unchangedWriteTime = File.GetLastWriteTimeUtc(Path.Combine(root, "unchanged.txt"))
-
-            File.WriteAllText(Path.Combine(root, "local-file"), "local file becomes directory")
-
-            let currentStatus =
-                graceStatusFromWorkingTree
-                    root
-                    (Guid.NewGuid())
-                    [|
-                        "changed.txt"
-                        "local-file"
-                        "unchanged.txt"
-                    |]
-                    [| "local-dir" |]
-
-            let remoteDirectoryId = Guid.NewGuid()
-            let remoteDirectory = remoteDirectoryVersion remoteDirectoryId "local-file" Array.empty Array.empty<FileVersion>
-            let remoteRootId = Guid.NewGuid()
-
-            let remoteRoot =
-                remoteDirectoryVersion
-                    remoteRootId
-                    Constants.RootDirectoryPath
-                    [| remoteDirectoryId |]
-                    [|
-                        remoteChangedFile
-                        remoteFileForDirectoryPath
-                        unchangedFile
-                    |]
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot; remoteDirectory |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
-                .GetAwaiter()
-                .GetResult()
-
-            File.ReadAllText(Path.Combine(root, "local-dir"))
-            |> should equal "remote file replaces local directory"
-
-            Directory.Exists(Path.Combine(root, "local-file"))
-            |> should equal true
-
-            File.ReadAllText(Path.Combine(root, "changed.txt"))
-            |> should equal "remote changed payload"
-
-            File.ReadAllText(Path.Combine(root, "unchanged.txt"))
-            |> should equal "same payload"
-
-            File.GetLastWriteTimeUtc(Path.Combine(root, "unchanged.txt"))
-            |> should equal unchangedWriteTime
-
-            writtenStatuses.Count |> should equal 1
-
-            let writtenUnchangedFile =
-                writtenStatuses[0].Index.Values
-                |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
-                |> Seq.find (fun fileVersion -> fileVersion.RelativePath = RelativePath "unchanged.txt")
-
-            writtenUnchangedFile.LastWriteTimeUtc
-            |> should equal unchangedWriteTime
-
-            writtenStatuses[0].RootDirectoryId
-            |> should equal remoteRootId
-
-            let expectedDirectoryIds = HashSet<DirectoryVersionId>([| remoteRootId; remoteDirectoryId |])
-
-            Watch
-                .graceStatusDirectoryIdsForWatchTests()
-                .SetEquals(expectedDirectoryIds)
-            |> should equal true
-
-            resyncRequests.Count |> should equal 0)
-
-    /// Verifies a retained tracked parent must remain the accepted directory until exact remote child materialization starts.
-    [<TestCase("intact")>]
-    [<TestCase("deleted")>]
-    [<TestCase("replaced")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization revalidates retained tracked parent before remote child write`` mutation =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let retainedParent = "retained-parent"
-            let targetPath = Path.Combine(root, retainedParent, "remote-child.txt")
-
-            Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
-            |> ignore
-
-            let remoteFile = cacheRemoteFileVersion root $"{retainedParent}/remote-child.txt" "remote payload"
-            File.Delete(targetPath)
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> [| retainedParent |]
-            let remoteDirectoryId = Guid.NewGuid()
-            let remoteDirectory = remoteDirectoryVersion remoteDirectoryId retainedParent Array.empty [| remoteFile |]
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| remoteDirectoryId |] Array.empty<FileVersion>
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot; remoteDirectory |] currentStatus writtenStatuses resyncRequests with
-                    BeforeFinalVerification =
-                        fun () ->
-                            match mutation with
-                            | "deleted" -> Directory.Delete(Path.Combine(root, retainedParent), true)
-                            | "replaced" ->
-                                Directory.Delete(Path.Combine(root, retainedParent), true)
-                                File.WriteAllText(Path.Combine(root, retainedParent), "local replacement")
-                            | "intact" -> ()
-                            | unexpected -> failwith $"Unexpected retained parent mutation: {unexpected}"
-
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            match mutation with
-            | "intact" ->
-                operation.Invoke().GetAwaiter().GetResult()
-
-                File.ReadAllText(targetPath)
-                |> should equal "remote payload"
-
-                writtenStatuses.Count |> should equal 1
-                resyncRequests.Count |> should equal 0
-            | "deleted"
-            | "replaced" ->
-                Assert.ThrowsAsync<InvalidOperationException>(operation)
-                |> ignore
-
-                File.Exists(targetPath) |> should equal false
-                writtenStatuses.Count |> should equal 0
-                resyncRequests.Count |> should equal 1
-            | _ -> ())
-
-    /// Verifies a parent directory explicitly created by the remote materialization plan remains eligible for child file creation.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization permits planned remote created parent`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let createdParent = "remote-created-parent"
-            let targetPath = Path.Combine(root, createdParent, "remote-child.txt")
-            let remoteFile = cacheRemoteFileVersion root $"{createdParent}/remote-child.txt" "remote payload"
-
-            Directory.Delete(Path.Combine(root, createdParent), true)
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteDirectoryId = Guid.NewGuid()
-            let remoteDirectory = remoteDirectoryVersion remoteDirectoryId createdParent Array.empty [| remoteFile |]
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| remoteDirectoryId |] Array.empty<FileVersion>
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot; remoteDirectory |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
-                .GetAwaiter()
-                .GetResult()
-
-            File.ReadAllText(targetPath)
-            |> should equal "remote payload"
-
-            writtenStatuses.Count |> should equal 1
-            resyncRequests.Count |> should equal 0)
-
-    /// Verifies a planned remote child cannot recreate a retained tracked ancestor deleted after the clean snapshot.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization blocks planned parent beneath deleted retained ancestor`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let retainedParent = "retained-parent"
-            let createdParent = $"{retainedParent}/remote-created-parent"
-            let targetPath = Path.Combine(root, retainedParent, "remote-created-parent", "remote-child.txt")
-
-            Directory.CreateDirectory(Path.Combine(root, retainedParent))
-            |> ignore
-
-            let remoteFile = cacheRemoteFileVersion root $"{createdParent}/remote-child.txt" "remote payload"
-
-            Directory.Delete(Path.Combine(root, retainedParent, "remote-created-parent"), true)
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> [| retainedParent |]
-            let createdDirectoryId = Guid.NewGuid()
-            let createdDirectory = remoteDirectoryVersion createdDirectoryId createdParent Array.empty [| remoteFile |]
-            let retainedDirectoryId = Guid.NewGuid()
-
-            let retainedDirectory = remoteDirectoryVersion retainedDirectoryId retainedParent [| createdDirectoryId |] Array.empty<FileVersion>
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| retainedDirectoryId |] Array.empty<FileVersion>
-
-            setCanonicalRemoteDirectoryHashes retainedDirectory [| createdDirectory |]
-            |> ignore
-
-            setCanonicalRemoteDirectoryHashes remoteRoot [| retainedDirectory |]
-            |> ignore
-
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let targetMutations = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients
-                      [|
-                          remoteRoot
-                          retainedDirectory
-                          createdDirectory
-                      |]
-                      currentStatus
-                      writtenStatuses
-                      resyncRequests with
-                    BeforeFinalVerification =
-                        fun () ->
-                            Directory.Delete(Path.Combine(root, retainedParent), true)
-                            Task.FromResult(())
-                    BeforeTargetMutation = targetMutations.Add
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            let error = Assert.ThrowsAsync<InvalidOperationException>(operation)
-
-            error.Message
-            |> should startWith "Remote materialization retained directory changed before apply"
-
-            File.Exists(targetPath) |> should equal false
-
-            targetMutations
-            |> should equal [| "final verification" |]
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies a target edited after the clean gate fails closed before remote bytes overwrite it.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization requests resync when target changes before exact apply`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.WriteAllText(Path.Combine(root, "target.txt"), "local payload")
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-            File.WriteAllText(Path.Combine(root, "target.txt"), "local edit after clean gate")
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(Path.Combine(root, "target.txt"))
-            |> should equal "local edit after clean gate"
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should not' (equal Array.empty<string>))
-
-    /// Verifies a target edit after early preflight is caught at the final mutation boundary.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rechecks target immediately before mutation`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.WriteAllText(targetPath, "clean local payload")
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeFinalVerification =
-                        fun () ->
-                            File.WriteAllText(targetPath, "local edit after early preflight")
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(targetPath)
-            |> should equal "local edit after early preflight"
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies final target checks cover creates, deletes, and file-directory swaps without timing sleeps.
-    [<TestCase("create")>]
-    [<TestCase("delete")>]
-    [<TestCase("file-to-directory")>]
-    [<TestCase("directory-to-file")>]
-    [<Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rechecks every mutation shape at final boundary`` mutationShape =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target")
-            let mutable hookMutation = fun () -> ()
-
-            let currentStatus, remoteDirectoryVersions =
-                match mutationShape with
-                | "create" ->
-                    let remoteFile = cacheRemoteFileVersion root "target" "remote payload"
-                    File.Delete(targetPath)
-
-                    let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-                    let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-                    hookMutation <- fun () -> File.WriteAllText(targetPath, "local create after early preflight")
-                    currentStatus, [| remoteRoot |]
-                | "delete" ->
-                    File.WriteAllText(targetPath, "clean local payload")
-                    let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target" |] Array.empty<string>
-                    let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-                    hookMutation <- fun () -> File.WriteAllText(targetPath, "local edit after early preflight")
-                    currentStatus, [| remoteRoot |]
-                | "file-to-directory" ->
-                    File.WriteAllText(targetPath, "clean local payload")
-                    let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target" |] Array.empty<string>
-                    let remoteDirectoryId = Guid.NewGuid()
-                    let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath [| remoteDirectoryId |] Array.empty<FileVersion>
-                    let remoteDirectory = remoteDirectoryVersion remoteDirectoryId "target" Array.empty Array.empty<FileVersion>
-
-                    setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
-                    |> ignore
-
-                    hookMutation <- fun () -> File.WriteAllText(targetPath, "local edit before type swap")
-                    currentStatus, [| remoteRoot; remoteDirectory |]
-                | "directory-to-file" ->
-                    let remoteFile = cacheRemoteFileVersion root "target" "remote payload"
-                    File.Delete(targetPath)
-                    Directory.CreateDirectory(targetPath) |> ignore
-                    let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> [| "target" |]
-                    let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-
-                    hookMutation <-
-                        fun () ->
-                            Directory.CreateDirectory(Path.Combine(targetPath, "local-empty"))
-                            |> ignore
-
-                    currentStatus, [| remoteRoot |]
-                | unexpected -> failwith $"Unexpected mutation shape: {unexpected}"
-
-            let remoteRoot = remoteDirectoryVersions[0]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients remoteDirectoryVersions currentStatus writtenStatuses resyncRequests with
-                    BeforeFinalVerification =
-                        fun () ->
-                            hookMutation ()
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies retained files are rechecked after target mutation and before replacement status is committed.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rechecks retained file before status replacement`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let retainedPath = Path.Combine(root, "retained.txt")
-            let retainedFile = cacheRemoteFileVersion root "retained.txt" "retained payload"
-            let changedFile = cacheRemoteFileVersion root "changed.txt" "remote changed payload"
-            File.WriteAllText(Path.Combine(root, "changed.txt"), "clean local changed payload")
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "retained.txt"; "changed.txt" |] Array.empty<string>
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| retainedFile; changedFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeStatusReplacementVerification =
-                        fun () ->
-                            File.WriteAllText(retainedPath, "retained edit before status replacement")
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(retainedPath)
-            |> should equal "retained edit before status replacement"
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies a failed local status read requests recovery before the post-pending failure escapes.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization requests resync when local status read fails`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] GraceStatus.Default writtenStatuses resyncRequests with
-                    ReadGraceStatus = fun () -> Task.FromException<GraceStatus>(InvalidOperationException("injected status read failure"))
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies invalid local status cannot fail plan construction without requesting recovery.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization requests resync when plan construction fails`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentRoot = localDirectoryVersion Constants.RootDirectoryPath (List<DirectoryVersionId>()) (List<LocalFileVersion>())
-            let currentStatus = graceStatusFromRootDirectory currentRoot
-
-            let duplicateRoot =
-                LocalDirectoryVersion.CreateWithHashes
-                    (Guid.NewGuid())
-                    currentRoot.OwnerId
-                    currentRoot.OrganizationId
-                    currentRoot.RepositoryId
-                    Constants.RootDirectoryPath
-                    currentRoot.Sha256Hash
-                    currentRoot.Blake3Hash
-                    (List<DirectoryVersionId>())
-                    (List<LocalFileVersion>())
-                    currentRoot.Size
-                    currentRoot.LastWriteTimeUtc
-
-            currentStatus.Index.TryAdd(duplicateRoot.DirectoryVersionId, duplicateRoot)
-            |> ignore
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<ArgumentException>(operation)
-            |> ignore
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies a partial initial marker write is removed before the write failure escapes.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization cleans partial initial marker write failure`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    TryCreateUpdateMarker =
-                        fun markerFileName _ ->
-                            File.WriteAllText(markerFileName, "partial")
-                            File.Delete(markerFileName)
-                            raise (IOException("injected marker write failure"))
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<IOException>(operation)
-            |> ignore
-
-            File.Exists(Services.updateInProgressFileName ())
-            |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies a competing Grace command marker wins the creation race without being overwritten or removed.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization preserves competing update marker creation`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.WriteAllText(targetPath, "local payload")
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let competingMarker = "`grace rebase` is in progress."
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    TryCreateUpdateMarker =
-                        fun markerFileName _ ->
-                            File.WriteAllText(markerFileName, competingMarker)
-                            false
-                    BeforeFinalVerification =
-                        fun () -> Task.FromException<unit>(InvalidOperationException("A losing marker race must not enter apply verification."))
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(Services.updateInProgressFileName ())
-            |> should equal competingMarker
-
-            File.Exists(
-                Services.updateInProgressFileName ()
-                + ".completed"
-            )
-            |> should equal false
-
-            File.ReadAllText(targetPath)
-            |> should equal "local payload"
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies replacement after marker creation fails closed without deleting the replacement marker.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization preserves externally replaced owned marker`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let targetPath = Path.Combine(root, "target.txt")
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.WriteAllText(targetPath, "local payload")
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let replacementMarker = "`grace rebase` is in progress."
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeFinalVerification =
-                        fun () ->
-                            File.WriteAllText(Services.updateInProgressFileName (), replacementMarker)
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(Services.updateInProgressFileName ())
-            |> should equal replacementMarker
-
-            File.ReadAllText(targetPath)
-            |> should equal "local payload"
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies ownership replacement between sequential writes prevents every later target mutation.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization stops sequential mutations after marker replacement`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let firstFile = cacheRemoteFileVersion root "first.txt" "first remote payload"
-            let secondFile = cacheRemoteFileVersion root "second.txt" "second remote payload"
-            File.Delete(Path.Combine(root, "first.txt"))
-            File.Delete(Path.Combine(root, "second.txt"))
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| firstFile; secondFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let replacementMarker = "`grace rebase` is in progress."
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeTargetMutation =
-                        fun mutation ->
-                            if mutation = "copy file second.txt" then
-                                File.WriteAllText(Services.updateInProgressFileName (), replacementMarker)
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(Path.Combine(root, "first.txt"))
-            |> should equal "first remote payload"
-
-            File.Exists(Path.Combine(root, "second.txt"))
-            |> should equal false
-
-            File.ReadAllText(Services.updateInProgressFileName ())
-            |> should equal replacementMarker
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies ownership is revalidated after final target proof and immediately before status replacement.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization refuses status replacement after marker replacement`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.Delete(Path.Combine(root, "target.txt"))
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let replacementMarker = "`grace rebase` is in progress."
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeStatusReplacementVerification =
-                        fun () ->
-                            File.WriteAllText(Services.updateInProgressFileName (), replacementMarker)
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.ReadAllText(Path.Combine(root, "target.txt"))
-            |> should equal "remote payload"
-
-            File.ReadAllText(Services.updateInProgressFileName ())
-            |> should equal replacementMarker
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies remote apply carries forward local-upload timestamps from the accepted persisted status.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization preserves successful upload timestamps`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.Delete(Path.Combine(root, "target.txt"))
-
-            let fileUpload =
-                getCurrentInstant()
-                    .Minus(Duration.FromMinutes(17L))
-
-            let directoryUpload =
-                getCurrentInstant()
-                    .Minus(Duration.FromMinutes(11L))
-
-            let currentStatus =
-                { graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string> with
-                    LastSuccessfulFileUpload = fileUpload
-                    LastSuccessfulDirectoryVersionUpload = directoryUpload
-                }
-
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
-                .GetAwaiter()
-                .GetResult()
-
-            writtenStatuses.Count |> should equal 1
-
-            writtenStatuses[0].LastSuccessfulFileUpload
-            |> should equal fileUpload
-
-            writtenStatuses[0]
-                .LastSuccessfulDirectoryVersionUpload
-            |> should equal directoryUpload
-
-            resyncRequests.Count |> should equal 0)
-
-    /// Verifies successful completion evidence cannot hide failure to retire the still-owned marker.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization fails when final owned marker deletion fails`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    DeleteUpdateMarker = fun _ -> raise (IOException("injected final marker deletion failure"))
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-            let observed = Assert.ThrowsAsync<IOException>(operation)
-
-            observed.Message
-            |> should equal "injected final marker deletion failure"
-
-            File.Exists(Services.updateInProgressFileName ())
-            |> should equal true
-
-            File.Exists(
-                Services.updateInProgressFileName ()
-                + ".completed"
-            )
-            |> should equal true
-
-            writtenStatuses.Count |> should equal 1
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies marker-retirement failure does not replace an earlier apply failure.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization preserves primary failure over marker deletion failure`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeStatusReplacementVerification = fun () -> Task.FromException<unit>(InvalidOperationException("injected primary apply failure"))
-                    DeleteUpdateMarker = fun _ -> raise (IOException("injected secondary marker deletion failure"))
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRoot.DirectoryVersionId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-            let observed = Assert.ThrowsAsync<InvalidOperationException>(operation)
-
-            observed.Message
-            |> should equal "injected primary apply failure"
-
-            File.Exists(Services.updateInProgressFileName ())
-            |> should equal true
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies declared size mismatch rejects object-cache bytes even when both hashes match.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects object cache declared size mismatch`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cachedFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.Delete(Path.Combine(root, "target.txt"))
-
-            let mismatchedFile =
-                FileVersion.CreateWithHashes
-                    cachedFile.RelativePath
-                    cachedFile.Sha256Hash
-                    cachedFile.Blake3Hash
-                    String.Empty
-                    cachedFile.IsBinary
-                    (cachedFile.Size + 1L)
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| mismatchedFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            File.Exists(Path.Combine(root, "target.txt"))
-            |> should equal false
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies copied target length is rechecked after mutation and before clean status replacement.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization rejects copied target size mismatch before status replacement`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            let targetPath = Path.Combine(root, "target.txt")
-            File.Delete(targetPath)
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-
-            let clients =
-                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
-                    BeforeStatusReplacementVerification =
-                        fun () ->
-                            use stream = File.OpenWrite(targetPath)
-                            stream.SetLength(remoteFile.Size + 1L)
-                            Task.FromResult(())
-                }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            FileInfo(targetPath).Length
-            |> should equal (remoteFile.Size + 1L)
-
-            writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 1)
-
-    /// Verifies an empty directory created under a target after the clean gate fails closed before replacement.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization requests resync when directory target gains empty directory`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFile = cacheRemoteFileVersion root "target-dir" "remote payload"
-            File.Delete(Path.Combine(root, "target-dir"))
-
-            Directory.CreateDirectory(Path.Combine(root, "target-dir"))
-            |> ignore
-
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> [| "target-dir" |]
-
-            Directory.CreateDirectory(Path.Combine(root, "target-dir", "local-empty"))
-            |> ignore
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
-
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
-
-            Directory.Exists(Path.Combine(root, "target-dir", "local-empty"))
-            |> should equal true
-
-            writtenStatuses.Count |> should equal 0
-
-            resyncRequests.ToArray()
-            |> should not' (equal Array.empty<string>))
-
     /// Verifies a dirty IPC publication failure prevents the coordinator from starting target mutation.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationApplyBoundary")>]
     let ``current branch materialization coordinator refuses apply when dirty ipc publication is not proven`` () =
@@ -25594,25 +22190,13 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-publication-failure-test"))
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let degradedRequests = ResizeArray<string>()
             let requestDegradedResync reason = degradedRequests.Add(reason)
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("dirty IPC was not proven, so apply must not start"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
@@ -25626,44 +22210,6 @@ module WatchTests =
                 |])
 
     /// Verifies delayed callbacks for apply-owned writes and deletes do not become local Watch work.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
-    let ``current branch remote materialization suppresses delayed apply owned observations`` () =
-        withTempRepo (fun root ->
-            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
-            File.WriteAllText(Path.Combine(root, "target.txt"), "local payload")
-            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
-
-            let remoteRootId = Guid.NewGuid()
-            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
-            let writtenStatuses = ResizeArray<GraceStatus>()
-            let resyncRequests = ResizeArray<string>()
-            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    remoteRootId
-                    remoteRoot.Sha256Hash
-                    remoteRoot.Blake3Hash
-
-            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
-                .GetAwaiter()
-                .GetResult()
-
-            Watch.OnChanged(changedEvent (Path.Combine(root, "target.txt")))
-
-            let pending = Watch.pendingWatchWorkSnapshotForTests ()
-
-            pending.FilesToProcess
-            |> should equal Array.empty<string>
-
-            pending.StatusUpdateTriggers
-            |> should equal Array.empty<string>)
-
     /// Verifies that a branch switch during dirty IPC publication is rechecked before the apply seam.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationApplyBoundary")>]
     let ``current branch materialization coordinator drops branch switch after dirty ipc before apply`` () =
@@ -25685,13 +22231,8 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-ipc-target-race-test"))
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
             let appliedReferences = ResizeArray<ReferenceId>()
 
             let applyReference payload _ =
@@ -25708,14 +22249,7 @@ module WatchTests =
                 Task.FromResult(graceStatus))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
@@ -25741,363 +22275,6 @@ module WatchTests =
                 publishedStatus.IsWorkingTreeClean
                 |> should equal true
             | None -> Assert.Fail("Expected stale materialization cleanup to publish clean Watch IPC."))
-
-    /// Verifies final clean IPC publication occurs only after apply reports durable state and marker-boundary completion.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
-    let ``current branch materialization coordinator publishes clean only after successful apply completion`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let events = ResizeArray<string>()
-
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "final-publication-order-test"))
-
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync _ = Assert.Fail("A verified final clean publication must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-
-            let applyReference _ _ =
-                task {
-                    events.Add("apply-targets")
-                    events.Add("durable-status-updated")
-                    events.Add("update-marker-closed")
-                }
-
-            let publishCleanIpcAfterApply () =
-                events.ToArray()
-                |> should
-                    equal
-                    [|
-                        "apply-targets"
-                        "durable-status-updated"
-                        "update-marker-closed"
-                    |]
-
-                events.Add("clean-ipc-verified")
-                true
-
-            let reassertDirtyIpcAfterFailedCleanPublication () =
-                Assert.Fail("Verified clean publication must not reassert dirty IPC.")
-                false
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    publishCleanIpcAfterApply
-                    reassertDirtyIpcAfterFailedCleanPublication
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            events.ToArray()
-            |> should
-                equal
-                [|
-                    "apply-targets"
-                    "durable-status-updated"
-                    "update-marker-closed"
-                    "clean-ipc-verified"
-                |])
-
-    /// Verifies a verified dirty replacement keeps final clean publication degraded and non-applied after a successful apply.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
-    let ``current branch materialization coordinator reasserts dirty ipc when final clean publication is unproven`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let events = ResizeArray<string>()
-
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "final-publication-failure-test"))
-
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync reason = events.Add($"degraded:{reason}")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-
-            let applyReference _ _ =
-                task {
-                    events.Add("apply-targets")
-                    events.Add("durable-status-updated")
-                    events.Add("update-marker-closed")
-                }
-
-            let publishCleanIpcAfterApply () =
-                events.Add("clean-ipc-unproven")
-                false
-
-            let reassertDirtyIpcAfterFailedCleanPublication () =
-                Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
-                |> should equal true
-
-                events.Add("dirty-ipc-reasserted")
-                true
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    publishCleanIpcAfterApply
-                    reassertDirtyIpcAfterFailedCleanPublication
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-
-            events.ToArray()
-            |> should
-                equal
-                [|
-                    "apply-targets"
-                    "durable-status-updated"
-                    "update-marker-closed"
-                    "clean-ipc-unproven"
-                    "dirty-ipc-reasserted"
-                    "degraded:materialization final clean Watch IPC/status publication failed"
-                |]
-
-            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
-            |> should equal true)
-
-    /// Verifies a process-local queue observed during final clean publication prevents an applied result.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
-    let ``current branch materialization coordinator rejects process local work queued during clean publication`` () =
-        withTempRepo (fun root ->
-            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let events = ResizeArray<string>()
-
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "process-local-final-publication-race"))
-
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync reason = events.Add($"degraded:{reason}")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = task { events.Add("apply-complete") }
-
-            let publishCleanIpcAfterApply () =
-                events.Add("clean-write")
-                Watch.setGraceStatusHasChangedForWatchTests true
-
-                let processablePending, hasPendingEvidence = Watch.pendingWatchWorkEvidenceForWatchTests ()
-                processablePending |> should equal true
-                hasPendingEvidence |> should equal true
-                false
-
-            let reassertDirtyIpcAfterFailedCleanPublication () =
-                events.Add("dirty-verified")
-                true
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    publishCleanIpcAfterApply
-                    reassertDirtyIpcAfterFailedCleanPublication
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-
-            events.ToArray()
-            |> should
-                equal
-                [|
-                    "apply-complete"
-                    "clean-write"
-                    "dirty-verified"
-                    "degraded:materialization final clean Watch IPC/status publication failed"
-                |])
-
-    /// Verifies durable journal work observed during final clean publication prevents an applied result.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
-    let ``current branch materialization coordinator rejects durable work queued during clean publication`` () =
-        withTempRepo (fun root ->
-            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-            let mutable pendingRows = 0L
-
-            Watch.setWatchJournalStatusClientForWatchTests (fun () ->
-                Task.FromResult(
-                    {
-                        LocalStateDb.WatchJournalPendingWorkSummary.DbPath = Current().GraceStatusFile
-                        AppliedThroughSequence = 0L
-                        PendingRowCount = pendingRows
-                    }
-                ))
-
-            try
-                let notification =
-                    validCurrentBranchReferenceNotification
-                        currentRepositoryId
-                        currentBranchId
-                        ReferenceType.Save
-                        (Guid.NewGuid())
-                        (Sha256Hash "remote-root")
-                        (Blake3Hash "remote-root-blake3")
-
-                let events = ResizeArray<string>()
-
-                let getBranch () =
-                    Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "durable-final-publication-race"))
-
-                let inspectStatus () = Task.FromResult(watchStatusInspection status)
-                let requestDegradedResync reason = events.Add($"degraded:{reason}")
-                let waitForSafePoint _ _ = Task.FromResult(())
-                let reestablishIpc _ _ = Task.FromResult(())
-                let applyReference _ _ = task { events.Add("apply-complete") }
-
-                let publishCleanIpcAfterApply () =
-                    events.Add("clean-write")
-                    pendingRows <- 1L
-
-                    let processablePending, hasPendingEvidence = Watch.pendingWatchWorkEvidenceForWatchTests ()
-                    processablePending |> should equal false
-                    hasPendingEvidence |> should equal true
-                    false
-
-                let reassertDirtyIpcAfterFailedCleanPublication () =
-                    events.Add("dirty-verified")
-                    true
-
-                let outcome =
-                    (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        publishCleanIpcAfterApply
-                        reassertDirtyIpcAfterFailedCleanPublication
-                        notification)
-                        .Result
-
-                outcome.Value.Reason
-                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-
-                events.ToArray()
-                |> should
-                    equal
-                    [|
-                        "apply-complete"
-                        "clean-write"
-                        "dirty-verified"
-                        "degraded:materialization final clean Watch IPC/status publication failed"
-                    |]
-            finally
-                Watch.resetWatchJournalClientsForWatchTests ())
-
-    /// Verifies a clean IPC snapshot already verified by another Watch pass completes materialization without another write.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
-    let ``current branch materialization coordinator accepts already verified clean publication`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let events = ResizeArray<string>()
-
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "already-clean-final-publication"))
-
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync _ = Assert.Fail("An already verified clean IPC snapshot must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = task { events.Add("apply-complete") }
-
-            let publishCleanIpcAfterApply () =
-                events.Add("already-clean-verified")
-                true
-
-            let reassertDirtyIpcAfterFailedCleanPublication () =
-                Assert.Fail("An already verified clean IPC snapshot must not reassert dirty IPC.")
-                false
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    publishCleanIpcAfterApply
-                    reassertDirtyIpcAfterFailedCleanPublication
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            events.ToArray()
-            |> should
-                equal
-                [|
-                    "apply-complete"
-                    "already-clean-verified"
-                |])
 
     /// Verifies a matching stale IPC snapshot is rewritten and re-inspected before final materialization clean success.
     [<Test; Category("CurrentBranchMaterializationPublication")>]
@@ -26267,70 +22444,6 @@ module WatchTests =
 
             statusReadCount |> should equal 2)
 
-    /// Verifies an unverified dirty replacement leaves materialization fail-closed on the existing degraded-resync path.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
-    let ``current branch materialization coordinator fails closed when dirty replacement is unproven`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let events = ResizeArray<string>()
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-reassertion-failure"))
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync reason = events.Add($"degraded:{reason}")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = task { events.Add("apply-complete") }
-
-            let publishCleanIpcAfterApply () =
-                events.Add("clean-unproven")
-                false
-
-            let reassertDirtyIpcAfterFailedCleanPublication () =
-                Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
-                |> should equal true
-
-                events.Add("dirty-unproven")
-                false
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    publishCleanIpcAfterApply
-                    reassertDirtyIpcAfterFailedCleanPublication
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-
-            events.ToArray()
-            |> should
-                equal
-                [|
-                    "apply-complete"
-                    "clean-unproven"
-                    "dirty-unproven"
-                    "degraded:materialization final clean Watch IPC/status publication failed and dirty replacement was unproven"
-                |]
-
-            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
-            |> should equal true)
-
     /// Verifies that a failed apply cannot republish clean IPC from pre-apply status evidence.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator keeps ipc dirty when apply fails`` () =
@@ -26350,13 +22463,8 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-ipc-after-apply-failure-test"))
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync before apply.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
 
             let applyReference _ _ =
                 task {
@@ -26366,15 +22474,7 @@ module WatchTests =
 
             let operation =
                 Func<Task> (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                    :> Task)
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification) :> Task)
 
             Assert.ThrowsAsync<InvalidOperationException>(operation)
             |> ignore
@@ -26419,48 +22519,16 @@ module WatchTests =
                 Task.FromResult(summary))
 
             try
-                let getBranch () =
-                    Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "durable-journal-gate-test"))
-
                 let inspectStatus () = Task.FromResult(watchStatusInspection status)
                 let requestDegradedResync _ = Assert.Fail("Durable journal pending rows should wait, not request degraded resync.")
-                let safePointWaits = ResizeArray<ReferenceId>()
-
-                let waitForSafePoint payload gate =
-                    task {
-                        safePointWaits.Add(payload.ReferenceId)
-
-                        match gate with
-                        | Watch.CurrentBranchMaterializationStatusGate.Blocked reason ->
-                            reason
-                            |> should equal "durable Watch journal has pending local observations"
-                        | _ -> Assert.Fail("Expected durable journal evidence to block the coordinator.")
-                    }
-
-                let reestablishIpc _ _ = Task.FromResult(())
                 let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("clean IPC with durable journal rows must not apply"))
 
                 let outcome =
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                         .Result
 
                 outcome.Value.Reason
                 |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-
-                safePointWaits.ToArray()
-                |> should
-                    equal
-                    [|
-                        notification.ReferenceId
-                        notification.ReferenceId
-                    |]
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
@@ -26484,25 +22552,13 @@ module WatchTests =
                 Task.FromException<LocalStateDb.WatchJournalPendingWorkSummary>(InvalidOperationException("local-state schema is incompatible")))
 
             try
-                let getBranch () =
-                    Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "unreadable-journal-gate-test"))
-
                 let inspectStatus () = Task.FromResult(watchStatusInspection status)
                 let degradedRequests = ResizeArray<string>()
                 let requestDegradedResync reason = degradedRequests.Add(reason)
-                let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("unreadable journal authority must not wait for a safe point"))
-                let reestablishIpc _ _ = Task.FromResult(())
                 let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("unreadable journal authority must not apply"))
 
                 let outcome =
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                         .Result
 
                 outcome.Value.Reason
@@ -26538,21 +22594,8 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "process-local-work-gate-test"))
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let requestDegradedResync _ = Assert.Fail("Process-local queues should wait, not request degraded resync.")
-            let safePointWaits = ResizeArray<string>()
-
-            let waitForSafePoint _ gate =
-                task {
-                    match gate with
-                    | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
-                    | _ -> Assert.Fail("Expected process-local Watch queues to block the coordinator.")
-                }
-
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("process-local Watch queues must not apply"))
             let diagnostics = ResizeArray<string>()
 
@@ -26560,26 +22603,11 @@ module WatchTests =
                 Watch.setCurrentBranchWaitDiagnosticForWatchTests (fun _ waitKind reason -> diagnostics.Add($"{waitKind}: {reason}"))
 
                 let outcome =
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                         .Result
 
                 outcome.Value.Reason
                 |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-
-                safePointWaits.ToArray()
-                |> should
-                    equal
-                    [|
-                        "file uploads are pending"
-                        "file uploads are pending"
-                    |]
 
                 diagnostics.ToArray()
                 |> should
@@ -26613,44 +22641,16 @@ module WatchTests =
                         (Sha256Hash "remote-root")
                         (Blake3Hash "remote-root-blake3")
 
-                let getBranch () =
-                    Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "update-marker-gate-test"))
-
                 let inspectStatus () = Task.FromResult(watchStatusInspection status)
                 let requestDegradedResync _ = Assert.Fail("Existing update marker should wait, not request degraded resync.")
-                let safePointWaits = ResizeArray<string>()
-
-                let waitForSafePoint _ gate =
-                    task {
-                        match gate with
-                        | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
-                        | _ -> Assert.Fail("Expected existing update marker to block the coordinator.")
-                    }
-
-                let reestablishIpc _ _ = Task.FromResult(())
                 let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("update marker must block clean materialization"))
 
                 let outcome =
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
+                    (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                         .Result
 
                 outcome.Value.Reason
                 |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-
-                safePointWaits.ToArray()
-                |> should
-                    equal
-                    [|
-                        "Grace update marker is present"
-                        "Grace update marker is present"
-                    |]
             finally
                 if File.Exists(updateMarkerFile) then File.Delete(updateMarkerFile))
 
@@ -26672,43 +22672,16 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "manual-pending-gate-test"))
-
             let inspectStatus () = Task.FromResult(watchStatusInspection status)
             let requestDegradedResync _ = Assert.Fail("Manual pending status should wait, not request degraded resync.")
-            let safePointWaits = ResizeArray<string>()
-
-            let waitForSafePoint _ gate =
-                task {
-                    match gate with
-                    | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
-                    | _ -> Assert.Fail("Expected manual pending status to block the coordinator.")
-                }
-
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("manual pending status must block clean materialization"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-
-            safePointWaits.ToArray()
-            |> should
-                equal
-                [|
-                    "materialization pending status has not reached IPC"
-                    "materialization pending status has not reached IPC"
-                |])
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint)
 
     /// Verifies that clean IPC does not let materialization proceed when the local-state database is missing.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -26727,9 +22700,6 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "missing-local-state-gate-test"))
-
             let inspectStatus () =
                 Task.FromResult<Services.GraceWatchStatusInspection>(
                     { Exists = true; Status = Some status; PersistedMode = Some status.Mode; SafetyFlags = status.SafetyFlags; ReadError = None }
@@ -26737,19 +22707,10 @@ module WatchTests =
 
             let degradedRequests = ResizeArray<string>()
             let requestDegradedResync reason = degradedRequests.Add(reason)
-            let reestablishIpc _ _ = Task.FromResult(())
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("missing local-state DB must not wait as clean work"))
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("missing local-state DB must not apply"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
@@ -26783,40 +22744,20 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "suspended-ipc-gate-test"))
-
             let inspectStatus () = Task.FromResult(suspendedInspection)
             let degradedRequests = ResizeArray<string>()
             let requestDegradedResync reason = degradedRequests.Add(reason)
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("suspended IPC must not wait for a safe point"))
-            let reestablishedReferences = ResizeArray<ReferenceId>()
-            let reestablishIpc payload _ = task { reestablishedReferences.Add(payload.ReferenceId) }
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("suspended IPC must not apply"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
 
             degradedRequests.ToArray()
-            |> should equal [| "Watch is suspended" |]
-
-            reestablishedReferences.ToArray()
-            |> should
-                equal
-                [|
-                    notification.ReferenceId
-                    notification.ReferenceId
-                |])
+            |> should equal [| "Watch is suspended" |])
 
     /// Verifies that degraded resync is not requested after the notification stops targeting Current().
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -26834,9 +22775,6 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "degraded-current-recheck-test"))
-
             let inspectStatus () =
                 let current = Current()
                 current.BranchId <- branchBId
@@ -26845,681 +22783,14 @@ module WatchTests =
                 Task.FromResult(missingWatchStatusInspection)
 
             let requestDegradedResync _ = Assert.Fail("Stale notification must not request degraded resync.")
-            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not reestablish IPC"))
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not wait for a safe point"))
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not apply"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
-
-    /// Verifies that a branch switch completed during the repository lease wait is observed before apply.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator rechecks branch after lease wait`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
-            let branchBId = Guid.NewGuid()
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "post-lease-branch-test"))
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync _ = Assert.Fail("Stale notification must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale post-lease notification must not apply"))
-            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
-
-            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
-            |> ignore
-
-            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                        .GetAwaiter()
-                        .GetResult())
-
-            Task.Delay(150).Wait()
-
-            let current = Current()
-            current.BranchId <- branchBId
-            current.BranchName <- "branch-b"
-
-            blockingLease.Dispose()
-
-            Task.WaitAll([| materializationTask :> Task |], 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
-
-    /// Verifies that a branch switch persisted during the repository lease wait is observed before apply.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator reloads persisted branch after lease wait`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
-            let branchBId = Guid.NewGuid()
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let getBranch () =
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "persisted-post-lease-branch-test"))
-
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync _ = Assert.Fail("Stale notification must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale persisted-branch notification must not apply"))
-            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
-
-            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
-            |> ignore
-
-            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-
-            let materializationTask =
-                Task.Run (fun () ->
-                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                        getBranch
-                        inspectStatus
-                        requestDegradedResync
-                        waitForSafePoint
-                        reestablishIpc
-                        applyReference
-                        notification)
-                        .GetAwaiter()
-                        .GetResult())
-
-            Task.Delay(150).Wait()
-
-            writeRepositoryConfiguration root currentRepositoryId "current-repo" branchBId "branch-b"
-
-            Current().BranchId |> should equal currentBranchId
-
-            blockingLease.Dispose()
-
-            Task.WaitAll([| materializationTask :> Task |], 5000)
-            |> should equal true
-
-            materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
-
-    /// Verifies that a cursor-admitted Reference survives a post-lease blocked retry without BranchDto revalidation.
-    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator keeps accepted reference after post lease blocked retry`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cleanStatus = liveWatchStatus (Guid.NewGuid())
-            let blockedStatus = { cleanStatus with HasPendingWatchWork = true; IsWorkingTreeClean = false }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let newerNotification =
-                { notification with
-                    ReferenceId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "newer-remote-root"
-                    Blake3Hash = Blake3Hash "newer-remote-root-blake3"
-                }
-
-            let mutable latestBranchDto = branchDtoWithLatestCurrentBranchReference notification
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                task {
-                    branchFetches.Add(latestBranchDto.LatestReference.ReferenceId)
-                    return Ok(GraceReturnValue.Create latestBranchDto "post-lease-blocked-retry-test")
-                }
-
-            let mutable inspectionCount = 0
-            let inspections = ResizeArray<string>()
-
-            let inspectStatus () =
-                task {
-                    inspectionCount <- inspectionCount + 1
-
-                    if inspectionCount = 3 then
-                        inspections.Add("blocked")
-                        return watchStatusInspection blockedStatus
-                    else
-                        inspections.Add("clean")
-                        return watchStatusInspection cleanStatus
-                }
-
-            let requestDegradedResync _ = Assert.Fail("Blocked post-lease retry must wait for a safe point, not request degraded resync.")
-            let safePointWaits = ResizeArray<string>()
-
-            let waitForSafePoint payload gate =
-                task {
-                    payload.ReferenceId
-                    |> should equal notification.ReferenceId
-
-                    match gate with
-                    | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
-                    | _ -> Assert.Fail("Expected a blocked safe-point gate.")
-
-                    latestBranchDto <- branchDtoWithLatestCurrentBranchReference newerNotification
-                }
-
-            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("blocked retry must not reestablish IPC"))
-            let appliedReferences = ResizeArray<ReferenceId>()
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            safePointWaits.ToArray()
-            |> should
-                equal
-                [|
-                    "local Watch status has dirty or pending work"
-                |]
-
-            inspections.ToArray()
-            |> should
-                equal
-                [|
-                    "clean"
-                    "clean"
-                    "blocked"
-                    "clean"
-                    "clean"
-                    "clean"
-                    "clean"
-                |]
-
-            appliedReferences.ToArray()
-            |> should equal [| notification.ReferenceId |])
-
-    /// Verifies that a cursor-admitted Reference survives a post-lease degraded retry without BranchDto revalidation.
-    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator keeps accepted reference after post lease degraded retry`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cleanStatus = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Checkpoint
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let newerNotification =
-                { notification with
-                    ReferenceId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "newer-remote-root"
-                    Blake3Hash = Blake3Hash "newer-remote-root-blake3"
-                }
-
-            let mutable latestBranchDto = branchDtoWithLatestCurrentBranchReference notification
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                task {
-                    branchFetches.Add(latestBranchDto.LatestReference.ReferenceId)
-                    return Ok(GraceReturnValue.Create latestBranchDto "post-lease-degraded-retry-test")
-                }
-
-            let mutable inspectionCount = 0
-            let inspections = ResizeArray<string>()
-
-            let inspectStatus () =
-                task {
-                    inspectionCount <- inspectionCount + 1
-
-                    if inspectionCount = 3 then
-                        inspections.Add("degraded")
-                        return missingWatchStatusInspection
-                    else
-                        inspections.Add("clean")
-                        return watchStatusInspection cleanStatus
-                }
-
-            let degradedRequests = ResizeArray<string>()
-            let requestDegradedResync reason = degradedRequests.Add(reason)
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("degraded retry must not wait for a safe point"))
-            let reestablishedReferences = ResizeArray<ReferenceId>()
-
-            let reestablishIpc payload _ =
-                task {
-                    reestablishedReferences.Add(payload.ReferenceId)
-                    latestBranchDto <- branchDtoWithLatestCurrentBranchReference newerNotification
-                }
-
-            let appliedReferences = ResizeArray<ReferenceId>()
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            degradedRequests.ToArray()
-            |> should
-                equal
-                [|
-                    "missing Watch IPC/status authority"
-                |]
-
-            reestablishedReferences.ToArray()
-            |> should equal [| notification.ReferenceId |]
-
-            inspections.ToArray()
-            |> should
-                equal
-                [|
-                    "clean"
-                    "clean"
-                    "degraded"
-                    "clean"
-                    "clean"
-                    "clean"
-                    "clean"
-                |]
-
-            appliedReferences.ToArray()
-            |> should equal [| notification.ReferenceId |])
-
-    /// Verifies that missing IPC enters degraded resync and keeps the exact Reference for revalidation.
-    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator revalidates exact reference after degraded resync`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Checkpoint
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                task {
-                    branchFetches.Add(notification.ReferenceId)
-                    return Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "degraded-retry-test")
-                }
-
-            let mutable statusReestablished = false
-
-            let inspectStatus () =
-                Task.FromResult(
-                    if statusReestablished then
-                        watchStatusInspection status
-                    else
-                        missingWatchStatusInspection
-                )
-
-            let degradedRequests = ResizeArray<string>()
-            let requestDegradedResync reason = degradedRequests.Add(reason)
-
-            let reestablishIpc payload _ =
-                task {
-                    payload.ReferenceId
-                    |> should equal notification.ReferenceId
-
-                    statusReestablished <- true
-                }
-
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let appliedReferences = ResizeArray<ReferenceId>()
-
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            degradedRequests.ToArray()
-            |> should
-                equal
-                [|
-                    "missing Watch IPC/status authority"
-                |]
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            appliedReferences.ToArray()
-            |> should equal [| notification.ReferenceId |])
-
-    /// Verifies degraded retry acknowledges an exact local root without consulting a BranchDto summary.
-    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator detects exact local root after degraded resync`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Commit
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let acceptedRootStatus =
-                { status with
-                    RootDirectoryId = notification.DirectoryId
-                    RootDirectorySha256Hash = notification.Sha256Hash
-                    RootDirectoryBlake3Hash = notification.Blake3Hash
-                }
-
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                branchFetches.Add(notification.ReferenceId)
-                Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "unexpected-branch-fetch"))
-
-            let mutable statusReestablished = false
-
-            let inspectStatus () =
-                Task.FromResult(
-                    if statusReestablished then
-                        watchStatusInspection acceptedRootStatus
-                    else
-                        missingWatchStatusInspection
-                )
-
-            let requestDegradedResync _ = ()
-
-            let reestablishIpc payload _ =
-                task {
-                    payload.ReferenceId
-                    |> should equal notification.ReferenceId
-
-                    statusReestablished <- true
-                }
-
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale revalidated Reference must not apply"))
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
-
-            outcome.Value.Decision.Value.Reason
-            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.SameRoot
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>)
-
-    /// Verifies that stale branch evidence is dropped before a mismatch safe-point wait can hold the lane.
-    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator drops branch switch before mismatch safe point wait`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
-            let branchBId = Guid.NewGuid()
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let getBranch () =
-                Task.FromResult(
-                    Ok(
-                        GraceReturnValue.Create
-                            (branchDtoWithLatestCurrentBranchReference { notification with DirectoryId = Guid.NewGuid() })
-                            "stale-mismatch-safe-point-test"
-                    )
-                )
-
-            let dirtyStatus = { liveWatchStatus (Guid.NewGuid()) with HasPendingWatchWork = true; IsWorkingTreeClean = false }
-
-            let inspectStatus () =
-                let current = Current()
-                current.BranchId <- branchBId
-                current.BranchName <- "branch-b"
-
-                Task.FromResult(watchStatusInspection dirtyStatus)
-
-            let requestDegradedResync _ = Assert.Fail("Stale notification must be dropped before degraded resync.")
-
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not wait for a safe point"))
-
-            let reestablishIpc _ _ = Task.FromResult(())
-            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not apply"))
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
-
-    /// Verifies that dirty status becoming clean re-runs local cursor-event safety checks before apply.
-    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator retries after dirty status becomes clean`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cleanStatus = liveWatchStatus (Guid.NewGuid())
-            let dirtyStatus = { cleanStatus with HasPendingWatchWork = true; IsWorkingTreeClean = false }
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Save
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                task {
-                    branchFetches.Add(notification.ReferenceId)
-                    return Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-clean-retry-test")
-                }
-
-            let mutable inspections = 0
-
-            let inspectStatus () =
-                inspections <- inspections + 1
-
-                if inspections = 1 then
-                    Task.FromResult(watchStatusInspection dirtyStatus)
-                else
-                    Task.FromResult(watchStatusInspection cleanStatus)
-
-            let requestDegradedResync _ = Assert.Fail("Clean recovered status must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must retry instead of waiting."))
-            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must not reestablish IPC."))
-            let appliedReferences = ResizeArray<ReferenceId>()
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            inspections |> should equal 4
-
-            appliedReferences.ToArray()
-            |> should equal [| notification.ReferenceId |])
-
-    /// Verifies that unavailable status becoming clean re-runs local cursor-event safety checks before apply.
-    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator retries after unavailable status becomes clean`` () =
-        withTempRepo (fun root ->
-            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let cleanStatus = liveWatchStatus (Guid.NewGuid())
-
-            let notification =
-                validCurrentBranchReferenceNotification
-                    currentRepositoryId
-                    currentBranchId
-                    ReferenceType.Checkpoint
-                    (Guid.NewGuid())
-                    (Sha256Hash "remote-root")
-                    (Blake3Hash "remote-root-blake3")
-
-            let branchFetches = ResizeArray<ReferenceId>()
-
-            let getBranch () =
-                task {
-                    branchFetches.Add(notification.ReferenceId)
-                    return Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "unavailable-clean-retry-test")
-                }
-
-            let mutable inspections = 0
-
-            let inspectStatus () =
-                inspections <- inspections + 1
-
-                if inspections = 1 then
-                    Task.FromResult(missingWatchStatusInspection)
-                else
-                    Task.FromResult(watchStatusInspection cleanStatus)
-
-            let requestDegradedResync _ = Assert.Fail("Clean recovered status must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must retry instead of waiting."))
-            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must not reestablish IPC."))
-            let appliedReferences = ResizeArray<ReferenceId>()
-            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
-
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
-
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-
-            branchFetches.ToArray()
-            |> should equal Array.empty<ReferenceId>
-
-            inspections |> should equal 4
-
-            appliedReferences.ToArray()
-            |> should equal [| notification.ReferenceId |])
 
     /// Verifies mismatched local status identity is rejected and cannot apply a cursor event.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -27537,12 +22808,6 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let mutable branchFetches = 0
-
-            let getBranch () =
-                branchFetches <- branchFetches + 1
-                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "identity-mismatch-clean-gate-test"))
-
             let mutable inspections = 0
 
             let inspectStatus () =
@@ -27550,19 +22815,10 @@ module WatchTests =
                 Task.FromResult(watchStatusInspection legacyNameFallbackStatus)
 
             let requestDegradedResync _ = ()
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("identity mismatch must not enter a safe-point wait"))
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("clean status identity rejection must not apply"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference notification)
                     .Result
 
             outcome.Value.Reason
@@ -27571,12 +22827,11 @@ module WatchTests =
             outcome.Value.Decision.Value.Reason
             |> should equal Services.LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
 
-            branchFetches |> should equal 0
             inspections |> should equal 2)
 
-    /// Verifies that rootless notifications never enter a materialization apply or multi-reference optimization path.
+    /// Verifies that rootless notifications never enter local-status inspection or materialization apply.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator rejects rootless notification before branch fetch and apply`` () =
+    let ``current branch materialization coordinator rejects rootless notification before status inspection and apply`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
 
@@ -27591,28 +22846,14 @@ module WatchTests =
                     ReferenceType = ReferenceType.Save
                 }
 
-            let getBranch () =
-                Task.FromException<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>(
-                    InvalidOperationException("rootless notification must not fetch BranchDto")
-                )
-
             let inspectStatus () =
                 Task.FromException<Services.GraceWatchStatusInspection>(InvalidOperationException("rootless notification must not inspect IPC"))
 
             let requestDegradedResync _ = Assert.Fail("Rootless notification must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromResult(())
-            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("rootless notification must not apply"))
 
             let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    rootlessNotification)
+                (Watch.processCurrentBranchReferenceReplayWithClientsForWatchTests inspectStatus requestDegradedResync applyReference rootlessNotification)
                     .Result
 
             outcome.Value.Reason
@@ -27728,6 +22969,7 @@ module WatchTests =
             |> should equal true
 
             writeWatchStatusJsonWithRuntimeSurface dirtyStatus
+            |> ignore
             |> ignore
 
             let inspection =
@@ -28527,6 +23769,363 @@ module WatchTests =
 
                 File.Exists(ipcFileName) |> should equal true))
 
+    /// Proves same-root Watch replay reads the verified retained file even when an unrelated cache entry is corrupt.
+    [<Test; Category("CurrentBranchCursorReplay"); Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``same-root Watch WDU replay ignores corrupt cache and does not rewrite retained file`` () =
+        withTempRepo (fun root ->
+            let current = Current()
+            let relativePath = "retained.txt"
+            let retainedPath = Path.Combine(root, relativePath)
+            let retainedBytes = Text.Encoding.UTF8.GetBytes("verified retained Watch bytes")
+            File.WriteAllBytes(retainedPath, retainedBytes)
+
+            let rootDirectoryId = DirectoryVersionId.NewGuid()
+            let retainedFile = localFileVersionFromWorkingTree root relativePath
+
+            let entries =
+                [
+                    DirectoryVersionPreimageEntry.File retainedFile.RelativePath retainedFile.Size retainedFile.Blake3Hash retainedFile.Sha256Hash
+                ]
+
+            let rootDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    rootDirectoryId
+                    current.OwnerId
+                    current.OrganizationId
+                    current.RepositoryId
+                    Constants.RootDirectoryPath
+                    (computeSha256ForDirectoryEntries Constants.RootDirectoryPath entries)
+                    (computeBlake3ForDirectory Constants.RootDirectoryPath entries)
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| retainedFile |]))
+                    retainedFile.Size
+                    DateTime.UtcNow
+
+            let status = graceStatusFromRootDirectory rootDirectory
+
+            let boundary =
+                { ReferenceMaterializationBoundaryDto.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    DirectoryId = status.RootDirectoryId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                    EventCursor = "opaque-before-same-root-wdu"
+                }
+
+            Services.writeGraceStatusFileWithRemoteReferenceBoundary status boundary CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let cachePath = Services.getLocalObjectCachePathForFileVersion retainedFile.ToFileVersion
+
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath))
+            |> ignore
+
+            File.WriteAllText(cachePath, "corrupt unrelated cache bytes")
+
+            let eventCursor = "opaque-same-root-wdu"
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    ReferenceId = Guid.NewGuid()
+                    ReferenceType = ReferenceType.Save
+                    DirectoryId = status.RootDirectoryId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                }
+
+            Watch.applyCurrentBranchReferenceThroughWorkingDirectoryUpdateForWatchTests
+                payload
+                (acceptedMaterializationStatus status)
+                eventCursor
+                CancellationToken.None
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            File.ReadAllBytes(retainedPath)
+            |> should equal retainedBytes
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    current.RepositoryId
+                    current.BranchId
+                    status.RootDirectoryId
+                    status.RootDirectorySha256Hash
+                    status.RootDirectoryBlake3Hash
+                |> Result.defaultWith invalidOp
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                |> Result.defaultWith invalidOp
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal))
+
+    /// Proves startup settles exact pending or terminal Watch completion before crossing the callback/runtime boundary.
+    [<TestCase(false, TestName = "watch startup recovers exact pending WDU completion before runtime admission")>]
+    [<TestCase(true, TestName = "watch startup recovers exact terminal WDU completion before runtime admission")>]
+    [<Category("WatchStartupWduRecovery")>]
+    let ``watch startup recovers exact WDU completion before runtime admission`` terminalBeforeStartup =
+        withTempRepo (fun root ->
+            let current = Current()
+            let predecessorRootId = DirectoryVersionId.NewGuid()
+            writeTrustedRootOnlyWatchState predecessorRootId
+
+            let predecessorBoundary =
+                LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> Option.defaultWith (fun () -> invalidOp "Expected predecessor Watch boundary.")
+
+            let relativePath = "recovered.txt"
+            let workingPath = Path.Combine(root, relativePath)
+            let targetBytes = Text.Encoding.UTF8.GetBytes("already written before Watch restart")
+            File.WriteAllBytes(workingPath, targetBytes)
+            let targetFile = localFileVersionFromWorkingTree root relativePath
+            let targetRootId = DirectoryVersionId.NewGuid()
+
+            let targetEntries =
+                [
+                    DirectoryVersionPreimageEntry.File targetFile.RelativePath targetFile.Size targetFile.Blake3Hash targetFile.Sha256Hash
+                ]
+
+            let targetRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    targetRootId
+                    current.OwnerId
+                    current.OrganizationId
+                    current.RepositoryId
+                    Constants.RootDirectoryPath
+                    (computeSha256ForDirectoryEntries Constants.RootDirectoryPath targetEntries)
+                    (computeBlake3ForDirectory Constants.RootDirectoryPath targetEntries)
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| targetFile |]))
+                    targetFile.Size
+                    DateTime.UtcNow
+
+            let targetStatus = graceStatusFromRootDirectory targetRoot
+
+            let eventCursor =
+                if terminalBeforeStartup then
+                    "opaque-terminal-before-startup"
+                else
+                    "opaque-pending-before-startup"
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    current.RepositoryId
+                    current.BranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> Result.defaultWith invalidOp
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                |> Result.defaultWith invalidOp
+
+            LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                current.GraceStatusFile
+                targetStatus
+                [| targetRoot |]
+                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization eventCursor)
+                target
+                operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId root
+                |> Result.defaultWith invalidOp
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdateContracts.AttemptToken.create ()) target operation
+                |> Result.defaultWith invalidOp
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            if terminalBeforeStartup then
+                WorkingDirectoryUpdate.Watch.resumePendingFinalization CancellationToken.None WorkingDirectoryUpdate.Watch.none
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> function
+                    | Some (actualCursor, WorkingDirectoryUpdateContracts.Outcome.Updated _) -> actualCursor |> should equal eventCursor
+                    | outcome -> Assert.Fail($"Expected terminal Watch setup, got {outcome}.")
+
+            let expectedBeforeStartup =
+                if terminalBeforeStartup then
+                    Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal
+                else
+                    Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal expectedBeforeStartup
+
+            let revisionBeforeRecovery =
+                LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            use workingFileLock = new FileStream(workingPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let mutable runtimeAdmissionObserved = false
+
+            Watch.setBeforeWatchCallbackRuntimeSetupForTests (fun () ->
+                let inspection = Services.inspectGraceWatchStatus().Result
+                inspection.IsUsable |> should equal true
+                let status = inspection.Status |> Option.get
+
+                status.RootDirectoryId
+                |> should equal targetStatus.RootDirectoryId
+
+                status.HasPendingWatchWork |> should equal false
+                status.IsWorkingTreeClean |> should equal true
+                runtimeAdmissionObserved <- true)
+
+            try
+                Watch.recoverInitializedLocalStateBeforeWatchRuntimeForTests CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> fun recoveredStatus ->
+                    recoveredStatus.RootDirectoryId
+                    |> should equal targetStatus.RootDirectoryId
+            finally
+                Watch.resetBeforeWatchCallbackRuntimeSetupForTests ()
+
+            runtimeAdmissionObserved |> should equal true
+
+            File.ReadAllBytes(workingPath)
+            |> should equal targetBytes
+
+            LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal revisionBeforeRecovery
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+            File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+            |> should equal false
+
+            let advancedBoundary =
+                LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> Option.defaultWith (fun () -> invalidOp "Expected recovered Watch boundary.")
+
+            advancedBoundary.EventCursor
+            |> should equal eventCursor
+
+            advancedBoundary.DirectoryId
+            |> should equal targetStatus.RootDirectoryId
+
+            advancedBoundary.Sha256Hash
+            |> should equal targetStatus.RootDirectorySha256Hash
+
+            advancedBoundary.Blake3Hash
+            |> should equal targetStatus.RootDirectoryBlake3Hash
+
+            predecessorBoundary.EventCursor
+            |> should not' (equal advancedBoundary.EventCursor))
+
+    /// Proves production Watch publishes clean IPC only after exact terminal completion and cursor compare-and-set.
+    [<Test; Category("CurrentBranchCursorReplay"); Category("CurrentBranchMaterializationPublication")>]
+    let ``terminal Watch completion advances exact cursor before clean ipc publication`` () =
+        withTempRepo (fun _ ->
+            let current = Current()
+            let rootDirectoryId = DirectoryVersionId.NewGuid()
+            let eventCursor = "opaque-terminal-wdu-event"
+            writeTrustedRootOnlyWatchState rootDirectoryId
+            let status = Services.readGraceStatusFile().Result
+            let metadata = status.Index.Values |> Seq.toArray
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    current.RepositoryId
+                    current.BranchId
+                    status.RootDirectoryId
+                    status.RootDirectorySha256Hash
+                    status.RootDirectoryBlake3Hash
+                |> Result.defaultWith invalidOp
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay current.RepositoryId current.BranchId eventCursor
+                |> Result.defaultWith invalidOp
+
+            LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                current.GraceStatusFile
+                status
+                metadata
+                (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization eventCursor)
+                target
+                operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            LocalStateDb.finalizeWorkingDirectoryUpdateCompletion current.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let durableBoundary =
+                LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> Option.defaultWith (fun () -> invalidOp "Expected a durable Watch cursor boundary.")
+
+            let dirtyStatus =
+                { liveWatchStatus rootDirectoryId with
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                    HasPendingWatchWork = true
+                    IsWorkingTreeClean = false
+                }
+
+            writeWatchStatusJsonWithRuntimeSurface dirtyStatus
+            |> ignore
+
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests false
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    DirectoryId = status.RootDirectoryId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                }
+
+            let staleExpected = { durableBoundary with EventCursor = "opaque-stale-predecessor" }
+
+            Assert.ThrowsAsync<InvalidOperationException>(
+                Func<Task> (fun () ->
+                    Watch.acknowledgeCurrentBranchReferenceReplayCursorForWatchTests staleExpected (Some payload) eventCursor CancellationToken.None :> Task)
+            )
+            |> ignore
+
+            let stillDirty =
+                Services.inspectGraceWatchStatus().Result.Status
+                |> Option.get
+
+            stillDirty.HasPendingWatchWork
+            |> should equal true
+
+            stillDirty.IsWorkingTreeClean
+            |> should equal false
+
+            let advanced =
+                Watch.acknowledgeCurrentBranchReferenceReplayCursorForWatchTests durableBoundary (Some payload) eventCursor CancellationToken.None
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            advanced.EventCursor |> should equal eventCursor
+
+            let publishedClean =
+                Services.inspectGraceWatchStatus().Result.Status
+                |> Option.get
+
+            publishedClean.HasPendingWatchWork
+            |> should equal false
+
+            publishedClean.IsWorkingTreeClean
+            |> should equal true)
+
     /// Creates a deterministic durable replay boundary without exposing cursor format assumptions to the replay seam.
     let private replayBoundary cursor =
         { ReferenceMaterializationBoundaryDto.Default with
@@ -28591,7 +24190,7 @@ module WatchTests =
             let laterEvent = replayEvent "opaque-later-event" 11
             let mutable durableBoundary: ReferenceMaterializationBoundaryDto option = None
             let mutable resolutionCount = 0
-            let processed = ResizeArray<ReferenceId>()
+            let processed = ResizeArray<ReferenceId * string>()
             use replayGate = new SemaphoreSlim(1, 1)
 
             let clients =
@@ -28607,8 +24206,8 @@ module WatchTests =
                              Assert.That(boundary.EventCursor, Is.EqualTo("opaque-matching-root"))
                              Task.FromResult(Ok(replayReturnValue boundary [| laterEvent |] "opaque-later-event"))
                      ProcessReference =
-                         fun payload ->
-                             processed.Add(payload.ReferenceId)
+                         fun payload eventCursor ->
+                             processed.Add(payload.ReferenceId, eventCursor)
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun expected reference cursor _ ->
@@ -28634,7 +24233,11 @@ module WatchTests =
             Assert.That(outcome.AcknowledgedEventCount, Is.EqualTo(1))
 
             processed.ToArray()
-            |> should equal [| laterEvent.Reference.ReferenceId |]
+            |> should
+                equal
+                [|
+                    laterEvent.Reference.ReferenceId, laterEvent.EventCursor
+                |]
         }
 
     /// An unmatched local root establishes a conservative baseline, preserves history, and follows only a future event.
@@ -28646,7 +24249,7 @@ module WatchTests =
             let futureEvent = replayEvent "opaque-future-event" 13
             let mutable durableBoundary: ReferenceMaterializationBoundaryDto option = None
             let mutable futureAvailable = false
-            let processed = ResizeArray<ReferenceId>()
+            let processed = ResizeArray<ReferenceId * string>()
             use replayGate = new SemaphoreSlim(1, 1)
 
             let clients =
@@ -28662,8 +24265,8 @@ module WatchTests =
                              let scannedThrough = if futureAvailable then futureEvent.EventCursor else boundary.EventCursor
                              Task.FromResult(Ok(replayReturnValue boundary events scannedThrough))
                      ProcessReference =
-                         fun payload ->
-                             processed.Add(payload.ReferenceId)
+                         fun payload eventCursor ->
+                             processed.Add(payload.ReferenceId, eventCursor)
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun expected reference cursor _ ->
@@ -28696,9 +24299,13 @@ module WatchTests =
             Assert.That(futureOutcome.AcknowledgedEventCount, Is.EqualTo(1))
 
             processed.ToArray()
-            |> should equal [| futureEvent.Reference.ReferenceId |]
+            |> should
+                equal
+                [|
+                    futureEvent.Reference.ReferenceId, futureEvent.EventCursor
+                |]
 
-            Assert.That(processed, Does.Not.Contain(historicalEvent.Reference.ReferenceId))
+            Assert.That(processed, Does.Not.Contain((historicalEvent.Reference.ReferenceId, historicalEvent.EventCursor)))
         }
 
     /// Proves a partial root match stays non-terminal at the production decision and replay acknowledgement boundary.
@@ -28721,7 +24328,7 @@ module WatchTests =
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-partial-match"))
                      ProcessReference =
-                         fun currentPayload ->
+                         fun currentPayload _ ->
                              let decision =
                                  Services.revalidateAcceptedCurrentBranchReferenceMaterialization
                                      currentPayload.RepositoryId
@@ -28818,7 +24425,7 @@ module WatchTests =
         task {
             let mutable durableBoundary = replayBoundary "opaque-n"
             let event = replayEvent "opaque-n-plus-one" 1
-            let processed = ResizeArray<ReferenceId>()
+            let processed = ResizeArray<ReferenceId * string>()
             let acknowledgements = ResizeArray<string>()
             use replayGate = new SemaphoreSlim(1, 1)
 
@@ -28831,8 +24438,8 @@ module WatchTests =
                              let events = if boundary.EventCursor = "opaque-n" then [| event |] else Array.empty
                              Task.FromResult(Ok(replayReturnValue boundary events "opaque-scanned"))
                      ProcessReference =
-                         fun payload ->
-                             processed.Add(payload.ReferenceId)
+                         fun payload eventCursor ->
+                             processed.Add(payload.ReferenceId, eventCursor)
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun expected reference cursor _ ->
@@ -28861,7 +24468,11 @@ module WatchTests =
 
             processed
             |> Seq.toArray
-            |> should equal [| event.Reference.ReferenceId |]
+            |> should
+                equal
+                [|
+                    event.Reference.ReferenceId, event.EventCursor
+                |]
 
             acknowledgements
             |> Seq.toArray
@@ -28894,7 +24505,7 @@ module WatchTests =
                              let events = if boundary.EventCursor = "opaque-before" then [| event |] else Array.empty
                              Task.FromResult(Ok(replayReturnValue boundary events "opaque-closed"))
                      ProcessReference =
-                         fun payload ->
+                         fun payload _ ->
                              task {
                                  processCount <- processCount + 1
                                  applyStarted.TrySetResult(()) |> ignore
@@ -28945,7 +24556,7 @@ module WatchTests =
                      ReadBoundary = fun () -> Task.FromResult(Some boundary)
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-wait"))
-                     ProcessReference = fun payload -> Task.FromResult(waitingReplayOutcome payload.ReferenceId)
+                     ProcessReference = fun payload _ -> Task.FromResult(waitingReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
                          fun _ _ _ _ ->
                              acknowledgementCount <- acknowledgementCount + 1
@@ -28976,7 +24587,7 @@ module WatchTests =
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-scan-closed"))
                      ProcessReference =
-                         fun payload ->
+                         fun payload _ ->
                              processCount <- processCount + 1
                              Task.FromResult(sameRootReplayOutcome payload.ReferenceId payload)
                      AcknowledgeCursor =
@@ -29025,7 +24636,7 @@ module WatchTests =
                      ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-cancel"))
                      ProcessReference =
-                         fun payload ->
+                         fun payload _ ->
                              cancellation.Cancel()
                              Task.FromResult(appliedReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =

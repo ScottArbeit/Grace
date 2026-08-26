@@ -32,13 +32,14 @@ overwrite local work when IPC, local durable state, or the object cache is incom
 - Missing, stale, unreadable, blocked, or ambiguous IPC/local-state evidence leaves the current event cursor
   unacknowledged. Watch fails closed; only explicit exact `grace doctor --repair-local-state` maintenance may reconstruct
   missing status and its matching boundary, and it does not fall back to `BranchDto`.
-- Remote materialization creates no local Save. Its Grace-owned marker suppresses apply-owned observations while the
-  exact target plan mutates the working tree.
-- Watch publishes a clean IPC snapshot only after the exact apply succeeds, durable `GraceStatus` is updated, the
-  materialization update marker is closed, and the final clean snapshot is verified. It persists the matching event
-  cursor only after successful materialization or a verified same-root acknowledgement.
+- Remote materialization creates no local Save. Working Directory Update owns marker evidence while its exact tracked
+  plan mutates or verifies the working tree.
+- Changed-root and same-root events both record exact Watch local completion. Working Directory Update updates durable
+  `GraceStatus`, records pending completion, cleans exact marker evidence, and records terminal completion. Watch then
+  advances the matching event cursor by exact compare-and-set and publishes a verified clean IPC snapshot.
 - Watch persists the response's scanned-through cursor only after every earlier eligible event in that exact response
-  is terminally acknowledged. A persistence failure leaves the event replayable and idempotent.
+  is terminally acknowledged. A cursor persistence failure leaves the terminal local completion replayable without
+  repeating working-file mutation.
 
 ## Consequences
 
@@ -65,7 +66,7 @@ the final write cannot be verified, would let an unproven state cross that proce
 
 ## Related decision
 
-[ADR 0011](0011-working-directory-update-transaction.md) moves filesystem planning, mutation, dual-hash verification,
-marker behavior, and local completion into the shared Working Directory Update module. This ADR continues to define
-Watch's server-event ordering, replay admission, cursor progression, IPC publication, and resync policy around that
-shared transaction.
+[ADR 0011](0011-working-directory-update-transaction.md) records the shared Working Directory Update transaction that
+now owns Watch filesystem planning, mutation, BLAKE3 byte verification, marker behavior, and local completion. SHA-256
+remains target identity, selector, and metadata. This ADR continues to define Watch's server-event ordering, replay
+admission, cursor progression, IPC publication, and resync policy around that transaction.

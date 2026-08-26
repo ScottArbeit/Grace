@@ -3,7 +3,8 @@
 `grace doctor` inspects the local Grace environment and reports diagnostics for people, scripts, and agents. The default
 command is strictly read-only: it does not create configuration, initialize local state, migrate databases, repair
 object-cache rows, acquire credentials, refresh tokens, open a browser, or upload support bundles. The explicit
-`--repair-local-state` gesture is the sole exception and owns exact, non-destructive local-state reconstruction.
+`--repair-local-state` gesture is the sole exception. It completes a recorded pending Reference finalization when one
+is applicable, or performs exact, non-destructive local-state reconstruction.
 
 Use it when a Grace checkout, local state database, authentication environment, or server connection looks suspicious and
 you need a structured first look before deciding what to fix.
@@ -50,7 +51,7 @@ parsing or storing doctor evidence.
 | `--list-checks` | Lists the catalog and marks each returned check as skipped; diagnostic probes do not run. |
 | `--check <id-or-category>` | Runs only matching check IDs or categories. Repeat the option or separate values with commas. |
 | `--strict` | Returns exit code `1` when the report status is `Warning`; failures already return `1`. |
-| `--repair-local-state` | Rebuilds exact status and the matching ordered event boundary without changing working-tree or server content. |
+| `--repair-local-state` | Completes an applicable pending Reference finalization, or rebuilds exact status and its ordered event boundary, without changing working-tree content. |
 
 Check selection is case-insensitive. Category tokens can use spaces or hyphens, so `--check working-tree` matches
 `working-tree.scan`. Exact check IDs can also select non-default or full-profile diagnostics without `--full`.
@@ -208,8 +209,23 @@ avoid raw secrets, but summaries may include local file paths or configured serv
 
 ## Exact Local-State Repair
 
-Use `grace doctor --repair-local-state` only when a materialized working tree remains intact but its local SQLite state
-is missing or unusable. Repair:
+Use `grace doctor --repair-local-state` only when a materialized working tree remains intact but a recorded Reference
+completion is pending or its local SQLite state is missing or unusable.
+
+When SQLite contains a pending Reference completion, repair first:
+
+- Acquires the same exclusive Working Directory Update lease used by Branch operations.
+- Rereads durable repository and Branch configuration, the pending operation, and current SQLite status under that
+  lease.
+- Requires the local status and exact working bytes to match the recorded selected directory version.
+- Runs the existing Reference completion sequence without acquiring a second lease or rewriting working files.
+- Publishes the selected Branch only when it is still missing, proves durable Branch selection, and records terminal
+  completion.
+
+Cancellation or refusal before the first completion effect retains the pending row. A retry after Branch publication
+uses durable Branch evidence and does not publish it twice. DirectoryVersion selection has no pending completion state.
+
+When no applicable pending Reference exists, repair retains the exact reconstruction path. It:
 
 - Refuses a live Watch process for the configured repository and branch.
 - Computes the complete retained tree without changing its bytes.
@@ -218,23 +234,22 @@ is missing or unusable. Repair:
 - Fetches the complete immutable server directory closure and preserves its real descendant identities.
 - Rechecks configuration and local bytes immediately before one atomic status-and-cursor commit.
 
-Repair never uploads files, creates directory versions, publishes Save or Reference events, or materializes server
-content into the working tree. No exact root, changed bytes, a repository or branch mismatch, cancellation, server
-failure, or SQLite failure leaves no partially initialized status. The default command never invokes this path.
+Repair never uploads files, creates directory versions, publishes Save events, or materializes server content into the
+working tree. Recorded Reference repair may publish only the missing selected-Branch event already owned by the pending
+operation. Exact reconstruction does not publish Reference events. No exact root, changed bytes, a repository or branch
+mismatch, cancellation, server failure, or SQLite failure leaves partially initialized reconstructed status. The
+default command never invokes either repair path.
 
-### Planned Working Directory Update recovery
+### Recorded Working Directory Update completion
 
-The Plan-ready [Working Directory Update specification](Working%20Directory%20Update.md) extends the explicit repair
-gesture after the shared update module is implemented. A command that reaches `FinalizationIncomplete` will recommend
+The [Working Directory Update specification](Working%20Directory%20Update.md) defines the pending Reference rows that
+the explicit repair gesture can complete. A Branch command that reaches `FinalizationIncomplete` recommends
 `grace doctor --repair-local-state`.
 
-For a matching recorded update, the planned repair path first acquires the same local update lease, proves that working
-bytes and local status still match the recorded target, and retries only the idempotent Branch or Watch finalization.
-It performs no filesystem mutation. If recorded finalization is not applicable, Doctor may use the exact reconstruction
-path described above. Changed or ambiguous bytes still cause refusal and preserve recovery evidence.
-
-This section records an accepted design, not current executable behavior. Until the Working Directory Update work is
-implemented, `--repair-local-state` retains the current exact reconstruction behavior above.
+For a matching recorded Reference update, Doctor acquires the same local update lease, proves that working bytes and
+local status still match the recorded target, and retries only the idempotent Branch finalization. It performs no
+working-file mutation. If recorded finalization is not applicable, Doctor uses the exact reconstruction path described
+above. Changed or ambiguous bytes cause refusal and preserve the pending recovery evidence.
 
 ## V1 Boundaries
 

@@ -2573,8 +2573,9 @@ module Services =
             |> ignore
         | _ -> ()
 
-    /// Recursively processes changed directories from leaf to root
+    /// Rebuilds changed directories leaf-to-root, replacing every same-path child identity before linking the rebuilt child.
     let rec private processChangedDirectoriesBottomUp
+        (previousGraceStatus: GraceStatus)
         (newGraceStatus: GraceStatus)
         (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
         (newDirectoryVersions: List<LocalDirectoryVersion>)
@@ -2611,8 +2612,25 @@ module Services =
                         else
                             newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = path)
 
-                    if foundPrevious then
-                        dv.Directories.Remove(previous.DirectoryVersionId)
+                    let replacedDirectoryIds =
+                        dv.Directories
+                        |> Seq.filter (fun directoryId ->
+                            if foundPrevious
+                               && directoryId = previous.DirectoryVersionId then
+                                true
+                            else
+                                let mutable directoryVersion = LocalDirectoryVersion.Default
+
+                                if newGraceStatus.Index.TryGetValue(directoryId, &directoryVersion) then
+                                    directoryVersion.RelativePath = relativePath
+                                elif previousGraceStatus.Index.TryGetValue(directoryId, &directoryVersion) then
+                                    directoryVersion.RelativePath = relativePath
+                                else
+                                    false)
+                        |> Seq.toArray
+
+                    for replacedDirectoryId in replacedDirectoryIds do
+                        dv.Directories.Remove(replacedDirectoryId)
                         |> ignore
 
                     dv.Directories.Add(newDirectoryVersion.DirectoryVersionId)
@@ -2622,7 +2640,7 @@ module Services =
                     |> ignore
 
                     // Recursively process the parent
-                    processChangedDirectoriesBottomUp newGraceStatus changedDirectoryVersions newDirectoryVersions
+                    processChangedDirectoriesBottomUp previousGraceStatus newGraceStatus changedDirectoryVersions newDirectoryVersions
                 | None -> ()
 
     /// Normalizes Grace ids for directory difference path by keeping explicit scope values and clearing implicit child scopes.
@@ -2799,7 +2817,7 @@ module Services =
 
             // Recursively process changed directories from leaf to root
             let newDirectoryVersions = List<LocalDirectoryVersion>()
-            processChangedDirectoriesBottomUp newGraceStatus changedDirectoryVersions newDirectoryVersions
+            processChangedDirectoriesBottomUp previousGraceStatus newGraceStatus changedDirectoryVersions newDirectoryVersions
 
             if newDirectoryVersions.Count > 0 then
                 let rootExists =
@@ -2924,6 +2942,15 @@ module Services =
                 localRepositoryScopeSegment branchName
 
         Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryScope, rootScope, "branches", branchScope)
+
+    /// Gets the branch-independent temp directory that holds one Working Directory Update lease and its owned evidence.
+    let internal workingDirectoryUpdateTempDirectory (repositoryId: Guid) (localRootScope: string) =
+        if repositoryId = Guid.Empty then
+            invalidArg (nameof repositoryId) "Working Directory Update coordination requires a repository id."
+        elif not (Sha256FullHashRegex.IsMatch(localRootScope)) then
+            invalidArg (nameof localRootScope) "Working Directory Update coordination requires a lowercase SHA-256 local-root scope."
+        else
+            Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryId.ToString("N"), localRootScope, "working-directory-update")
 
     /// Gets the repository-scoped Watch IPC path for a specific local repository identity.
     let internal IpcFileNameForIdentity (repositoryId: Guid) (repositoryName: string) (rootDirectory: string) (branchId: Guid) (branchName: string) =

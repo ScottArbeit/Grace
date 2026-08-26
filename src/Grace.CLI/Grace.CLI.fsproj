@@ -25,10 +25,15 @@
 		<None Include="instructions.md" />
 		<Compile Include="Log.CLI.fs" />
 		<Compile Include="Text.CLI.fs" />
+		<Compile Include="Command\WorkingDirectoryUpdateContracts.CLI.fs" />
+		<Compile Include="Command\ConnectZipStaging.CLI.fs" />
+		<Compile Include="Command\WorkingDirectoryUpdate.Transition.CLI.fs" />
 		<Compile Include="LocalStateDb.CLI.fs" />
 		<Compile Include="SelectProjection.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
+		<Compile Include="Command\WorkingDirectoryUpdate.Coordination.CLI.fs" />
+		<Compile Include="Command\WorkingDirectoryUpdate.CLI.fs" />
 		<Compile Include="Command\Auth.CLI.fs" />
 		<Compile Include="Command\Config.CLI.fs" />
 		<Compile Include="Command\Owner.CLI.fs" />
@@ -36,7 +41,6 @@
 		<Compile Include="Command\Organization.CLI.fs" />
 		<Compile Include="Command\Repository.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />
-		<Compile Include="Command\WorkingDirectoryMaterialization.CLI.fs" />
 		<Compile Include="Command\Branch.CLI.fs" />
 		<Compile Include="Command\Reference.CLI.fs" />
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />

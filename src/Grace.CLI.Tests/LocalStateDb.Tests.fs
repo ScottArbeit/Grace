@@ -2,6 +2,7 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Command
 open Grace.Shared.Client.Configuration
 open Grace.Shared
 open Grace.Shared.Utilities
@@ -17,6 +18,8 @@ open System.Text
 open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
+
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
 
 /// Groups local state db coverage for the CLI test project.
 [<NonParallelizable>]
@@ -174,6 +177,18 @@ module LocalStateDbTests =
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Closes every SQLite handle so a pending-finalization assertion exercises the production restart reconstruction path.
+    let private assertPendingFinalizationReopenRejects (configuration: GraceConfiguration) expectedMessage =
+        SqliteConnection.ClearAllPools()
+        LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+
+        let corruptedRead = Func<Task>(fun () -> LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile :> Task)
+
+        let thrownException = Assert.ThrowsAsync<InvalidOperationException>(corruptedRead)
+
+        thrownException.Message
+        |> should equal expectedMessage
+
     /// Allocates Watch journal sequences without adding replay semantics beyond the schema scaffold.
     let private insertWatchJournalRows (connection: SqliteConnection) throughSequence =
         [| 1L .. throughSequence |]
@@ -255,6 +270,22 @@ module LocalStateDbTests =
             connection
             "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
 
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS remote_reference_boundaries (repository_id TEXT NOT NULL, branch_id TEXT NOT NULL, root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, root_directory_blake3_hash TEXT NOT NULL, event_cursor TEXT NOT NULL, PRIMARY KEY (repository_id, branch_id));"
+
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, target_repository_id TEXT NOT NULL, target_branch_id TEXT NOT NULL, target_root_directory_version_id TEXT NOT NULL, target_root_directory_sha256_hash TEXT NOT NULL, target_root_directory_blake3_hash TEXT NOT NULL, branch_previous_branch_id TEXT NULL, branch_selection_kind TEXT NULL CHECK (branch_selection_kind IN ('Reference', 'DirectoryVersion')), branch_selected_reference_id TEXT NULL, watch_event_cursor TEXT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL, CHECK ((caller_kind = 'Branch' AND branch_previous_branch_id IS NOT NULL AND ((branch_selection_kind = 'Reference' AND branch_selected_reference_id IS NOT NULL) OR (branch_selection_kind = 'DirectoryVersion' AND branch_selected_reference_id IS NULL)) AND watch_event_cursor IS NULL) OR (caller_kind = 'Watch' AND branch_previous_branch_id IS NULL AND branch_selection_kind IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NOT NULL) OR (caller_kind = 'Connect' AND branch_previous_branch_id IS NULL AND branch_selection_kind IS NULL AND branch_selected_reference_id IS NULL AND watch_event_cursor IS NULL)));"
+
+        executeNonQuery
+            connection
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_pending ON working_directory_update_completions(finalization_state) WHERE finalization_state = 'Pending';"
+
+        executeNonQuery
+            connection
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_terminal_caller ON working_directory_update_completions(caller_kind) WHERE finalization_state = 'Terminal';"
+
         executeNonQuery connection "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
         executeNonQuery connection "CREATE INDEX IF NOT EXISTS ix_status_files_directory_version_id ON status_files(directory_version_id);"
         executeNonQuery connection "CREATE INDEX IF NOT EXISTS ix_status_files_sha256 ON status_files(sha256_hash);"
@@ -279,13 +310,13 @@ module LocalStateDbTests =
 
         executeNonQuery
             connection
-            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, quarantined_at_unix_ticks INTEGER, quarantine_reason TEXT);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_sha256_hash TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, quarantined_at_unix_ticks INTEGER, quarantine_reason TEXT);"
 
         executeNonQuery
             connection
-            "CREATE TABLE IF NOT EXISTS watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 0));"
+            "CREATE TABLE IF NOT EXISTS watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_sha256_hash TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 0));"
 
-        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');"
+        executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{LocalStateDb.SchemaVersion}');"
         executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
 
         executeNonQuery
@@ -325,6 +356,60 @@ module LocalStateDbTests =
             LastSuccessfulFileUpload = Instant.FromUnixTimeTicks(ticks)
             LastSuccessfulDirectoryVersionUpload = Instant.FromUnixTimeTicks(ticks)
         }
+
+    /// Requires a successful private Working Directory Update contract construction in local-state tests.
+    let private requiredWorkingDirectoryUpdate value =
+        match value with
+        | Ok result -> result
+        | Error error -> failwith error
+
+    /// Builds a status snapshot whose root exactly matches the Working Directory Update target.
+    let private completionStatus (configuration: GraceConfiguration) rootId sha256Hash blake3Hash ticks =
+        let lastWrite = DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc)
+
+        let rootDirectory =
+            LocalDirectoryVersion.CreateWithHashes
+                rootId
+                configuration.OwnerId
+                configuration.OrganizationId
+                configuration.RepositoryId
+                Constants.RootDirectoryPath
+                sha256Hash
+                blake3Hash
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>())
+                0L
+                lastWrite
+
+        let index = GraceIndex()
+        index.TryAdd(rootId, rootDirectory) |> ignore
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootId
+            RootDirectorySha256Hash = sha256Hash
+            RootDirectoryBlake3Hash = blake3Hash
+            LastSuccessfulFileUpload = Instant.FromUnixTimeTicks(ticks)
+            LastSuccessfulDirectoryVersionUpload = Instant.FromUnixTimeTicks(ticks)
+        },
+        rootDirectory
+
+    /// Builds a complete Branch operation, exact target, and bounded finalization details for local completion tests.
+    let private completionTargetAndOperation (configuration: GraceConfiguration) rootId sha256Hash blake3Hash =
+        let target =
+            WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+            |> requiredWorkingDirectoryUpdate
+
+        let previousBranchId = Guid.NewGuid()
+        let selectedReferenceId = Guid.NewGuid()
+
+        let operation =
+            WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target
+            |> requiredWorkingDirectoryUpdate
+
+        let completionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, selectedReferenceId)
+
+        target, operation, completionDetails
 
     /// Exercises private behavior.
     type private WorkerCommand = { FileName: string; ArgumentsPrefix: string }
@@ -380,7 +465,9 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
@@ -1800,7 +1887,9 @@ module LocalStateDbTests =
 
                 let lifecycleColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('watch_lifecycle_events');"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 lifecycleColumns |> should equal 13
 
                 let corruptAfter =
@@ -1843,7 +1932,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -2132,7 +2223,44 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Proves a complete prior v10 database is replaced instead of being read through as the v11 typed-selector shape.
+    [<Test>]
+    let ``ensureDbInitialized cleanly recreates v10 local state for typed Branch selectors`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                seedSchemaVersionOnly configuration.GraceStatusFile "10"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                |> should equal "11"
+
+                let selectorColumn =
+                    use command = connection.CreateCommand()
+
+                    command.CommandText <-
+                        "SELECT COUNT(*) FROM pragma_table_info('working_directory_update_completions') WHERE name = 'branch_selection_kind';"
+
+                    command.ExecuteScalar() |> Convert.ToInt32
+
+                selectorColumn |> should equal 1
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -2169,7 +2297,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
                 sequencePk |> should equal 1
@@ -2221,7 +2351,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -2261,7 +2393,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -2301,7 +2435,9 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
@@ -2343,7 +2479,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let duplicateRows = executeScalarInt connection "SELECT COUNT(*) FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 duplicateRows |> should equal 1
 
@@ -2388,7 +2526,9 @@ module LocalStateDbTests =
                     with
                     | :? SqliteException -> false
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 duplicateInsertSucceeded |> should equal false
 
@@ -2427,7 +2567,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2466,7 +2608,9 @@ module LocalStateDbTests =
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
                 let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
                 allocationRows |> should equal 0
@@ -2504,7 +2648,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2541,7 +2687,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2578,7 +2726,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2624,7 +2774,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2671,7 +2823,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2717,7 +2871,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2765,7 +2921,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2806,7 +2964,9 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2836,7 +2996,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -2891,7 +3053,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "9")
+                |> should equal (Some LocalStateDb.SchemaVersion)
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -2936,7 +3098,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "9")
+                |> should equal (Some LocalStateDb.SchemaVersion)
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -3242,7 +3404,9 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'schema_version';"
                 let readRootId = executeScalarString connection2 "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection2 "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 readRootId
                 |> should not' (equal (rootId.ToString()))
@@ -3279,7 +3443,10 @@ module LocalStateDbTests =
                 let readRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
                 let readRootBlake3Hash = executeScalarString connection "SELECT root_directory_blake3_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 readRootId |> should equal (rootId.ToString())
                 readRootHash |> should equal rootHash
                 readRootBlake3Hash |> should equal rootBlake3Hash
@@ -3335,7 +3502,9 @@ module LocalStateDbTests =
                 let watchJournalCount = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 watchJournalCount |> should equal 1
                 appliedThrough |> should equal "0"
 
@@ -3387,7 +3556,9 @@ module LocalStateDbTests =
 
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 hiddenRequiredColumns |> should equal 0
                 journalColumns |> should equal 15
                 appliedThrough |> should equal "0"
@@ -3424,7 +3595,9 @@ module LocalStateDbTests =
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 rootBlake3Columns |> should equal 1
                 statusMetaCount |> should equal 1
 
@@ -3465,7 +3638,9 @@ module LocalStateDbTests =
                 let statusDirectoryCount = executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "9"
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
+
                 statusDirectoryCount |> should equal 0
                 statusMetaCount |> should equal 1
 
@@ -3626,6 +3801,899 @@ module LocalStateDbTests =
                 |> should equal revisionBeforeFailure
             })
 
+    /// Verifies a pending Working Directory Update completion durably joins the exact status and object-cache facts.
+    [<Test>]
+    let ``working directory update completion atomically persists matching local facts across sqlite restart`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "a")
+                let blake3Hash = Blake3Hash(String.replicate 64 "b")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 123L
+                let target, operation, completionDetails = completionTargetAndOperation configuration rootId sha256Hash blake3Hash
+
+                let! revision =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        completionDetails
+                        target
+                        operation
+
+                revision |> should equal 1L
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
+                |> should equal 1
+
+                executeScalarIntWithTextParameter
+                    connection
+                    "SELECT COUNT(*) FROM status_directories WHERE directory_version_id = $root_id;"
+                    "$root_id"
+                    (rootId.ToString())
+                |> should equal 1
+
+                executeScalarIntWithTextParameter
+                    connection
+                    "SELECT COUNT(*) FROM object_cache_directories WHERE directory_version_id = $root_id;"
+                    "$root_id"
+                    (rootId.ToString())
+                |> should equal 1
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions WHERE finalization_state = 'Pending';"
+                |> should equal 1
+
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+
+                completion
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+            })
+
+    /// Verifies restart reconstructs exact Branch and Watch finalizers and rejects altered persisted facts.
+    [<Test>]
+    let ``working directory update pending finalization reconstructs typed Branch and Watch facts after restart`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "c")
+                let blake3Hash = Blake3Hash(String.replicate 64 "d")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 223L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let previousBranchId = configuration.BranchId
+                let selectedReferenceId = Guid.NewGuid()
+
+                let branchOperation =
+                    WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target
+                    |> requiredWorkingDirectoryUpdate
+
+                let branchCompletionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, selectedReferenceId)
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        branchCompletionDetails
+                        target
+                        branchOperation
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let! branchPending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile
+
+                match branchPending with
+                | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingBranchFinalization (persistedTarget,
+                                                                                                          persistedOperation,
+                                                                                                          persistedPreviousBranchId,
+                                                                                                          persistedSelection)) ->
+                    WorkingDirectoryUpdate.Target.canonical persistedTarget
+                    |> should equal (WorkingDirectoryUpdate.Target.canonical target)
+
+                    WorkingDirectoryUpdate.Operation.value persistedOperation
+                    |> should equal (WorkingDirectoryUpdate.Operation.value branchOperation)
+
+                    persistedPreviousBranchId
+                    |> should equal previousBranchId
+
+                    persistedSelection
+                    |> should equal (WorkingDirectoryUpdate.BranchSelection.Reference selectedReferenceId)
+                | _ -> failwith "Expected the persisted Branch finalizer after restart."
+
+                do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target branchOperation
+
+                let watchCursor = "typed-watch-cursor-001"
+
+                let watchOperation =
+                    WorkingDirectoryUpdate.Operation.watchReplay configuration.RepositoryId configuration.BranchId watchCursor
+                    |> requiredWorkingDirectoryUpdate
+
+                let watchCompletionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization watchCursor
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        watchCompletionDetails
+                        target
+                        watchOperation
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let! watchPending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile
+
+                match watchPending with
+                | Some (LocalStateDb.PendingWorkingDirectoryUpdateFinalization.PendingWatchFinalization (persistedTarget, persistedOperation, persistedCursor)) ->
+                    WorkingDirectoryUpdate.Target.canonical persistedTarget
+                    |> should equal (WorkingDirectoryUpdate.Target.canonical target)
+
+                    WorkingDirectoryUpdate.Operation.value persistedOperation
+                    |> should equal (WorkingDirectoryUpdate.Operation.value watchOperation)
+
+                    persistedCursor |> should equal watchCursor
+                | _ -> failwith "Expected the persisted Watch finalizer after restart."
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        "UPDATE working_directory_update_completions SET watch_event_cursor = 'altered-watch-cursor' WHERE finalization_state = 'Pending';"
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+
+                let alteredRead = Func<Task>(fun () -> LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile :> Task)
+
+                Assert.ThrowsAsync<InvalidOperationException>(alteredRead)
+                |> ignore
+            })
+
+    /// Proves reopening a hash-selected Branch completion retains terminal state without a pending finalizer.
+    [<Test>]
+    let ``working directory update terminal DirectoryVersion Branch completion has no pending finalizer after restart`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "c")
+                let blake3Hash = Blake3Hash(String.replicate 64 "d")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 224L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let previousBranchId = configuration.BranchId
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization previousBranchId)
+                        target
+                        operation
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let! pending = LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile
+                pending |> should equal None
+
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+
+                completion
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+            })
+
+    /// Proves persisted Reference selections reject when their previous Branch no longer matches the operation identity.
+    [<Test>]
+    let ``working directory update pending Reference Branch corruption rejects on reopen`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "e")
+                let blake3Hash = Blake3Hash(String.replicate 64 "f")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 225L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let selectedReferenceId = Guid.NewGuid()
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitch configuration.BranchId selectedReferenceId target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(configuration.BranchId, selectedReferenceId))
+                        target
+                        operation
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        $"UPDATE working_directory_update_completions SET branch_previous_branch_id = '{Guid.NewGuid()}' WHERE finalization_state = 'Pending';"
+
+                assertPendingFinalizationReopenRejects
+                    configuration
+                    "Pending Working Directory Update finalization facts do not match their operation identity."
+            })
+
+    /// Proves impossible persisted selector and Reference combinations reject during strict pending-row reconstruction.
+    [<Test>]
+    let ``working directory update pending Branch selector corruption rejects on reopen`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "e")
+                let blake3Hash = Blake3Hash(String.replicate 64 "f")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 225L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let previousBranchId = configuration.BranchId
+                let selectedReferenceId = Guid.NewGuid()
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, selectedReferenceId))
+                        target
+                        operation
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "PRAGMA ignore_check_constraints = ON;"
+
+                    executeNonQuery
+                        connection
+                        "UPDATE working_directory_update_completions SET branch_selection_kind = 'DirectoryVersion' WHERE finalization_state = 'Pending';"
+
+                    executeNonQuery connection "PRAGMA ignore_check_constraints = OFF;"
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+
+                assertPendingFinalizationReopenRejects configuration "DirectoryVersion Branch finalization must not persist a Reference id."
+            })
+
+    /// Proves restart validation rejects independently mutated target, operation, and caller facts from an otherwise valid pending row.
+    [<TestCase("target")>]
+    [<TestCase("operation")>]
+    [<TestCase("caller")>]
+    let ``working directory update pending finalization rejects each corrupted persisted identity fact`` (corruptedFact: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "a")
+                let blake3Hash = Blake3Hash(String.replicate 64 "b")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 226L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let selectedReferenceId = Guid.NewGuid()
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitch configuration.BranchId selectedReferenceId target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(configuration.BranchId, selectedReferenceId))
+                        target
+                        operation
+
+                let expectedMessage =
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    match corruptedFact with
+                    | "target" ->
+                        executeNonQuery
+                            connection
+                            "UPDATE working_directory_update_completions SET target_root_directory_sha256_hash = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' WHERE finalization_state = 'Pending';"
+
+                        "Pending Working Directory Update finalization target facts do not match their canonical target."
+                    | "operation" ->
+                        executeNonQuery
+                            connection
+                            "UPDATE working_directory_update_completions SET operation_value = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' WHERE finalization_state = 'Pending';"
+
+                        "Pending Working Directory Update finalization facts do not match their operation identity."
+                    | "caller" ->
+                        executeNonQuery connection "PRAGMA ignore_check_constraints = ON;"
+
+                        executeNonQuery
+                            connection
+                            "UPDATE working_directory_update_completions SET caller_kind = 'Connect' WHERE finalization_state = 'Pending';"
+
+                        executeNonQuery connection "PRAGMA ignore_check_constraints = OFF;"
+                        "Connect completion must be terminal and cannot be a pending finalization."
+                    | value -> failwith $"Unexpected persisted identity fact '{value}'."
+
+                assertPendingFinalizationReopenRejects configuration expectedMessage
+            })
+
+    /// Verifies Connect cursor progress and its terminal completion cannot commit separately from matching local facts.
+    [<Test>]
+    let ``working directory update completion atomically persists connect cursor`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "c")
+                let blake3Hash = Blake3Hash(String.replicate 64 "d")
+                let cursor = "connect-cursor-001"
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 234L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let localRootScope =
+                    WorkingDirectoryUpdate.LocalRootScope.create configuration.RootDirectory
+                    |> requiredWorkingDirectoryUpdate
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.connectBootstrap target cursor localRootScope
+                    |> requiredWorkingDirectoryUpdate
+
+                let completionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.ConnectCompletion(cursor, localRootScope)
+
+                let mismatchedIdentityCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.ConnectCompletion("different-connect-cursor", localRootScope))
+                            target
+                            operation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(mismatchedIdentityCommit)
+                |> ignore
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        completionDetails
+                        target
+                        operation
+
+                let nextCursor = "connect-cursor-002"
+
+                let nextOperation =
+                    WorkingDirectoryUpdate.Operation.connectBootstrap target nextCursor localRootScope
+                    |> requiredWorkingDirectoryUpdate
+
+                let nextCompletionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.ConnectCompletion(nextCursor, localRootScope)
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        nextCompletionDetails
+                        target
+                        nextOperation
+
+                SqliteConnection.ClearAllPools()
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                let! persistedBoundary =
+                    LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                persistedStatus.RootDirectoryId
+                |> should equal rootId
+
+                persistedStatus.RootDirectorySha256Hash
+                |> should equal sha256Hash
+
+                persistedStatus.RootDirectoryBlake3Hash
+                |> should equal blake3Hash
+
+                match persistedBoundary with
+                | Some boundary ->
+                    boundary.RepositoryId
+                    |> should equal configuration.RepositoryId
+
+                    boundary.BranchId
+                    |> should equal configuration.BranchId
+
+                    boundary.DirectoryId |> should equal rootId
+                    boundary.Sha256Hash |> should equal sha256Hash
+                    boundary.Blake3Hash |> should equal blake3Hash
+                    boundary.EventCursor |> should equal nextCursor
+                | None -> failwith "Expected Connect cursor boundary after reopening the local state database."
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeScalarIntWithTextParameter
+                        connection
+                        "SELECT COUNT(*) FROM object_cache_directories WHERE directory_version_id = $root_id;"
+                        "$root_id"
+                        (rootId.ToString())
+                    |> should equal 1
+
+                let! supersededCompletion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+                let! completion = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target nextOperation
+
+                supersededCompletion |> should equal None
+
+                completion
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+            })
+
+    /// Proves completion writes reject selector disagreement and the impossible DirectoryVersion target/previous-Branch tuple.
+    [<Test>]
+    let ``working directory update completion rejects mismatched Branch selector and DirectoryVersion Branch retention on write`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "7")
+                let blake3Hash = Blake3Hash(String.replicate 64 "8")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 344L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let previousBranchId = configuration.BranchId
+                let selectedReferenceId = Guid.NewGuid()
+
+                let directoryVersionOperation =
+                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection previousBranchId WorkingDirectoryUpdate.BranchSelection.DirectoryVersion target
+                    |> requiredWorkingDirectoryUpdate
+
+                let referenceOperation =
+                    WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target
+                    |> requiredWorkingDirectoryUpdate
+
+                let referenceDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, selectedReferenceId)
+
+                let directoryVersionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization previousBranchId
+
+                let mismatchedReferenceWrite =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            referenceDetails
+                            target
+                            directoryVersionOperation
+                        :> Task)
+
+                let mismatchedDirectoryVersionWrite =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            directoryVersionDetails
+                            target
+                            referenceOperation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(mismatchedReferenceWrite)
+                |> ignore
+
+                Assert.ThrowsAsync<ArgumentException>(mismatchedDirectoryVersionWrite)
+                |> ignore
+
+                let otherBranchTarget =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId (Guid.NewGuid()) rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let referenceOperationForOtherBranch =
+                    WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId otherBranchTarget
+                    |> requiredWorkingDirectoryUpdate
+
+                let invalidDirectoryVersionWrite =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization previousBranchId)
+                            otherBranchTarget
+                            referenceOperationForOtherBranch
+                        :> Task)
+
+                let thrownException = Assert.ThrowsAsync<ArgumentException>(invalidDirectoryVersionWrite)
+
+                thrownException.Message
+                |> should equal "DirectoryVersion Branch completion must retain the current Branch. (Parameter 'completionDetails')"
+            })
+
+    /// Verifies an injected pre-commit failure rolls back every local fact in the update completion transaction.
+    [<Test>]
+    let ``working directory update pre-commit failure leaves no completion facts`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                let! revisionBefore = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "e")
+                let blake3Hash = Blake3Hash(String.replicate 64 "f")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 345L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let cursor = "rollback-connect-cursor"
+
+                let localRootScope =
+                    WorkingDirectoryUpdate.LocalRootScope.create configuration.RootDirectory
+                    |> requiredWorkingDirectoryUpdate
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.connectBootstrap target cursor localRootScope
+                    |> requiredWorkingDirectoryUpdate
+
+                let completionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.ConnectCompletion(cursor, localRootScope)
+
+                let failingCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            completionDetails
+                            target
+                            operation
+                            (fun () -> raise (InvalidOperationException("injected before commit")))
+                        :> Task)
+
+                Assert.ThrowsAsync<InvalidOperationException>(failingCommit)
+                |> ignore
+
+                let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! revisionAfter = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+
+                persistedStatus.RootDirectoryId
+                |> should equal DirectoryVersionId.Empty
+
+                revisionAfter |> should equal revisionBefore
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM object_cache_directories;"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM remote_reference_boundaries;"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions;"
+                |> should equal 0
+            })
+
+    /// Verifies one mismatched target hash rejects the whole completion before any durable row appears.
+    [<Test>]
+    let ``working directory update completion rejects one-hash status mismatch`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "1")
+                let targetBlake3Hash = Blake3Hash(String.replicate 64 "2")
+                let statusBlake3Hash = Blake3Hash(String.replicate 64 "3")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash statusBlake3Hash 456L
+                let target, operation, completionDetails = completionTargetAndOperation configuration rootId sha256Hash targetBlake3Hash
+
+                let mismatchedCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            completionDetails
+                            target
+                            operation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(mismatchedCommit)
+                |> ignore
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions;"
+                |> should equal 0
+            })
+
+    /// Verifies object-cache root metadata cannot diverge by one hash from matching status and target facts.
+    [<Test>]
+    let ``working directory update completion rejects one-hash object metadata mismatch`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "6")
+                let blake3Hash = Blake3Hash(String.replicate 64 "7")
+                let mismatchedBlake3Hash = Blake3Hash(String.replicate 64 "8")
+                let status, _ = completionStatus configuration rootId sha256Hash blake3Hash 457L
+                let target, operation, completionDetails = completionTargetAndOperation configuration rootId sha256Hash blake3Hash
+
+                let mismatchedRoot =
+                    LocalDirectoryVersion.CreateWithHashes
+                        rootId
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+                        Constants.RootDirectoryPath
+                        sha256Hash
+                        mismatchedBlake3Hash
+                        (List<DirectoryVersionId>())
+                        (List<LocalFileVersion>())
+                        0L
+                        (DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc))
+
+                let mismatchedCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ mismatchedRoot ]
+                            completionDetails
+                            target
+                            operation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(mismatchedCommit)
+                |> ignore
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM object_cache_directories;"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions;"
+                |> should equal 0
+            })
+
+    /// Verifies repository and root identity mismatches reject completion before any durable local fact appears.
+    [<Test>]
+    let ``working directory update completion rejects direct repository and root mismatches`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "9")
+                let blake3Hash = Blake3Hash(String.replicate 64 "a")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 478L
+
+                let branchCompletion target =
+                    let previousBranchId = Guid.NewGuid()
+                    let selectedReferenceId = Guid.NewGuid()
+
+                    let operation =
+                        WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target
+                        |> requiredWorkingDirectoryUpdate
+
+                    let completionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, selectedReferenceId)
+
+                    operation, completionDetails
+
+                let repositoryMismatchTarget =
+                    WorkingDirectoryUpdate.Target.create (Guid.NewGuid()) configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let repositoryMismatchOperation, repositoryMismatchCompletionDetails = branchCompletion repositoryMismatchTarget
+
+                let repositoryMismatchCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            repositoryMismatchCompletionDetails
+                            repositoryMismatchTarget
+                            repositoryMismatchOperation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(repositoryMismatchCommit)
+                |> ignore
+
+                let rootMismatchTarget =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId (Guid.NewGuid()) sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let rootMismatchOperation, rootMismatchCompletionDetails = branchCompletion rootMismatchTarget
+
+                let rootMismatchCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            rootMismatchCompletionDetails
+                            rootMismatchTarget
+                            rootMismatchOperation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(rootMismatchCommit)
+                |> ignore
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM object_cache_directories;"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions;"
+                |> should equal 0
+            })
+
+    /// Verifies pending completion is never displaced and terminal supersession stays scoped to one caller kind.
+    [<Test>]
+    let ``working directory update completion retention preserves pending and other callers`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "4")
+                let blake3Hash = Blake3Hash(String.replicate 64 "5")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 567L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let branchOperation () =
+                    let previousBranchId = Guid.NewGuid()
+                    let selectedReferenceId = Guid.NewGuid()
+
+                    let operation =
+                        WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target
+                        |> requiredWorkingDirectoryUpdate
+
+                    let completionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchFinalization(previousBranchId, selectedReferenceId)
+
+                    operation, completionDetails
+
+                let firstBranch, firstBranchCompletionDetails = branchOperation ()
+
+                let watch =
+                    WorkingDirectoryUpdate.Operation.watchReplay configuration.RepositoryId configuration.BranchId "watch-cursor-001"
+                    |> requiredWorkingDirectoryUpdate
+
+                let watchCompletionDetails = LocalStateDb.WorkingDirectoryUpdateCompletionDetails.WatchFinalization "watch-cursor-001"
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        firstBranchCompletionDetails
+                        target
+                        firstBranch
+
+                do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target firstBranch
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        watchCompletionDetails
+                        target
+                        watch
+
+                do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target watch
+
+                let secondBranch, secondBranchCompletionDetails = branchOperation ()
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        secondBranchCompletionDetails
+                        target
+                        secondBranch
+
+                let displacedPending, displacedPendingCompletionDetails = branchOperation ()
+
+                let conflictingCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            displacedPendingCompletionDetails
+                            target
+                            displacedPending
+                        :> Task)
+
+                Assert.ThrowsAsync<InvalidOperationException>(conflictingCommit)
+                |> ignore
+
+                let! pending = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target secondBranch
+                let! firstBranchBeforeFinalization = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target firstBranch
+                let! watchBeforeFinalization = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target watch
+
+                pending
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Pending)
+
+                firstBranchBeforeFinalization
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+                watchBeforeFinalization
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+                do! LocalStateDb.finalizeWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target secondBranch
+
+                let! firstBranchAfterFinalization = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target firstBranch
+                let! secondBranchAfterFinalization = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target secondBranch
+                let! watchAfterFinalization = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target watch
+
+                firstBranchAfterFinalization |> should equal None
+
+                secondBranchAfterFinalization
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+                watchAfterFinalization
+                |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions WHERE finalization_state = 'Pending';"
+                |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM working_directory_update_completions WHERE finalization_state = 'Terminal';"
+                |> should equal 2
+            })
+
     /// Verifies that apply status incremental is atomic (rollback on failure).
     [<Test>]
     let ``applyStatusIncremental is atomic (rollback on failure)`` () =
@@ -3710,7 +4778,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -3740,7 +4810,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "9"
+
+                schemaVersion
+                |> should equal LocalStateDb.SchemaVersion
             })
 
     /// Verifies non-Windows filesystems can initialize case-distinct local-state paths without rewriting the temp root.
@@ -4088,7 +5160,7 @@ module LocalStateDbTests =
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
                     executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9');"
+                    executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{LocalStateDb.SchemaVersion}');"
 
                     executeNonQuery
                         connection
@@ -5103,7 +6175,9 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "9"
+
+                    schemaVersion
+                    |> should equal LocalStateDb.SchemaVersion
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1

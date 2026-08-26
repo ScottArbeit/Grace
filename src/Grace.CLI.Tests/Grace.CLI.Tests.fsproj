@@ -22,6 +22,7 @@
     <Compile Include="Branch.CLI.Tests.fs" />
     <Compile Include="Connect.CLI.Parsing.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
+    <Compile Include="ConnectZipStaging.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
     <Compile Include="Artifact.SDK.Tests.fs" />
     <Compile Include="ClientIdentity.SDK.Tests.fs" />
@@ -49,6 +50,13 @@
     <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="ManifestUpload.SDK.Tests.fs" />
     <Compile Include="ManifestDownload.SDK.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Contracts.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.PreparedContent.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Coordination.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Transition.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Topology.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.BranchDirectoryVersion.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Watch.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
