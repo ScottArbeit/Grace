@@ -435,6 +435,102 @@ module WorkingDirectoryUpdateCoordinationTests =
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false)
 
+    /// Proves a failed first marker publication leaves fresh admission available and removes its temporary file.
+    [<Test>]
+    let ``failed fresh marker publication leaves no durable evidence`` () =
+        withTempRoot (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let selectedTarget = target repositoryId branchId
+            let operation = branchOperation selectedTarget
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let attemptToken = WorkingDirectoryUpdate.AttemptToken.create ()
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope attemptToken selectedTarget operation
+                |> required
+
+            Assert.Throws<IOException>(
+                Action (fun () ->
+                    WorkingDirectoryUpdateCoordination.Marker.writeWithBeforePublish scope marker (fun () ->
+                        raise (IOException("forced marker publication failure")))
+                    |> fun task -> task.GetAwaiter().GetResult())
+            )
+            |> ignore
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope attemptToken
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+
+            Directory.GetFiles(WorkingDirectoryUpdateCoordination.Scope.directory scope, "*.tmp")
+            |> should be Empty)
+
+    /// Proves a failed replacement preserves the exact marker that an identical retry may adopt.
+    [<Test>]
+    let ``failed exact marker replacement preserves prior retry evidence`` () =
+        withTempRoot (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let selectedTarget = target repositoryId branchId
+            let operation = branchOperation selectedTarget
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let firstToken = WorkingDirectoryUpdate.AttemptToken.create ()
+
+            let first =
+                WorkingDirectoryUpdateCoordination.Marker.create scope firstToken selectedTarget operation
+                |> required
+
+            let replacement =
+                WorkingDirectoryUpdateCoordination.Marker.create scope (WorkingDirectoryUpdate.AttemptToken.create ()) selectedTarget operation
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope first
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let markerPath = WorkingDirectoryUpdateCoordination.Scope.markerPath scope
+            let priorEvidence = File.ReadAllText(markerPath)
+
+            Assert.Throws<IOException>(
+                Action (fun () ->
+                    WorkingDirectoryUpdateCoordination.Marker.writeWithBeforePublish scope replacement (fun () ->
+                        raise (IOException("forced marker replacement failure")))
+                    |> fun task -> task.GetAwaiter().GetResult())
+            )
+            |> ignore
+
+            File.ReadAllText(markerPath)
+            |> should equal priorEvidence
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope firstToken
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactMatchCleaned
+
+            Directory.GetFiles(WorkingDirectoryUpdateCoordination.Scope.directory scope, "*.tmp")
+            |> should be Empty)
+
     /// Proves missing, damaged, and unreadable cleanup evidence is never treated as successful cleanup.
     [<Test>]
     let ``marker cleanup distinguishes every non-successful evidence disposition`` () =

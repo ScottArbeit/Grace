@@ -2415,6 +2415,9 @@ module internal WorkingDirectoryUpdate =
         /// Uses normal WDU effects for Watch replay.
         let none = LocalApplication.none
 
+        /// Exposes the deterministic boundary immediately before Watch local completion commits.
+        let BeforeCommit = LocalApplication.BeforeCommit
+
         /// Exposes the deterministic boundary immediately before Watch terminal recording.
         let BeforeTerminalRecording = LocalApplication.BeforeTerminalRecording
 
@@ -2709,6 +2712,7 @@ module internal WorkingDirectoryUpdate =
                                 }
 
                             let mutable committedReceipt: WorkingDirectoryUpdateContracts.Receipt option = None
+                            let mutable verifiedRoot = false
 
                             try
                                 match WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId current.RootDirectory with
@@ -2857,6 +2861,8 @@ module internal WorkingDirectoryUpdate =
                                                     | LocalApplication.UpdateIncomplete error ->
                                                         return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete error
                                                     | LocalApplication.Verified localRoot ->
+                                                        verifiedRoot <- true
+
                                                         let! _ =
                                                             LocalStateDb.commitWorkingDirectoryUpdateCompletionWithBeforeCommit
                                                                 current.GraceStatusFile
@@ -2879,6 +2885,7 @@ module internal WorkingDirectoryUpdate =
                                                         return! finalizeUnderLease scope receipt eventCursor cancellationToken failureInjection
                             with
                             | ex when committedReceipt.IsSome -> return incomplete committedReceipt.Value $"Watch finalization failed: {ex.Message}"
+                            | ex when verifiedRoot -> return WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete(transactionFailure ex.Message)
                             | :? OperationCanceledException as ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(transactionFailure ex.Message)
                             | ex -> return WorkingDirectoryUpdateContracts.Outcome.Rejected(transactionFailure ex.Message)
             }

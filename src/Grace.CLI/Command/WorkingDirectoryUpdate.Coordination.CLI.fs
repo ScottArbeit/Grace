@@ -348,8 +348,8 @@ module internal WorkingDirectoryUpdateCoordination =
                         ProcessId = Environment.ProcessId
                     }
 
-        /// Writes a complete owned marker after the caller holds the matching scope lease.
-        let write (scope: Scope) (marker: MarkerDocument) =
+        /// Publishes a complete owned marker atomically while exposing the pre-publication boundary to focused tests.
+        let internal writeWithBeforePublish (scope: Scope) (marker: MarkerDocument) (beforePublish: unit -> unit) =
             task {
                 Directory.CreateDirectory(Scope.directory scope)
                 |> ignore
@@ -371,8 +371,25 @@ module internal WorkingDirectoryUpdateCoordination =
                         jsonOptions
                     )
 
-                File.WriteAllText(Scope.markerPath scope, serialized)
+                let markerPath = Scope.markerPath scope
+                let temporaryPath = markerPath + $".{Guid.NewGuid():N}.tmp"
+
+                try
+                    do
+                        use stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+                        use writer = new StreamWriter(stream, UTF8Encoding(false))
+                        writer.Write(serialized)
+                        writer.Flush()
+                        stream.Flush(flushToDisk = true)
+
+                    beforePublish ()
+                    File.Move(temporaryPath, markerPath, overwrite = true)
+                finally
+                    if File.Exists(temporaryPath) then File.Delete(temporaryPath)
             }
+
+        /// Writes a complete owned marker after the caller holds the matching scope lease.
+        let write (scope: Scope) (marker: MarkerDocument) = writeWithBeforePublish scope marker ignore
 
         /// Classifies every marker state so a caller can adopt only exact evidence and preserve all Doctor-required evidence.
         let inspect scope expectedTarget operation =

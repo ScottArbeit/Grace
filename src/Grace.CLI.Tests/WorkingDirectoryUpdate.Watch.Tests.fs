@@ -315,6 +315,79 @@ module WorkingDirectoryUpdateWatchTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal pendingRevision)
 
+    /// Proves a Watch SQLite failure after verified local application remains truthfully incomplete and retryable.
+    [<Test>]
+    let ``Watch pre-commit failure after verified root returns update incomplete`` () =
+        withRepo (fun root configuration ->
+            let path = "watch-pre-commit.txt"
+            let currentBytes = Encoding.UTF8.GetBytes("current Watch bytes")
+            let targetBytes = Encoding.UTF8.GetBytes("verified Watch target bytes")
+            let currentStatus, _ = status configuration (DirectoryVersionId.NewGuid()) path currentBytes
+            let targetStatus, targetRoot = status configuration (DirectoryVersionId.NewGuid()) path targetBytes
+            let eventCursor = "watch-cursor-before-local-commit"
+
+            LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile currentStatus
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> ignore
+
+            let workingPath = Path.Combine(root, path)
+            File.WriteAllBytes(workingPath, currentBytes)
+
+            let acceptedRevision =
+                LocalStateDb.readLocalStatusRevisionReadOnly configuration.GraceStatusFile
+                |> fun task -> task.Result
+
+            let injection =
+                { Grace.CLI.Command.WorkingDirectoryUpdate.Watch.none with
+                    ThrowAt =
+                        fun point ->
+                            if point = Grace.CLI.Command.WorkingDirectoryUpdate.Watch.BeforeCommit then
+                                raise (IOException("injected Watch local completion failure"))
+                }
+
+            Grace.CLI.Command.WorkingDirectoryUpdate.Watch.runAtRevision
+                currentStatus
+                targetStatus
+                [| targetRoot |]
+                (preparedContent path targetBytes)
+                eventCursor
+                "watch-before-local-commit"
+                acceptedRevision
+                CancellationToken.None
+                injection
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> function
+                | WorkingDirectoryUpdateContracts.Outcome.UpdateIncomplete _ -> ()
+                | outcome -> Assert.Fail($"Expected incomplete Watch local completion, got {outcome}.")
+
+            File.ReadAllBytes(workingPath)
+            |> should equal targetBytes
+
+            let target =
+                WorkingDirectoryUpdateContracts.Target.create
+                    configuration.RepositoryId
+                    configuration.BranchId
+                    targetStatus.RootDirectoryId
+                    targetStatus.RootDirectorySha256Hash
+                    targetStatus.RootDirectoryBlake3Hash
+                |> required
+
+            let operation =
+                WorkingDirectoryUpdateContracts.Operation.watchReplay configuration.RepositoryId configuration.BranchId eventCursor
+                |> required
+
+            LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal None
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId root
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope target operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.ExactMatch)
+
     /// Proves a newer cursor for the same accepted root records its own terminal completion without touching working bytes.
     [<Test>]
     let ``Watch same root newer cursor completes without rewriting working files`` () =
