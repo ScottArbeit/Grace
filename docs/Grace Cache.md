@@ -2,16 +2,19 @@
 
 ## Purpose
 
-Grace Cache supports one deliberately local path on Linux x64. A producer can commit one immutable
-`DirectoryVersionZip` artifact to a managed local root, and one local development caller can read a pre-existing
-verified artifact over HTTP on `127.0.0.1`.
+Grace Cache supports one explicit Cache-required `grace connect` path on Linux x64. An authenticated user can reuse a
+verified local `DirectoryVersionZip` or fill one Server-approved miss, then apply the verified ZIP through the same
+Working Directory Update transaction used by Direct Connect. Direct remains the default.
 
 ## Specification state
 
-- The local artifact lifecycle and loopback read path are implemented.
-- The Server-approved Cache HTTP miss-to-hit path is implemented through Issue #999 and PR #1001.
-- The Cache-required `grace connect` path is implemented by GC-CAL-04 on top of the shared WDU Connect path now on
-  `main`.
+- Issue #965 and PR #969 delivered the local artifact lifecycle.
+- Issues #970 and #972, merged by PRs #971 and #973, delivered the loopback F# Cache host and verified read path.
+- Issue #999, merged by PR #1001, delivered the Server-approved Cache HTTP miss-to-hit path.
+- Issue #1031, merged by PR #1032 as `05e7dd6c5fab8c2f613d9bb97c8d1395606be0c5`, delivered Cache-required Connect
+  through the shared WDU path.
+- Issue #597 has no remaining Tier 2 implementation child. Only current-state documentation reconciliation remains;
+  the deferred capabilities below remain deferred.
 
 ## Cache-required miss-to-hit outcome
 
@@ -319,8 +322,8 @@ Those changes would add a product or state-machine decision that this specificat
 ## Supported world
 
 - One process owns one SQLite database and one managed artifact root.
-- The implemented writer serializes whole commit operations. The accepted fill design keeps one process lease and
-  serializes only the short publication section; verified reads and network downloads may overlap.
+- Network retrieval stages and hashes bytes outside the store-operation lock. Only the short classification and
+  publication section is serialized; verified reads and distinct downloads may overlap subject to finite capacity.
 - An artifact tuple contains kind, canonical identity, represented directory-version identity, lowercase SHA-256, and
   exact byte size.
 - Only `DirectoryVersionZip` is accepted.
@@ -345,17 +348,26 @@ to `Absent`. A `Complete` row that disagrees with its final file fails closed an
 
 ## Local read boundary
 
-The implemented calibration route is
-`GET /directory-version-zips/{directoryVersionId}?canonicalIdentity=...&sha256=...&size=...`. It returns
-`application/zip` only when the caller's exact tuple matches a SQLite `Complete` row and the managed final file verifies
-to that row's exact size and SHA-256.
+The loopback Cache exposes these Product V1 routes:
 
-The accepted miss-to-hit increment replaces that route with
-`GET /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}`. Cache derives the internal identity,
-uses integrity values from its own `Complete` row, and verifies final bytes before returning `application/zip`.
-Missing, ineligible, conflicting, corrupt, or byte-disagreeing state returns 404 without mutation.
+```text
+GET /fill-public-key
+GET /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}
+POST /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}/fill
+```
 
-The implemented host currently exposes no write route. The accepted increment adds only the permit-bound fill `POST`,
-same-artifact fill coordination, and bounded Cache-backpressure retry described above. Both the current and target host
-bind only to loopback. Persistent identity, enrollment, liveness, recursive metadata, complete-root publication,
-prefetch, scheduling, reconciliation, and generalized recovery remain excluded.
+The ZIP `GET` derives the internal artifact identity and integrity values from its own `Complete` row, then verifies the
+managed final bytes before returning `application/zip`. Missing, ineligible, conflicting, corrupt, or byte-disagreeing
+state returns 404 without mutation.
+
+The public-key `GET` returns the running Cache process's ephemeral key. The fill `POST` accepts only an opaque
+Server-signed permit. Cache redeems the permit with Server, retrieves and independently validates the exact ZIP,
+commits it through the local lifecycle, and returns no artifact bytes or source location.
+
+Cache-required Connect first performs the verified ZIP `GET`. On a miss, it obtains the public key, prepares a permit
+through Server, asks Cache to fill, and repeats the independent verified ZIP `GET`. The resulting stream enters
+`ConnectZipStaging.prepare` and exactly one `WorkingDirectoryUpdate.Connect.run` call. Direct Connect obtains its own
+Blob stream and enters the same staging and WDU path.
+
+The host binds only to loopback. Persistent identity, enrollment, liveness, recursive metadata, complete-root
+publication, prefetch, scheduling, reconciliation, and generalized recovery remain excluded.

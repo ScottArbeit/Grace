@@ -18,23 +18,22 @@ provide ancestry or host topology.
 | Restart behavior | Verified `Staging` plus final file completes; incomplete staging cleans to `Absent`; `Complete` disagreement fails closed |
 | Validation | Sixteen injected before/after crash cases, integrity mismatch, tuple conflicts, traversal-shaped identity, unknown residue, disagreement, and child-process locking |
 
-## Implemented loopback read
+## GC-CAL-02 loopback read delivery
 
-GC-CAL-02 added one F# ASP.NET Core host and one localhost-only
-`GET /directory-version-zips/{directoryVersionId}` route. Its separate storage reader opens the existing SQLite
-database in immutable read-only mode, queries only an exact `Complete` tuple, derives the opaque final path, and verifies
-the stored size and lowercase SHA-256 before serving `application/zip`. Startup requires existing database, managed
-root, artifact directory, and schema. It does not open the writer store, acquire its process lock, create sidecars or
-directories, classify residue, clean up, or mutate.
+GC-CAL-02 added one F# ASP.NET Core host and one localhost-only exact-tuple read route. Its separate storage reader
+opened the existing SQLite database in immutable read-only mode, queried only an exact `Complete` tuple, derived the
+opaque final path, and verified the stored size and lowercase SHA-256 before serving `application/zip`. Startup required
+the existing database, managed root, artifact directory, and schema. The reader did not open the writer store, acquire
+its process lock, create sidecars or directories, classify residue, clean up, or mutate.
 
-The implemented route still requires caller-supplied `canonicalIdentity`, `sha256`, and `size` query values. The host
-has no fill route. Current `CacheArtifactStore.commit` also holds the global operation gate across staging, streaming,
-hashing, and publication, so it is not the target implementation for many-client network fill.
+That calibration route required caller-supplied `canonicalIdentity`, `sha256`, and `size` query values and exposed no
+fill route. Its writer held the global operation gate across staging, streaming, hashing, and publication. Issue #999
+replaced those temporary boundaries with the delivered Product V1 HTTP path below.
 
-## Accepted miss-to-hit design
+## Delivered miss-to-hit implementation
 
-The accepted Product V1 increment replaces the exact-tuple read route with an identity-only repository and immutable
-directory-version route. `grace connect` first asks Cache for a verified hit. On a miss, it obtains a Server-signed
+Issue #999 replaced the exact-tuple read route with an identity-only repository and immutable directory-version route.
+`grace connect` first asks Cache for a verified hit. On a miss, it obtains a Server-signed
 60-second permit bound to the authenticated user, artifact, and an ephemeral Cache process key. Cache redeems that
 permit for the Server-owned descriptor and a 15-minute read-only Blob SAS, retrieves and validates the bytes, commits
 them, and returns no ZIP bytes from the fill operation. Connect repeats the independent Cache `GET`; there is no Direct
@@ -47,8 +46,8 @@ waiter but does not cancel the shared immutable fill.
 
 ### Algorithm test result
 
-A disposable F# executable test used a real scratch filesystem and SQLite database to test the proposed effect order.
-All nine cases passed:
+Before Issue #999, a disposable F# executable test used a real scratch filesystem and SQLite database to test the
+effect order. All nine cases passed:
 
 - happy-path commit;
 - 200 concurrent same-artifact callers with one source request;
@@ -60,10 +59,9 @@ All nine cases passed:
 - restart after staged bytes, `Staging`, final move, and `Complete`; and
 - 500 concurrent verified hits.
 
-The result supports removing network streaming and hashing from the global store-operation gate. The implementation
-should retain only a short serialized publication section that reclassifies the artifact, inserts `Staging`, moves the
-verified same-root file, and transitions to `Complete`. Restart continues to classify SQLite plus filesystem state and
-never resumes a network stream.
+Issue #999 implemented that effect order. Network streaming and hashing run outside the global store-operation gate.
+Only a short publication section reclassifies the artifact, inserts `Staging`, moves the verified same-root file, and
+transitions to `Complete`. Restart classifies SQLite plus filesystem state and never resumes a network stream.
 
 ### Implemented seams
 
@@ -89,7 +87,8 @@ At the GC-CAL-03 checkpoint, Direct `directory/getZipFile` behavior and `grace c
 
 ## GC-CAL-04 delivery result
 
-Issue #1031 implements the Cache-required Connect contract with these fixed integration choices:
+Issue #1031, merged by PR #1032 as `05e7dd6c5fab8c2f613d9bb97c8d1395606be0c5`, completed the Cache-required Connect
+contract with these fixed integration choices:
 
 - Syntax: `grace connect <repository> --cache-required`; absence means Direct.
 - Selection: per invocation only. No configuration or environment value silently selects Cache, and no
@@ -107,6 +106,31 @@ Issue #1031 implements the Cache-required Connect contract with these fixed inte
 - Unchanged surfaces: Direct retrieval, WDU contracts and algorithms, Cache and Server routes, SDK and shared contracts,
   OpenAPI and generated artifacts, persisted configuration, and local status shapes do not change in GC-CAL-04.
 
-GC-CAL-04 owns only the Connect Cache HTTP client, the two CLI options and URI validation, Cache-required source
+GC-CAL-04 changed only the Connect Cache HTTP client, the two CLI options and URI validation, Cache-required source
 selection and orchestration, typed capacity retry, focused CLI tests, and these two Cache documents. CachePreferred,
 repository-persisted Cache location, durable retry, and any second working-directory writer remain outside this slice.
+
+### Review and validation
+
+- R1 reviewed candidate `6ea3489e3df354d9262b26f34433c662f1829dcb` and accepted three repairs: bound Server
+  preparation by the remaining 60-second retry budget, detach promptly when the caller cancels an in-flight
+  preparation, and add deterministic Cache-to-staging-to-WDU composition coverage.
+- The consolidated repair produced approved head `ef47dbe2d9cff7cda9d555e6f0fa9ca69ba2dedc`. R2 returned `VERIFIED` with all
+  three items closed, no direct repair regression, and no scope escape.
+- GitHub Validate run `32934622196` passed on the approved head. The approved head and merge commit have the same tree,
+  `61bab6337f400bbeb06c71abf9ebe4eba6c04ca1`.
+- Focused tests covered deadline crossing, prompt cancellation, real ZIP staging and local WDU application, and
+  invalid-ZIP cleanup with no WDU entry.
+- A live external Server plus loopback Cache pair was not run. Deterministic tests cover the Server-to-Cache seams and
+  Cache-to-staging-to-WDU composition, including real local ZIP staging and WDU behavior.
+
+### Issue #597 completion verdict
+
+No next Tier 2 child is selected. The accepted Product V1 outcome is implemented, reviewed, validated, and present on
+`main`. Issue #597 now needs only the current-state reconciliation in this document and `docs/Grace Cache.md` before it
+can close. Future Cache capabilities require fresh design and issue-readiness work against then-current evidence.
+
+Historical Cache issues, branches, pull requests, worktrees, and dirty state remain preserved. Persistent identity,
+enrollment, liveness, assignment, revocation, recursive metadata, complete-root publication, prefetch, scheduling,
+retention, cleanup, Watch or Operations integration, durable retry queues, reconciliation, generalized recovery,
+platform parity, HA/DR, and hostile-root defense remain deferred.
