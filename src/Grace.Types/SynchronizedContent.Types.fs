@@ -7,6 +7,8 @@ open Orleans
 open System
 open System.Security.Cryptography
 open System.Text
+open System.Threading
+open System.Threading.Tasks
 
 /// Defines the complete wire-safe remote Synchronized Content contract.
 module SynchronizedContent =
@@ -391,3 +393,299 @@ module SynchronizedContent =
                 OccurredAt = occurredAt
                 CorrelationId = correlationId
             }
+
+    /// Carries the internal mutation request after public validation and authorization are complete.
+    [<GenerateSerializer>]
+    type SynchronizedMutationCommand =
+        {
+            RepositoryId: RepositoryId
+            OperationId: SynchronizedOperationId
+            RequestHash: string
+            RootConfigurationVersion: SynchronizedRootConfigurationVersion
+            MutationKind: string
+            ItemKind: string
+            ItemId: SynchronizedItemId option
+            NamespacePrecondition: SynchronizedNamespacePreconditionDto option
+            ContentPrecondition: SynchronizedContentPreconditionDto option
+            CreationSlotExpectation: SynchronizedCreationSlotExpectationDto option
+            DestinationParent: SynchronizedParentDto option
+            DestinationName: string option
+            PreparedContentId: SynchronizedPreparedContentId option
+            PreparedContent: SynchronizedContentVersionDto option
+        }
+
+    /// Tracks the independently repairable projection positions for one repository.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedProjectionWatermarks =
+        {
+            Current: int64
+            History: int64
+            Receipts: int64
+            Baselines: int64
+        }
+
+        /// Returns the empty projection state before any accepted mutation.
+        static member Empty = { Current = 0L; History = 0L; Receipts = 0L; Baselines = 0L }
+
+    /// Persists the immutable canonical commit record for one accepted mutation.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedCanonicalMutationDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            Cursor: int64
+            PublicCursor: SynchronizedCursor
+            OperationId: SynchronizedOperationId
+            RequestHash: string
+            Mutation: SynchronizedMutationDto
+            PriorNamespace: SynchronizedNamespaceDto option
+            PriorContentVersionId: SynchronizedContentVersionId option
+            ConsumedNamespaceVersion: SynchronizedNamespaceVersion option
+            ConsumedContentVersionId: SynchronizedContentVersionId option
+            ConsumedSlotVersion: SynchronizedNamespaceSlotVersion option
+            CorrelationId: CorrelationId
+        }
+
+    /// Persists the complete deterministic reservation that activation can finish without guessing.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedPendingCommandDocument =
+        {
+            OperationId: SynchronizedOperationId
+            RequestHash: string
+            Cursor: int64
+            Receipt: SynchronizedOperationReceiptDto
+            CanonicalMutation: SynchronizedCanonicalMutationDocument
+            ExpectedRootConfigurationVersion: SynchronizedRootConfigurationVersion
+            PrincipalId: PrincipalId
+            CorrelationId: CorrelationId
+            ReservedAt: Instant
+            TargetItemIds: SynchronizedItemId array
+        }
+
+    /// Persists the bounded serialized command lane and repository synchronization configuration.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedControlDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            CursorEpoch: Guid
+            NextCursor: int64
+            AppliedThrough: int64
+            ReplayFloor: int64
+            RootConfiguration: SynchronizedRootConfigurationDto
+            Pending: SynchronizedPendingCommandDocument option
+            CurrentBaselineId: SynchronizedBootstrapId option
+            CurrentBaselineCursor: int64 option
+            ProjectionWatermarks: SynchronizedProjectionWatermarks
+            UpdatedAt: Instant
+        }
+
+    /// Stores one rebuildable current item projection and its canonical position.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedCurrentItemDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            Item: SynchronizedItemDto
+            LastCursor: int64
+            AppliedThrough: int64
+        }
+
+    /// Stores one rebuildable namespace-slot projection and its canonical position.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedCurrentSlotDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            Slot: SynchronizedNamespaceSlotDto
+            LastCursor: int64
+            AppliedThrough: int64
+        }
+
+    /// Stores one deterministic operation receipt for response-loss recovery.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedReceiptDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            OperationId: SynchronizedOperationId
+            RequestHash: string
+            Receipt: SynchronizedOperationReceiptDto
+            Cursor: int64 option
+            AppliedThrough: int64
+        }
+
+    /// Stores one canonical-derived item or path history entry.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedHistoryEntry =
+        {
+            Cursor: int64
+            PublicCursor: SynchronizedCursor
+            OperationId: SynchronizedOperationId
+            ItemId: SynchronizedItemId
+            PriorNamespace: SynchronizedNamespaceDto option
+            ResultingNamespace: SynchronizedNamespaceDto option
+            PriorContentVersionId: SynchronizedContentVersionId option
+            ResultingContentVersionId: SynchronizedContentVersionId option
+            Tombstone: SynchronizedTombstoneDto option
+            Conflict: SynchronizedConflictProvenanceDto option
+            PrincipalId: PrincipalId
+            AcceptedAt: Instant
+        }
+
+    /// Stores at most 512 canonical-derived history entries under a byte bound.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedHistorySegmentDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            Segment: int64
+            FirstCursor: int64
+            LastCursor: int64
+            EntryCount: int
+            Entries: SynchronizedHistoryEntry array
+        }
+
+    /// Stores one immutable byte-bounded current-state baseline shard.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedBaselineShardDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            BaselineId: SynchronizedBootstrapId
+            BoundaryCursor: int64
+            Items: SynchronizedItemDto array
+            ItemCount: int
+            SerializedBytes: int
+        }
+
+    /// Publishes a baseline only after every named shard is durable and hash-verified.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedBaselineManifestDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            BaselineId: SynchronizedBootstrapId
+            BoundaryCursor: int64
+            CursorEpoch: Guid
+            RootConfigurationVersion: SynchronizedRootConfigurationVersion
+            ShardIds: string array
+            ShardHashes: string array
+            ShardItemCounts: int array
+            TotalItemCount: int
+            CreatedAt: Instant
+        }
+
+    /// Couples one Cosmos document read with the private ETag used for exact replacement.
+    type SynchronizedStoreRead<'T> = { Document: 'T; ETag: string }
+
+    /// Reports whether an exact conditional control replacement succeeded.
+    type SynchronizedControlWriteResult =
+        | Replaced of etag: string
+        | PreconditionFailed
+
+    /// Defines the direct durable operations used by the bounded repository coordinator.
+    type ISynchronizedContentStore =
+
+        /// Creates the repository control document when absent and returns its current exact state.
+        abstract member EnsureControlAsync:
+            repositoryId: RepositoryId * rootConfiguration: SynchronizedRootConfigurationDto * cancellationToken: CancellationToken ->
+                Task<SynchronizedStoreRead<SynchronizedControlDocument>>
+
+        /// Reads the current exact control document.
+        abstract member ReadControlAsync:
+            repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task<SynchronizedStoreRead<SynchronizedControlDocument>>
+
+        /// Replaces the control document only while its previously observed ETag remains current.
+        abstract member ReplaceControlAsync:
+            control: SynchronizedControlDocument * etag: string * cancellationToken: CancellationToken -> Task<SynchronizedControlWriteResult>
+
+        /// Reads a deterministic receipt by operation identity.
+        abstract member ReadReceiptAsync:
+            repositoryId: RepositoryId * operationId: SynchronizedOperationId * cancellationToken: CancellationToken -> Task<SynchronizedReceiptDocument option>
+
+        /// Reads a canonical mutation by its reserved internal cursor.
+        abstract member ReadCanonicalAsync:
+            repositoryId: RepositoryId * cursor: int64 * cancellationToken: CancellationToken -> Task<SynchronizedCanonicalMutationDocument option>
+
+        /// Creates the immutable canonical commit record or verifies an exact retry.
+        abstract member CreateCanonicalAsync: mutation: SynchronizedCanonicalMutationDocument * cancellationToken: CancellationToken -> Task
+
+        /// Reads one current item projection.
+        abstract member ReadItemAsync:
+            repositoryId: RepositoryId * itemId: SynchronizedItemId * cancellationToken: CancellationToken -> Task<SynchronizedCurrentItemDocument option>
+
+        /// Reads one current normalized namespace slot projection.
+        abstract member ReadSlotAsync:
+            repositoryId: RepositoryId * normalizedPath: string * cancellationToken: CancellationToken -> Task<SynchronizedCurrentSlotDocument option>
+
+        /// Applies the current item projection idempotently by canonical cursor.
+        abstract member UpsertItemAsync: item: SynchronizedCurrentItemDocument * cancellationToken: CancellationToken -> Task
+
+        /// Applies the namespace slot projection idempotently by canonical cursor.
+        abstract member UpsertSlotAsync: slot: SynchronizedCurrentSlotDocument * cancellationToken: CancellationToken -> Task
+
+        /// Applies the deterministic operation receipt idempotently.
+        abstract member UpsertReceiptAsync: receipt: SynchronizedReceiptDocument * cancellationToken: CancellationToken -> Task
+
+        /// Appends one bounded item-history entry idempotently.
+        abstract member AppendItemHistoryAsync:
+            repositoryId: RepositoryId * itemId: SynchronizedItemId * entry: SynchronizedHistoryEntry * cancellationToken: CancellationToken -> Task
+
+        /// Appends one bounded path-history entry idempotently.
+        abstract member AppendPathHistoryAsync:
+            repositoryId: RepositoryId * normalizedPath: string * entry: SynchronizedHistoryEntry * cancellationToken: CancellationToken -> Task
+
+        /// Reads one ordered page of canonical accepted mutations.
+        abstract member ReadDeltasAsync:
+            repositoryId: RepositoryId * afterCursor: int64 * maximumCount: int * cancellationToken: CancellationToken ->
+                Task<SynchronizedCanonicalMutationDocument array>
+
+        /// Enumerates current live and tombstoned item projections for baseline publication.
+        abstract member ReadCurrentItemsAsync: repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task<SynchronizedCurrentItemDocument array>
+
+    /// Defines integrity protection for opaque repository cursor values.
+    type ISynchronizedCursorCodec =
+
+        /// Protects one internal repository position without exposing its numeric value.
+        abstract member Encode: repositoryId: RepositoryId * epoch: Guid * cursor: int64 -> SynchronizedCursor
+
+        /// Validates one protected cursor against its repository and returns its private epoch and position.
+        abstract member TryDecode: repositoryId: RepositoryId * cursor: SynchronizedCursor -> (Guid * int64) option
+
+    /// Defines the application service invoked inside the bounded repository coordinator grain.
+    type ISynchronizedContentCoordinator =
+
+        /// Repairs any reserved command and submits one validated, authorized deterministic mutation.
+        abstract member SubmitAsync:
+            command: SynchronizedMutationCommand *
+            rootConfiguration: SynchronizedRootConfigurationDto *
+            principalId: PrincipalId *
+            correlationId: CorrelationId *
+            cancellationToken: CancellationToken ->
+                Task<SynchronizedOperationReceiptDto>
+
+        /// Repairs one repository's pending publication lifecycle without accepting another command.
+        abstract member RepairAsync:
+            repositoryId: RepositoryId * rootConfiguration: SynchronizedRootConfigurationDto * cancellationToken: CancellationToken -> Task
+
+        /// Returns truthful content-free server state after repairing any pending accepted command.
+        abstract member GetStatusAsync:
+            repositoryId: RepositoryId * rootConfiguration: SynchronizedRootConfigurationDto * cancellationToken: CancellationToken ->
+                Task<SynchronizedRepositoryStatusDto>

@@ -25,6 +25,7 @@ open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.Common
+open Grace.Types.SynchronizedContent
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans
@@ -741,6 +742,21 @@ module Interfaces =
 
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the bounded repository command lane for synchronized namespace and immutable-byte mutations.
+    [<Interface>]
+    type ISynchronizedContentRepositoryActor =
+        inherit IGrainWithGuidKey
+
+        /// Repairs prior accepted work, then submits one deterministic command against the Repository-owned root policy.
+        abstract member Submit:
+            command: SynchronizedMutationCommand -> principalId: PrincipalId -> correlationId: CorrelationId -> Task<SynchronizedOperationReceiptDto>
+
+        /// Repairs any pending accepted operation without admitting another command.
+        abstract member Repair: correlationId: CorrelationId -> Task
+
+        /// Returns truthful content-free synchronized repository status after repair.
+        abstract member GetStatus: correlationId: CorrelationId -> Task<SynchronizedRepositoryStatusDto>
 
     /// Defines the operations for the AccessControl actor.
     [<Interface>]
