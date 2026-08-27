@@ -376,6 +376,7 @@ module Watch =
             GraceStatusFile = snapshot.GraceStatusFile
             DirectoryIgnoreEntries = snapshot.DirectoryEntries
             FileIgnoreEntries = snapshot.FileEntries
+            SynchronizedRoots = Array.empty
             PathComparison = watchPathComparison
         }
 
@@ -420,6 +421,7 @@ module Watch =
                 GraceStatusFile = snapshot.GraceStatusFile
                 DirectoryIgnoreEntries = snapshot.DirectoryEntries
                 FileIgnoreEntries = snapshot.FileEntries
+                SynchronizedRoots = Array.empty
             }
 
         scanWorkingTreeForDifferencesReadOnlyWithComparison watchPathComparison scanInput previousGraceStatus
@@ -7821,6 +7823,7 @@ module Watch =
         match classifyRawLocalObservation fallbackKind fullPath with
         | LocalStateArtifact -> recordLocalStatusRevisionCheckObservation ()
         | GraceInternal
+        | Synchronized
         | Ignored -> ()
         | Eligible when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate fallbackKind fullPath seenAt
         | Eligible when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately fallbackKind fullPath

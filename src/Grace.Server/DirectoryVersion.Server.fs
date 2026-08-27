@@ -16,6 +16,7 @@ open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
+open Grace.Shared.Validation.SynchronizedContent
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open System
@@ -513,37 +514,62 @@ module DirectoryVersion =
                             |> Seq.sortByDescending (fun directoryVersion -> directorySaveDepth directoryVersion.RelativePath)
                             |> Seq.toArray
 
+                        let synchronizedPath =
+                            orderedDirectoryVersions
+                            |> Array.tryPick (fun directoryVersion ->
+                                if configurationOwnsPath repositoryDto.SynchronizedRootConfiguration (string directoryVersion.RelativePath) then
+                                    Some(string directoryVersion.RelativePath)
+                                else
+                                    directoryVersion.Files
+                                    |> Seq.tryPick (fun file ->
+                                        if configurationOwnsPath repositoryDto.SynchronizedRootConfiguration (string file.RelativePath) then
+                                            Some(string file.RelativePath)
+                                        else
+                                            None))
+
+                        match synchronizedPath with
+                        | Some path ->
+                            results.Enqueue(
+                                Error(
+                                    GraceError.Create
+                                        $"Path '{path}' belongs to the current synchronized root policy and cannot be saved as version-controlled content."
+                                        correlationId
+                                )
+                            )
+                        | None -> ()
+
                         for directoryVersion in orderedDirectoryVersions do
-                            try
-                                // Check if the directory version exists. If it doesn't, create it.
-                                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                            if synchronizedPath.IsNone then
+                                try
+                                    // Check if the directory version exists. If it doesn't, create it.
+                                    let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
-                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
-                                if not <| exists then
-                                    if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
-                                        results.Enqueue(
-                                            Error(
-                                                GraceError.Create
-                                                    $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
-                                                    correlationId
+                                    let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                    //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                    if not <| exists then
+                                        if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
+                                            results.Enqueue(
+                                                Error(
+                                                    GraceError.Create
+                                                        $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
+                                                        correlationId
+                                                )
                                             )
-                                        )
-                                    else
-                                        let! createResult =
-                                            directoryVersionActor.Handle
-                                                (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
-                                                (createMetadata context)
+                                        else
+                                            let! createResult =
+                                                directoryVersionActor.Handle
+                                                    (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
+                                                    (createMetadata context)
 
-                                        results.Enqueue(createResult)
-                            with
-                            | ex ->
-                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
+                                            results.Enqueue(createResult)
+                                with
+                                | ex ->
+                                    let exceptionResponse = Utilities.ExceptionResponse.Create ex
 
-                                logToConsole
-                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+                                    logToConsole
+                                        $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
 
-                                logToConsole $"{exceptionResponse}"
+                                    logToConsole $"{exceptionResponse}"
 
                         let firstError =
                             results

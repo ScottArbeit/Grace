@@ -1735,7 +1735,7 @@ module Application =
                         POST [ route "/roots/get" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetRoots)
                                |> addMetadata typeof<GetSynchronizedRootConfigurationParameters>
 
-                               route "/roots/list" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetRoots)
+                               route "/roots/list" (composeHandlers requireSynchronizedContentRead SynchronizedContent.ListRoots)
                                |> addMetadata typeof<ListSynchronizedRootsParameters>
 
                                route "/roots/add" (composeHandlers requireSynchronizedContentWrite SynchronizedContent.AddRoot)

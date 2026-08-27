@@ -1668,6 +1668,7 @@ module WatchTests =
                     GraceStatusFile = current.GraceStatusFile
                     DirectoryIgnoreEntries = Array.empty
                     FileIgnoreEntries = [| "ignored.tmp" |]
+                    SynchronizedRoots = [| "synchronized" |]
                     PathComparison = StringComparison.OrdinalIgnoreCase
                 }
 
@@ -1675,6 +1676,7 @@ module WatchTests =
             let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
             let sharedPrefixPath = Path.Combine(root, ".grace-old", "ordinary.txt")
             let internalPath = Path.Combine(current.GraceDirectory, "objects", "cached.bin")
+            let synchronizedPath = Path.Combine(root, "synchronized", "remote.bin")
             let outsidePath = Path.Combine(Path.GetDirectoryName(root), $"outside-{Guid.NewGuid():N}.txt")
 
             classify Services.RepositoryPathKind.FilePath graceIgnorePath
@@ -1682,6 +1684,9 @@ module WatchTests =
 
             classify Services.RepositoryPathKind.FilePath sharedPrefixPath
             |> should equal Services.RepositoryPathClassification.Eligible
+
+            classify Services.RepositoryPathKind.FilePath synchronizedPath
+            |> should equal Services.RepositoryPathClassification.Synchronized
 
             classify Services.RepositoryPathKind.FilePath (internalPath.ToUpperInvariant())
             |> should equal Services.RepositoryPathClassification.GraceInternal

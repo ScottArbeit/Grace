@@ -170,6 +170,25 @@ module Services =
     /// Clears process-local `.graceignore` decisions after repository configuration changes.
     let clearShouldIgnoreCache () = shouldIgnoreCache.Clear()
 
+    let private synchronizedRootsForOperation = AsyncLocal<string array>()
+
+    /// Applies one remote repository root-policy snapshot to local path decisions for the lifetime of a single command operation.
+    let beginSynchronizedRootPolicy (roots: string array) =
+        let previous = synchronizedRootsForOperation.Value
+        synchronizedRootsForOperation.Value <- if isNull roots then Array.empty else Array.copy roots
+        clearShouldIgnoreCache ()
+
+        { new IDisposable with
+            member _.Dispose() =
+                synchronizedRootsForOperation.Value <- previous
+                clearShouldIgnoreCache ()
+        }
+
+    /// Returns the synchronized roots supplied by the current remote command without persisting local participation state.
+    let internal currentSynchronizedRoots () =
+        let roots = synchronizedRootsForOperation.Value
+        if isNull roots then Array.empty else roots
+
     // This section is "borrowed" from Common.CLI.fs, because Services.CLI.fs comes before Common.CLI.fs in the build order.
 
     /// Checks if the output format from the command line is a specific format.
@@ -1018,7 +1037,7 @@ module Services =
         /// The path is a tracked removal or status could not be read, so configured ignores cannot discard reconciliation.
         | RemovalReconciliationPath
 
-    /// Describes the only four admission outcomes shared by repository scans and Watch callbacks.
+    /// Describes the admission outcomes shared by repository scans and Watch callbacks.
     type RepositoryPathClassification =
         /// The path may continue through ordinary repository processing.
         | Eligible
@@ -1028,6 +1047,8 @@ module Services =
         | GraceInternal
         /// The path is the exact local SQLite database or one of its supported side files.
         | LocalStateArtifact
+        /// The path is owned by a configured synchronized root and is excluded from version-controlled content.
+        | Synchronized
 
     /// Supplies the repository identity, ignore snapshot, and platform comparison used for one path decision.
     type RepositoryPathClassifierInput =
@@ -1037,6 +1058,7 @@ module Services =
             GraceStatusFile: string
             DirectoryIgnoreEntries: string array
             FileIgnoreEntries: string array
+            SynchronizedRoots: string array
             PathComparison: StringComparison
         }
 
@@ -1076,6 +1098,12 @@ module Services =
 
         let isGraceInternal = isPathWithinDirectoryWithComparison input.PathComparison input.GraceDirectory normalizedCandidate
 
+        let isSynchronized =
+            input.SynchronizedRoots
+            |> Array.exists (fun root ->
+                let synchronizedRoot = Path.Combine(input.RootDirectory, root.Replace('/', Path.DirectorySeparatorChar))
+                isPathWithinDirectoryWithComparison input.PathComparison synchronizedRoot normalizedCandidate)
+
         /// Checks whether configured directory rules match the candidate's parent directory.
         let directoryRuleMatchesParent graceIgnoreLine =
             let parent = FileInfo(normalizedCandidate).Directory
@@ -1114,6 +1142,7 @@ module Services =
         if isLocalStateArtifact then LocalStateArtifact
         elif not isInsideRepository then Ignored
         elif isGraceInternal then GraceInternal
+        elif isSynchronized then Synchronized
         elif matchesConfiguredIgnore then Ignored
         else Eligible
 
@@ -1127,6 +1156,7 @@ module Services =
             GraceStatusFile = current.GraceStatusFile
             DirectoryIgnoreEntries = current.GraceDirectoryIgnoreEntries
             FileIgnoreEntries = current.GraceFileIgnoreEntries
+            SynchronizedRoots = currentSynchronizedRoots ()
             PathComparison =
                 if runningOnWindows then
                     StringComparison.OrdinalIgnoreCase
@@ -1228,6 +1258,7 @@ module Services =
             GraceStatusFile: string
             DirectoryIgnoreEntries: string array
             FileIgnoreEntries: string array
+            SynchronizedRoots: string array
         }
 
     /// Converts a copied scan snapshot into the shared repository path-classification contract.
@@ -1238,6 +1269,7 @@ module Services =
             GraceStatusFile = scanInput.GraceStatusFile
             DirectoryIgnoreEntries = scanInput.DirectoryIgnoreEntries
             FileIgnoreEntries = scanInput.FileIgnoreEntries
+            SynchronizedRoots = scanInput.SynchronizedRoots
             PathComparison = pathComparison
         }
 

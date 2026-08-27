@@ -281,6 +281,23 @@ module SynchronizedContent =
                 return! ok context repository.SynchronizedRootConfiguration
             }
 
+    /// Lists the current normalized synchronized roots in deterministic path order.
+    let ListRoots: HttpHandler =
+        fun _ context ->
+            task {
+                let! repository = repositoryState context
+                let configuration = repository.SynchronizedRootConfiguration
+
+                return!
+                    ok
+                        context
+                        { configuration with
+                            Roots =
+                                configuration.Roots
+                                |> Array.sortWith (fun left right -> StringComparer.OrdinalIgnoreCase.Compare(left, right))
+                        }
+            }
+
     /// Applies one exact-version root change without importing, deleting, or rewriting either ownership system.
     let private changeRoot addRootOperation : HttpHandler =
         fun _ context ->
@@ -304,6 +321,37 @@ module SynchronizedContent =
                 let expectedVersion, rootPath, operationId = parameters
                 let now = SystemClock.Instance.GetCurrentInstant()
                 let newVersion = SynchronizedContentCoordinator.deterministicGuid ids.RepositoryId operationId "root-configuration"
+                let currentConfiguration = repository.SynchronizedRootConfiguration
+
+                let replayResult =
+                    if currentConfiguration.Version = newVersion then
+                        let intendedStateMatches =
+                            match normalizeRepositoryRelativePath rootPath with
+                            | Error _ -> false
+                            | Ok normalizedRoot ->
+                                let containsRoot =
+                                    currentConfiguration.Roots
+                                    |> Array.exists (pathsEqual normalizedRoot)
+
+                                if addRootOperation then containsRoot else not containsRoot
+
+                        Some
+                            {
+                                OperationId = operationId
+                                Outcome = if intendedStateMatches then OutcomeKind.Unchanged else OutcomeKind.Rejected
+                                RootConfiguration = currentConfiguration
+                                ReasonCode =
+                                    if intendedStateMatches then
+                                        None
+                                    else
+                                        Some RejectionReason.OperationIdentityMismatch
+                                RecordedAt = now
+                            }
+                    else
+                        None
+
+                let synchronizedRepositoryActor = synchronizedActor ids.RepositoryId
+                do! synchronizedRepositoryActor.Repair correlationId
                 let store = service<ISynchronizedContentStore> context
                 let! currentItems = store.ReadCurrentItemsAsync(ids.RepositoryId, context.RequestAborted)
 
@@ -349,8 +397,9 @@ module SynchronizedContent =
                                 (principalId context)
                                 repository.SynchronizedRootConfiguration
 
-                match outcome with
-                | Error reason ->
+                match replayResult, outcome with
+                | Some result, _ -> return! ok context result
+                | None, Error reason ->
                     let result =
                         {
                             OperationId = operationId
@@ -365,7 +414,7 @@ module SynchronizedContent =
                         }
 
                     return! ok context result
-                | Ok configuration ->
+                | None, Ok configuration ->
                     let actor = Repository.CreateActorProxy ids.OrganizationId ids.RepositoryId correlationId
 
                     match! actor.Handle (RepositoryCommand.SetSynchronizedRootConfiguration(configuration, operationId)) (Services.createMetadata context) with

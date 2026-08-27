@@ -276,6 +276,34 @@ module WorkingDirectoryUpdateTopologyTests =
 
             snapshotTree root |> should equal before)
 
+    /// Proves a configured synchronized namespace can never become a version-controlled Branch/WDU target.
+    [<Test>]
+    let ``topology rejects target beneath synchronized root before mutation`` () =
+        withTempRepo (fun root _ ->
+            let synchronizedDirectory = Path.Combine(root, "synchronized")
+
+            Directory.CreateDirectory(synchronizedDirectory)
+            |> ignore
+
+            let existingPath = Path.Combine(synchronizedDirectory, "remote.txt")
+            let existingBytes = Encoding.UTF8.GetBytes("remote-owned bytes")
+            File.WriteAllBytes(existingPath, existingBytes)
+            use _rootPolicy = Services.beginSynchronizedRootPolicy [| "synchronized" |]
+
+            let preparedManifest = manifest [ targetFile "synchronized/remote.txt" (Encoding.UTF8.GetBytes("version-controlled bytes")) ]
+            let before = snapshotTree root
+
+            match plan (status [] []) preparedManifest with
+            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+                WorkingDirectoryUpdate.Topology.Rejection.path rejection
+                |> should equal (RelativePath "synchronized")
+            | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("A synchronized target must reject before WDU mutation planning.")
+
+            File.ReadAllBytes(existingPath)
+            |> should equal existingBytes
+
+            snapshotTree root |> should equal before)
+
     /// Proves absent targets and verified tracked matches make a complete materialization plan without destructive actions.
     [<Test>]
     let ``topology retains matching tracked files and plans absent files and directories`` () =

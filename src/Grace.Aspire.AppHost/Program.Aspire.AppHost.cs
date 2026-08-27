@@ -14,12 +14,24 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using static Grace.Types.Common;
 using static Shared::Grace.Shared.Constants;
 
 public partial class Program
 {
+    private static readonly string[] SynchronizedContentContainers =
+    [
+        "grace-synchronized-control",
+        "grace-synchronized-mutations",
+        "grace-synchronized-current",
+        "grace-synchronized-receipts",
+        "grace-synchronized-history",
+        "grace-synchronized-baselines"
+    ];
+
+    private static readonly string[] SynchronizedContentPartitionKeys = ["/RepositoryId", "/Scope", "/id"];
     private const string AspireResourceModeEnvVar = "ASPIRE_RESOURCE_MODE";
     private const string AspireResourceModeLocal = "Local";
     private const string AspireResourceModeAzure = "Azure";
@@ -293,9 +305,16 @@ public partial class Program
                         });
 #pragma warning restore ASPIRECOSMOSDB001
 
-                    _ = cosmos.AddCosmosDatabase(cosmosDatabaseName)
-                        .AddContainer(cosmosDbContainerName, "/PartitionKey");
+                    var cosmosDatabase = cosmos.AddCosmosDatabase(cosmosDatabaseName);
+                    _ = cosmosDatabase.AddContainer(cosmosDbContainerName, "/PartitionKey");
+
+                    foreach (var synchronizedContainer in SynchronizedContentContainers)
+                    {
+                        _ = cosmosDatabase.AddContainer(synchronizedContainer, SynchronizedContentPartitionKeys);
+                    }
+
                     var cosmosConnStr = cosmos.Resource.ConnectionStringExpression;
+                    var synchronizedContentTokenSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
                     graceServer
                         .WithParentRelationship(azurite)
@@ -310,6 +329,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBConnectionString, cosmosConnStr)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDatabaseName)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosDbContainerName)
+                        .WithEnvironment(EnvironmentVariables.SynchronizedContentTokenSecret, synchronizedContentTokenSecret)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Local");
 
@@ -460,6 +480,7 @@ public partial class Program
 
                     var cosmosDatabaseName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBDatabaseName);
                     var cosmosContainerName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBContainerName);
+                    var synchronizedContentTokenSecret = GetRequiredSetting(configuration, EnvironmentVariables.SynchronizedContentTokenSecret);
                     var serviceBusConnectionString = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusConnectionString);
                     var serviceBusNamespace = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusNamespace);
                     if (string.IsNullOrWhiteSpace(serviceBusConnectionString) && string.IsNullOrWhiteSpace(serviceBusNamespace))
@@ -500,6 +521,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBEndpoint, cosmosdbEndpoint)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDatabaseName)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosContainerName)
+                        .WithEnvironment(EnvironmentVariables.SynchronizedContentTokenSecret, synchronizedContentTokenSecret)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
@@ -547,6 +569,11 @@ public partial class Program
                 var cosmos = builder.AddAzureCosmosDB("cosmos");
                 var cosmosDatabase = cosmos.AddCosmosDatabase(configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev");
                 _ = cosmosDatabase.AddContainer(configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events", "/PartitionKey");
+
+                foreach (var synchronizedContainer in SynchronizedContentContainers)
+                {
+                    _ = cosmosDatabase.AddContainer(synchronizedContainer, SynchronizedContentPartitionKeys);
+                }
 
                 var storage = builder.AddAzureStorage("storage");
                 var blobStorage = storage.AddBlobContainer("directoryversions");
@@ -598,6 +625,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.GraceServerUri, configuration[getConfigKey(EnvironmentVariables.GraceServerUri)] ?? "https://localhost:5001")
                     .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev")
                     .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events")
+                    .WithEnvironment(EnvironmentVariables.SynchronizedContentTokenSecret, configuration[getConfigKey(EnvironmentVariables.SynchronizedContentTokenSecret)] ?? string.Empty)
                     .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
                     .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")

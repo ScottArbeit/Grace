@@ -3,6 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Server
 open Grace.Types.Common
 open Grace.Types.SynchronizedContent
+open Grace.Shared.Validation.SynchronizedContent
 open NodaTime
 open NUnit.Framework
 open System
@@ -434,6 +435,20 @@ type SynchronizedContentCoordinatorTests() =
         Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared/docs" directoryVersion, Is.True)
         Assert.That(SynchronizedContent.directoryVersionOwnsRoot "share" directoryVersion, Is.False)
         Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared/documentation" directoryVersion, Is.False)
+
+    /// Verifies that Save and Branch/WDU share exact, separator-bounded synchronized-root ownership.
+    [<Test>]
+    member _.SynchronizedConfigurationOwnsOnlyExactRootSegments() =
+        let configuration =
+            { SynchronizedRootConfigurationDto.CreateInitial(Guid.NewGuid(), Instant.FromUtc(2026, 8, 27, 19, 0), "principal") with
+                Roots = [| "shared/docs" |]
+            }
+
+        Assert.That(configurationOwnsPath configuration "shared/docs", Is.True)
+        Assert.That(configurationOwnsPath configuration "shared/docs/readme.md", Is.True)
+        Assert.That(configurationOwnsPath configuration "Shared\\Docs\\readme.md", Is.True)
+        Assert.That(configurationOwnsPath configuration "shared/documentation", Is.False)
+        Assert.That(configurationOwnsPath configuration "shared", Is.False)
 
     /// Verifies that Repository root mutation admission requires the exact current predecessor version.
     [<Test>]

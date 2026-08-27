@@ -22,6 +22,7 @@ open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
+open Grace.Shared.Validation.SynchronizedContent
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
@@ -194,6 +195,16 @@ module Branch =
     /// Writes ambiguous branch hash lookup error onto the current response or server state.
     let private setAmbiguousBranchHashLookupError (context: HttpContext) sha256Hash blake3Hash correlationId =
         let graceError = GraceError.Create $"The supplied {branchHashLookupDescription sha256Hash blake3Hash} is ambiguous in repository scope." correlationId
+
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        context.Items[ branchHashLookupErrorItemKey ] <- graceError
+
+    /// Records a pre-mutation rejection when the selected root contains content owned by the current synchronized root policy.
+    let private setSynchronizedRootPolicyError (context: HttpContext) path correlationId =
+        let graceError =
+            GraceError.Create
+                $"Path '{path}' belongs to the current synchronized root policy and cannot be referenced as version-controlled content."
+                correlationId
 
         graceError.Properties.Add("Path", context.Request.Path.Value)
         context.Items[ branchHashLookupErrorItemKey ] <- graceError
@@ -1107,6 +1118,34 @@ module Branch =
         task {
             match! resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
             | Services.UniqueMatch directoryVersion ->
+                let graceIds = getGraceIds context
+                let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId repositoryId correlationId
+                let! repository = repositoryActor.Get correlationId
+                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                let! descendants = directoryVersionActor.GetRecursiveDirectoryVersions false correlationId
+
+                let synchronizedPath =
+                    seq {
+                        yield directoryVersion
+
+                        yield!
+                            descendants
+                            |> Seq.map (fun descendant -> descendant.DirectoryVersion)
+                    }
+                    |> Seq.tryPick (fun candidate ->
+                        if configurationOwnsPath repository.SynchronizedRootConfiguration (string candidate.RelativePath) then
+                            Some(string candidate.RelativePath)
+                        else
+                            candidate.Files
+                            |> Seq.tryPick (fun file ->
+                                if configurationOwnsPath repository.SynchronizedRootConfiguration (string file.RelativePath) then
+                                    Some(string file.RelativePath)
+                                else
+                                    None))
+
+                synchronizedPath
+                |> Option.iter (fun path -> setSynchronizedRootPolicyError context path correlationId)
+
                 return createCommand (referenceId, directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
             | Services.NoMatches -> return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
             | Services.AmbiguousMatches _ ->

@@ -113,6 +113,15 @@ module SynchronizedContent =
         || left.StartsWith(right + "/", StringComparison.OrdinalIgnoreCase)
         || right.StartsWith(left + "/", StringComparison.OrdinalIgnoreCase)
 
+    /// Returns true when one normalized repository-relative path belongs to the exact root policy.
+    let configurationOwnsPath (configuration: SynchronizedRootConfigurationDto) (path: string) =
+        let normalizedPath = path.Replace('\\', '/').Trim('/')
+
+        configuration.Roots
+        |> Array.exists (fun root ->
+            pathsEqual normalizedPath root
+            || normalizedPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+
     /// Normalizes and sorts one complete root set while enforcing uniqueness, overlap, and count bounds.
     let normalizeRoots (roots: string array) =
         if isNull roots then

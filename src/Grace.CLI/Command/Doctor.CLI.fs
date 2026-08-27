@@ -860,6 +860,7 @@ module Doctor =
                                     |> Array.map (fun entry -> $"*{entry}")
                                     |> Array.distinct
                                 FileIgnoreEntries = inspection.Ignore.FileEntries
+                                SynchronizedRoots = Array.empty
                             }
 
                         let scanResult =
