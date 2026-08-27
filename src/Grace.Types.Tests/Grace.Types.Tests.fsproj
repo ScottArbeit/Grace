@@ -27,6 +27,7 @@
     <Compile Include="ManifestContributionAccounting.Types.Tests.fs" />
     <Compile Include="StorageKeys.Shared.Tests.fs" />
     <Compile Include="ContentAddress.Types.Tests.fs" />
+    <Compile Include="ArtifactGrant.Types.Tests.fs" />
     <Compile Include="DirectoryVersionPreimage.Shared.Tests.fs" />
     <Compile Include="ContentBlockFormat.Shared.Tests.fs" />
     <Compile Include="ManifestValidation.Shared.Tests.fs" />
