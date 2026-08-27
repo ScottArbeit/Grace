@@ -84,6 +84,13 @@ module Repository =
         && persisted.Files.SequenceEqual(expected.Files)
         && persisted.Size = expected.Size
 
+    /// Confirms a root-configuration command was derived from the Repository actor's exact current configuration.
+    let internal synchronizedRootConfigurationMatchesCurrent
+        (currentConfiguration: Grace.Types.SynchronizedContent.SynchronizedRootConfigurationDto)
+        (proposedConfiguration: Grace.Types.SynchronizedContent.SynchronizedRootConfigurationDto)
+        =
+        proposedConfiguration.PreviousVersion = Some currentConfiguration.Version
+
     /// Implements the Orleans grain for repository actor.
     type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
         inherit Grain()
@@ -565,6 +572,15 @@ module Repository =
                                 | Some _ when matchingCreateRetry -> return Ok command
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
+                            | RepositoryCommand.SetSynchronizedRootConfiguration (configuration, _) when
+                                not (synchronizedRootConfigurationMatchesCurrent repositoryDto.SynchronizedRootConfiguration configuration)
+                                ->
+                                return
+                                    Error(
+                                        GraceError.Create
+                                            "The synchronized root configuration no longer matches its exact predecessor version."
+                                            metadata.CorrelationId
+                                    )
                             | _ ->
                                 match repositoryDto.UpdatedAt with
                                 | Some _ -> return Ok command

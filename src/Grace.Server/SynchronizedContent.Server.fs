@@ -172,6 +172,52 @@ module SynchronizedContent =
     /// Returns a public epoch token without exposing the private epoch identifier.
     let private publicEpoch (codec: ISynchronizedCursorCodec) repositoryId epoch = codec.Encode(repositoryId, epoch, 0L)
 
+    /// Returns true when one version-controlled directory snapshot owns a live path at or below an exact synchronized root.
+    let internal directoryVersionOwnsRoot normalizedRoot (directoryVersion: DirectoryVersion) =
+        let ownsPath (path: string) =
+            let normalizedPath = path.Replace('\\', '/').Trim('/')
+
+            pathsEqual normalizedPath normalizedRoot
+            || normalizedPath.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase)
+
+        ownsPath (string directoryVersion.RelativePath)
+        || directoryVersion.Files
+           |> Seq.exists (fun file -> ownsPath (string file.RelativePath))
+
+    /// Checks every selectable Reference root DirectoryVersion for a live path owned by the proposed synchronized root.
+    let private versionControlledRootIsEmpty (repository: RepositoryDto) normalizedRoot correlationId =
+        task {
+            let! branchIds =
+                Grace.Actors.Services.getBranches repository.OwnerId repository.OrganizationId repository.RepositoryId Int32.MaxValue false correlationId
+
+            let directoryVersionIds = Collections.Generic.HashSet<DirectoryVersionId>()
+
+            for branch in branchIds do
+                let! references = Grace.Actors.Services.getReferences repository.RepositoryId branch.BranchId Int32.MaxValue correlationId
+
+                references
+                |> Seq.filter (fun reference -> reference.DeletedAt.IsNone)
+                |> Seq.iter (fun reference ->
+                    directoryVersionIds.Add reference.DirectoryId
+                    |> ignore)
+
+            let mutable occupied = false
+
+            for directoryVersionId in directoryVersionIds do
+                if not occupied then
+                    let actor = Grace.Actors.Extensions.ActorProxy.DirectoryVersion.CreateActorProxy directoryVersionId repository.RepositoryId correlationId
+
+                    let! rootDirectory = actor.Get correlationId
+                    let! descendants = actor.GetRecursiveDirectoryVersions false correlationId
+
+                    occupied <-
+                        directoryVersionOwnsRoot normalizedRoot rootDirectory.DirectoryVersion
+                        || descendants
+                           |> Array.exists (fun directory -> directoryVersionOwnsRoot normalizedRoot directory.DirectoryVersion)
+
+            return not occupied
+        }
+
     /// Loads and revalidates one finalized principal-bound prepared content record immediately before actor submission.
     let private resolvePreparedContent (context: HttpContext) repositoryId operationId (preparedContentId: Nullable<Guid>) =
         task {
@@ -260,8 +306,14 @@ module SynchronizedContent =
                 let newVersion = SynchronizedContentCoordinator.deterministicGuid ids.RepositoryId operationId "root-configuration"
                 let store = service<ISynchronizedContentStore> context
                 let! currentItems = store.ReadCurrentItemsAsync(ids.RepositoryId, context.RequestAborted)
-                let repositoryActor = Repository.CreateActorProxy ids.OrganizationId ids.RepositoryId correlationId
-                let! repositoryIsEmpty = repositoryActor.IsEmpty correlationId
+
+                let! versionControlledRootEmpty =
+                    if addRootOperation then
+                        match normalizeRepositoryRelativePath rootPath with
+                        | Ok normalizedRoot -> versionControlledRootIsEmpty repository normalizedRoot correlationId
+                        | Error _ -> task { return true }
+                    else
+                        task { return true }
 
                 let liveUnderRoot normalizedRoot =
                     currentItems
@@ -274,9 +326,7 @@ module SynchronizedContent =
 
                 let outcome =
                     if addRootOperation then
-                        // The first remote tracer admits a root only while the existing repository is empty.
-                        // Later non-empty roots still require the full cross-Reference emptiness check below this seam.
-                        match repositoryIsEmpty with
+                        match versionControlledRootEmpty with
                         | false -> Error RootRejectionReason.OutgoingSystemNotEmpty
                         | true ->
                             Grace.Shared.Validation.SynchronizedContent.addRoot

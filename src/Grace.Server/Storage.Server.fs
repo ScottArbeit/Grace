@@ -363,19 +363,35 @@ module Storage =
             SessionForScope: UploadSessionDto
         }
 
-    /// Records a finalized synchronized preparation after the existing upload session accepts the exact manifest.
-    let private recordFinalizedSynchronizedPreparation (context: HttpContext) (requestContext: UploadSessionRequestContext) (manifest: FileManifest) =
+    /// Records synchronized upload completion while leaving every ordinary storage scope unchanged.
+    let internal recordFinalizedSynchronizedPreparationWith
+        (transferStore: ISynchronizedContentTransferStore)
+        repositoryId
+        (authorizedScope: string)
+        (manifest: FileManifest)
+        cancellationToken
+        =
         task {
-            let authorizedScope = string requestContext.SessionForScope.AuthorizedScope
             let prefix = "synchronized/"
 
             if authorizedScope.StartsWith(prefix, StringComparison.Ordinal) then
                 match Guid.TryParse(authorizedScope[prefix.Length ..]) with
                 | false, _ -> invalidOp "The synchronized upload-session scope contains an invalid prepared-content identifier."
-                | true, preparedContentId ->
-                    let transferStore = context.RequestServices.GetRequiredService<ISynchronizedContentTransferStore>()
+                | true, preparedContentId -> do! transferStore.FinalizePreparedAsync(repositoryId, preparedContentId, manifest, cancellationToken)
+        }
 
-                    do! transferStore.FinalizePreparedAsync(requestContext.RequestRepositoryId, preparedContentId, manifest, context.RequestAborted)
+    /// Records a finalized synchronized preparation after the existing upload session accepts the exact manifest.
+    let private recordFinalizedSynchronizedPreparation (context: HttpContext) (requestContext: UploadSessionRequestContext) (manifest: FileManifest) =
+        task {
+            let transferStore = context.RequestServices.GetRequiredService<ISynchronizedContentTransferStore>()
+
+            do!
+                recordFinalizedSynchronizedPreparationWith
+                    transferStore
+                    requestContext.RequestRepositoryId
+                    (string requestContext.SessionForScope.AuthorizedScope)
+                    manifest
+                    context.RequestAborted
         }
 
     /// Resolves the request repository and upload-session actor that storage upload-session handlers share.

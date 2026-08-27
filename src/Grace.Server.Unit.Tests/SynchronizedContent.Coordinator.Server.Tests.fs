@@ -423,3 +423,27 @@ type SynchronizedContentCoordinatorTests() =
             |> Array.sumBy (fun shard -> shard.ItemCount),
             Is.EqualTo manifest.TotalItemCount
         )
+
+    /// Verifies that root occupancy uses exact path segments across complete DirectoryVersion snapshots.
+    [<Test>]
+    member _.DirectoryVersionRootOwnershipUsesExactPathSegments() =
+        let directoryVersion = DirectoryVersion()
+        directoryVersion.RelativePath <- RelativePath "Shared/Docs"
+
+        Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared" directoryVersion, Is.True)
+        Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared/docs" directoryVersion, Is.True)
+        Assert.That(SynchronizedContent.directoryVersionOwnsRoot "share" directoryVersion, Is.False)
+        Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared/documentation" directoryVersion, Is.False)
+
+    /// Verifies that Repository root mutation admission requires the exact current predecessor version.
+    [<Test>]
+    member _.RepositoryRootConfigurationRequiresExactCurrentPredecessor() =
+        let repositoryId = Guid.Parse "3c982ea8-f104-41e9-821a-e2613035268d"
+        let current = SynchronizedRootConfigurationDto.CreateInitial(repositoryId, Instant.FromUtc(2026, 8, 27, 19, 0), "principal")
+
+        let matching = { current with Version = Guid.Parse "cc5ba0c2-8fb5-41fd-80d7-86e5f444f95a"; PreviousVersion = Some current.Version }
+
+        let stale = { matching with PreviousVersion = Some(Guid.Parse "e6f33d06-5cef-4c35-99c8-3211fba6d776") }
+
+        Assert.That(Grace.Actors.Repository.synchronizedRootConfigurationMatchesCurrent current matching, Is.True)
+        Assert.That(Grace.Actors.Repository.synchronizedRootConfigurationMatchesCurrent current stale, Is.False)
