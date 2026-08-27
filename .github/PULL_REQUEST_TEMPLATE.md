@@ -74,7 +74,7 @@ List only surfaces this PR changes or must prove unchanged.
 - Root issue session:
 - Implementation owner: root | worker thread
 - Child context policy: `fork_turns = "none"` | recorded read-only scout exception
-- Shape Reviewer: GPT-5.6-Luna XHigh read-only subagent | root fallback
+- Shape Reviewer
 - Diagnostic scout used: no | yes, question and result
 - Replacement worker used: N/A in direct mode | no | yes, reason
 - Owner stop encountered: no | link and disposition
