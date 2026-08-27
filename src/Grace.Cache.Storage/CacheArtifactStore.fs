@@ -4,10 +4,11 @@ open System
 open System.Collections.Concurrent
 open System.IO
 open System.Security.Cryptography
+open Blake3
 open Microsoft.Data.Sqlite
 
 /// Identifies the one immutable DirectoryVersion ZIP artifact accepted by the calibrated local store.
-type CacheArtifactTuple = { Kind: string; CanonicalIdentity: string; DirectoryVersionId: string; ExpectedSha256: string; ExpectedSize: int64 }
+type CacheArtifactTuple = { Kind: string; CanonicalIdentity: string; RepositoryId: string; DirectoryVersionId: string; ExpectedBlake3: string }
 
 /// Distinguishes the finite local outcomes available to an artifact commit or eligibility lookup.
 type CacheArtifactOutcome =
@@ -23,7 +24,7 @@ type internal CacheArtifactEffect =
     | StagingAllocation
     | StagingFileCreation
     | ByteWriteAndClose
-    | SizeAndSha256Verification
+    | Blake3Verification
     | StagingStateTransaction
     | FinalFilePublication
     | CompleteStateTransaction
@@ -64,8 +65,9 @@ module CacheArtifactStore =
         | DurableStaging of CacheArtifactTuple * string
         | DurableComplete of CacheArtifactTuple
 
-    /// Builds the one internal identity for a repository's immutable DirectoryVersion ZIP.
-    let canonicalIdentity repositoryId directoryVersionId = $"artifact://grace/repositories/{repositoryId}/directory-version-zips/{directoryVersionId}"
+    /// Builds the one internal identity for an exact immutable DirectoryVersion ZIP generation.
+    let canonicalIdentity repositoryId directoryVersionId blake3Hash =
+        $"artifact://grace/repositories/{repositoryId}/directory-version-zips/{directoryVersionId}/blake3/{blake3Hash}"
 
     /// Returns the lowercase SHA-256 digest of a byte sequence used only for opaque managed filenames.
     let private sha256 (bytes: byte array) =
@@ -95,20 +97,21 @@ module CacheArtifactStore =
     let private validateTuple tuple =
         if tuple.Kind <> "DirectoryVersionZip" then
             Error "Only DirectoryVersionZip artifacts are supported by the calibrated local store."
-        elif String.IsNullOrWhiteSpace tuple.CanonicalIdentity then
-            Error "Canonical identity is required."
-        elif String.IsNullOrWhiteSpace tuple.DirectoryVersionId then
-            Error "Directory version identity is required."
-        elif tuple.ExpectedSize < 0L then
-            Error "Expected artifact size cannot be negative."
-        elif tuple.ExpectedSha256.Length <> 64
-             || tuple.ExpectedSha256
+        elif not (fst (Guid.TryParse tuple.RepositoryId)) then
+            Error "Repository identity must be a GUID."
+        elif not (fst (Guid.TryParse tuple.DirectoryVersionId)) then
+            Error "Directory version identity must be a GUID."
+        elif tuple.ExpectedBlake3.Length <> 64
+             || tuple.ExpectedBlake3
                 |> Seq.exists (fun value ->
                     not (
                         (value >= '0' && value <= '9')
                         || (value >= 'a' && value <= 'f')
                     )) then
-            Error "Expected SHA-256 must be exactly 64 lowercase hexadecimal characters."
+            Error "Expected BLAKE3 must be exactly 64 lowercase hexadecimal characters."
+        elif tuple.CanonicalIdentity
+             <> canonicalIdentity tuple.RepositoryId tuple.DirectoryVersionId tuple.ExpectedBlake3 then
+            Error "Artifact identity must include the exact repository, directory version, and BLAKE3 generation."
         else
             Ok()
 
@@ -117,7 +120,7 @@ module CacheArtifactStore =
         use command = connection.CreateCommand()
 
         command.CommandText <-
-            "CREATE TABLE IF NOT EXISTS cache_artifact_states (artifact_key TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, canonical_identity TEXT NOT NULL, directory_version_id TEXT NOT NULL, expected_sha256 TEXT NOT NULL, expected_size INTEGER NOT NULL CHECK (expected_size >= 0), state TEXT NOT NULL CHECK (state IN ('Staging', 'Complete')), operation_identity TEXT NULL);"
+            "CREATE TABLE IF NOT EXISTS cache_artifact_states (artifact_key TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, canonical_identity TEXT NOT NULL, repository_id TEXT NOT NULL, directory_version_id TEXT NOT NULL, expected_blake3 TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('Staging', 'Complete')), operation_identity TEXT NULL);"
 
         command.ExecuteNonQuery() |> ignore
 
@@ -126,9 +129,9 @@ module CacheArtifactStore =
         {
             Kind = reader.GetString(0)
             CanonicalIdentity = reader.GetString(1)
-            DirectoryVersionId = reader.GetString(2)
-            ExpectedSha256 = reader.GetString(3)
-            ExpectedSize = reader.GetInt64(4)
+            RepositoryId = reader.GetString(2)
+            DirectoryVersionId = reader.GetString(3)
+            ExpectedBlake3 = reader.GetString(4)
         }
 
     /// Reads exactly one durable artifact state without exposing raw SQLite tables to callers.
@@ -136,7 +139,7 @@ module CacheArtifactStore =
         use command = connection.CreateCommand()
 
         command.CommandText <-
-            "SELECT kind, canonical_identity, directory_version_id, expected_sha256, expected_size, state, operation_identity FROM cache_artifact_states WHERE artifact_key = @key;"
+            "SELECT kind, canonical_identity, repository_id, directory_version_id, expected_blake3, state, operation_identity FROM cache_artifact_states WHERE artifact_key = @key;"
 
         command.Parameters.AddWithValue("@key", key)
         |> ignore
@@ -153,28 +156,23 @@ module CacheArtifactStore =
             | "Complete" when reader.IsDBNull(6) -> DurableComplete tuple
             | _ -> invalidOp "Cache artifact SQLite state does not satisfy the calibrated state shape."
 
-    /// Verifies size and SHA-256 from disk using streaming reads rather than trusting a caller-provided byte count.
+    /// Verifies BLAKE3 from disk using streaming reads rather than trusting caller-provided bytes.
     let private verifyFile path tuple =
         if not (File.Exists path) then
             false
         else
-            let info = FileInfo(path)
+            use stream = File.OpenRead(path)
+            use hasher = Hasher.New()
+            let buffer = Array.zeroCreate<byte> 81920
+            let mutable read = stream.Read(buffer, 0, buffer.Length)
 
-            if info.Length <> tuple.ExpectedSize then
-                false
-            else
-                use stream = File.OpenRead(path)
-                use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
-                let buffer = Array.zeroCreate<byte> 81920
-                let mutable read = stream.Read(buffer, 0, buffer.Length)
+            while read > 0 do
+                hasher.Update(buffer.AsSpan(0, read))
+                read <- stream.Read(buffer, 0, buffer.Length)
 
-                while read > 0 do
-                    hash.AppendData(buffer, 0, read)
-                    read <- stream.Read(buffer, 0, buffer.Length)
-
-                Convert
-                    .ToHexString(hash.GetHashAndReset())
-                    .ToLowerInvariant() = tuple.ExpectedSha256
+            let digest = Array.zeroCreate<byte> Hash.Size
+            hasher.Finalize(digest)
+            Convert.ToHexString(digest).ToLowerInvariant() = tuple.ExpectedBlake3
 
     /// Opens SQLite without create or write capability for one read-only operation.
     let private openReadOnlyConnection databasePath =
@@ -196,7 +194,7 @@ module CacheArtifactStore =
         use command = connection.CreateCommand()
 
         command.CommandText <-
-            "SELECT artifact_key, kind, canonical_identity, directory_version_id, expected_sha256, expected_size, state, operation_identity FROM cache_artifact_states LIMIT 0;"
+            "SELECT artifact_key, kind, canonical_identity, repository_id, directory_version_id, expected_blake3, state, operation_identity FROM cache_artifact_states LIMIT 0;"
 
         use _reader = command.ExecuteReader()
         ()
@@ -206,7 +204,7 @@ module CacheArtifactStore =
         use command = connection.CreateCommand()
 
         command.CommandText <-
-            "SELECT 1 FROM cache_artifact_states WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND directory_version_id = @directoryVersionId AND expected_sha256 = @sha256 AND expected_size = @size AND state = 'Complete' AND operation_identity IS NULL LIMIT 1;"
+            "SELECT 1 FROM cache_artifact_states WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND repository_id = @repositoryId AND directory_version_id = @directoryVersionId AND expected_blake3 = @blake3 AND state = 'Complete' AND operation_identity IS NULL LIMIT 1;"
 
         command.Parameters.AddWithValue("@key", artifactKey tuple)
         |> ignore
@@ -217,13 +215,13 @@ module CacheArtifactStore =
         command.Parameters.AddWithValue("@identity", tuple.CanonicalIdentity)
         |> ignore
 
+        command.Parameters.AddWithValue("@repositoryId", tuple.RepositoryId)
+        |> ignore
+
         command.Parameters.AddWithValue("@directoryVersionId", tuple.DirectoryVersionId)
         |> ignore
 
-        command.Parameters.AddWithValue("@sha256", tuple.ExpectedSha256)
-        |> ignore
-
-        command.Parameters.AddWithValue("@size", tuple.ExpectedSize)
+        command.Parameters.AddWithValue("@blake3", tuple.ExpectedBlake3)
         |> ignore
 
         command.ExecuteScalar() <> null
@@ -249,7 +247,7 @@ module CacheArtifactStore =
         command.Transaction <- transaction
 
         command.CommandText <-
-            "DELETE FROM cache_artifact_states WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND directory_version_id = @directoryVersionId AND expected_sha256 = @sha256 AND expected_size = @size AND state = 'Staging';"
+            "DELETE FROM cache_artifact_states WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND repository_id = @repositoryId AND directory_version_id = @directoryVersionId AND expected_blake3 = @blake3 AND state = 'Staging';"
 
         command.Parameters.AddWithValue("@key", artifactKey tuple)
         |> ignore
@@ -260,13 +258,13 @@ module CacheArtifactStore =
         command.Parameters.AddWithValue("@identity", tuple.CanonicalIdentity)
         |> ignore
 
+        command.Parameters.AddWithValue("@repositoryId", tuple.RepositoryId)
+        |> ignore
+
         command.Parameters.AddWithValue("@directoryVersionId", tuple.DirectoryVersionId)
         |> ignore
 
-        command.Parameters.AddWithValue("@sha256", tuple.ExpectedSha256)
-        |> ignore
-
-        command.Parameters.AddWithValue("@size", tuple.ExpectedSize)
+        command.Parameters.AddWithValue("@blake3", tuple.ExpectedBlake3)
         |> ignore
 
         if command.ExecuteNonQuery() <> 1 then
@@ -281,7 +279,7 @@ module CacheArtifactStore =
         command.Transaction <- transaction
 
         command.CommandText <-
-            "UPDATE cache_artifact_states SET state = 'Complete', operation_identity = NULL WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND directory_version_id = @directoryVersionId AND expected_sha256 = @sha256 AND expected_size = @size AND state = 'Staging' AND operation_identity = @operationIdentity;"
+            "UPDATE cache_artifact_states SET state = 'Complete', operation_identity = NULL WHERE artifact_key = @key AND kind = @kind AND canonical_identity = @identity AND repository_id = @repositoryId AND directory_version_id = @directoryVersionId AND expected_blake3 = @blake3 AND state = 'Staging' AND operation_identity = @operationIdentity;"
 
         command.Parameters.AddWithValue("@key", artifactKey tuple)
         |> ignore
@@ -292,13 +290,13 @@ module CacheArtifactStore =
         command.Parameters.AddWithValue("@identity", tuple.CanonicalIdentity)
         |> ignore
 
+        command.Parameters.AddWithValue("@repositoryId", tuple.RepositoryId)
+        |> ignore
+
         command.Parameters.AddWithValue("@directoryVersionId", tuple.DirectoryVersionId)
         |> ignore
 
-        command.Parameters.AddWithValue("@sha256", tuple.ExpectedSha256)
-        |> ignore
-
-        command.Parameters.AddWithValue("@size", tuple.ExpectedSize)
+        command.Parameters.AddWithValue("@blake3", tuple.ExpectedBlake3)
         |> ignore
 
         command.Parameters.AddWithValue("@operationIdentity", operationIdentity)
@@ -316,7 +314,7 @@ module CacheArtifactStore =
         command.Transaction <- transaction
 
         command.CommandText <-
-            "INSERT INTO cache_artifact_states (artifact_key, kind, canonical_identity, directory_version_id, expected_sha256, expected_size, state, operation_identity) VALUES (@key, @kind, @identity, @directoryVersionId, @sha256, @size, 'Staging', @operationIdentity);"
+            "INSERT INTO cache_artifact_states (artifact_key, kind, canonical_identity, repository_id, directory_version_id, expected_blake3, state, operation_identity) VALUES (@key, @kind, @identity, @repositoryId, @directoryVersionId, @blake3, 'Staging', @operationIdentity);"
 
         command.Parameters.AddWithValue("@key", artifactKey tuple)
         |> ignore
@@ -327,13 +325,13 @@ module CacheArtifactStore =
         command.Parameters.AddWithValue("@identity", tuple.CanonicalIdentity)
         |> ignore
 
+        command.Parameters.AddWithValue("@repositoryId", tuple.RepositoryId)
+        |> ignore
+
         command.Parameters.AddWithValue("@directoryVersionId", tuple.DirectoryVersionId)
         |> ignore
 
-        command.Parameters.AddWithValue("@sha256", tuple.ExpectedSha256)
-        |> ignore
-
-        command.Parameters.AddWithValue("@size", tuple.ExpectedSize)
+        command.Parameters.AddWithValue("@blake3", tuple.ExpectedBlake3)
         |> ignore
 
         command.Parameters.AddWithValue("@operationIdentity", operationIdentity)
@@ -399,26 +397,23 @@ module CacheArtifactStore =
         | Some point when point.Effect = effect && point.Moment = After -> raise (CacheArtifactInjectedFailure(effect, After))
         | _ -> ()
 
-    /// Streams source bytes into a staged file and returns the independently observed length and SHA-256 digest.
+    /// Streams source bytes into a staged file and returns the independently observed BLAKE3 digest.
     let private writeAndHash stagedPath (source: Stream) =
         use destination = new FileStream(stagedPath, FileMode.Open, FileAccess.Write, FileShare.None)
-        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+        use hasher = Hasher.New()
         let buffer = Array.zeroCreate<byte> 81920
-        let mutable length = 0L
         let mutable read = source.Read(buffer, 0, buffer.Length)
 
         while read > 0 do
             destination.Write(buffer, 0, read)
-            hash.AppendData(buffer, 0, read)
-            length <- length + int64 read
+            hasher.Update(buffer.AsSpan(0, read))
             read <- source.Read(buffer, 0, buffer.Length)
 
         destination.Flush(true)
 
-        length,
-        Convert
-            .ToHexString(hash.GetHashAndReset())
-            .ToLowerInvariant()
+        let digest = Array.zeroCreate<byte> Hash.Size
+        hasher.Finalize(digest)
+        Convert.ToHexString(digest).ToLowerInvariant()
 
     /// Opens one managed artifact root after the private storage database has already gained process ownership.
     let create (store: CacheStore) managedRoot =
@@ -448,36 +443,9 @@ module CacheArtifactStore =
     let inspect store tuple =
         match validateTuple tuple with
         | Error message -> Rejected message
-        | Ok () -> classify store tuple
-
-    /// Resolves and verifies one identity-only hit from the stored immutable descriptor.
-    let inspectByIdentity store repositoryId directoryVersionId =
-        if String.IsNullOrWhiteSpace repositoryId
-           || String.IsNullOrWhiteSpace directoryVersionId then
-            Rejected "Repository and directory version identities are required."
-        else
-            let identity = canonicalIdentity repositoryId directoryVersionId
-
-            let key =
-                {
-                    Kind = "DirectoryVersionZip"
-                    CanonicalIdentity = identity
-                    DirectoryVersionId = directoryVersionId
-                    ExpectedSha256 = String.replicate 64 "0"
-                    ExpectedSize = 0L
-                }
-                |> artifactKey
-
+        | Ok () ->
             try
-                CacheStore.withStoreOperation store.Store (fun databasePath ->
-                    CacheStore.withBusyRetry (fun () ->
-                        use connection = CacheStore.openConnection databasePath
-                        ensureArtifactSchema connection
-
-                        match readState connection key with
-                        | DurableComplete tuple
-                        | DurableStaging (tuple, _) -> classifyWithConnection store tuple connection
-                        | DurableAbsent -> Absent))
+                classify store tuple
             with
             | :? InvalidOperationException -> RecoveryRequired "Cache artifact metadata is invalid; explicit local reset is required."
 
@@ -567,21 +535,16 @@ module CacheArtifactStore =
                             use _stream = new FileStream(stagedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
                             ())
 
-                        let mutable observedLength = 0L
-                        let mutable observedSha256 = String.Empty
+                        let mutable observedBlake3 = String.Empty
 
-                        executeEffect failurePoint ByteWriteAndClose (fun () ->
-                            let length, digest = writeAndHash stagedPath source
-                            observedLength <- length
-                            observedSha256 <- digest)
+                        executeEffect failurePoint ByteWriteAndClose (fun () -> observedBlake3 <- writeAndHash stagedPath source)
 
-                        executeEffect failurePoint SizeAndSha256Verification (fun () ->
+                        executeEffect failurePoint Blake3Verification (fun () ->
                             if
-                                observedLength <> tuple.ExpectedSize
-                                || observedSha256 <> tuple.ExpectedSha256
+                                observedBlake3 <> tuple.ExpectedBlake3
                                 || not (verifyFile stagedPath tuple)
                             then
-                                invalidOp "Staged bytes failed exact size and lowercase SHA-256 verification.")
+                                invalidOp "Staged bytes failed exact lowercase BLAKE3 verification.")
 
                         executeEffect failurePoint StagingStateTransaction (fun () -> insertStaging connection tuple operationIdentity)
                         executeEffect failurePoint FinalFilePublication (fun () -> File.Move(stagedPath, final, false))
@@ -624,14 +587,13 @@ module CacheArtifactStore =
 
                 use _created = new FileStream(stagedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
                 _created.Dispose()
-                let observedLength, observedSha256 = writeAndHash stagedPath source
+                let observedBlake3 = writeAndHash stagedPath source
 
                 if
-                    observedLength <> tuple.ExpectedSize
-                    || observedSha256 <> tuple.ExpectedSha256
+                    observedBlake3 <> tuple.ExpectedBlake3
                     || not (verifyFile stagedPath tuple)
                 then
-                    Error "Staged bytes failed exact size and lowercase SHA-256 verification."
+                    Error "Staged bytes failed exact lowercase BLAKE3 verification."
                 else
                     Ok(CacheStagedArtifact(tuple, operationIdentity, stagedPath))
             with

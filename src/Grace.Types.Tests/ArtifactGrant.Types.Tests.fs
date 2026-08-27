@@ -127,6 +127,8 @@ type CacheArtifactGrantTests() =
         let issued = ArtifactGrant.issue "server-process-key" key issueRequest
         let validationKey = ArtifactGrant.createValidationKey "server-process-key" key
 
+        Assert.That(ArtifactGrant.tryReadArtifact issued.Grant, Is.EqualTo(Some artifact))
+
         let validate now request = ArtifactGrant.validate now validationKey request issued.Grant
 
         Assert.Multiple(

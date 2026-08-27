@@ -45,7 +45,7 @@ type CacheStoreOpenResult =
 module CacheStore =
 
     [<Literal>]
-    let private SchemaVersion = 2
+    let private SchemaVersion = 3
 
     [<Literal>]
     let private BusyTimeoutMilliseconds = 5000

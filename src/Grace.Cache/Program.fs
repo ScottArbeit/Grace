@@ -5,9 +5,11 @@ open System.Net
 open System.Net.Http
 open Grace.Cache.Storage
 open Grace.Shared.Parameters.Cache
+open Grace.Types.ArtifactGrant
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
 
 /// Identifies the Cache host assembly to ASP.NET Core's in-process test factory.
 type Program =
@@ -20,6 +22,16 @@ type CacheFillRequest = { Permit: string }
 
 /// Composes the localhost-only HTTP boundary for verified Grace Cache artifacts.
 module Host =
+
+    /// Builds the exact local storage tuple selected by a validated signed artifact claim.
+    let private tupleForArtifact (artifact: DirectoryVersionZipCacheArtifact) =
+        {
+            Kind = CacheArtifactGrantContract.ArtifactKind
+            CanonicalIdentity = CacheArtifactStore.canonicalIdentity artifact.RepositoryId artifact.DirectoryVersionId artifact.Blake3Hash
+            RepositoryId = artifact.RepositoryId
+            DirectoryVersionId = artifact.DirectoryVersionId
+            ExpectedBlake3 = artifact.Blake3Hash
+        }
 
     /// Creates one redacted typed problem response for the Cache loopback contract.
     let private problem status code detail = Results.Json({ Code = code; Detail = detail }, statusCode = Nullable status)
@@ -49,6 +61,9 @@ module Host =
                 | _ -> invalidOp "Grace.Cache accepts exactly one valid ASPNETCORE_URLS listener."
 
         builder.WebHost.ConfigureKestrel(fun options -> options.Listen(IPAddress.Loopback, listenPort))
+        |> ignore
+
+        builder.Services.AddSingleton<HttpClient>(fun _ -> new HttpClient())
         |> ignore
 
         let databasePath =
@@ -84,12 +99,14 @@ module Host =
 
         let artifacts = CacheArtifactStore.create store managedRoot
         let processKey = CacheProcessKey.Create()
-        let httpClient = new HttpClient()
-        let coordinator = new CacheFillCoordinator(artifacts, processKey, serverUri, httpClient, maxConcurrentFills)
         let app = builder.Build()
+        let httpClient = app.Services.GetRequiredService<HttpClient>()
+        let grantValidator = new CacheArtifactGrantValidator(serverUri, httpClient, Func<DateTimeOffset>(fun () -> DateTimeOffset.UtcNow))
+        let coordinator = new CacheFillCoordinator(artifacts, processKey, serverUri, httpClient, maxConcurrentFills)
 
         app.Lifetime.ApplicationStopped.Register (fun () ->
             (coordinator :> IDisposable).Dispose()
+            (grantValidator :> IDisposable).Dispose()
             httpClient.Dispose()
             (processKey :> IDisposable).Dispose()
             CacheStore.disposeStore store)
@@ -100,14 +117,32 @@ module Host =
 
         app.MapGet(
             "/repositories/{repositoryId}/directory-version-zips/{directoryVersionId}",
-            Func<string, string, IResult> (fun repositoryId directoryVersionId ->
-                match Guid.TryParse(repositoryId), Guid.TryParse(directoryVersionId) with
-                | (true, _), (true, _) ->
-                    match CacheArtifactStore.inspectByIdentity artifacts repositoryId directoryVersionId with
-                    | Hit finalPath -> Results.File(finalPath, "application/zip")
-                    | Rejected message -> problem StatusCodes.Status400BadRequest "CacheRequestInvalid" message
-                    | _ -> Results.NotFound()
-                | _ -> problem StatusCodes.Status400BadRequest "CacheRequestInvalid" "Repository and directory version identities must be GUIDs.")
+            Func<string, string, HttpContext, Threading.Tasks.Task<IResult>> (fun repositoryId directoryVersionId context ->
+                task {
+                    match Guid.TryParse(repositoryId), Guid.TryParse(directoryVersionId) with
+                    | (true, _), (true, _) ->
+                        let authorization = string context.Request.Headers.Authorization
+                        let route = string context.Request.Path
+
+                        match! grantValidator.ValidateAsync(authorization, route) with
+                        | Error Unauthorized ->
+                            return problem StatusCodes.Status401Unauthorized "CacheArtifactGrantUnauthorized" "A valid Cache artifact grant is required."
+                        | Error Forbidden ->
+                            return
+                                problem StatusCodes.Status403Forbidden "CacheArtifactGrantForbidden" "The Cache artifact grant does not authorize this request."
+                        | Error ValidationKeyUnavailable ->
+                            return
+                                problem
+                                    StatusCodes.Status503ServiceUnavailable
+                                    "CacheArtifactGrantValidationKeyUnavailable"
+                                    "The Server validation key is unavailable."
+                        | Ok artifact ->
+                            match CacheArtifactStore.inspect artifacts (tupleForArtifact artifact) with
+                            | Hit finalPath -> return Results.File(finalPath, "application/zip")
+                            | Rejected message -> return problem StatusCodes.Status400BadRequest "CacheRequestInvalid" message
+                            | _ -> return Results.NotFound()
+                    | _ -> return problem StatusCodes.Status400BadRequest "CacheRequestInvalid" "Repository and directory version identities must be GUIDs."
+                })
         )
         |> ignore
 
@@ -126,30 +161,22 @@ module Host =
                     then
                         return problem StatusCodes.Status400BadRequest "CachePermitInvalid" "A fill permit is required."
                     else
-                        match CacheArtifactStore.inspectByIdentity artifacts repositoryId directoryVersionId with
-                        | Hit _ -> return Results.NoContent()
-                        | RecoveryRequired _ ->
-                            return problem StatusCodes.Status409Conflict "CacheRecoveryRequired" "Local Cache state requires an explicit reset."
-                        | Conflict _ ->
+                        match! coordinator.Fill(repositoryId, directoryVersionId, request.Permit, context.RequestAborted) with
+                        | Ok artifact ->
+                            match CacheArtifactStore.inspect artifacts (tupleForArtifact artifact) with
+                            | Hit _ -> return Results.NoContent()
+                            | _ -> return problem StatusCodes.Status502BadGateway "CachePostFillVerificationFailed" "The committed artifact did not verify."
+                        | Error CapacityExceeded ->
+                            return problem StatusCodes.Status429TooManyRequests "CacheFillCapacityExceeded" "Distinct fill capacity is full."
+                        | Error TupleConflict ->
                             return problem StatusCodes.Status409Conflict "CacheArtifactConflict" "A conflicting immutable tuple already owns this artifact."
-                        | _ ->
-                            match! coordinator.Fill(repositoryId, directoryVersionId, request.Permit, context.RequestAborted) with
-                            | Ok () ->
-                                match CacheArtifactStore.inspectByIdentity artifacts repositoryId directoryVersionId with
-                                | Hit _ -> return Results.NoContent()
-                                | _ -> return problem StatusCodes.Status502BadGateway "CachePostFillVerificationFailed" "The committed artifact did not verify."
-                            | Error CapacityExceeded ->
-                                return problem StatusCodes.Status429TooManyRequests "CacheFillCapacityExceeded" "Distinct fill capacity is full."
-                            | Error TupleConflict ->
-                                return problem StatusCodes.Status409Conflict "CacheArtifactConflict" "A conflicting immutable tuple already owns this artifact."
-                            | Error CacheFillError.RecoveryRequired ->
-                                return problem StatusCodes.Status409Conflict "CacheRecoveryRequired" "Local Cache state requires an explicit reset."
-                            | Error RedemptionFailed ->
-                                return problem StatusCodes.Status403Forbidden "CachePermitRedemptionFailed" "Grace Server rejected the fill permit."
-                            | Error SourceFailed -> return problem StatusCodes.Status502BadGateway "CacheSourceFailed" "The approved source could not be read."
-                            | Error IntegrityFailed ->
-                                return
-                                    problem StatusCodes.Status422UnprocessableEntity "CacheIntegrityFailed" "The approved source did not match its descriptor."
+                        | Error CacheFillError.RecoveryRequired ->
+                            return problem StatusCodes.Status409Conflict "CacheRecoveryRequired" "Local Cache state requires an explicit reset."
+                        | Error RedemptionFailed ->
+                            return problem StatusCodes.Status403Forbidden "CachePermitRedemptionFailed" "Grace Server rejected the fill permit."
+                        | Error SourceFailed -> return problem StatusCodes.Status502BadGateway "CacheSourceFailed" "The approved source could not be read."
+                        | Error IntegrityFailed ->
+                            return problem StatusCodes.Status422UnprocessableEntity "CacheIntegrityFailed" "The approved source did not match its artifact."
                 })
         )
         |> ignore

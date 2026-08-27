@@ -12,6 +12,7 @@ open System.Threading.Tasks
 open Grace.Cache.Storage
 open Grace.Shared
 open Grace.Shared.Parameters.Cache
+open Grace.Types.ArtifactGrant
 open Grace.Types.Common
 
 /// Encodes the unpadded base64url values used by JWK coordinates, permits, and signatures.
@@ -26,7 +27,7 @@ module internal Base64Url =
             .Replace('/', '_')
 
 /// Owns the one ephemeral Cache process key and its public JWK projection.
-type CacheProcessKey private (key: ECDsa, publicJwk: CachePublicJwk) =
+type CacheProcessKey private (key: ECDsa, publicJwk: P256PublicJwk) =
 
     /// Returns the public P-256 coordinates without private-key material.
     member _.PublicJwk = publicJwk
@@ -45,7 +46,7 @@ type CacheProcessKey private (key: ECDsa, publicJwk: CachePublicJwk) =
         let key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
         let parameters = key.ExportParameters(false)
 
-        new CacheProcessKey(key, { Kty = "EC"; Crv = "P-256"; X = Base64Url.encode parameters.Q.X; Y = Base64Url.encode parameters.Q.Y })
+        new CacheProcessKey(key, P256PublicJwk.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y))
 
 /// Classifies terminal fill results without carrying secrets or managed paths.
 type CacheFillError =
@@ -60,7 +61,7 @@ type CacheFillError =
 type CacheFillCoordinator(store: CacheArtifactStore, processKey: CacheProcessKey, serverUri: Uri, httpClient: HttpClient, maxConcurrentFills: int) =
 
     let capacity = new SemaphoreSlim(maxConcurrentFills, maxConcurrentFills)
-    let fills = ConcurrentDictionary<string, Lazy<Task<Result<unit, CacheFillError>>>>(StringComparer.Ordinal)
+    let fills = ConcurrentDictionary<string, Lazy<Task<Result<DirectoryVersionZipCacheArtifact, CacheFillError>>>>(StringComparer.Ordinal)
 
     /// Redeems, retrieves, verifies, and commits one immutable artifact without honoring a disconnected request token.
     let execute repositoryId directoryVersionId permit =
@@ -94,11 +95,10 @@ type CacheFillCoordinator(store: CacheArtifactStore, processKey: CacheProcessKey
                             return Error RedemptionFailed
                         else
                             let source = envelope.ReturnValue
-                            let descriptor = source.Descriptor
+                            let artifact = source.Artifact
 
-                            if descriptor.RepositoryId <> repositoryId
-                               || descriptor.DirectoryVersionId
-                                  <> directoryVersionId then
+                            if artifact.RepositoryId <> repositoryId
+                               || artifact.DirectoryVersionId <> directoryVersionId then
                                 return Error RedemptionFailed
                             else
                                 try
@@ -111,11 +111,12 @@ type CacheFillCoordinator(store: CacheArtifactStore, processKey: CacheProcessKey
 
                                         let tuple =
                                             {
-                                                Kind = descriptor.Kind
-                                                CanonicalIdentity = CacheArtifactStore.canonicalIdentity repositoryId directoryVersionId
-                                                DirectoryVersionId = directoryVersionId
-                                                ExpectedSha256 = descriptor.Sha256
-                                                ExpectedSize = descriptor.Size
+                                                Kind = CacheArtifactGrantContract.ArtifactKind
+                                                CanonicalIdentity =
+                                                    CacheArtifactStore.canonicalIdentity artifact.RepositoryId artifact.DirectoryVersionId artifact.Blake3Hash
+                                                RepositoryId = artifact.RepositoryId
+                                                DirectoryVersionId = artifact.DirectoryVersionId
+                                                ExpectedBlake3 = artifact.Blake3Hash
                                             }
 
                                         match CacheArtifactStore.stage store tuple sourceStream with
@@ -123,7 +124,7 @@ type CacheFillCoordinator(store: CacheArtifactStore, processKey: CacheProcessKey
                                         | Ok staged ->
                                             match CacheArtifactStore.publishStaged store staged with
                                             | Filled
-                                            | Hit _ -> return Ok()
+                                            | Hit _ -> return Ok artifact
                                             | CacheArtifactOutcome.Conflict _ -> return Error TupleConflict
                                             | CacheArtifactOutcome.RecoveryRequired _ -> return Error CacheFillError.RecoveryRequired
                                             | CacheArtifactOutcome.Rejected _
@@ -138,9 +139,20 @@ type CacheFillCoordinator(store: CacheArtifactStore, processKey: CacheProcessKey
     /// Joins one exact process-owned fill or starts it when distinct-fill capacity is available.
     member _.Fill(repositoryId: string, directoryVersionId: string, permit: string, waiterCancellation: CancellationToken) =
         task {
-            let key = $"{repositoryId}/{directoryVersionId}"
+            let permitIdentity =
+                permit
+                |> Encoding.UTF8.GetBytes
+                |> SHA256.HashData
+                |> Base64Url.encode
 
-            let operation = fills.GetOrAdd(key, (fun _ -> Lazy<Task<Result<unit, CacheFillError>>>(fun () -> execute repositoryId directoryVersionId permit)))
+            let key = $"{repositoryId}/{directoryVersionId}/{permitIdentity}"
+
+            let operation =
+                fills.GetOrAdd(
+                    key,
+                    (fun _ -> Lazy<Task<Result<DirectoryVersionZipCacheArtifact, CacheFillError>>>(fun () -> execute repositoryId directoryVersionId permit))
+                )
+
             let fill = operation.Value
 
             try

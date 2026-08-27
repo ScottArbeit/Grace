@@ -7,6 +7,7 @@
     <Description>Localhost-only read boundary for verified Grace Cache artifacts.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="CacheArtifactGrantValidation.fs" />
     <Compile Include="CacheFill.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

@@ -195,6 +195,22 @@ module ArtifactGrant =
             | None -> None
         | None -> None
 
+    /// Reads the untrusted artifact claims needed to select the exact local tuple before full validation.
+    let tryReadArtifact (grant: CacheArtifactGrant) =
+        match tryReadSegments grant with
+        | Some (_, claimsSegment, _) ->
+            match tryDeserialize<WireClaims> claimsSegment with
+            | Some claims when claims.ArtifactKind = CacheArtifactGrantContract.ArtifactKind ->
+                match Guid.TryParse(claims.RepositoryId), Guid.TryParse(claims.DirectoryVersionId) with
+                | (true, repositoryId), (true, directoryVersionId) ->
+                    try
+                        Some(DirectoryVersionZipCacheArtifact.Create(repositoryId, directoryVersionId, claims.Blake3Hash))
+                    with
+                    | :? ArgumentException -> None
+                | _ -> None
+            | _ -> None
+        | None -> None
+
     /// Validates signature, issuer, audience, time bounds, HTTP binding, and exact BLAKE3 artifact identity.
     let validate
         (now: DateTimeOffset)
