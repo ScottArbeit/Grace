@@ -94,6 +94,8 @@ type AuthorizationSemanticsTests() =
                 "RepositoryAdmin"
                 "RepositoryContributor"
                 "RepositoryReader"
+                "SynchronizedContentReader"
+                "SynchronizedContentWriter"
                 "BranchAdmin"
                 "BranchWriter"
                 "BranchReader"
@@ -185,6 +187,21 @@ type AuthorizationSemanticsTests() =
             |> List.find (fun role -> role.RoleId.Equals("RepositoryAdmin", StringComparison.OrdinalIgnoreCase))
 
         Assert.That(repositoryAdmin.AllowedOperations.Contains BranchAdmin, Is.True)
+
+    /// Verifies synchronized roles are repository-scoped and repository write alone does not imply synchronized write.
+    [<Test>]
+    member _.SynchronizedContentRolesHaveIndependentReadAndWriteAuthority() =
+        let repositoryScope = Scope.Repository(ownerId, organizationId, repositoryId)
+        let repositoryResource = Resource.Repository(ownerId, organizationId, repositoryId)
+
+        assertOperationAllowed "SynchronizedContentReader" repositoryScope RepositoryRead repositoryResource
+        assertOperationAllowed "SynchronizedContentReader" repositoryScope SynchronizedContentRead repositoryResource
+        assertOperationDenied "SynchronizedContentReader" repositoryScope SynchronizedContentWrite repositoryResource
+        assertOperationAllowed "SynchronizedContentWriter" repositoryScope SynchronizedContentRead repositoryResource
+        assertOperationAllowed "SynchronizedContentWriter" repositoryScope SynchronizedContentWrite repositoryResource
+        assertOperationDenied "RepositoryContributor" repositoryScope SynchronizedContentWrite repositoryResource
+        assertOperationAllowed "RepositoryAdmin" repositoryScope SynchronizedContentRead repositoryResource
+        assertOperationAllowed "RepositoryAdmin" repositoryScope SynchronizedContentWrite repositoryResource
 
     /// Verifies that every role maps to exactly one assignment scope.
     [<Test>]

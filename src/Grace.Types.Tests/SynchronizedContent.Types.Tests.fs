@@ -101,6 +101,36 @@ type SynchronizedContentTypesTests() =
                 Assert.That(isError (normalizeRoots [| "shared"; "SHARED" |]), Is.True))
         )
 
+    /// Confirms root changes use exact versions and never normalize overlap into success.
+    [<Test>]
+    member _.``root transitions require exact version and retain prior configuration on rejection``() =
+        let current =
+            SynchronizedRootConfigurationDto.CreateInitial(Guid.Parse("a345ebd6-037a-45b8-b97e-64d6840bd440"), Instant.FromUtc(2026, 8, 27, 21, 0), "admin")
+
+        let nextVersion = Guid.Parse("90af4bba-a884-46d8-a497-f68ce0b795ed")
+        let added = addRoot current.Version nextVersion "Shared" (Instant.FromUtc(2026, 8, 27, 21, 1)) "admin" current
+
+        match added with
+        | Error reason -> Assert.Fail($"Expected root add success but received {reason}.")
+        | Ok configured ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(box configured.Roots, Is.EqualTo(box [| "Shared" |]))
+                    Assert.That(configured.PreviousVersion, Is.EqualTo(Some current.Version))
+
+                    Assert.That(
+                        addRoot current.Version (Guid.NewGuid()) "Shared/child" (Instant.FromUtc(2026, 8, 27, 21, 2)) "admin" configured
+                        |> isError,
+                        Is.True
+                    )
+
+                    Assert.That(
+                        removeRoot current.Version (Guid.NewGuid()) "Shared" (Instant.FromUtc(2026, 8, 27, 21, 3)) "admin" configured
+                        |> isError,
+                        Is.True
+                    ))
+            )
+
     /// Confirms each mutation kind accepts only its specified authority fields.
     [<Test>]
     member _.``mutation validation enforces exact field combinations``() =

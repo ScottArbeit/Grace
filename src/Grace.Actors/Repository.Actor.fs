@@ -612,6 +612,8 @@ module Repository =
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | SetConflictResolutionPolicy policy -> return ConflictResolutionPolicySet policy
+                                    | SetSynchronizedRootConfiguration (configuration, operationId) ->
+                                        return SynchronizedRootConfigurationSet(configuration, operationId)
                                     | DeleteLogical (force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches =

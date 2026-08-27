@@ -2,6 +2,7 @@ namespace Grace.Shared.Validation
 
 open Grace.Shared.Parameters.SynchronizedContent
 open Grace.Types.SynchronizedContent
+open NodaTime
 open System
 open System.Globalization
 open System.IO
@@ -135,6 +136,59 @@ module SynchronizedContent =
                                 Ok(Array.append normalizedRoots [| normalizedRoot |]))))
                 (Ok Array.empty)
             |> Result.map (Array.sortWith (fun left right -> StringComparer.OrdinalIgnoreCase.Compare(left, right)))
+
+    /// Applies one exact-version root add after the caller has proven outgoing-system emptiness.
+    let addRoot expectedVersion newVersion rootPath createdAt createdBy (current: SynchronizedRootConfigurationDto) =
+        if expectedVersion <> current.Version then
+            Error OutcomeKind.StalePolicy
+        elif current.Roots.Length >= MaximumRootCount then
+            Error RootRejectionReason.RootLimitExceeded
+        else
+            normalizeRepositoryRelativePath rootPath
+            |> Result.mapError (fun _ -> RootRejectionReason.UnsupportedPath)
+            |> Result.bind (fun normalizedRoot ->
+                if
+                    current.Roots
+                    |> Array.exists (rootsOverlap normalizedRoot)
+                then
+                    Error RootRejectionReason.RootOverlap
+                else
+                    normalizeRoots (Array.append current.Roots [| normalizedRoot |])
+                    |> Result.mapError (fun _ -> RootRejectionReason.RootOverlap)
+                    |> Result.map (fun roots ->
+                        {
+                            RepositoryId = current.RepositoryId
+                            Version = newVersion
+                            Roots = roots
+                            CreatedAt = createdAt
+                            CreatedBy = createdBy
+                            PreviousVersion = Some current.Version
+                        }))
+
+    /// Applies one exact-version root removal after the caller has proven the synchronized namespace empty.
+    let removeRoot expectedVersion newVersion rootPath createdAt createdBy (current: SynchronizedRootConfigurationDto) =
+        if expectedVersion <> current.Version then
+            Error OutcomeKind.StalePolicy
+        else
+            normalizeRepositoryRelativePath rootPath
+            |> Result.mapError (fun _ -> RootRejectionReason.UnsupportedPath)
+            |> Result.bind (fun normalizedRoot ->
+                let retained =
+                    current.Roots
+                    |> Array.filter (fun configured -> not (pathsEqual configured normalizedRoot))
+
+                if retained.Length = current.Roots.Length then
+                    Error RootRejectionReason.UnsupportedPath
+                else
+                    Ok
+                        {
+                            RepositoryId = current.RepositoryId
+                            Version = newVersion
+                            Roots = retained
+                            CreatedAt = createdAt
+                            CreatedBy = createdBy
+                            PreviousVersion = Some current.Version
+                        })
 
     /// Checks the exact lowercase 64-character hexadecimal hash contract.
     let isLowercaseHash (value: string) =
