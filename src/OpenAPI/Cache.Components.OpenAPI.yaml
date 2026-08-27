@@ -22,6 +22,14 @@
         Algorithm: { type: string, const: ES256 }
         KeyId: { type: string }
         PublicJwk: { $ref: '#/P256PublicJwk' }
+    CacheArtifactGrantValidationKeyReturnValue:
+      description: Grace response envelope containing the current Server process validation key.
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+        - type: object
+          required: [ReturnValue]
+          properties:
+            ReturnValue: { $ref: '#/CacheArtifactGrantValidationKey' }
     PrepareDirectoryVersionZipParameters:
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
@@ -70,4 +78,4 @@
       description: Current Server process public key and fixed Cache grant validation contract.
       content:
         application/json:
-          schema: { $ref: '#/CacheArtifactGrantValidationKey' }
+          schema: { $ref: '#/CacheArtifactGrantValidationKeyReturnValue' }

@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.grace_return_value import GraceReturnValue
+from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key_return_value import CacheArtifactGrantValidationKeyReturnValue
 
-class TestGraceReturnValue(unittest.TestCase):
-    """GraceReturnValue unit test stubs"""
+class TestCacheArtifactGrantValidationKeyReturnValue(unittest.TestCase):
+    """CacheArtifactGrantValidationKeyReturnValue unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,17 +26,26 @@ class TestGraceReturnValue(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> GraceReturnValue:
-        """Test GraceReturnValue
+    def make_instance(self, include_optional) -> CacheArtifactGrantValidationKeyReturnValue:
+        """Test CacheArtifactGrantValidationKeyReturnValue
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `GraceReturnValue`
+        # uncomment below to create an instance of `CacheArtifactGrantValidationKeyReturnValue`
         """
-        model = GraceReturnValue()
+        model = CacheArtifactGrantValidationKeyReturnValue()
         if include_optional:
-            return GraceReturnValue(
-                return_value = grace_generated_openapi_probe.models.return_value.ReturnValue(),
+            return CacheArtifactGrantValidationKeyReturnValue(
+                return_value = grace_generated_openapi_probe.models.cache_artifact_grant_validation_key.CacheArtifactGrantValidationKey(
+                    issuer = 'Grace.Server.CacheArtifactGrant.v1', 
+                    audience = 'Grace.Cache.Artifact.v1', 
+                    algorithm = 'ES256', 
+                    key_id = '', 
+                    public_jwk = grace_generated_openapi_probe.models.p256_public_jwk.P256PublicJwk(
+                        kty = 'EC', 
+                        crv = 'P-256', 
+                        x = '', 
+                        y = '', ), ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = '',
                 properties = {
@@ -44,12 +53,22 @@ class TestGraceReturnValue(unittest.TestCase):
                     }
             )
         else:
-            return GraceReturnValue(
+            return CacheArtifactGrantValidationKeyReturnValue(
+                return_value = grace_generated_openapi_probe.models.cache_artifact_grant_validation_key.CacheArtifactGrantValidationKey(
+                    issuer = 'Grace.Server.CacheArtifactGrant.v1', 
+                    audience = 'Grace.Cache.Artifact.v1', 
+                    algorithm = 'ES256', 
+                    key_id = '', 
+                    public_jwk = grace_generated_openapi_probe.models.p256_public_jwk.P256PublicJwk(
+                        kty = 'EC', 
+                        crv = 'P-256', 
+                        x = '', 
+                        y = '', ), ),
         )
         """
 
-    def testGraceReturnValue(self):
-        """Test GraceReturnValue"""
+    def testCacheArtifactGrantValidationKeyReturnValue(self):
+        """Test CacheArtifactGrantValidationKeyReturnValue"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

@@ -12,7 +12,7 @@ All URIs are relative to *http://localhost:5000*
 
 ## getCacheArtifactGrantValidationKey
 
-> CacheArtifactGrantValidationKey getCacheArtifactGrantValidationKey()
+> CacheArtifactGrantValidationKeyReturnValue getCacheArtifactGrantValidationKey()
 
 Get the current Server process public key for local Cache grant validation.
 
@@ -47,7 +47,7 @@ This endpoint does not need any parameter.
 
 ### Return type
 
-[**CacheArtifactGrantValidationKey**](CacheArtifactGrantValidationKey.md)
+[**CacheArtifactGrantValidationKeyReturnValue**](CacheArtifactGrantValidationKeyReturnValue.md)
 
 ### Authorization
 

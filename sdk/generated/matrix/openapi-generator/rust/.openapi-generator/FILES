@@ -38,6 +38,7 @@ docs/BranchReturnValue.md
 docs/BranchesApi.md
 docs/CacheApi.md
 docs/CacheArtifactGrantValidationKey.md
+docs/CacheArtifactGrantValidationKeyReturnValue.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -310,6 +311,7 @@ src/models/branch_parameters.rs
 src/models/branch_query_parameters.rs
 src/models/branch_return_value.rs
 src/models/cache_artifact_grant_validation_key.rs
+src/models/cache_artifact_grant_validation_key_return_value.rs
 src/models/change_type.rs
 src/models/claim_reuse_ranges_parameters.rs
 src/models/claimed_reuse_range.rs

@@ -207,6 +207,7 @@ All URIs are relative to *http://localhost:5000*
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
 - [CacheArtifactGrantValidationKey](docs/CacheArtifactGrantValidationKey.md)
+- [CacheArtifactGrantValidationKeyReturnValue](docs/CacheArtifactGrantValidationKeyReturnValue.md)
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)

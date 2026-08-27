@@ -71,6 +71,7 @@ __all__ = [
     "BranchQueryParameters",
     "BranchReturnValue",
     "CacheArtifactGrantValidationKey",
+    "CacheArtifactGrantValidationKeyReturnValue",
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
@@ -347,6 +348,7 @@ from grace_generated_openapi_probe.models.branch_parameters import BranchParamet
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
 from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key import CacheArtifactGrantValidationKey as CacheArtifactGrantValidationKey
+from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key_return_value import CacheArtifactGrantValidationKeyReturnValue as CacheArtifactGrantValidationKeyReturnValue
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange

@@ -39,6 +39,7 @@ docs/BranchReturnValue.md
 docs/BranchesApi.md
 docs/CacheApi.md
 docs/CacheArtifactGrantValidationKey.md
+docs/CacheArtifactGrantValidationKeyReturnValue.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -315,6 +316,7 @@ grace_generated_openapi_probe/models/branch_parameters.py
 grace_generated_openapi_probe/models/branch_query_parameters.py
 grace_generated_openapi_probe/models/branch_return_value.py
 grace_generated_openapi_probe/models/cache_artifact_grant_validation_key.py
+grace_generated_openapi_probe/models/cache_artifact_grant_validation_key_return_value.py
 grace_generated_openapi_probe/models/change_type.py
 grace_generated_openapi_probe/models/claim_reuse_ranges_parameters.py
 grace_generated_openapi_probe/models/claimed_reuse_range.py
@@ -575,6 +577,7 @@ test/test_branch_return_value.py
 test/test_branches_api.py
 test/test_cache_api.py
 test/test_cache_artifact_grant_validation_key.py
+test/test_cache_artifact_grant_validation_key_return_value.py
 test/test_change_type.py
 test/test_claim_reuse_ranges_parameters.py
 test/test_claimed_reuse_range.py

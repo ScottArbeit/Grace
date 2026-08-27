@@ -32,6 +32,7 @@ export * from './BranchParameters';
 export * from './BranchQueryParameters';
 export * from './BranchReturnValue';
 export * from './CacheArtifactGrantValidationKey';
+export * from './CacheArtifactGrantValidationKeyReturnValue';
 export * from './ChangeType';
 export * from './ClaimReuseRangesParameters';
 export * from './ClaimedReuseRange';

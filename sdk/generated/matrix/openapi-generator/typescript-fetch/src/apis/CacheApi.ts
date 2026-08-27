@@ -14,10 +14,10 @@
 
 import * as runtime from '../runtime';
 import {
-    type CacheArtifactGrantValidationKey,
-    CacheArtifactGrantValidationKeyFromJSON,
-    CacheArtifactGrantValidationKeyToJSON,
-} from '../models/CacheArtifactGrantValidationKey';
+    type CacheArtifactGrantValidationKeyReturnValue,
+    CacheArtifactGrantValidationKeyReturnValueFromJSON,
+    CacheArtifactGrantValidationKeyReturnValueToJSON,
+} from '../models/CacheArtifactGrantValidationKeyReturnValue';
 import {
     type DirectoryVersionZipFillSource,
     DirectoryVersionZipFillSourceFromJSON,
@@ -79,17 +79,17 @@ export class CacheApi extends runtime.BaseAPI {
     /**
      * Get the current Server process public key for local Cache grant validation.
      */
-    async getCacheArtifactGrantValidationKeyRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheArtifactGrantValidationKey>> {
+    async getCacheArtifactGrantValidationKeyRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheArtifactGrantValidationKeyReturnValue>> {
         const requestOptions = await this.getCacheArtifactGrantValidationKeyRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => CacheArtifactGrantValidationKeyFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => CacheArtifactGrantValidationKeyReturnValueFromJSON(jsonValue));
     }
 
     /**
      * Get the current Server process public key for local Cache grant validation.
      */
-    async getCacheArtifactGrantValidationKey(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheArtifactGrantValidationKey> {
+    async getCacheArtifactGrantValidationKey(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheArtifactGrantValidationKeyReturnValue> {
         const response = await this.getCacheArtifactGrantValidationKeyRaw(initOverrides);
         return await response.value();
     }

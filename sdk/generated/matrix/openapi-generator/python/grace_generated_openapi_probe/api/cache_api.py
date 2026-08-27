@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key import CacheArtifactGrantValidationKey
+from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key_return_value import CacheArtifactGrantValidationKeyReturnValue
 from grace_generated_openapi_probe.models.directory_version_zip_fill_source import DirectoryVersionZipFillSource
 from grace_generated_openapi_probe.models.directory_version_zip_preparation import DirectoryVersionZipPreparation
 from grace_generated_openapi_probe.models.prepare_directory_version_zip_parameters import PrepareDirectoryVersionZipParameters
@@ -55,7 +55,7 @@ class CacheApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> CacheArtifactGrantValidationKey:
+    ) -> CacheArtifactGrantValidationKeyReturnValue:
         """Get the current Server process public key for local Cache grant validation.
 
 
@@ -89,7 +89,7 @@ class CacheApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "CacheArtifactGrantValidationKey",
+            '200': "CacheArtifactGrantValidationKeyReturnValue",
             '400': "GraceError",
             '500': "GraceError",
         }
@@ -119,7 +119,7 @@ class CacheApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[CacheArtifactGrantValidationKey]:
+    ) -> ApiResponse[CacheArtifactGrantValidationKeyReturnValue]:
         """Get the current Server process public key for local Cache grant validation.
 
 
@@ -153,7 +153,7 @@ class CacheApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "CacheArtifactGrantValidationKey",
+            '200': "CacheArtifactGrantValidationKeyReturnValue",
             '400': "GraceError",
             '500': "GraceError",
         }
@@ -217,7 +217,7 @@ class CacheApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "CacheArtifactGrantValidationKey",
+            '200': "CacheArtifactGrantValidationKeyReturnValue",
             '400': "GraceError",
             '500': "GraceError",
         }

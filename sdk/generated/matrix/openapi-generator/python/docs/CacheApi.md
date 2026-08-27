@@ -10,7 +10,7 @@ Method | HTTP request | Description
 
 
 # **get_cache_artifact_grant_validation_key**
-> CacheArtifactGrantValidationKey get_cache_artifact_grant_validation_key()
+> CacheArtifactGrantValidationKeyReturnValue get_cache_artifact_grant_validation_key()
 
 Get the current Server process public key for local Cache grant validation.
 
@@ -19,7 +19,7 @@ Get the current Server process public key for local Cache grant validation.
 
 ```python
 import grace_generated_openapi_probe
-from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key import CacheArtifactGrantValidationKey
+from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key_return_value import CacheArtifactGrantValidationKeyReturnValue
 from grace_generated_openapi_probe.rest import ApiException
 from pprint import pprint
 
@@ -52,7 +52,7 @@ This endpoint does not need any parameter.
 
 ### Return type
 
-[**CacheArtifactGrantValidationKey**](CacheArtifactGrantValidationKey.md)
+[**CacheArtifactGrantValidationKeyReturnValue**](CacheArtifactGrantValidationKeyReturnValue.md)
 
 ### Authorization
 

@@ -62,6 +62,8 @@ pub mod branch_return_value;
 pub use self::branch_return_value::BranchReturnValue;
 pub mod cache_artifact_grant_validation_key;
 pub use self::cache_artifact_grant_validation_key::CacheArtifactGrantValidationKey;
+pub mod cache_artifact_grant_validation_key_return_value;
+pub use self::cache_artifact_grant_validation_key_return_value::CacheArtifactGrantValidationKeyReturnValue;
 pub mod change_type;
 pub use self::change_type::ChangeType;
 pub mod claim_reuse_ranges_parameters;

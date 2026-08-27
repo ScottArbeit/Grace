@@ -9,6 +9,7 @@ open System.Net.Http.Json
 open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text
+open System.Text.Json
 open System.Threading.Tasks
 open Grace.Server.Tests.Services
 open Grace.Shared
@@ -115,6 +116,40 @@ type CacheServerIntegrationTests() =
 
             if not ready then
                 failwith "Grace Cache did not become ready for the cross-service tracer."
+        }
+
+    /// Confirms the live validation-key route returns the response envelope modeled for generated clients.
+    [<Test>]
+    member _.``validation key response matches the generated client envelope``() =
+        task {
+            use! response = Client.GetAsync("/cache/artifact-grant-validation-key")
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! body = response.Content.ReadAsStringAsync()
+            use document = JsonDocument.Parse(body)
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("KeyId")
+                    .GetString(),
+                Is.Not.Empty,
+                "The live JSON must retain the property names consumed by generated clients."
+            )
+
+            let envelope = JsonSerializer.Deserialize<GraceReturnValue<CacheArtifactGrantValidationKey>>(body, Constants.JsonSerializerOptions)
+            Assert.That(envelope, Is.Not.Null)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(envelope.CorrelationId, Is.Not.Empty)
+                    Assert.That(envelope.ReturnValue.Issuer, Is.EqualTo(CacheArtifactGrantContract.Issuer))
+                    Assert.That(envelope.ReturnValue.Audience, Is.EqualTo(CacheArtifactGrantContract.Audience))
+                    Assert.That(envelope.ReturnValue.Algorithm, Is.EqualTo(CacheArtifactGrantContract.Algorithm))
+                    Assert.That(envelope.ReturnValue.KeyId, Is.Not.Empty)
+                    Assert.That(envelope.ReturnValue.PublicJwk.Kty, Is.EqualTo("EC"))
+                    Assert.That(envelope.ReturnValue.PublicJwk.Crv, Is.EqualTo("P-256")))
+            )
         }
 
     /// Proves stale preparation cannot issue a source, then runs one truthful miss-to-hit through both HTTP services.

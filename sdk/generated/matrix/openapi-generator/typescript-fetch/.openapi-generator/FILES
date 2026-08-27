@@ -37,6 +37,7 @@ docs/BranchReturnValue.md
 docs/BranchesApi.md
 docs/CacheApi.md
 docs/CacheArtifactGrantValidationKey.md
+docs/CacheArtifactGrantValidationKeyReturnValue.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -308,6 +309,7 @@ src/models/BranchParameters.ts
 src/models/BranchQueryParameters.ts
 src/models/BranchReturnValue.ts
 src/models/CacheArtifactGrantValidationKey.ts
+src/models/CacheArtifactGrantValidationKeyReturnValue.ts
 src/models/ChangeType.ts
 src/models/ClaimReuseRangesParameters.ts
 src/models/ClaimedReuseRange.ts

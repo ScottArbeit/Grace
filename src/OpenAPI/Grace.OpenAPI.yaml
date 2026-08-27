@@ -4145,6 +4145,16 @@ components:
           type: string
         PublicJwk:
           $ref: '#/components/schemas/P256PublicJwk'
+    CacheArtifactGrantValidationKeyReturnValue:
+      description: Grace response envelope containing the current Server process validation key.
+      allOf:
+        - $ref: '#/components/schemas/GraceReturnValue'
+        - type: object
+          required:
+            - ReturnValue
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/CacheArtifactGrantValidationKey'
     PrepareDirectoryVersionZipParameters:
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
@@ -8377,7 +8387,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/CacheArtifactGrantValidationKey'
+            $ref: '#/components/schemas/CacheArtifactGrantValidationKeyReturnValue'
     DirectoryVersionZipPreparationResponse:
       description: Exact immutable artifact with a five-minute read grant and separate fill permit.
       content:

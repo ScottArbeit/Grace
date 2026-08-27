@@ -12,7 +12,7 @@ Method | HTTP request | Description
 
 ## get_cache_artifact_grant_validation_key
 
-> models::CacheArtifactGrantValidationKey get_cache_artifact_grant_validation_key()
+> models::CacheArtifactGrantValidationKeyReturnValue get_cache_artifact_grant_validation_key()
 Get the current Server process public key for local Cache grant validation.
 
 ### Parameters
@@ -21,7 +21,7 @@ This endpoint does not need any parameter.
 
 ### Return type
 
-[**models::CacheArtifactGrantValidationKey**](CacheArtifactGrantValidationKey.md)
+[**models::CacheArtifactGrantValidationKeyReturnValue**](CacheArtifactGrantValidationKeyReturnValue.md)
 
 ### Authorization
 

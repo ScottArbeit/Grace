@@ -45,7 +45,7 @@ pub enum RedeemDirectoryVersionZipFillError {
 }
 
 
-pub async fn get_cache_artifact_grant_validation_key(configuration: &configuration::Configuration, ) -> Result<models::CacheArtifactGrantValidationKey, Error<GetCacheArtifactGrantValidationKeyError>> {
+pub async fn get_cache_artifact_grant_validation_key(configuration: &configuration::Configuration, ) -> Result<models::CacheArtifactGrantValidationKeyReturnValue, Error<GetCacheArtifactGrantValidationKeyError>> {
 
     let uri_str = format!("{}/cache/artifact-grant-validation-key", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
@@ -69,8 +69,8 @@ pub async fn get_cache_artifact_grant_validation_key(configuration: &configurati
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::CacheArtifactGrantValidationKey`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::CacheArtifactGrantValidationKey`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::CacheArtifactGrantValidationKeyReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::CacheArtifactGrantValidationKeyReturnValue`")))),
         }
     } else {
         let content = resp.text().await?;
