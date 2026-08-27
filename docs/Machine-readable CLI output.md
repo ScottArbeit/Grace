@@ -26,6 +26,8 @@ grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 grace --output Json watch --check
 grace watch --check --select Mode
+grace --output Json sync roots get --repository-id $repositoryId
+grace --output Json sync roots list --repository-id $repositoryId
 ```
 
 bash / zsh:
@@ -38,6 +40,8 @@ grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 grace --output Json watch --check
 grace watch --check --select Mode
+grace --output Json sync roots get --repository-id "$repository_id"
+grace --output Json sync roots list --repository-id "$repository_id"
 ```
 
 ## Output Envelopes
@@ -190,6 +194,18 @@ envelope.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
+
+## Synchronized Root Command Outcomes
+
+The remote-only `sync roots` command group uses the same result envelope as other JSON-ready commands:
+
+- `sync roots get` and `sync roots list` return the persisted `SynchronizedRootConfigurationDto`.
+- `sync roots add` and `sync roots remove` return `SynchronizedRootMutationResultDto`.
+
+Root changes require `--root`, `--expected-version`, and `--operation-id`. Automation must inspect
+`ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process
+exit code as evidence that a repository mutation was accepted. These commands configure the server-owned remote
+namespace. They do not activate local synchronization, Watch participation, or filesystem publication.
 
 ## Agent Recipes
 

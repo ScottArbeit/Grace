@@ -112,6 +112,17 @@ contracts.
 | Repository | `RepositoryAdmin` | `RepositoryContributor` | `RepositoryReader` |
 | Branch | `BranchAdmin` | `BranchWriter` | `BranchReader` |
 
+Synchronized Content uses two additional repository-scoped roles:
+
+| Role ID | Allows |
+| ------- | ------ |
+| `SynchronizedContentReader` | `RepositoryRead` and `SynchronizedContentRead` for roots, status, bootstrap, deltas, current state, receipts, authorized bytes, and wake subscriptions |
+| `SynchronizedContentWriter` | Reader access plus `SynchronizedContentWrite` for content preparation and mutation submission |
+
+`RepositoryAdmin` and the broader administrator roles include both synchronized-content operations. Root add and remove require repository administration. A synchronized-content reader or writer does not gain root-management permission merely by receiving the specialized role.
+
+Synchronized routes and SignalR wake registration resolve the stored repository resource before checking permission. Missing, denied, and cross-repository identifiers use the same hidden failure behavior so callers cannot use authorization errors as an existence oracle.
+
 Approval-specific role IDs:
 
 | Scope | Role ID | Allows |

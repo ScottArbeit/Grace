@@ -31,6 +31,13 @@ Branch, Connect, and Watch share the local-application and completion transactio
 publishing caller completion after marker cleanup fails, keeps partial failures truthful and recoverable, and gives
 implementation workers one user-safety goal when lower-level details are incomplete.
 
+### Synchronized Root Boundary
+
+Configured synchronized roots and their descendants are excluded from version-control planning and complete-root
+verification using exact path-segment matching. A root named `shared` owns `shared` and `shared/design.md`, but not
+`shared-old`. This boundary does not add another Working Directory Update caller, selection, completion, or publication
+path. Product V1 Synchronized Content remains remote-only and does not write local SQLite or the filesystem.
+
 ## 2. Accepted decisions
 
 | ID | Decision | Lasting consequence | Owner |

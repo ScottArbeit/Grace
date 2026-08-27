@@ -76,6 +76,22 @@ Some examples:
 
 In general, once a Repository is created and the settings adjusted to taste, the Repository record will be updated very infrequently.
 
+### Synchronized root configuration
+
+Every Repository contains one persisted `SynchronizedRootConfigurationDto`, including repositories with no configured roots. Its version changes only through exact-version, idempotent root add or remove operations.
+
+Configured roots divide repository path ownership. A root and its descendants belong to the Synchronized Content namespace and are excluded from version-control Save, Reference, Branch, and Working Directory Update planning. Root configuration does not copy files or enable local synchronization.
+
+Synchronized Content keeps stable item identities separate from mutable placement and immutable bytes:
+
+- `SynchronizedItemDto` holds a stable item ID, item kind, current state, and last mutation cursor.
+- `SynchronizedNamespaceDto` holds the current parent, name, normalized path, namespace version, and destination-slot version.
+- `SynchronizedContentVersionDto` identifies immutable complete bytes by content version, BLAKE3, SHA-256, size, and creation time.
+- `SynchronizedTombstoneDto` records deletion without reusing the item identity.
+- `SynchronizedOperationReceiptDto` is the stable result for an idempotent remote operation.
+
+The root configuration and accepted mutation stream are repository-owned remote state. Product V1 adds no working-copy participation setting, local SQLite synchronized-item state, or filesystem publication.
+
 ## Branch
 
 Branch is where branches in a repository are defined. It just holds settings that apply to the Branch.
