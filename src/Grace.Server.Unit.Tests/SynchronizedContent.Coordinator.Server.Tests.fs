@@ -8,6 +8,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Threading
 open System.Threading.Tasks
 
@@ -435,6 +436,47 @@ type SynchronizedContentCoordinatorTests() =
         Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared/docs" directoryVersion, Is.True)
         Assert.That(SynchronizedContent.directoryVersionOwnsRoot "share" directoryVersion, Is.False)
         Assert.That(SynchronizedContent.directoryVersionOwnsRoot "shared/documentation" directoryVersion, Is.False)
+
+    /// Verifies only a durable mutation receipt can produce the coarse content-free wake payload.
+    [<Test>]
+    member _.SynchronizedWakeRequiresAcceptedMutationReceipt() =
+        let repositoryId, control = pendingFixture ()
+        let receipt = control.Pending.Value.Receipt
+        let codec = SynchronizedContentCoordinator.SynchronizedCursorCodec(Array.create 32 0x6Buy) :> ISynchronizedCursorCodec
+
+        let wake =
+            SynchronizedContent.synchronizedContentAvailableFromReceipt codec control receipt "correlation-id"
+            |> Option.get
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(wake.EventName, Is.EqualTo("SynchronizedContentAvailable.v1"))
+                Assert.That(wake.RepositoryId, Is.EqualTo(repositoryId))
+                Assert.That(codec.TryDecode(repositoryId, wake.CursorEpoch), Is.EqualTo(Some(control.CursorEpoch, 0L)))
+                Assert.That(wake.AvailableAfterCursor, Is.EqualTo(receipt.Cursor.Value))
+                Assert.That(wake.RootConfigurationVersion, Is.EqualTo(receipt.RootConfigurationVersion))
+                Assert.That(wake.CorrelationId, Is.EqualTo("correlation-id")))
+        )
+
+        let rejectedReceipt = { receipt with Outcome = OutcomeKind.Rejected; Mutation = None; Cursor = None }
+
+        Assert.That(SynchronizedContent.synchronizedContentAvailableFromReceipt codec control rejectedReceipt "correlation-id", Is.EqualTo(None))
+
+    /// Verifies mutation submission awaits the durable receipt before attempting its best-effort wake and returning success.
+    [<Test>]
+    member _.SynchronizedWakeFollowsDurableSubmitAndPrecedesResponse() =
+        let sourcePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "SynchronizedContent.Server.fs"))
+        let source = File.ReadAllText sourcePath
+        let submitIndex = source.IndexOf("let! receipt = actor.Submit command", StringComparison.Ordinal)
+        let wakeIndex = source.IndexOf("do! tryNotifySynchronizedContentAvailable context ids.RepositoryId receipt", StringComparison.Ordinal)
+        let responseIndex = source.IndexOf("return! ok context receipt", wakeIndex, StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(submitIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(wakeIndex, Is.GreaterThan(submitIndex))
+                Assert.That(responseIndex, Is.GreaterThan(wakeIndex)))
+        )
 
     /// Verifies that Save and Branch/WDU share exact, separator-bounded synchronized-root ownership.
     [<Test>]

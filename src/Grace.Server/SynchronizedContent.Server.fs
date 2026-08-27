@@ -12,7 +12,9 @@ open Grace.Types.Common
 open Grace.Types.Repository
 open Grace.Types.SynchronizedContent
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.SignalR
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
 open System
@@ -171,6 +173,58 @@ module SynchronizedContent =
 
     /// Returns a public epoch token without exposing the private epoch identifier.
     let private publicEpoch (codec: ISynchronizedCursorCodec) repositoryId epoch = codec.Encode(repositoryId, epoch, 0L)
+
+    /// Builds a coarse wake only for receipts that represent one accepted repository mutation.
+    let internal synchronizedContentAvailableFromReceipt
+        (codec: ISynchronizedCursorCodec)
+        (control: SynchronizedControlDocument)
+        (receipt: SynchronizedOperationReceiptDto)
+        correlationId
+        =
+        match receipt.Mutation, receipt.Cursor with
+        | Some _, Some cursor ->
+            SynchronizedContentAvailable.Create(
+                control.RepositoryId,
+                publicEpoch codec control.RepositoryId control.CursorEpoch,
+                cursor,
+                receipt.RootConfigurationVersion,
+                receipt.RecordedAt,
+                correlationId
+            )
+            |> Some
+        | _ -> None
+
+    /// Attempts the post-commit wake after durable completion without changing the recorded operation result.
+    let private tryNotifySynchronizedContentAvailable context repositoryId (receipt: SynchronizedOperationReceiptDto) =
+        task {
+            try
+                match receipt.Mutation, receipt.Cursor with
+                | Some _, Some _ ->
+                    let store = service<ISynchronizedContentStore> context
+                    let codec = service<ISynchronizedCursorCodec> context
+                    let! control = store.ReadControlAsync(repositoryId, context.RequestAborted)
+
+                    match synchronizedContentAvailableFromReceipt codec control.Document receipt (Services.getCorrelationId context) with
+                    | Some payload ->
+                        let hubContext = context.RequestServices.GetService<IHubContext<Notification.NotificationHub, Notification.IGraceClientConnection>>()
+                        let! _ = Notification.notifySynchronizedContentAvailableClients hubContext payload
+                        return ()
+                    | None -> return ()
+                | _ -> return ()
+            with
+            | ex ->
+                let loggerFactory = context.RequestServices.GetService<ILoggerFactory>()
+
+                if not <| isNull loggerFactory then
+                    loggerFactory
+                        .CreateLogger("SynchronizedContent.Server")
+                        .LogWarning(
+                            ex,
+                            "Best-effort synchronized-content wake preparation failed for RepositoryId: {RepositoryId}; OperationId: {OperationId}.",
+                            repositoryId,
+                            receipt.OperationId
+                        )
+        }
 
     /// Returns true when one version-controlled directory snapshot owns a live path at or below an exact synchronized root.
     let internal directoryVersionOwnsRoot normalizedRoot (directoryVersion: DirectoryVersion) =
@@ -585,6 +639,8 @@ module SynchronizedContent =
                         let actor = synchronizedActor ids.RepositoryId
 
                         let! receipt = actor.Submit command (principalId context) (Services.getCorrelationId context)
+
+                        do! tryNotifySynchronizedContentAvailable context ids.RepositoryId receipt
 
                         return! ok context receipt
             }

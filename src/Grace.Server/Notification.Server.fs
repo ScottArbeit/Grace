@@ -19,6 +19,7 @@ open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.Queue
 open Grace.Types.Reference
+open Grace.Types.SynchronizedContent
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.Validation
@@ -70,6 +71,9 @@ module Notification =
 
     /// Builds the SignalR group key for same-branch Reference notifications without colliding with raw GUID groups.
     let internal currentBranchGroupKey (repositoryId: RepositoryId) (branchId: BranchId) = $"current-branch:{repositoryId:N}:{branchId:N}"
+
+    /// Builds the SignalR group key reserved for authorized synchronized-content wake subscribers.
+    let internal synchronizedContentGroupKey (repositoryId: RepositoryId) = $"synchronized-content:{repositoryId:N}"
 
     [<Literal>]
     let private CurrentBranchGroupItemKey = "Grace.Notification.CurrentBranchGroup"
@@ -128,6 +132,29 @@ module Notification =
                 | Denied _ -> return false
         }
 
+    /// Checks whether the caller can subscribe to synchronized-content wakes for the stored repository identity.
+    let internal canRegisterSynchronizedContentSubscription
+        (evaluator: IGracePermissionEvaluator)
+        principal
+        (repositoryId: RepositoryId)
+        (repositoryDto: Repository.RepositoryDto)
+        =
+        task {
+            if
+                obj.ReferenceEquals(evaluator, null)
+                || repositoryDto.RepositoryId <> repositoryId
+            then
+                return false
+            else
+                let principals = PrincipalMapper.getPrincipals principal
+                let claims = PrincipalMapper.getEffectiveClaims principal
+                let resource = Resource.Repository(repositoryDto.OwnerId, repositoryDto.OrganizationId, repositoryDto.RepositoryId)
+
+                match! evaluator.CheckAsync(principals, claims, Operation.SynchronizedContentRead, resource) with
+                | Allowed _ -> return true
+                | Denied _ -> return false
+        }
+
     /// Defines the contract for igrace client connection.
     type IGraceClientConnection =
         /// Defines the register repository operation for implementers.
@@ -136,8 +163,12 @@ module Notification =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
         /// Defines the register current branch operation for implementers.
         abstract member RegisterCurrentBranch: RepositoryId -> BranchId -> Task
+        /// Defines the authorized synchronized-content wake registration operation for implementers.
+        abstract member RegisterSynchronizedContent: RepositoryId -> Task
         /// Defines the notify repository operation for implementers.
         abstract member NotifyRepository: RepositoryId * ReferenceId -> Task
+        /// Defines the coarse synchronized-content wake hint for implementers.
+        abstract member NotifySynchronizedContentAvailable: SynchronizedContentAvailable -> Task
         /// Defines the notify current branch reference operation for implementers.
         abstract member NotifyCurrentBranchReference: Reference.CurrentBranchReferenceNotification -> Task
         /// Defines the notify on commit operation for implementers.
@@ -195,6 +226,42 @@ module Notification =
                 )
 
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{repositoryId}")
+            }
+
+        /// Adds the current SignalR connection to the synchronized-content wake group after repository-scoped read authorization.
+        member this.RegisterSynchronizedContent(repositoryId: RepositoryId) =
+            task {
+                let correlationId = generateCorrelationId ()
+
+                try
+                    let repositoryActor = Repository.CreateActorProxy Guid.Empty repositoryId correlationId
+                    let! repositoryDto = repositoryActor.Get correlationId
+
+                    let evaluator =
+                        this
+                            .Context
+                            .GetHttpContext()
+                            .RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+                    let! allowed = canRegisterSynchronizedContentSubscription evaluator this.Context.User repositoryId repositoryDto
+
+                    if not allowed then
+                        raise (HubException("Synchronized-content SignalR registration requires synchronized-content read permission."))
+
+                    do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, synchronizedContentGroupKey repositoryId)
+                with
+                | :? HubException -> return raise (HubException("Synchronized-content SignalR registration requires synchronized-content read permission."))
+                | ex ->
+                    log.LogWarning(
+                        ex,
+                        "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} denied synchronized-content SignalR registration for RepositoryId: {RepositoryId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        this.Context.ConnectionId,
+                        repositoryId
+                    )
+
+                    return raise (HubException("Synchronized-content SignalR registration requires synchronized-content read permission."))
             }
 
         /// Adds the current SignalR connection to the parent-branch group used for branch notifications.
@@ -388,6 +455,37 @@ module Notification =
                     logToConsole $"No SignalR clients connected."
             }
             :> Task
+
+    /// Attempts one repository-scoped synchronized-content wake without making live delivery part of durable success.
+    let internal notifySynchronizedContentAvailableClients
+        (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
+        (payload: SynchronizedContentAvailable)
+        =
+        task {
+            try
+                if isNull hubContext then
+                    return false
+                else
+                    do!
+                        hubContext
+                            .Clients
+                            .Group(synchronizedContentGroupKey payload.RepositoryId)
+                            .NotifySynchronizedContentAvailable(payload)
+
+                    return true
+            with
+            | ex ->
+                log.LogWarning(
+                    ex,
+                    "{CurrentInstant}: Node: {HostName}; Best-effort synchronized-content wake failed for RepositoryId: {RepositoryId}; cursor: {Cursor}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    payload.RepositoryId,
+                    payload.AvailableAfterCursor
+                )
+
+                return false
+        }
 
     /// Broadcasts a same-branch Reference payload from trusted server-side event processing only.
     let internal notifyCurrentBranchReferenceClients

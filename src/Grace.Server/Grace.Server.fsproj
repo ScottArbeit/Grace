@@ -114,7 +114,6 @@
 		<Compile Include="Cache.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="NormalFileMaterialization.Server.fs" />
-		<Compile Include="SynchronizedContent.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
 		<Compile Include="Access.Server.fs" />
 		<Compile Include="Auth.Server.fs" />
@@ -122,6 +121,7 @@
                 <Compile Include="ReminderService.Server.fs" />
                 <Compile Include="DerivedComputation.Server.fs" />
                 <Compile Include="Notification.Server.fs" />
+		<Compile Include="SynchronizedContent.Server.fs" />
 		<Compile Include="Startup.Server.fs" />
 		<Compile Include="DiffBlobGrainStorage.Server.fs" />
 		<Compile Include="Program.Server.fs" />
