@@ -9,9 +9,10 @@ Most Grace users will be programmers, and we're a more technical audience. We kn
 ## Synchronized Roots Are Remote-Only
 
 Product V1 Synchronized Content does not add a fourth local caller to Working Directory Update. Configuring a
-synchronized root changes repository path ownership: Save, Reference, Branch, Watch, and Working Directory Update
-exclude that root and its descendants using exact path-segment matching. Watch continues to replay only the accepted
-Reference events and version-controlled paths described below.
+synchronized root changes repository path ownership: Save and Reference reject it, while Branch and Working Directory
+Update exclude that root and its descendants using exact path-segment matching. Watch continues to replay only the
+accepted Reference events and version-controlled paths described below; it cannot publish synchronized paths through
+those server boundaries.
 
 The server's synchronized-content wake belongs to authorized remote SDK clients. `grace watch` does not subscribe to
 it, materialize synchronized bytes, write synchronized metadata to local SQLite, or publish synchronized files. Those

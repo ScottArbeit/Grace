@@ -1738,10 +1738,10 @@ module Application =
                                route "/roots/list" (composeHandlers requireSynchronizedContentRead SynchronizedContent.ListRoots)
                                |> addMetadata typeof<ListSynchronizedRootsParameters>
 
-                               route "/roots/add" (composeHandlers requireSynchronizedContentWrite SynchronizedContent.AddRoot)
+                               route "/roots/add" (composeHandlers requireRepositoryAdmin SynchronizedContent.AddRoot)
                                |> addMetadata typeof<AddSynchronizedRootParameters>
 
-                               route "/roots/remove" (composeHandlers requireSynchronizedContentWrite SynchronizedContent.RemoveRoot)
+                               route "/roots/remove" (composeHandlers requireRepositoryAdmin SynchronizedContent.RemoveRoot)
                                |> addMetadata typeof<RemoveSynchronizedRootParameters>
 
                                route "/bootstrap/start" (composeHandlers requireSynchronizedContentRead SynchronizedContent.StartBootstrap)

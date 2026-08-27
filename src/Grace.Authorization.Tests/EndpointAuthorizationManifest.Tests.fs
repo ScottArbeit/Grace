@@ -214,6 +214,37 @@ type EndpointAuthorizationManifestTests() =
 
             Assert.Fail($"EndpointAuthorizationManifest contains duplicate entries:{Environment.NewLine}{message}")
 
+    /// Verifies synchronized roots remain repository-admin policy while ordinary synchronized operations use the specialized roles.
+    [<Test>]
+    member _.SynchronizedContentRoutesUseAcceptedRepositoryPolicies() =
+        [
+            "POST", "/sync/roots/get"
+            "POST", "/sync/roots/list"
+            "POST", "/sync/bootstrap/start"
+            "POST", "/sync/bootstrap/continue"
+            "POST", "/sync/deltas/get"
+            "POST", "/sync/operations/get"
+            "POST", "/sync/content/read"
+            "POST", "/sync/items/get"
+            "POST", "/sync/namespace/get-slot"
+            "POST", "/sync/status/get"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.SynchronizedContentRead, ResourceKind.Repository))
+
+        [
+            "POST", "/sync/mutations/submit"
+            "POST", "/sync/content/prepare"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.SynchronizedContentWrite, ResourceKind.Repository))
+
+        [
+            "POST", "/sync/roots/add"
+            "POST", "/sync/roots/remove"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.RepositoryAdmin, ResourceKind.Repository))
+
+        assertRouteSecurity "GET" "/sync/content/%s" AllowAnonymous
+
     /// Verifies that approval policy routes require repository policy manage.
     [<Test>]
     member _.ApprovalPolicyRoutesRequireRepositoryPolicyManage() =

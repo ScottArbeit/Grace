@@ -213,8 +213,8 @@ module EndpointAuthorizationManifest =
             endpoint "GET" "/healthz" AllowAnonymous
             endpoint "POST" "/sync/roots/get" (Authorized(SynchronizedContentRead, Repository))
             endpoint "POST" "/sync/roots/list" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/roots/add" (Authorized(SynchronizedContentWrite, Repository))
-            endpoint "POST" "/sync/roots/remove" (Authorized(SynchronizedContentWrite, Repository))
+            endpoint "POST" "/sync/roots/add" (Authorized(RepositoryAdmin, Repository))
+            endpoint "POST" "/sync/roots/remove" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/sync/bootstrap/start" (Authorized(SynchronizedContentRead, Repository))
             endpoint "POST" "/sync/bootstrap/continue" (Authorized(SynchronizedContentRead, Repository))
             endpoint "POST" "/sync/deltas/get" (Authorized(SynchronizedContentRead, Repository))
