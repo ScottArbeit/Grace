@@ -211,6 +211,21 @@ module EndpointAuthorizationManifest =
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
             endpoint "GET" "/healthz" AllowAnonymous
+            endpoint "POST" "/sync/roots/get" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/roots/list" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/roots/add" (Authorized(SynchronizedContentWrite, Repository))
+            endpoint "POST" "/sync/roots/remove" (Authorized(SynchronizedContentWrite, Repository))
+            endpoint "POST" "/sync/bootstrap/start" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/bootstrap/continue" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/deltas/get" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/mutations/submit" (Authorized(SynchronizedContentWrite, Repository))
+            endpoint "POST" "/sync/operations/get" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/content/prepare" (Authorized(SynchronizedContentWrite, Repository))
+            endpoint "POST" "/sync/content/read" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "GET" "/sync/content/%s" AllowAnonymous
+            endpoint "POST" "/sync/items/get" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/namespace/get-slot" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/sync/status/get" (Authorized(SynchronizedContentRead, Repository))
             endpoint
                 "POST"
                 "/organization/create"

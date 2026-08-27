@@ -351,7 +351,7 @@ module SynchronizedContent =
 
     /// Grants one authorized short-lived read of exact immutable bytes.
     [<CLIMutable; GenerateSerializer>]
-    type SynchronizedContentReadGrantDto = { GrantId: Guid; DownloadPath: string; Content: SynchronizedContentVersionDto; ExpiresAt: Instant }
+    type SynchronizedContentReadGrantDto = { GrantId: string; DownloadPath: string; Content: SynchronizedContentVersionDto; ExpiresAt: Instant }
 
     /// Reports server synchronization progress without exposing storage or content details.
     [<CLIMutable; GenerateSerializer>]
@@ -412,6 +412,7 @@ module SynchronizedContent =
             DestinationName: string option
             PreparedContentId: SynchronizedPreparedContentId option
             PreparedContent: SynchronizedContentVersionDto option
+            PreparedContentExpiresAt: Instant option
         }
 
     /// Tracks the independently repairable projection positions for one repository.
@@ -592,6 +593,55 @@ module SynchronizedContent =
             CreatedAt: Instant
         }
 
+    /// Persists one principal-bound immutable-content preparation until its existing upload session is finalized or expires.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedPreparedContentDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            PreparedContentId: SynchronizedPreparedContentId
+            OperationId: SynchronizedOperationId
+            PrincipalId: PrincipalId
+            Content: SynchronizedPreparedContentDto
+            UploadSessionId: UploadSessionId
+            AuthorizedScope: string
+            StoragePoolId: StoragePoolId
+            FinalizedManifest: FileManifest option
+        }
+
+    /// Retains the existing immutable-content location behind one public content-version identity.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedContentLocationDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            Content: SynchronizedContentVersionDto
+            AuthorizedScope: string
+            Manifest: FileManifest
+        }
+
+    /// Persists one principal-bound, one-use immutable-byte read grant without exposing storage placement.
+    [<CLIMutable; GenerateSerializer>]
+    type SynchronizedContentReadGrantDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            Scope: string
+            SchemaVersion: int
+            GrantId: Guid
+            PrincipalId: PrincipalId
+            ItemId: SynchronizedItemId
+            Content: SynchronizedContentVersionDto
+            AuthorizedScope: string
+            Manifest: FileManifest
+            ExpiresAt: Instant
+            ConsumedAt: Instant option
+        }
+
     /// Couples one Cosmos document read with the private ETag used for exact replacement.
     type SynchronizedStoreRead<'T> = { Document: 'T; ETag: string }
 
@@ -659,6 +709,61 @@ module SynchronizedContent =
 
         /// Enumerates current live and tombstoned item projections for baseline publication.
         abstract member ReadCurrentItemsAsync: repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task<SynchronizedCurrentItemDocument array>
+
+        /// Reports whether a live synchronized item remains below one normalized directory path.
+        abstract member HasLiveDescendantsAsync:
+            repositoryId: RepositoryId * normalizedDirectoryPath: string * cancellationToken: CancellationToken -> Task<bool>
+
+        /// Publishes immutable byte-bounded baseline shards and then their manifest for one caught-up boundary.
+        abstract member EnsureBaselineAsync:
+            repositoryId: RepositoryId *
+            boundaryCursor: int64 *
+            cursorEpoch: Guid *
+            rootConfiguration: SynchronizedRootConfigurationDto *
+            items: SynchronizedItemDto array *
+            cancellationToken: CancellationToken ->
+                Task<SynchronizedBaselineManifestDocument>
+
+        /// Reads one published immutable baseline and all of its verified current-item shards.
+        abstract member ReadBaselineAsync:
+            repositoryId: RepositoryId * baselineId: SynchronizedBootstrapId * cancellationToken: CancellationToken ->
+                Task<(SynchronizedBaselineManifestDocument * SynchronizedItemDto array) option>
+
+    /// Defines durable preparation, retained-content, and one-use read-grant operations over existing immutable storage.
+    type ISynchronizedContentTransferStore =
+
+        /// Creates one immutable principal- and operation-bound preparation or verifies its exact replay.
+        abstract member CreatePreparedAsync: preparation: SynchronizedPreparedContentDocument * cancellationToken: CancellationToken -> Task
+
+        /// Reads one content preparation without revealing it across repository boundaries.
+        abstract member ReadPreparedAsync:
+            repositoryId: RepositoryId * preparedContentId: SynchronizedPreparedContentId * cancellationToken: CancellationToken ->
+                Task<SynchronizedStoreRead<SynchronizedPreparedContentDocument> option>
+
+        /// Records the exact manifest completed by the preparation's existing upload session.
+        abstract member FinalizePreparedAsync:
+            repositoryId: RepositoryId * preparedContentId: SynchronizedPreparedContentId * manifest: FileManifest * cancellationToken: CancellationToken ->
+                Task
+
+        /// Retains the private immutable-content location behind a public content-version identity.
+        abstract member UpsertContentLocationAsync: location: SynchronizedContentLocationDocument * cancellationToken: CancellationToken -> Task
+
+        /// Reads the retained location for one public content-version identity.
+        abstract member ReadContentLocationAsync:
+            repositoryId: RepositoryId * contentVersionId: SynchronizedContentVersionId * cancellationToken: CancellationToken ->
+                Task<SynchronizedContentLocationDocument option>
+
+        /// Creates one principal-bound read grant after item and content authorization.
+        abstract member CreateReadGrantAsync: grant: SynchronizedContentReadGrantDocument * cancellationToken: CancellationToken -> Task
+
+        /// Reads one read grant for exact one-use redemption.
+        abstract member ReadReadGrantAsync:
+            repositoryId: RepositoryId * grantId: Guid * cancellationToken: CancellationToken ->
+                Task<SynchronizedStoreRead<SynchronizedContentReadGrantDocument> option>
+
+        /// Marks one still-current grant consumed through exact ETag replacement.
+        abstract member ConsumeReadGrantAsync:
+            grant: SynchronizedContentReadGrantDocument * etag: string * cancellationToken: CancellationToken -> Task<SynchronizedControlWriteResult>
 
     /// Defines integrity protection for opaque repository cursor values.
     type ISynchronizedCursorCodec =

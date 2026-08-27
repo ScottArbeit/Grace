@@ -23,7 +23,9 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
+open Grace.Types.SynchronizedContent
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
@@ -359,6 +361,21 @@ module Storage =
             Metadata: EventMetadata
             RequestRepositoryId: RepositoryId
             SessionForScope: UploadSessionDto
+        }
+
+    /// Records a finalized synchronized preparation after the existing upload session accepts the exact manifest.
+    let private recordFinalizedSynchronizedPreparation (context: HttpContext) (requestContext: UploadSessionRequestContext) (manifest: FileManifest) =
+        task {
+            let authorizedScope = string requestContext.SessionForScope.AuthorizedScope
+            let prefix = "synchronized/"
+
+            if authorizedScope.StartsWith(prefix, StringComparison.Ordinal) then
+                match Guid.TryParse(authorizedScope[prefix.Length ..]) with
+                | false, _ -> invalidOp "The synchronized upload-session scope contains an invalid prepared-content identifier."
+                | true, preparedContentId ->
+                    let transferStore = context.RequestServices.GetRequiredService<ISynchronizedContentTransferStore>()
+
+                    do! transferStore.FinalizePreparedAsync(requestContext.RequestRepositoryId, preparedContentId, manifest, context.RequestAborted)
         }
 
     /// Resolves the request repository and upload-session actor that storage upload-session handlers share.
@@ -871,7 +888,7 @@ module Storage =
                         | Some authoritativeMetadata when not (rangeMatches claimedRange authoritativeMetadata) ->
                             if firstError.IsNone then
                                 firstError <- Some(GraceError.Create $"{staleOrIncompleteMessage} {claimedRange.ContentBlockAddress}." correlationId)
-                        | Some authoritativeMetadata -> validatedCandidates.Add(claimedRange, authoritativeMetadata)
+                        | Some authoritativeMetadata -> validatedCandidates.Add((claimedRange, authoritativeMetadata))
 
                     candidateIndex <- candidateIndex + 1
 
@@ -2147,7 +2164,9 @@ module Storage =
                                             let! result = requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata
 
                                             match result with
-                                            | Ok returnValue -> return! context |> result200Ok returnValue
+                                            | Ok returnValue ->
+                                                do! recordFinalizedSynchronizedPreparation context requestContext parameters.Manifest
+                                                return! context |> result200Ok returnValue
                                             | Error error -> return! context |> result400BadRequest error
                         | true, None ->
                             return!
@@ -2164,7 +2183,9 @@ module Storage =
                                 let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 
                                 match result with
-                                | Ok returnValue -> return! context |> result200Ok returnValue
+                                | Ok returnValue ->
+                                    do! recordFinalizedSynchronizedPreparation context requestContext parameters.Manifest
+                                    return! context |> result200Ok returnValue
                                 | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->

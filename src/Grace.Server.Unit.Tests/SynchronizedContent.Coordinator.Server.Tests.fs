@@ -132,9 +132,38 @@ type private FailingSynchronizedStore(initialControl: SynchronizedControlDocumen
 
         member _.ReadCurrentItemsAsync(_repositoryId, _cancellationToken) = items.Values |> Seq.toArray |> Task.FromResult
 
+        member _.HasLiveDescendantsAsync(_repositoryId, _normalizedDirectoryPath, _cancellationToken) = Task.FromResult false
+
+        member _.EnsureBaselineAsync(_repositoryId, _boundaryCursor, _cursorEpoch, _rootConfiguration, _items, _cancellationToken) =
+            Task.FromException<SynchronizedBaselineManifestDocument>(NotSupportedException())
+
+        member _.ReadBaselineAsync(_repositoryId, _baselineId, _cancellationToken) = Task.FromResult None
+
 /// Covers canonical-first publication and restart repair at every durable effect boundary.
 [<Parallelizable(ParallelScope.All)>]
 type SynchronizedContentCoordinatorTests() =
+
+    /// Builds one live directory item for deterministic baseline tests.
+    let baselineItem itemId rootVersion normalizedPath =
+        let namespaceValue =
+            {
+                Parent = { Kind = "root"; RootPath = Some "shared"; ItemId = None }
+                Name = normalizedPath
+                NormalizedPath = normalizedPath
+                NamespaceVersion = Guid.NewGuid()
+                SlotVersion = Guid.NewGuid()
+            }
+
+        {
+            ItemId = itemId
+            ItemKind = ItemKind.Directory
+            State = "live"
+            LastMutationCursor = "cursor"
+            RootConfigurationVersion = rootVersion
+            Namespace = Some namespaceValue
+            Content = None
+            Tombstone = None
+        }
 
     /// Builds one completely determined accepted directory creation reservation.
     let pendingFixture () =
@@ -303,3 +332,94 @@ type SynchronizedContentCoordinatorTests() =
 
         Assert.That(codec.TryDecode(firstRepository, cursor), Is.EqualTo(Some(epoch, 42L)))
         Assert.That(codec.TryDecode(secondRepository, cursor), Is.EqualTo None)
+
+    [<Test>]
+    member _.BaselinePlanIsDeterministicAndPublishesExactShardMetadata() =
+        let repositoryId = Guid.Parse "23ae5574-a60c-54f1-bcbc-f4f5515d6cc9"
+        let rootVersion = Guid.Parse "34b47a7e-f34b-52aa-8a64-24ae99ff193a"
+        let cursorEpoch = Guid.Parse "a3664cc6-9534-54fd-a794-83744886627b"
+        let now = Instant.FromUtc(2026, 8, 27, 18, 0)
+
+        let rootConfiguration =
+            { RepositoryId = repositoryId; Version = rootVersion; Roots = [| "shared" |]; CreatedAt = now; CreatedBy = "principal"; PreviousVersion = None }
+
+        let firstId = Guid.Parse "f83b3a34-5897-5cb0-bac0-c186412c4adc"
+        let secondId = Guid.Parse "0a3d49d4-071b-505a-809a-b49cd4e445fd"
+
+        let items =
+            [|
+                baselineItem firstId rootVersion "shared/zeta"
+                baselineItem secondId rootVersion "shared/alpha"
+            |]
+
+        let firstManifest, firstShards = SynchronizedContentPersistence.buildBaselineDocuments repositoryId 23L cursorEpoch rootConfiguration items now
+
+        let secondManifest, secondShards =
+            SynchronizedContentPersistence.buildBaselineDocuments repositoryId 23L cursorEpoch rootConfiguration (Array.rev items) now
+
+        Assert.That(secondManifest, Is.EqualTo firstManifest)
+        Assert.That(secondShards, Is.EqualTo<SynchronizedBaselineShardDocument array>(firstShards))
+
+        Assert.That(
+            firstShards
+            |> Array.collect (fun shard -> shard.Items)
+            |> Array.map (fun item -> item.ItemId),
+            Is.EqualTo<Guid array>([| secondId; firstId |])
+        )
+
+        Assert.That(firstManifest.ShardIds, Is.EqualTo<string array>(firstShards |> Array.map (fun shard -> shard.id)))
+
+        Assert.That(
+            firstManifest.ShardHashes,
+            Is.EqualTo<string array>(
+                firstShards
+                |> Array.map SynchronizedContentPersistence.documentHash
+            )
+        )
+
+        Assert.That(
+            firstManifest.ShardItemCounts,
+            Is.EqualTo<int array>(
+                firstShards
+                |> Array.map (fun shard -> shard.ItemCount)
+            )
+        )
+
+        Assert.That(firstManifest.TotalItemCount, Is.EqualTo items.Length)
+
+    [<Test>]
+    member _.BaselinePlanKeepsEveryShardWithinTheOneMillionByteLimit() =
+        let repositoryId = Guid.Parse "896dcd38-a724-5247-a976-de1776984301"
+        let rootVersion = Guid.Parse "807ee08a-bbcf-551b-a684-498ae353d4bf"
+        let now = Instant.FromUtc(2026, 8, 27, 18, 30)
+
+        let rootConfiguration =
+            { RepositoryId = repositoryId; Version = rootVersion; Roots = [| "shared" |]; CreatedAt = now; CreatedBy = "principal"; PreviousVersion = None }
+
+        let pathBody = String.replicate 490000 "x"
+        let largePath suffix = $"shared/{pathBody}/{suffix}"
+
+        let items =
+            [|
+                baselineItem (Guid.Parse "079966d6-8de4-501e-8db7-ed1189d55512") rootVersion (largePath "a")
+                baselineItem (Guid.Parse "a5888377-934c-56d0-8f57-d38760c03f15") rootVersion (largePath "b")
+                baselineItem (Guid.Parse "45f4df4f-aa6b-5f0f-a71c-b5c5a034e531") rootVersion (largePath "c")
+            |]
+
+        let manifest, shards = SynchronizedContentPersistence.buildBaselineDocuments repositoryId 41L Guid.Empty rootConfiguration items now
+
+        Assert.That(shards.Length, Is.GreaterThan 1)
+
+        Assert.That(
+            shards
+            |> Array.forall (fun shard ->
+                shard.SerializedBytes
+                <= SynchronizedContentPersistence.BaselineShardByteLimit),
+            Is.True
+        )
+
+        Assert.That(
+            shards
+            |> Array.sumBy (fun shard -> shard.ItemCount),
+            Is.EqualTo manifest.TotalItemCount
+        )

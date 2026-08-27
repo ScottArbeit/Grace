@@ -82,6 +82,125 @@ module SynchronizedContentPersistence =
     /// Confirms an equal-position retry carries byte-equivalent deterministic state.
     let private equivalent left right = String.Equals(serialize left, serialize right, StringComparison.Ordinal)
 
+    /// Derives one stable baseline identity from its immutable repository boundary.
+    let private baselineId repositoryId boundaryCursor cursorEpoch rootConfigurationVersion =
+        let seed = Encoding.UTF8.GetBytes($"{repositoryId:D}:{boundaryCursor}:{cursorEpoch:D}:{rootConfigurationVersion:D}")
+        let hash = SHA256.HashData seed
+        let bytes = hash[0..15]
+        bytes[6] <- (bytes[6] &&& 0x0Fuy) ||| 0x50uy
+        bytes[8] <- (bytes[8] &&& 0x3Fuy) ||| 0x80uy
+        Guid bytes
+
+    /// Computes the lowercase SHA-256 digest of one stable internal JSON document.
+    let internal documentHash value =
+        value
+        |> serialize
+        |> Encoding.UTF8.GetBytes
+        |> SHA256.HashData
+        |> Convert.ToHexString
+        |> fun hash -> hash.ToLowerInvariant()
+
+    /// Builds deterministic bounded baseline shards and their manifest without publishing either representation.
+    let internal buildBaselineDocuments
+        (repositoryId: RepositoryId)
+        (boundaryCursor: int64)
+        (cursorEpoch: Guid)
+        (rootConfiguration: SynchronizedRootConfigurationDto)
+        (items: SynchronizedItemDto array)
+        (createdAt: Instant)
+        =
+        let baselineId = baselineId repositoryId boundaryCursor cursorEpoch rootConfiguration.Version
+        let scope = $"baseline:{baselineId:D}"
+
+        let orderedItems =
+            items
+            |> Array.sortBy (fun item ->
+                item.Namespace
+                |> Option.map (fun namespaceValue -> namespaceValue.NormalizedPath.ToUpperInvariant())
+                |> Option.defaultValue "",
+                item.ItemId)
+
+        let shardDocuments = ResizeArray<SynchronizedBaselineShardDocument>()
+        let mutable nextItem = 0
+        let mutable shardIndex = 0
+
+        while nextItem < orderedItems.Length do
+            let shardItems = ResizeArray<SynchronizedItemDto>()
+            let mutable fits = true
+
+            while nextItem < orderedItems.Length && fits do
+                let candidateItems = Array.append (shardItems.ToArray()) [| orderedItems[nextItem] |]
+                let shardId = $"shard:{baselineId:D}:{shardIndex:D8}"
+
+                let candidate =
+                    {
+                        id = shardId
+                        RepositoryId = repositoryId
+                        Scope = scope
+                        SchemaVersion = 1
+                        BaselineId = baselineId
+                        BoundaryCursor = boundaryCursor
+                        Items = candidateItems
+                        ItemCount = candidateItems.Length
+                        SerializedBytes = 0
+                    }
+
+                let serializedBytes = Encoding.UTF8.GetByteCount(serialize candidate)
+
+                if serializedBytes > BaselineShardByteLimit then
+                    if shardItems.Count = 0 then
+                        invalidOp $"One synchronized baseline item exceeds the {BaselineShardByteLimit}-byte shard bound."
+
+                    fits <- false
+                else
+                    shardItems.Add orderedItems[nextItem]
+                    nextItem <- nextItem + 1
+
+            let shardId = $"shard:{baselineId:D}:{shardIndex:D8}"
+
+            let initialShard =
+                {
+                    id = shardId
+                    RepositoryId = repositoryId
+                    Scope = scope
+                    SchemaVersion = 1
+                    BaselineId = baselineId
+                    BoundaryCursor = boundaryCursor
+                    Items = shardItems.ToArray()
+                    ItemCount = shardItems.Count
+                    SerializedBytes = 0
+                }
+
+            let shard = { initialShard with SerializedBytes = Encoding.UTF8.GetByteCount(serialize initialShard) }
+
+            if shard.SerializedBytes > BaselineShardByteLimit then
+                invalidOp $"Synchronized baseline shard {shardIndex} exceeds the {BaselineShardByteLimit}-byte bound."
+
+            shardDocuments.Add shard
+            shardIndex <- shardIndex + 1
+
+        let shards = shardDocuments.ToArray()
+        let manifestId = $"manifest:{baselineId:D}"
+
+        let manifest =
+            {
+                id = manifestId
+                RepositoryId = repositoryId
+                Scope = scope
+                SchemaVersion = 1
+                BaselineId = baselineId
+                BoundaryCursor = boundaryCursor
+                CursorEpoch = cursorEpoch
+                RootConfigurationVersion = rootConfiguration.Version
+                ShardIds = shards |> Array.map (fun shard -> shard.id)
+                ShardHashes = shards |> Array.map documentHash
+                ShardItemCounts = shards |> Array.map (fun shard -> shard.ItemCount)
+                TotalItemCount = orderedItems.Length
+                CreatedAt = createdAt
+            }
+
+        manifest, shards
+
     /// Returns a missing document as None while preserving all other Cosmos failures.
     let private readOptional<'T> (container: Container) id key cancellationToken =
         task {
@@ -123,6 +242,20 @@ module SynchronizedContentPersistence =
                             completed <- true
                         with
                         | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> ()
+        }
+
+    /// Creates one immutable document or verifies that a concurrent retry created the exact same value.
+    let private createExact<'T> (container: Container) (id: string) (key: PartitionKey) (candidate: 'T) (cancellationToken: CancellationToken) =
+        task {
+            try
+                let! _ = container.CreateItemAsync(candidate, key, cancellationToken = cancellationToken)
+                return ()
+            with
+            | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict ->
+                let! existing = container.ReadItemAsync<'T>(id, key, cancellationToken = cancellationToken)
+
+                if not (equivalent existing.Resource candidate) then
+                    invalidOp $"Immutable synchronized document {id} is not byte-equivalent to its deterministic retry."
         }
 
     /// Owns direct access to the six fixed application Cosmos containers.
@@ -427,6 +560,171 @@ module SynchronizedContentPersistence =
                     return results.ToArray()
                 }
 
+            member _.HasLiveDescendantsAsync(repositoryId, normalizedDirectoryPath, cancellationToken) =
+                task {
+                    let prefix = normalizedDirectoryPath + "/"
+
+                    let options = QueryRequestOptions(PartitionKey = Nullable(partitionPrefix repositoryId "item"), MaxItemCount = Nullable 1)
+
+                    let query =
+                        QueryDefinition(
+                            "SELECT TOP 1 VALUE true FROM c WHERE c.Item.State = 'live' AND STARTSWITH(c.Item.Namespace.NormalizedPath, @prefix, true)"
+                        )
+                            .WithParameter("@prefix", prefix)
+
+                    use iterator = current.GetItemQueryIterator<bool>(query, requestOptions = options)
+
+                    if iterator.HasMoreResults then
+                        let! page = iterator.ReadNextAsync(cancellationToken)
+                        return page.Count > 0
+                    else
+                        return false
+                }
+
+            member _.EnsureBaselineAsync(repositoryId, boundaryCursor, cursorEpoch, rootConfiguration, items, cancellationToken) =
+                task {
+                    let baselineId = baselineId repositoryId boundaryCursor cursorEpoch rootConfiguration.Version
+                    let scope = $"baseline:{baselineId:D}"
+                    let manifestId = $"manifest:{baselineId:D}"
+                    let manifestKey = partitionKey repositoryId scope manifestId
+
+                    match! readOptional<SynchronizedBaselineManifestDocument> baselines manifestId manifestKey cancellationToken with
+                    | Some existing -> return existing.Document
+                    | None ->
+                        let manifest, shardDocuments =
+                            buildBaselineDocuments repositoryId boundaryCursor cursorEpoch rootConfiguration items (SystemClock.Instance.GetCurrentInstant())
+
+                        for shard in shardDocuments do
+                            do! createExact baselines shard.id (partitionKey repositoryId scope shard.id) shard cancellationToken
+
+                        do! createExact baselines manifest.id manifestKey manifest cancellationToken
+                        return manifest
+                }
+
+            member _.ReadBaselineAsync(repositoryId, baselineId, cancellationToken) =
+                task {
+                    let scope = $"baseline:{baselineId:D}"
+                    let manifestId = $"manifest:{baselineId:D}"
+
+                    match! readOptional<SynchronizedBaselineManifestDocument>
+                               baselines
+                               manifestId
+                               (partitionKey repositoryId scope manifestId)
+                               cancellationToken
+                        with
+                    | None -> return None
+                    | Some manifestRead ->
+                        let items = ResizeArray<SynchronizedItemDto>()
+
+                        for index = 0 to manifestRead.Document.ShardIds.Length - 1 do
+                            let shardId = manifestRead.Document.ShardIds[index]
+
+                            let! shard =
+                                baselines.ReadItemAsync<SynchronizedBaselineShardDocument>(
+                                    shardId,
+                                    partitionKey repositoryId scope shardId,
+                                    cancellationToken = cancellationToken
+                                )
+
+                            if documentHash shard.Resource
+                               <> manifestRead.Document.ShardHashes[index] then
+                                invalidOp $"Synchronized baseline shard {shardId} failed its published hash."
+
+                            if shard.Resource.ItemCount
+                               <> manifestRead.Document.ShardItemCounts[index] then
+                                invalidOp $"Synchronized baseline shard {shardId} failed its published item count."
+
+                            items.AddRange shard.Resource.Items
+
+                        if items.Count
+                           <> manifestRead.Document.TotalItemCount then
+                            invalidOp $"Synchronized baseline {baselineId:D} failed its published total item count."
+
+                        return Some(manifestRead.Document, items.ToArray())
+                }
+
+        interface ISynchronizedContentTransferStore with
+
+            member _.CreatePreparedAsync(document, cancellationToken) =
+                createExact receipts document.id (partitionKey document.RepositoryId document.Scope document.id) document cancellationToken
+
+            member _.ReadPreparedAsync(repositoryId, preparedContentId, cancellationToken) =
+                let id = $"prepared:{preparedContentId:D}"
+                readOptional<SynchronizedPreparedContentDocument> receipts id (partitionKey repositoryId "prepared" id) cancellationToken
+
+            member _.FinalizePreparedAsync(repositoryId, preparedContentId, manifest, cancellationToken) =
+                task {
+                    let id = $"prepared:{preparedContentId:D}"
+                    let key = partitionKey repositoryId "prepared" id
+                    let mutable completed = false
+
+                    while not completed do
+                        match! readOptional<SynchronizedPreparedContentDocument> receipts id key cancellationToken with
+                        | None -> invalidOp "The synchronized content preparation does not exist."
+                        | Some current ->
+                            if manifest.ManifestAddress
+                               <> ContentAddress.computeManifestAddressForManifest manifest then
+                                invalidOp "The finalized synchronized content manifest address is invalid."
+
+                            if manifest.FileContentHash
+                               <> current.Document.Content.Blake3Hash
+                               || manifest.Size <> current.Document.Content.Size then
+                                invalidOp "The finalized synchronized content manifest does not match its prepared descriptor."
+
+                            match current.Document.FinalizedManifest with
+                            | Some existing when equivalent existing manifest -> completed <- true
+                            | Some _ -> invalidOp "The synchronized content preparation was already finalized with a different manifest."
+                            | None ->
+                                let replacement = { current.Document with FinalizedManifest = Some manifest }
+                                let options = ItemRequestOptions(IfMatchEtag = current.ETag)
+
+                                try
+                                    let! _ = receipts.ReplaceItemAsync(replacement, id, key, options, cancellationToken)
+                                    completed <- true
+                                with
+                                | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> ()
+                }
+
+            member _.UpsertContentLocationAsync(document, cancellationToken) =
+                createExact receipts document.id (partitionKey document.RepositoryId document.Scope document.id) document cancellationToken
+
+            member _.ReadContentLocationAsync(repositoryId, contentVersionId, cancellationToken) =
+                task {
+                    let id = $"content:{contentVersionId:D}"
+
+                    let! existing = readOptional<SynchronizedContentLocationDocument> receipts id (partitionKey repositoryId "content" id) cancellationToken
+
+                    return
+                        existing
+                        |> Option.map (fun value -> value.Document)
+                }
+
+            member _.CreateReadGrantAsync(document, cancellationToken) =
+                createExact receipts document.id (partitionKey document.RepositoryId document.Scope document.id) document cancellationToken
+
+            member _.ReadReadGrantAsync(repositoryId, grantId, cancellationToken) =
+                let id = $"grant:{grantId:D}"
+                readOptional<SynchronizedContentReadGrantDocument> receipts id (partitionKey repositoryId "grant" id) cancellationToken
+
+            member _.ConsumeReadGrantAsync(document, etag, cancellationToken) =
+                task {
+                    let options = ItemRequestOptions(IfMatchEtag = etag)
+
+                    try
+                        let! response =
+                            receipts.ReplaceItemAsync(
+                                document,
+                                document.id,
+                                partitionKey document.RepositoryId document.Scope document.id,
+                                options,
+                                cancellationToken
+                            )
+
+                        return Replaced response.ETag
+                    with
+                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> return PreconditionFailed
+                }
+
     /// Creates the six-container store from the configured Cosmos client and database name.
     let createStore (client: CosmosClient) databaseName =
         let database = client.GetDatabase databaseName
@@ -440,3 +738,17 @@ module SynchronizedContentPersistence =
             database.GetContainer BaselinesContainerName
         )
         :> ISynchronizedContentStore
+
+    /// Creates the preparation and read-grant store over the fixed receipt container.
+    let createTransferStore (client: CosmosClient) databaseName =
+        let database = client.GetDatabase databaseName
+
+        CosmosSynchronizedContentStore(
+            database.GetContainer ControlContainerName,
+            database.GetContainer MutationsContainerName,
+            database.GetContainer CurrentContainerName,
+            database.GetContainer ReceiptsContainerName,
+            database.GetContainer HistoryContainerName,
+            database.GetContainer BaselinesContainerName
+        )
+        :> ISynchronizedContentTransferStore

@@ -356,6 +356,13 @@ module SynchronizedContentCoordinator =
                         |> Result.toOption
         }
 
+    /// Reports whether one normalized namespace path belongs to the exact current synchronized root set.
+    let private isOwnedByRoot (rootConfiguration: SynchronizedRootConfigurationDto) normalizedPath =
+        rootConfiguration.Roots
+        |> Array.exists (fun root ->
+            pathsEqual root normalizedPath
+            || normalizedPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+
     /// Creates one typed non-canonical receipt for a safe rejection or stale root policy.
     let private rejectedReceipt
         (command: SynchronizedMutationCommand)
@@ -467,6 +474,38 @@ module SynchronizedContentCoordinator =
                            |> Option.forall (fun slot -> slot.Slot.State = "vacant")
                     | _ -> false
 
+                let currentNamespace =
+                    currentItem
+                    |> Option.bind (fun document -> document.Item.Namespace)
+
+                let currentPathIsOwned =
+                    currentNamespace
+                    |> Option.forall (fun namespaceValue -> isOwnedByRoot control.RootConfiguration namespaceValue.NormalizedPath)
+
+                let destinationPathIsOwned =
+                    destination
+                    |> Option.forall (isOwnedByRoot control.RootConfiguration)
+
+                let preparedContentIsCurrent =
+                    match command.PreparedContentId with
+                    | None -> true
+                    | Some _ ->
+                        command.PreparedContent.IsSome
+                        && command.PreparedContentExpiresAt
+                           |> Option.exists (fun expiresAt -> expiresAt > now)
+
+                let itemKindMatches =
+                    currentItem
+                    |> Option.forall (fun document -> document.Item.ItemKind = command.ItemKind)
+
+                let! directoryNotEmpty =
+                    match command.MutationKind, currentItem with
+                    | MutationKind.Delete, Some document when document.Item.ItemKind = ItemKind.Directory ->
+                        match document.Item.Namespace with
+                        | Some namespaceValue -> store.HasLiveDescendantsAsync(command.RepositoryId, namespaceValue.NormalizedPath, cancellationToken)
+                        | None -> Task.FromResult false
+                    | _ -> Task.FromResult false
+
                 let itemMissingReceipt reason = rejectedReceipt command principalId now OutcomeKind.Rejected (Some reason) control.RootConfiguration None
 
                 if command.ItemId.IsSome && currentItem.IsNone then
@@ -477,6 +516,15 @@ module SynchronizedContentCoordinator =
                 elif command.CreationSlotExpectation.IsSome
                      && not destinationExpectationMatches then
                     return Error(itemMissingReceipt RejectionReason.SlotOccupied)
+                elif not preparedContentIsCurrent then
+                    return Error(itemMissingReceipt RejectionReason.PreparedContentExpired)
+                elif not itemKindMatches then
+                    return Error(itemMissingReceipt RejectionReason.KindMismatch)
+                elif not currentPathIsOwned
+                     || not destinationPathIsOwned then
+                    return Error(itemMissingReceipt RejectionReason.NamespaceChanged)
+                elif directoryNotEmpty then
+                    return Error(itemMissingReceipt RejectionReason.DirectoryNotEmpty)
                 else
                     let priorItem =
                         currentItem
