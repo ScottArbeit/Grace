@@ -1777,22 +1777,16 @@ module DirectoryVersion =
                             // Step 5: Upload the new ZIP to Azure Blob Storage
                             archive.Dispose() // Dispose the archive before uploading to ensure it's properly flushed to the disk.
                             let! zipFileBlobClient = getAzureBlobClient repositoryDto zipFileBlobName correlationId
-                            use descriptorStream = File.OpenRead(tempZipPath)
-                            let! digestBytes = SHA256.HashDataAsync(descriptorStream)
-
-                            let sha256 =
-                                Convert
-                                    .ToHexString(digestBytes)
-                                    .ToLowerInvariant()
-
-                            let size = descriptorStream.Length
-                            descriptorStream.Position <- 0L
+                            use tempZipFileStream = File.OpenRead(tempZipPath)
+                            let! sha256, blake3 = computeHashesForFile tempZipFileStream zipFileName
+                            let size = tempZipFileStream.Length
+                            tempZipFileStream.Position <- 0L
 
                             let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                            metadata["grace_sha256"] <- sha256
-                            metadata["grace_size"] <- string size
+                            metadata["zip_sha256hash"] <- sha256
+                            metadata["zip_blake3hash"] <- blake3
+                            metadata["zip_size"] <- string size
 
-                            use tempZipFileStream = File.OpenRead(tempZipPath)
                             let options = BlobUploadOptions(Metadata = metadata)
                             let! response = zipFileBlobClient.UploadAsync(tempZipFileStream, options)
                             ()

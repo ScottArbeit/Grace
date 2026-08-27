@@ -1419,6 +1419,8 @@ module Application =
                 subRoute
                     "/cache"
                     [
+                        GET [ route "/artifact-grant-validation-key" Cache.GetArtifactGrantValidationKey
+                              |> addMetadata (AllowAnonymousAttribute()) ]
                         POST [ route "/prepareDirectoryVersionZip" Cache.PrepareDirectoryVersionZip
                                |> addMetadata typeof<Grace.Shared.Parameters.Cache.PrepareDirectoryVersionZipParameters>
 

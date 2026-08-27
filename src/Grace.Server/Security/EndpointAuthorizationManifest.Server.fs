@@ -156,6 +156,7 @@ module EndpointAuthorizationManifest =
                 (AnyOf [ Authorized(BranchAdmin, Branch)
                          Authorized(BranchWrite, Branch) ])
             endpoint "POST" "/branch/updateParentBranch" Authenticated
+            endpoint "GET" "/cache/artifact-grant-validation-key" AllowAnonymous
             endpoint "POST" "/cache/prepareDirectoryVersionZip" Authenticated
             endpoint "POST" "/cache/redeemDirectoryVersionZipFill" AllowAnonymous
             endpoint

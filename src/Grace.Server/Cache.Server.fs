@@ -15,6 +15,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Cache
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
+open Grace.Types.ArtifactGrant
 open Grace.Types.Common
 open Grace.Types.Repository
 open Microsoft.AspNetCore.Http
@@ -24,7 +25,7 @@ open Microsoft.Extensions.DependencyInjection
 module Cache =
 
     [<CLIMutable>]
-    type private PermitPayload = { UserId: string; PublicKey: CachePublicJwk; Descriptor: CacheArtifactDescriptor; ExpiresAtUnixSeconds: int64 }
+    type private PermitPayload = { UserId: string; PublicKey: P256PublicJwk; Artifact: DirectoryVersionZipCacheArtifact; ExpiresAtUnixSeconds: int64 }
 
     let private permitSigningKey = RandomNumberGenerator.GetBytes(32)
 
@@ -93,8 +94,8 @@ module Cache =
             | _ -> None
 
     /// Creates a permit through the production serializer and HMAC seam for focused binding tests.
-    let internal createPermitForTest userId publicKey descriptor (expiresAt: DateTimeOffset) =
-        createPermit { UserId = userId; PublicKey = publicKey; Descriptor = descriptor; ExpiresAtUnixSeconds = expiresAt.ToUnixTimeSeconds() }
+    let internal createPermitForTest userId publicKey artifact (expiresAt: DateTimeOffset) =
+        createPermit { UserId = userId; PublicKey = publicKey; Artifact = artifact; ExpiresAtUnixSeconds = expiresAt.ToUnixTimeSeconds() }
 
     /// Verifies production permit authentication, expiry, and P-256 process binding without performing authority reads.
     let internal verifyPermitBindingForTest permit signature (now: DateTimeOffset) =
@@ -187,41 +188,28 @@ module Cache =
             | _ -> ()
         }
 
-    /// Reads the immutable descriptor metadata from the exact ZIP Blob without returning its SAS.
-    let private readDescriptor repositoryId directoryVersionId (sourceUri: Uri) =
+    /// Reads the immutable artifact identity from the exact ZIP Blob without returning its SAS.
+    let private readArtifact repositoryId directoryVersionId (sourceUri: Uri) =
         task {
             let client = BlobClient(sourceUri)
             let! properties = client.GetPropertiesAsync()
             let metadata = properties.Value.Metadata
-            let mutable sha256 = String.Empty
-            let mutable sizeText = String.Empty
+            let mutable blake3 = String.Empty
 
-            if
-                not (metadata.TryGetValue("grace_sha256", &sha256))
-                || not (metadata.TryGetValue("grace_size", &sizeText))
-            then
-                return Error "DirectoryVersion ZIP descriptor metadata is unavailable."
+            if not (metadata.TryGetValue("zip_blake3hash", &blake3)) then
+                return Error "DirectoryVersion ZIP artifact metadata is unavailable."
             else
-                match Int64.TryParse(sizeText) with
-                | true, size when
-                    size >= 0L
-                    && sha256.Length = 64
-                    && sha256
-                       |> Seq.forall (fun value ->
-                           Char.IsDigit(value)
-                           || (value >= 'a' && value <= 'f'))
-                    ->
-                    return
-                        Ok
-                            {
-                                RepositoryId = string repositoryId
-                                DirectoryVersionId = string directoryVersionId
-                                Kind = "DirectoryVersionZip"
-                                Sha256 = sha256
-                                Size = size
-                            }
-                | _ -> return Error "DirectoryVersion ZIP descriptor metadata is invalid."
+                try
+                    return Ok(DirectoryVersionZipCacheArtifact.Create(repositoryId, directoryVersionId, blake3))
+                with
+                | :? ArgumentException -> return Error "DirectoryVersion ZIP artifact metadata is invalid."
         }
+
+    /// Returns the current process public key used by Cache for local grant validation.
+    let GetArtifactGrantValidationKey: HttpHandler =
+        fun next context ->
+            context
+            |> result200Ok (GraceReturnValue.Create (CacheArtifactGrantSigning.signer().ValidationKey) (getCorrelationId context))
 
     /// Prepares one exact artifact after current authenticated access and Blob descriptor validation.
     let PrepareDirectoryVersionZip: HttpHandler =
@@ -254,27 +242,35 @@ module Cache =
                             | Allowed _ ->
                                 let! sourceUri = directoryProxy.GetZipFileUri(getCorrelationId context)
 
-                                match! readDescriptor repositoryId directoryVersionId sourceUri with
+                                match! readArtifact repositoryId directoryVersionId sourceUri with
                                 | Error message ->
                                     return!
                                         context
                                         |> result400BadRequest (GraceError.Create message (getCorrelationId context))
-                                | Ok descriptor ->
-                                    let expiresAt = DateTimeOffset.UtcNow.AddSeconds(60.0)
+                                | Ok artifact ->
+                                    let issuedAt = DateTimeOffset.UtcNow
+                                    let expiresAt = issuedAt.AddSeconds(60.0)
 
                                     let payload =
                                         {
                                             UserId = userId
                                             PublicKey = parameters.CachePublicKey
-                                            Descriptor = descriptor
+                                            Artifact = artifact
                                             ExpiresAtUnixSeconds = expiresAt.ToUnixTimeSeconds()
                                         }
 
                                     let permit = createPermit payload
 
+                                    let issuedGrant =
+                                        CacheArtifactGrantSigning
+                                            .signer()
+                                            .Issue(artifact, issuedAt)
+
                                     let prepared =
                                         {
-                                            Descriptor = descriptor
+                                            Artifact = artifact
+                                            ArtifactGrant = issuedGrant.Grant.Value
+                                            ArtifactGrantExpiresAt = issuedGrant.ExpiresAt
                                             Permit = permit
                                             PermitExpiresAt = expiresAt
                                             RedemptionBytes =
@@ -329,8 +325,8 @@ module Cache =
                             if not validSignature then
                                 return! forbidden "Permit binding failed." next context
                             else
-                                let repositoryId = Guid.Parse(payload.Descriptor.RepositoryId)
-                                let directoryVersionId = Guid.Parse(payload.Descriptor.DirectoryVersionId)
+                                let repositoryId = Guid.Parse(payload.Artifact.RepositoryId)
+                                let directoryVersionId = Guid.Parse(payload.Artifact.DirectoryVersionId)
 
                                 match! loadArtifact repositoryId directoryVersionId (getCorrelationId context) with
                                 | Error _ -> return! forbidden "Permit binding failed." next context
@@ -340,8 +336,8 @@ module Cache =
                                     | Allowed _ ->
                                         let! sourceUri = directoryProxy.GetZipFileUri(getCorrelationId context)
 
-                                        match! readDescriptor repositoryId directoryVersionId sourceUri with
-                                        | Ok current when current = payload.Descriptor ->
+                                        match! readArtifact repositoryId directoryVersionId sourceUri with
+                                        | Ok current when current = payload.Artifact ->
                                             do! enterPostDescriptorTestGate context
 
                                             match! revalidateUserAccess context payload.UserId repository with
@@ -349,7 +345,7 @@ module Cache =
                                             | Allowed _ ->
                                                 let source =
                                                     {
-                                                        Descriptor = current
+                                                        Artifact = current
                                                         SourceUri = string sourceUri
                                                         SourceExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15.0)
                                                     }
