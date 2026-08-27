@@ -290,6 +290,37 @@ paths:
   /storage/finalizeManifestUpload:
     $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1finalizeManifestUpload'
 
+  /sync/roots/get:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1roots~1get'
+  /sync/roots/list:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1roots~1list'
+  /sync/roots/add:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1roots~1add'
+  /sync/roots/remove:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1roots~1remove'
+  /sync/bootstrap/start:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1bootstrap~1start'
+  /sync/bootstrap/continue:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1bootstrap~1continue'
+  /sync/deltas/get:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1deltas~1get'
+  /sync/mutations/submit:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1mutations~1submit'
+  /sync/operations/get:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1operations~1get'
+  /sync/content/prepare:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1content~1prepare'
+  /sync/content/read:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1content~1read'
+  /sync/content/{grantId}:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1content~1{grantId}'
+  /sync/items/get:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1items~1get'
+  /sync/namespace/get-slot:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1namespace~1get-slot'
+  /sync/status/get:
+    $ref: './SynchronizedContent.Paths.OpenAPI.yaml#/~1sync~1status~1get'
+
 components:
   schemas:
     ApprovalPolicyParameters:
@@ -588,6 +619,133 @@ components:
       $ref: 'Storage.Components.OpenAPI.yaml#/ChunkingSuiteId'
     UploadSessionOperationId:
       $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionOperationId'
+
+    SynchronizedItemId:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedItemId'
+    SynchronizedOperationId:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedOperationId'
+    SynchronizedRootConfigurationVersion:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootConfigurationVersion'
+    SynchronizedNamespaceVersion:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespaceVersion'
+    SynchronizedNamespaceSlotVersion:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespaceSlotVersion'
+    SynchronizedContentVersionId:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentVersionId'
+    SynchronizedBootstrapId:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedBootstrapId'
+    SynchronizedPreparedContentId:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedPreparedContentId'
+    SynchronizedCursor:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedCursor'
+    SynchronizedCursorEpoch:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedCursorEpoch'
+    SynchronizedPageToken:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedPageToken'
+    SynchronizedItemKind:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedItemKind'
+    SynchronizedMutationKind:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedMutationKind'
+    SynchronizedOutcomeKind:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedOutcomeKind'
+    SynchronizedRejectionReason:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRejectionReason'
+    SynchronizedRootRejectionReason:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootRejectionReason'
+    SynchronizedParentDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedParentDto'
+    SynchronizedNamespaceDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespaceDto'
+    SynchronizedContentVersionDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentVersionDto'
+    SynchronizedTombstoneDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedTombstoneDto'
+    SynchronizedConflictProvenanceDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedConflictProvenanceDto'
+    SynchronizedItemDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedItemDto'
+    SynchronizedNamespaceSlotDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespaceSlotDto'
+    SynchronizedRootConfigurationDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootConfigurationDto'
+    SynchronizedNamespacePreconditionDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespacePreconditionDto'
+    SynchronizedContentPreconditionDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentPreconditionDto'
+    SynchronizedCreationSlotExpectationDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedCreationSlotExpectationDto'
+    SynchronizedMutationDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedMutationDto'
+    SynchronizedRebaselineDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRebaselineDto'
+    SynchronizedOperationReceiptDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedOperationReceiptDto'
+    SynchronizedRootMutationResultDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootMutationResultDto'
+    SynchronizedBootstrapPageDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedBootstrapPageDto'
+    SynchronizedDeltaResultDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedDeltaResultDto'
+    SynchronizedPreparedContentDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedPreparedContentDto'
+    SynchronizedContentReadGrantDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentReadGrantDto'
+    SynchronizedRepositoryStatusDto:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRepositoryStatusDto'
+    SynchronizedContentAvailable:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentAvailable'
+    SynchronizedContentParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentParameters'
+    GetSynchronizedRootConfigurationParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedRootConfigurationParameters'
+    ListSynchronizedRootsParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/ListSynchronizedRootsParameters'
+    AddSynchronizedRootParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/AddSynchronizedRootParameters'
+    RemoveSynchronizedRootParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/RemoveSynchronizedRootParameters'
+    StartSynchronizedBootstrapParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/StartSynchronizedBootstrapParameters'
+    ContinueSynchronizedBootstrapParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/ContinueSynchronizedBootstrapParameters'
+    GetSynchronizedDeltasParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedDeltasParameters'
+    SubmitSynchronizedMutationParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SubmitSynchronizedMutationParameters'
+    GetSynchronizedOperationParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedOperationParameters'
+    PrepareSynchronizedContentParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/PrepareSynchronizedContentParameters'
+    PrepareSynchronizedContentReadParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/PrepareSynchronizedContentReadParameters'
+    GetSynchronizedItemParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedItemParameters'
+    GetSynchronizedNamespaceSlotParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedNamespaceSlotParameters'
+    GetSynchronizedStatusParameters:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedStatusParameters'
+    SynchronizedReturnValueBase:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedReturnValueBase'
+    SynchronizedRootConfigurationReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootConfigurationReturnValue'
+    SynchronizedRootMutationReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootMutationReturnValue'
+    SynchronizedBootstrapPageReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedBootstrapPageReturnValue'
+    SynchronizedDeltaReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedDeltaReturnValue'
+    SynchronizedOperationReceiptReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedOperationReceiptReturnValue'
+    SynchronizedPreparedContentReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedPreparedContentReturnValue'
+    SynchronizedContentReadGrantReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentReadGrantReturnValue'
+    SynchronizedItemReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedItemReturnValue'
+    SynchronizedNamespaceSlotReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespaceSlotReturnValue'
+    SynchronizedStatusReturnValue:
+      $ref: 'SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedStatusReturnValue'
 
     Instant:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'

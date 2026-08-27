@@ -9,5 +9,6 @@ export * from './DirectoriesApi';
 export * from './OrganizationsApi';
 export * from './OwnersApi';
 export * from './RepositoriesApi';
+export * from './SynchronizedContentApi';
 export * from './WebhooksApi';
 export * from './WorkItemsApi';

@@ -47,6 +47,24 @@
             forbidden:
               summary: Framework authorization failure
               value: Forbidden.
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+    '409':
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+    '410':
+      description: Gone
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
     '500':
       description: Internal Server Error
       content:

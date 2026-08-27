@@ -120,6 +120,7 @@ pub mod directories_api;
 pub mod organizations_api;
 pub mod owners_api;
 pub mod repositories_api;
+pub mod synchronized_content_api;
 pub mod webhooks_api;
 pub mod work_items_api;
 

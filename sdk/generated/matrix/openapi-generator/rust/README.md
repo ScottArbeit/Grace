@@ -141,6 +141,21 @@ Class | Method | HTTP request | Description
 *RepositoriesApi* | [**set_repository_status**](docs/RepositoriesApi.md#set_repository_status) | **POST** /repository/setStatus | Set repository status.
 *RepositoriesApi* | [**set_repository_visibility**](docs/RepositoriesApi.md#set_repository_visibility) | **POST** /repository/setVisibility | Set repository visibility.
 *RepositoriesApi* | [**undelete_repository**](docs/RepositoriesApi.md#undelete_repository) | **POST** /repository/undelete | Undelete a previously deleted repository.
+*SynchronizedContentApi* | [**add_synchronized_root**](docs/SynchronizedContentApi.md#add_synchronized_root) | **POST** /sync/roots/add | Add one empty normalized synchronized root under an exact configuration version.
+*SynchronizedContentApi* | [**continue_synchronized_bootstrap**](docs/SynchronizedContentApi.md#continue_synchronized_bootstrap) | **POST** /sync/bootstrap/continue | Continue one immutable bootstrap baseline page sequence.
+*SynchronizedContentApi* | [**download_synchronized_content**](docs/SynchronizedContentApi.md#download_synchronized_content) | **GET** /sync/content/{grantId} | Redeem one authorized short-lived immutable-content read grant.
+*SynchronizedContentApi* | [**get_synchronized_deltas**](docs/SynchronizedContentApi.md#get_synchronized_deltas) | **POST** /sync/deltas/get | Read repository-ordered accepted synchronized mutations after an opaque cursor.
+*SynchronizedContentApi* | [**get_synchronized_item**](docs/SynchronizedContentApi.md#get_synchronized_item) | **POST** /sync/items/get | Get one current synchronized item.
+*SynchronizedContentApi* | [**get_synchronized_namespace_slot**](docs/SynchronizedContentApi.md#get_synchronized_namespace_slot) | **POST** /sync/namespace/get-slot | Get one current occupied or remembered-vacant synchronized namespace slot.
+*SynchronizedContentApi* | [**get_synchronized_operation**](docs/SynchronizedContentApi.md#get_synchronized_operation) | **POST** /sync/operations/get | Get the stable receipt for one authorized synchronized operation identity.
+*SynchronizedContentApi* | [**get_synchronized_root_configuration**](docs/SynchronizedContentApi.md#get_synchronized_root_configuration) | **POST** /sync/roots/get | Get the persisted synchronized-root configuration.
+*SynchronizedContentApi* | [**get_synchronized_status**](docs/SynchronizedContentApi.md#get_synchronized_status) | **POST** /sync/status/get | Get content-free synchronized repository status.
+*SynchronizedContentApi* | [**list_synchronized_roots**](docs/SynchronizedContentApi.md#list_synchronized_roots) | **POST** /sync/roots/list | List the sorted synchronized roots and their exact configuration version.
+*SynchronizedContentApi* | [**prepare_synchronized_content**](docs/SynchronizedContentApi.md#prepare_synchronized_content) | **POST** /sync/content/prepare | Prepare exact immutable bytes for a later synchronized mutation.
+*SynchronizedContentApi* | [**prepare_synchronized_content_read**](docs/SynchronizedContentApi.md#prepare_synchronized_content_read) | **POST** /sync/content/read | Prepare a one-use read grant for an authorized retained content version.
+*SynchronizedContentApi* | [**remove_synchronized_root**](docs/SynchronizedContentApi.md#remove_synchronized_root) | **POST** /sync/roots/remove | Remove one empty normalized synchronized root under an exact configuration version.
+*SynchronizedContentApi* | [**start_synchronized_bootstrap**](docs/SynchronizedContentApi.md#start_synchronized_bootstrap) | **POST** /sync/bootstrap/start | Start a bounded bootstrap from the current immutable baseline.
+*SynchronizedContentApi* | [**submit_synchronized_mutation**](docs/SynchronizedContentApi.md#submit_synchronized_mutation) | **POST** /sync/mutations/submit | Submit one exact idempotent synchronized namespace or content mutation.
 *WebhooksApi* | [**create_webhook_rule**](docs/WebhooksApi.md#create_webhook_rule) | **POST** /webhook/rule/create | Create a webhook rule.
 *WebhooksApi* | [**delete_webhook_rule**](docs/WebhooksApi.md#delete_webhook_rule) | **POST** /webhook/rule/delete | Delete a webhook rule.
 *WebhooksApi* | [**disable_webhook_rule**](docs/WebhooksApi.md#disable_webhook_rule) | **POST** /webhook/rule/disable | Disable a webhook rule.
@@ -159,6 +174,7 @@ Class | Method | HTTP request | Description
 
 ## Documentation For Models
 
+ - [AddSynchronizedRootParameters](docs/AddSynchronizedRootParameters.md)
  - [AnnotateParameters](docs/AnnotateParameters.md)
  - [AnnotationBoundary](docs/AnnotationBoundary.md)
  - [AnnotationLine](docs/AnnotationLine.md)
@@ -205,6 +221,7 @@ Class | Method | HTTP request | Description
  - [ContentBlockMetadataRange](docs/ContentBlockMetadataRange.md)
  - [ContentBlockReuseRangeHint](docs/ContentBlockReuseRangeHint.md)
  - [ContentBlockStoragePlacement](docs/ContentBlockStoragePlacement.md)
+ - [ContinueSynchronizedBootstrapParameters](docs/ContinueSynchronizedBootstrapParameters.md)
  - [CreateApprovalPolicyParameters](docs/CreateApprovalPolicyParameters.md)
  - [CreateBranchParameters](docs/CreateBranchParameters.md)
  - [CreateOrganizationParameters](docs/CreateOrganizationParameters.md)
@@ -277,6 +294,12 @@ Class | Method | HTTP request | Description
  - [GetReferenceParameters](docs/GetReferenceParameters.md)
  - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
  - [GetReferencesParameters](docs/GetReferencesParameters.md)
+ - [GetSynchronizedDeltasParameters](docs/GetSynchronizedDeltasParameters.md)
+ - [GetSynchronizedItemParameters](docs/GetSynchronizedItemParameters.md)
+ - [GetSynchronizedNamespaceSlotParameters](docs/GetSynchronizedNamespaceSlotParameters.md)
+ - [GetSynchronizedOperationParameters](docs/GetSynchronizedOperationParameters.md)
+ - [GetSynchronizedRootConfigurationParameters](docs/GetSynchronizedRootConfigurationParameters.md)
+ - [GetSynchronizedStatusParameters](docs/GetSynchronizedStatusParameters.md)
  - [GetUploadMetadataForFilesParameters](docs/GetUploadMetadataForFilesParameters.md)
  - [GetUploadUriParameters](docs/GetUploadUriParameters.md)
  - [GraceError](docs/GraceError.md)
@@ -300,6 +323,7 @@ Class | Method | HTTP request | Description
  - [ListApprovalRequestsParameters](docs/ListApprovalRequestsParameters.md)
  - [ListOrganizationsParameters](docs/ListOrganizationsParameters.md)
  - [ListRepositoriesParameters](docs/ListRepositoriesParameters.md)
+ - [ListSynchronizedRootsParameters](docs/ListSynchronizedRootsParameters.md)
  - [ListWebhookDeliveriesParameters](docs/ListWebhookDeliveriesParameters.md)
  - [ListWebhookRulesParameters](docs/ListWebhookRulesParameters.md)
  - [ObjectStorageProvider](docs/ObjectStorageProvider.md)
@@ -317,6 +341,8 @@ Class | Method | HTTP request | Description
  - [P256PublicJwk](docs/P256PublicJwk.md)
  - [PopulateParameters](docs/PopulateParameters.md)
  - [PrepareDirectoryVersionZipParameters](docs/PrepareDirectoryVersionZipParameters.md)
+ - [PrepareSynchronizedContentParameters](docs/PrepareSynchronizedContentParameters.md)
+ - [PrepareSynchronizedContentReadParameters](docs/PrepareSynchronizedContentReadParameters.md)
  - [ProblemDetails](docs/ProblemDetails.md)
  - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)
  - [PromotionSetApprovalSummary](docs/PromotionSetApprovalSummary.md)
@@ -336,6 +362,7 @@ Class | Method | HTTP request | Description
  - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
  - [ReferenceType](docs/ReferenceType.md)
  - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
+ - [RemoveSynchronizedRootParameters](docs/RemoveSynchronizedRootParameters.md)
  - [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
  - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
  - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
@@ -368,9 +395,49 @@ Class | Method | HTTP request | Description
  - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
  - [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
  - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
+ - [StartSynchronizedBootstrapParameters](docs/StartSynchronizedBootstrapParameters.md)
  - [StartUploadSession](docs/StartUploadSession.md)
  - [StorageParameters](docs/StorageParameters.md)
+ - [SubmitSynchronizedMutationParameters](docs/SubmitSynchronizedMutationParameters.md)
  - [SwitchParameters](docs/SwitchParameters.md)
+ - [SynchronizedBootstrapPageDto](docs/SynchronizedBootstrapPageDto.md)
+ - [SynchronizedBootstrapPageReturnValue](docs/SynchronizedBootstrapPageReturnValue.md)
+ - [SynchronizedConflictProvenanceDto](docs/SynchronizedConflictProvenanceDto.md)
+ - [SynchronizedContentAvailable](docs/SynchronizedContentAvailable.md)
+ - [SynchronizedContentParameters](docs/SynchronizedContentParameters.md)
+ - [SynchronizedContentPreconditionDto](docs/SynchronizedContentPreconditionDto.md)
+ - [SynchronizedContentReadGrantDto](docs/SynchronizedContentReadGrantDto.md)
+ - [SynchronizedContentReadGrantReturnValue](docs/SynchronizedContentReadGrantReturnValue.md)
+ - [SynchronizedContentVersionDto](docs/SynchronizedContentVersionDto.md)
+ - [SynchronizedCreationSlotExpectationDto](docs/SynchronizedCreationSlotExpectationDto.md)
+ - [SynchronizedDeltaResultDto](docs/SynchronizedDeltaResultDto.md)
+ - [SynchronizedDeltaReturnValue](docs/SynchronizedDeltaReturnValue.md)
+ - [SynchronizedItemDto](docs/SynchronizedItemDto.md)
+ - [SynchronizedItemKind](docs/SynchronizedItemKind.md)
+ - [SynchronizedItemReturnValue](docs/SynchronizedItemReturnValue.md)
+ - [SynchronizedMutationDto](docs/SynchronizedMutationDto.md)
+ - [SynchronizedMutationKind](docs/SynchronizedMutationKind.md)
+ - [SynchronizedNamespaceDto](docs/SynchronizedNamespaceDto.md)
+ - [SynchronizedNamespacePreconditionDto](docs/SynchronizedNamespacePreconditionDto.md)
+ - [SynchronizedNamespaceSlotDto](docs/SynchronizedNamespaceSlotDto.md)
+ - [SynchronizedNamespaceSlotReturnValue](docs/SynchronizedNamespaceSlotReturnValue.md)
+ - [SynchronizedOperationReceiptDto](docs/SynchronizedOperationReceiptDto.md)
+ - [SynchronizedOperationReceiptReturnValue](docs/SynchronizedOperationReceiptReturnValue.md)
+ - [SynchronizedOutcomeKind](docs/SynchronizedOutcomeKind.md)
+ - [SynchronizedParentDto](docs/SynchronizedParentDto.md)
+ - [SynchronizedPreparedContentDto](docs/SynchronizedPreparedContentDto.md)
+ - [SynchronizedPreparedContentReturnValue](docs/SynchronizedPreparedContentReturnValue.md)
+ - [SynchronizedRebaselineDto](docs/SynchronizedRebaselineDto.md)
+ - [SynchronizedRejectionReason](docs/SynchronizedRejectionReason.md)
+ - [SynchronizedRepositoryStatusDto](docs/SynchronizedRepositoryStatusDto.md)
+ - [SynchronizedReturnValueBase](docs/SynchronizedReturnValueBase.md)
+ - [SynchronizedRootConfigurationDto](docs/SynchronizedRootConfigurationDto.md)
+ - [SynchronizedRootConfigurationReturnValue](docs/SynchronizedRootConfigurationReturnValue.md)
+ - [SynchronizedRootMutationResultDto](docs/SynchronizedRootMutationResultDto.md)
+ - [SynchronizedRootMutationReturnValue](docs/SynchronizedRootMutationReturnValue.md)
+ - [SynchronizedRootRejectionReason](docs/SynchronizedRootRejectionReason.md)
+ - [SynchronizedStatusReturnValue](docs/SynchronizedStatusReturnValue.md)
+ - [SynchronizedTombstoneDto](docs/SynchronizedTombstoneDto.md)
  - [TestWebhookRuleParameters](docs/TestWebhookRuleParameters.md)
  - [TypedReferenceApiDto](docs/TypedReferenceApiDto.md)
  - [UndeleteOrganizationParameters](docs/UndeleteOrganizationParameters.md)

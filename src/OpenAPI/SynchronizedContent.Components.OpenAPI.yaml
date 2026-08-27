@@ -1,0 +1,654 @@
+    SynchronizedItemId:
+      type: string
+      format: uuid
+    SynchronizedOperationId:
+      type: string
+      format: uuid
+    SynchronizedRootConfigurationVersion:
+      type: string
+      format: uuid
+    SynchronizedNamespaceVersion:
+      type: string
+      format: uuid
+    SynchronizedNamespaceSlotVersion:
+      type: string
+      format: uuid
+    SynchronizedContentVersionId:
+      type: string
+      format: uuid
+    SynchronizedBootstrapId:
+      type: string
+      format: uuid
+    SynchronizedPreparedContentId:
+      type: string
+      format: uuid
+    SynchronizedCursor:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque repository cursor. Clients must not parse or compare its contents.
+    SynchronizedCursorEpoch:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque repository epoch. Clients compare only exact equality.
+    SynchronizedPageToken:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque token for continuing one immutable page sequence.
+    SynchronizedItemKind:
+      type: string
+      enum: [file, directory]
+    SynchronizedMutationKind:
+      type: string
+      enum: [createFile, createDirectory, updateContent, rename, move, delete]
+    SynchronizedOutcomeKind:
+      type: string
+      enum: [accepted, unchanged, rejected, conflictCopy, stalePolicy, rebaselineRequired, localIncomplete]
+    SynchronizedRejectionReason:
+      type: string
+      enum: [namespaceChanged, contentChanged, slotOccupied, itemMissing, itemTombstoned, directoryNotEmpty, kindMismatch, preparedContentExpired, operationIdentityMismatch]
+    SynchronizedRootRejectionReason:
+      type: string
+      enum: [slotOccupied, outgoingSystemNotEmpty, rootOverlap, rootLimitExceeded, unsupportedPath]
+    SynchronizedParentDto:
+      description: Repository-owned root or directory parent identity.
+      type: object
+      properties:
+        Kind:
+          type: string
+          enum: [root, item]
+        RootPath:
+          type: string
+          nullable: true
+        ItemId:
+          allOf:
+            - $ref: '#/SynchronizedItemId'
+          nullable: true
+      required: [Kind, RootPath, ItemId]
+    SynchronizedNamespaceDto:
+      type: object
+      properties:
+        Parent: { $ref: '#/SynchronizedParentDto' }
+        Name: { type: string }
+        NormalizedPath: { type: string }
+        NamespaceVersion: { $ref: '#/SynchronizedNamespaceVersion' }
+        SlotVersion: { $ref: '#/SynchronizedNamespaceSlotVersion' }
+      required: [Parent, Name, NormalizedPath, NamespaceVersion, SlotVersion]
+    SynchronizedContentVersionDto:
+      type: object
+      properties:
+        ContentVersionId: { $ref: '#/SynchronizedContentVersionId' }
+        Blake3Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash' }
+        Sha256Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash' }
+        Size:
+          type: integer
+          format: int64
+          minimum: 0
+        CreatedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+      required: [ContentVersionId, Blake3Hash, Sha256Hash, Size, CreatedAt]
+    SynchronizedTombstoneDto:
+      type: object
+      properties:
+        ItemId: { $ref: '#/SynchronizedItemId' }
+        ItemKind: { $ref: '#/SynchronizedItemKind' }
+        DeletedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        DeletedBy: { type: string }
+        DeleteCursor: { $ref: '#/SynchronizedCursor' }
+        LastNamespaceVersion: { $ref: '#/SynchronizedNamespaceVersion' }
+        LastContentVersionId:
+          allOf:
+            - $ref: '#/SynchronizedContentVersionId'
+          nullable: true
+      required: [ItemId, ItemKind, DeletedAt, DeletedBy, DeleteCursor, LastNamespaceVersion, LastContentVersionId]
+    SynchronizedConflictProvenanceDto:
+      type: object
+      properties:
+        SourceOperationId: { $ref: '#/SynchronizedOperationId' }
+        SourceItemId: { $ref: '#/SynchronizedItemId' }
+        CanonicalItemId: { $ref: '#/SynchronizedItemId' }
+        ConflictItemId: { $ref: '#/SynchronizedItemId' }
+        ConflictPath: { type: string }
+        AcceptedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        SourceContentVersionId:
+          allOf:
+            - $ref: '#/SynchronizedContentVersionId'
+          nullable: true
+        BaseContentVersionId:
+          allOf:
+            - $ref: '#/SynchronizedContentVersionId'
+          nullable: true
+      required: [SourceOperationId, SourceItemId, CanonicalItemId, ConflictItemId, ConflictPath, AcceptedAt, SourceContentVersionId, BaseContentVersionId]
+    SynchronizedItemDto:
+      type: object
+      properties:
+        ItemId: { $ref: '#/SynchronizedItemId' }
+        ItemKind: { $ref: '#/SynchronizedItemKind' }
+        State:
+          type: string
+          enum: [live, tombstoned]
+        LastMutationCursor: { $ref: '#/SynchronizedCursor' }
+        RootConfigurationVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+        Namespace:
+          allOf:
+            - $ref: '#/SynchronizedNamespaceDto'
+          nullable: true
+        Content:
+          allOf:
+            - $ref: '#/SynchronizedContentVersionDto'
+          nullable: true
+        Tombstone:
+          allOf:
+            - $ref: '#/SynchronizedTombstoneDto'
+          nullable: true
+      required: [ItemId, ItemKind, State, LastMutationCursor, RootConfigurationVersion, Namespace, Content, Tombstone]
+    SynchronizedNamespaceSlotDto:
+      type: object
+      properties:
+        Parent: { $ref: '#/SynchronizedParentDto' }
+        Name: { type: string }
+        NormalizedPath: { type: string }
+        SlotVersion: { $ref: '#/SynchronizedNamespaceSlotVersion' }
+        State:
+          type: string
+          enum: [occupied, vacant]
+        OccupantItemId:
+          allOf:
+            - $ref: '#/SynchronizedItemId'
+          nullable: true
+      required: [Parent, Name, NormalizedPath, SlotVersion, State, OccupantItemId]
+    SynchronizedRootConfigurationDto:
+      type: object
+      properties:
+        RepositoryId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId' }
+        Version: { $ref: '#/SynchronizedRootConfigurationVersion' }
+        Roots:
+          type: array
+          maxItems: 128
+          items: { type: string }
+        CreatedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        CreatedBy: { type: string }
+        PreviousVersion:
+          allOf:
+            - $ref: '#/SynchronizedRootConfigurationVersion'
+          nullable: true
+      required: [RepositoryId, Version, Roots, CreatedAt, CreatedBy, PreviousVersion]
+    SynchronizedNamespacePreconditionDto:
+      type: object
+      properties:
+        ItemId: { $ref: '#/SynchronizedItemId' }
+        ExpectedNamespaceVersion: { $ref: '#/SynchronizedNamespaceVersion' }
+      required: [ItemId, ExpectedNamespaceVersion]
+    SynchronizedContentPreconditionDto:
+      type: object
+      properties:
+        ItemId: { $ref: '#/SynchronizedItemId' }
+        ExpectedContentVersionId: { $ref: '#/SynchronizedContentVersionId' }
+      required: [ItemId, ExpectedContentVersionId]
+    SynchronizedCreationSlotExpectationDto:
+      type: object
+      properties:
+        Parent: { $ref: '#/SynchronizedParentDto' }
+        Name: { type: string }
+        ExpectedSlotVersion: { $ref: '#/SynchronizedNamespaceSlotVersion' }
+        ExpectedState:
+          type: string
+          enum: [vacant]
+      required: [Parent, Name, ExpectedSlotVersion, ExpectedState]
+    SynchronizedMutationDto:
+      type: object
+      properties:
+        Cursor: { $ref: '#/SynchronizedCursor' }
+        OperationId: { $ref: '#/SynchronizedOperationId' }
+        MutationKind: { $ref: '#/SynchronizedMutationKind' }
+        ItemId: { $ref: '#/SynchronizedItemId' }
+        ItemKind: { $ref: '#/SynchronizedItemKind' }
+        AcceptedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        AcceptedBy: { type: string }
+        RootConfigurationVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+        Namespace:
+          allOf:
+            - $ref: '#/SynchronizedNamespaceDto'
+          nullable: true
+        Content:
+          allOf:
+            - $ref: '#/SynchronizedContentVersionDto'
+          nullable: true
+        Tombstone:
+          allOf:
+            - $ref: '#/SynchronizedTombstoneDto'
+          nullable: true
+        Conflict:
+          allOf:
+            - $ref: '#/SynchronizedConflictProvenanceDto'
+          nullable: true
+      required: [Cursor, OperationId, MutationKind, ItemId, ItemKind, AcceptedAt, AcceptedBy, RootConfigurationVersion, Namespace, Content, Tombstone, Conflict]
+    SynchronizedRebaselineDto:
+      type: object
+      properties:
+        Reason: { type: string }
+        CurrentEpoch: { $ref: '#/SynchronizedCursorEpoch' }
+        ServiceFloorCursor: { $ref: '#/SynchronizedCursor' }
+        RecommendedBootstrap: { type: boolean }
+      required: [Reason, CurrentEpoch, ServiceFloorCursor, RecommendedBootstrap]
+    SynchronizedOperationReceiptDto:
+      type: object
+      properties:
+        OperationId: { $ref: '#/SynchronizedOperationId' }
+        RequestHash: { type: string }
+        Outcome: { $ref: '#/SynchronizedOutcomeKind' }
+        RootConfigurationVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+        RecordedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        PrincipalId: { type: string }
+        Mutation:
+          allOf:
+            - $ref: '#/SynchronizedMutationDto'
+          nullable: true
+        Cursor:
+          allOf:
+            - $ref: '#/SynchronizedCursor'
+          nullable: true
+        Item:
+          allOf:
+            - $ref: '#/SynchronizedItemDto'
+          nullable: true
+        Conflict:
+          allOf:
+            - $ref: '#/SynchronizedConflictProvenanceDto'
+          nullable: true
+        ReasonCode:
+          type: string
+          nullable: true
+        CurrentRootConfiguration:
+          allOf:
+            - $ref: '#/SynchronizedRootConfigurationDto'
+          nullable: true
+        Rebaseline:
+          allOf:
+            - $ref: '#/SynchronizedRebaselineDto'
+          nullable: true
+      required: [OperationId, RequestHash, Outcome, RootConfigurationVersion, RecordedAt, PrincipalId, Mutation, Cursor, Item, Conflict, ReasonCode, CurrentRootConfiguration, Rebaseline]
+    SynchronizedRootMutationResultDto:
+      type: object
+      properties:
+        OperationId: { $ref: '#/SynchronizedOperationId' }
+        Outcome: { $ref: '#/SynchronizedOutcomeKind' }
+        RootConfiguration: { $ref: '#/SynchronizedRootConfigurationDto' }
+        ReasonCode:
+          type: string
+          nullable: true
+        RecordedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+      required: [OperationId, Outcome, RootConfiguration, ReasonCode, RecordedAt]
+    SynchronizedBootstrapPageDto:
+      type: object
+      properties:
+        BootstrapId: { $ref: '#/SynchronizedBootstrapId' }
+        BoundaryCursor: { $ref: '#/SynchronizedCursor' }
+        CursorEpoch: { $ref: '#/SynchronizedCursorEpoch' }
+        RootConfiguration: { $ref: '#/SynchronizedRootConfigurationDto' }
+        Items:
+          type: array
+          items: { $ref: '#/SynchronizedItemDto' }
+        NextPageToken:
+          allOf:
+            - $ref: '#/SynchronizedPageToken'
+          nullable: true
+      required: [BootstrapId, BoundaryCursor, CursorEpoch, RootConfiguration, Items, NextPageToken]
+    SynchronizedDeltaResultDto:
+      type: object
+      properties:
+        Outcome: { $ref: '#/SynchronizedOutcomeKind' }
+        CursorEpoch: { $ref: '#/SynchronizedCursorEpoch' }
+        Mutations:
+          type: array
+          items: { $ref: '#/SynchronizedMutationDto' }
+        LastCursor: { $ref: '#/SynchronizedCursor' }
+        HasMore: { type: boolean }
+        NextPageToken:
+          allOf:
+            - $ref: '#/SynchronizedPageToken'
+          nullable: true
+        Rebaseline:
+          allOf:
+            - $ref: '#/SynchronizedRebaselineDto'
+          nullable: true
+      required: [Outcome, CursorEpoch, Mutations, LastCursor, HasMore, NextPageToken, Rebaseline]
+    SynchronizedPreparedContentDto:
+      type: object
+      properties:
+        PreparedContentId: { $ref: '#/SynchronizedPreparedContentId' }
+        Blake3Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash' }
+        Sha256Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash' }
+        Size:
+          type: integer
+          format: int64
+          minimum: 1
+        UploadRequired: { type: boolean }
+        UploadInstructions:
+          type: string
+          nullable: true
+        ExpiresAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+      required: [PreparedContentId, Blake3Hash, Sha256Hash, Size, UploadRequired, UploadInstructions, ExpiresAt]
+    SynchronizedContentReadGrantDto:
+      type: object
+      properties:
+        GrantId: { type: string }
+        DownloadPath: { type: string }
+        Content: { $ref: '#/SynchronizedContentVersionDto' }
+        ExpiresAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+      required: [GrantId, DownloadPath, Content, ExpiresAt]
+    SynchronizedRepositoryStatusDto:
+      type: object
+      properties:
+        State: { type: string }
+        RepositoryId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId' }
+        RootConfigurationVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+        IsCaughtUp: { type: boolean }
+        RebaselineRequired: { type: boolean }
+        IsBlocked: { type: boolean }
+        PendingOperationCount:
+          type: integer
+          format: int32
+          minimum: 0
+        OldestPendingAgeMilliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+        ProjectionLagCount:
+          type: integer
+          format: int64
+          minimum: 0
+        LastCompletedAt:
+          allOf:
+            - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+          nullable: true
+      required: [State, RepositoryId, RootConfigurationVersion, IsCaughtUp, RebaselineRequired, IsBlocked, PendingOperationCount, OldestPendingAgeMilliseconds, ProjectionLagCount, LastCompletedAt]
+    SynchronizedContentAvailable:
+      type: object
+      description: Content-free best-effort wake. Authorized clients pull durable deltas after receipt.
+      properties:
+        EventName:
+          type: string
+          const: SynchronizedContentAvailable.v1
+        RepositoryId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId' }
+        CursorEpoch: { $ref: '#/SynchronizedCursorEpoch' }
+        AvailableAfterCursor: { $ref: '#/SynchronizedCursor' }
+        RootConfigurationVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+        OccurredAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        CorrelationId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId' }
+      required: [EventName, RepositoryId, CursorEpoch, AvailableAfterCursor, RootConfigurationVersion, OccurredAt, CorrelationId]
+
+    SynchronizedContentParameters:
+      description: Repository locator shared by every remote synchronized-content request.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+    GetSynchronizedRootConfigurationParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+    ListSynchronizedRootsParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+    AddSynchronizedRootParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ExpectedVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+            RootPath: { type: string }
+            OperationId: { $ref: '#/SynchronizedOperationId' }
+          required: [ExpectedVersion, RootPath, OperationId]
+    RemoveSynchronizedRootParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ExpectedVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+            RootPath: { type: string }
+            OperationId: { $ref: '#/SynchronizedOperationId' }
+          required: [ExpectedVersion, RootPath, OperationId]
+    StartSynchronizedBootstrapParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required: [PageSize]
+    ContinueSynchronizedBootstrapParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            BootstrapId: { $ref: '#/SynchronizedBootstrapId' }
+            PageToken: { $ref: '#/SynchronizedPageToken' }
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required: [BootstrapId, PageToken, PageSize]
+    GetSynchronizedDeltasParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            AfterCursor: { $ref: '#/SynchronizedCursor' }
+            PageToken:
+              allOf:
+                - $ref: '#/SynchronizedPageToken'
+              nullable: true
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required: [AfterCursor, PageToken, PageSize]
+    SubmitSynchronizedMutationParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            OperationId: { $ref: '#/SynchronizedOperationId' }
+            RootConfigurationVersion: { $ref: '#/SynchronizedRootConfigurationVersion' }
+            MutationKind: { $ref: '#/SynchronizedMutationKind' }
+            ItemKind: { $ref: '#/SynchronizedItemKind' }
+            ItemId:
+              allOf:
+                - $ref: '#/SynchronizedItemId'
+              nullable: true
+            NamespacePrecondition:
+              allOf:
+                - $ref: '#/SynchronizedNamespacePreconditionDto'
+              nullable: true
+            ContentPrecondition:
+              allOf:
+                - $ref: '#/SynchronizedContentPreconditionDto'
+              nullable: true
+            CreationSlotExpectation:
+              allOf:
+                - $ref: '#/SynchronizedCreationSlotExpectationDto'
+              nullable: true
+            DestinationParent:
+              allOf:
+                - $ref: '#/SynchronizedParentDto'
+              nullable: true
+            DestinationName:
+              type: string
+              nullable: true
+            PreparedContentId:
+              allOf:
+                - $ref: '#/SynchronizedPreparedContentId'
+              nullable: true
+          required: [OperationId, RootConfigurationVersion, MutationKind, ItemKind]
+    GetSynchronizedOperationParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            OperationId: { $ref: '#/SynchronizedOperationId' }
+          required: [OperationId]
+    PrepareSynchronizedContentParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            OperationId: { $ref: '#/SynchronizedOperationId' }
+            Blake3Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash' }
+            Sha256Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash' }
+            Size:
+              type: integer
+              format: int64
+              minimum: 1
+          required: [OperationId, Blake3Hash, Sha256Hash, Size]
+    PrepareSynchronizedContentReadParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ItemId: { $ref: '#/SynchronizedItemId' }
+            ContentVersionId: { $ref: '#/SynchronizedContentVersionId' }
+          required: [ItemId, ContentVersionId]
+    GetSynchronizedItemParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ItemId: { $ref: '#/SynchronizedItemId' }
+          required: [ItemId]
+    GetSynchronizedNamespaceSlotParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+        - type: object
+          properties:
+            Parent: { $ref: '#/SynchronizedParentDto' }
+            Name: { type: string }
+          required: [Parent, Name]
+    GetSynchronizedStatusParameters:
+      allOf:
+        - $ref: '#/SynchronizedContentParameters'
+
+    SynchronizedRootConfigurationReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedRootConfigurationDto' }
+    SynchronizedRootMutationReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedRootMutationResultDto' }
+    SynchronizedBootstrapPageReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedBootstrapPageDto' }
+    SynchronizedDeltaReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedDeltaResultDto' }
+    SynchronizedOperationReceiptReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedOperationReceiptDto' }
+    SynchronizedPreparedContentReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedPreparedContentDto' }
+    SynchronizedContentReadGrantReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedContentReadGrantDto' }
+    SynchronizedItemReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedItemDto' }
+    SynchronizedNamespaceSlotReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedNamespaceSlotDto' }
+    SynchronizedStatusReturnValue:
+      allOf:
+        - $ref: '#/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue: { $ref: '#/SynchronizedRepositoryStatusDto' }
+    SynchronizedReturnValueBase:
+      type: object
+      properties:
+        EventTime: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+        CorrelationId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId' }
+        Properties:
+          type: object
+          additionalProperties: { type: string }
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+
+    SynchronizedRootConfigurationResponse:
+      description: Current persisted synchronized-root configuration.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedRootConfigurationReturnValue' }
+    SynchronizedRootMutationResponse:
+      description: Exact-version synchronized-root mutation result.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedRootMutationReturnValue' }
+    SynchronizedBootstrapPageResponse:
+      description: One immutable bootstrap baseline page.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedBootstrapPageReturnValue' }
+    SynchronizedDeltaResponse:
+      description: Ordered accepted mutations or a rebaseline instruction.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedDeltaReturnValue' }
+    SynchronizedOperationReceiptResponse:
+      description: Stable synchronized operation receipt.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedOperationReceiptReturnValue' }
+    SynchronizedPreparedContentResponse:
+      description: Authorized immutable-content preparation.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedPreparedContentReturnValue' }
+    SynchronizedContentReadGrantResponse:
+      description: One-use authorized immutable-content read grant.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedContentReadGrantReturnValue' }
+    SynchronizedItemResponse:
+      description: Current synchronized item state.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedItemReturnValue' }
+    SynchronizedNamespaceSlotResponse:
+      description: Current occupied or remembered-vacant namespace slot.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedNamespaceSlotReturnValue' }
+    SynchronizedStatusResponse:
+      description: Content-free synchronized repository status.
+      content:
+        application/json:
+          schema: { $ref: '#/SynchronizedStatusReturnValue' }

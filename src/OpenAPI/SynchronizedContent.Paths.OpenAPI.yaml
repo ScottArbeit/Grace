@@ -1,0 +1,292 @@
+  /sync/roots/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get the persisted synchronized-root configuration.
+      operationId: GetSynchronizedRootConfiguration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedRootConfigurationParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootConfigurationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/roots/list:
+    post:
+      tags:
+        - Synchronized Content
+      summary: List the sorted synchronized roots and their exact configuration version.
+      operationId: ListSynchronizedRoots
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/ListSynchronizedRootsParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootConfigurationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/roots/add:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Add one empty normalized synchronized root under an exact configuration version.
+      operationId: AddSynchronizedRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/AddSynchronizedRootParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootMutationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/roots/remove:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Remove one empty normalized synchronized root under an exact configuration version.
+      operationId: RemoveSynchronizedRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/RemoveSynchronizedRootParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedRootMutationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/bootstrap/start:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Start a bounded bootstrap from the current immutable baseline.
+      operationId: StartSynchronizedBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/StartSynchronizedBootstrapParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedBootstrapPageResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/bootstrap/continue:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Continue one immutable bootstrap baseline page sequence.
+      operationId: ContinueSynchronizedBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/ContinueSynchronizedBootstrapParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedBootstrapPageResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '410': { $ref: './Responses.OpenAPI.yaml#/410' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/deltas/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Read repository-ordered accepted synchronized mutations after an opaque cursor.
+      operationId: GetSynchronizedDeltas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedDeltasParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedDeltaResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/mutations/submit:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Submit one exact idempotent synchronized namespace or content mutation.
+      operationId: SubmitSynchronizedMutation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SubmitSynchronizedMutationParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedOperationReceiptResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '410': { $ref: './Responses.OpenAPI.yaml#/410' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/operations/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get the stable receipt for one authorized synchronized operation identity.
+      operationId: GetSynchronizedOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedOperationParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedOperationReceiptResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/content/prepare:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Prepare exact immutable bytes for a later synchronized mutation.
+      operationId: PrepareSynchronizedContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/PrepareSynchronizedContentParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedPreparedContentResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/content/read:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Prepare a one-use read grant for an authorized retained content version.
+      operationId: PrepareSynchronizedContentRead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/PrepareSynchronizedContentReadParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedContentReadGrantResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/content/{grantId}:
+    get:
+      tags:
+        - Synchronized Content
+      summary: Redeem one authorized short-lived immutable-content read grant.
+      operationId: DownloadSynchronizedContent
+      security: []
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        '200':
+          description: Exact immutable bytes authorized by the one-use grant.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '410': { $ref: './Responses.OpenAPI.yaml#/410' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/items/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get one current synchronized item.
+      operationId: GetSynchronizedItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedItemParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedItemResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/namespace/get-slot:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get one current occupied or remembered-vacant synchronized namespace slot.
+      operationId: GetSynchronizedNamespaceSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedNamespaceSlotParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedNamespaceSlotResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /sync/status/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get content-free synchronized repository status.
+      operationId: GetSynchronizedStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/GetSynchronizedStatusParameters' }
+      responses:
+        '200': { $ref: './SynchronizedContent.Components.OpenAPI.yaml#/SynchronizedStatusResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'

@@ -9,6 +9,7 @@ from grace_generated_openapi_probe.api.directories_api import DirectoriesApi
 from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi
 from grace_generated_openapi_probe.api.owners_api import OwnersApi
 from grace_generated_openapi_probe.api.repositories_api import RepositoriesApi
+from grace_generated_openapi_probe.api.synchronized_content_api import SynchronizedContentApi
 from grace_generated_openapi_probe.api.webhooks_api import WebhooksApi
 from grace_generated_openapi_probe.api.work_items_api import WorkItemsApi
 from grace_generated_openapi_probe.api.default_api import DefaultApi

@@ -3331,6 +3331,353 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /sync/roots/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get the persisted synchronized-root configuration.
+      operationId: GetSynchronizedRootConfiguration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSynchronizedRootConfigurationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedRootConfigurationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/roots/list:
+    post:
+      tags:
+        - Synchronized Content
+      summary: List the sorted synchronized roots and their exact configuration version.
+      operationId: ListSynchronizedRoots
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListSynchronizedRootsParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedRootConfigurationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/roots/add:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Add one empty normalized synchronized root under an exact configuration version.
+      operationId: AddSynchronizedRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddSynchronizedRootParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedRootMutationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/roots/remove:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Remove one empty normalized synchronized root under an exact configuration version.
+      operationId: RemoveSynchronizedRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveSynchronizedRootParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedRootMutationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/bootstrap/start:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Start a bounded bootstrap from the current immutable baseline.
+      operationId: StartSynchronizedBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSynchronizedBootstrapParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedBootstrapPageResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/bootstrap/continue:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Continue one immutable bootstrap baseline page sequence.
+      operationId: ContinueSynchronizedBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContinueSynchronizedBootstrapParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedBootstrapPageResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '410':
+          $ref: '#/components/responses/410'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/deltas/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Read repository-ordered accepted synchronized mutations after an opaque cursor.
+      operationId: GetSynchronizedDeltas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSynchronizedDeltasParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedDeltaResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/mutations/submit:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Submit one exact idempotent synchronized namespace or content mutation.
+      operationId: SubmitSynchronizedMutation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitSynchronizedMutationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedOperationReceiptResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '410':
+          $ref: '#/components/responses/410'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/operations/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get the stable receipt for one authorized synchronized operation identity.
+      operationId: GetSynchronizedOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSynchronizedOperationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedOperationReceiptResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/content/prepare:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Prepare exact immutable bytes for a later synchronized mutation.
+      operationId: PrepareSynchronizedContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareSynchronizedContentParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedPreparedContentResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/content/read:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Prepare a one-use read grant for an authorized retained content version.
+      operationId: PrepareSynchronizedContentRead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareSynchronizedContentReadParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedContentReadGrantResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/content/{grantId}:
+    get:
+      tags:
+        - Synchronized Content
+      summary: Redeem one authorized short-lived immutable-content read grant.
+      operationId: DownloadSynchronizedContent
+      security: []
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        '200':
+          description: Exact immutable bytes authorized by the one-use grant.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '410':
+          $ref: '#/components/responses/410'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/items/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get one current synchronized item.
+      operationId: GetSynchronizedItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSynchronizedItemParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedItemResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/namespace/get-slot:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get one current occupied or remembered-vacant synchronized namespace slot.
+      operationId: GetSynchronizedNamespaceSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSynchronizedNamespaceSlotParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedNamespaceSlotResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /sync/status/get:
+    post:
+      tags:
+        - Synchronized Content
+      summary: Get content-free synchronized repository status.
+      operationId: GetSynchronizedStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSynchronizedStatusParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/SynchronizedStatusResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
 components:
   schemas:
     ApprovalPolicyParameters:
@@ -5195,6 +5542,934 @@ components:
     UploadSessionOperationId:
       description: Caller-supplied idempotency key for one upload-session operation.
       type: string
+    SynchronizedItemId:
+      type: string
+      format: uuid
+    SynchronizedOperationId:
+      type: string
+      format: uuid
+    SynchronizedRootConfigurationVersion:
+      type: string
+      format: uuid
+    SynchronizedNamespaceVersion:
+      type: string
+      format: uuid
+    SynchronizedNamespaceSlotVersion:
+      type: string
+      format: uuid
+    SynchronizedContentVersionId:
+      type: string
+      format: uuid
+    SynchronizedBootstrapId:
+      type: string
+      format: uuid
+    SynchronizedPreparedContentId:
+      type: string
+      format: uuid
+    SynchronizedCursor:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque repository cursor. Clients must not parse or compare its contents.
+    SynchronizedCursorEpoch:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque repository epoch. Clients compare only exact equality.
+    SynchronizedPageToken:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque token for continuing one immutable page sequence.
+    SynchronizedItemKind:
+      type: string
+      enum:
+        - file
+        - directory
+    SynchronizedMutationKind:
+      type: string
+      enum:
+        - createFile
+        - createDirectory
+        - updateContent
+        - rename
+        - move
+        - delete
+    SynchronizedOutcomeKind:
+      type: string
+      enum:
+        - accepted
+        - unchanged
+        - rejected
+        - conflictCopy
+        - stalePolicy
+        - rebaselineRequired
+        - localIncomplete
+    SynchronizedRejectionReason:
+      type: string
+      enum:
+        - namespaceChanged
+        - contentChanged
+        - slotOccupied
+        - itemMissing
+        - itemTombstoned
+        - directoryNotEmpty
+        - kindMismatch
+        - preparedContentExpired
+        - operationIdentityMismatch
+    SynchronizedRootRejectionReason:
+      type: string
+      enum:
+        - slotOccupied
+        - outgoingSystemNotEmpty
+        - rootOverlap
+        - rootLimitExceeded
+        - unsupportedPath
+    SynchronizedParentDto:
+      description: Repository-owned root or directory parent identity.
+      type: object
+      properties:
+        Kind:
+          type: string
+          enum:
+            - root
+            - item
+        RootPath:
+          type: string
+          nullable: true
+        ItemId:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedItemId'
+          nullable: true
+      required:
+        - Kind
+        - RootPath
+        - ItemId
+    SynchronizedNamespaceDto:
+      type: object
+      properties:
+        Parent:
+          $ref: '#/components/schemas/SynchronizedParentDto'
+        Name:
+          type: string
+        NormalizedPath:
+          type: string
+        NamespaceVersion:
+          $ref: '#/components/schemas/SynchronizedNamespaceVersion'
+        SlotVersion:
+          $ref: '#/components/schemas/SynchronizedNamespaceSlotVersion'
+      required:
+        - Parent
+        - Name
+        - NormalizedPath
+        - NamespaceVersion
+        - SlotVersion
+    SynchronizedContentVersionDto:
+      type: object
+      properties:
+        ContentVersionId:
+          $ref: '#/components/schemas/SynchronizedContentVersionId'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Size:
+          type: integer
+          format: int64
+          minimum: 0
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - ContentVersionId
+        - Blake3Hash
+        - Sha256Hash
+        - Size
+        - CreatedAt
+    SynchronizedTombstoneDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ItemKind:
+          $ref: '#/components/schemas/SynchronizedItemKind'
+        DeletedAt:
+          $ref: '#/components/schemas/Instant'
+        DeletedBy:
+          type: string
+        DeleteCursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        LastNamespaceVersion:
+          $ref: '#/components/schemas/SynchronizedNamespaceVersion'
+        LastContentVersionId:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedContentVersionId'
+          nullable: true
+      required:
+        - ItemId
+        - ItemKind
+        - DeletedAt
+        - DeletedBy
+        - DeleteCursor
+        - LastNamespaceVersion
+        - LastContentVersionId
+    SynchronizedConflictProvenanceDto:
+      type: object
+      properties:
+        SourceOperationId:
+          $ref: '#/components/schemas/SynchronizedOperationId'
+        SourceItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        CanonicalItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ConflictItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ConflictPath:
+          type: string
+        AcceptedAt:
+          $ref: '#/components/schemas/Instant'
+        SourceContentVersionId:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedContentVersionId'
+          nullable: true
+        BaseContentVersionId:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedContentVersionId'
+          nullable: true
+      required:
+        - SourceOperationId
+        - SourceItemId
+        - CanonicalItemId
+        - ConflictItemId
+        - ConflictPath
+        - AcceptedAt
+        - SourceContentVersionId
+        - BaseContentVersionId
+    SynchronizedItemDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ItemKind:
+          $ref: '#/components/schemas/SynchronizedItemKind'
+        State:
+          type: string
+          enum:
+            - live
+            - tombstoned
+        LastMutationCursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        RootConfigurationVersion:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        Namespace:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedNamespaceDto'
+          nullable: true
+        Content:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedContentVersionDto'
+          nullable: true
+        Tombstone:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedTombstoneDto'
+          nullable: true
+      required:
+        - ItemId
+        - ItemKind
+        - State
+        - LastMutationCursor
+        - RootConfigurationVersion
+        - Namespace
+        - Content
+        - Tombstone
+    SynchronizedNamespaceSlotDto:
+      type: object
+      properties:
+        Parent:
+          $ref: '#/components/schemas/SynchronizedParentDto'
+        Name:
+          type: string
+        NormalizedPath:
+          type: string
+        SlotVersion:
+          $ref: '#/components/schemas/SynchronizedNamespaceSlotVersion'
+        State:
+          type: string
+          enum:
+            - occupied
+            - vacant
+        OccupantItemId:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedItemId'
+          nullable: true
+      required:
+        - Parent
+        - Name
+        - NormalizedPath
+        - SlotVersion
+        - State
+        - OccupantItemId
+    SynchronizedRootConfigurationDto:
+      type: object
+      properties:
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        Version:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        Roots:
+          type: array
+          maxItems: 128
+          items:
+            type: string
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        CreatedBy:
+          type: string
+        PreviousVersion:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+          nullable: true
+      required:
+        - RepositoryId
+        - Version
+        - Roots
+        - CreatedAt
+        - CreatedBy
+        - PreviousVersion
+    SynchronizedNamespacePreconditionDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ExpectedNamespaceVersion:
+          $ref: '#/components/schemas/SynchronizedNamespaceVersion'
+      required:
+        - ItemId
+        - ExpectedNamespaceVersion
+    SynchronizedContentPreconditionDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ExpectedContentVersionId:
+          $ref: '#/components/schemas/SynchronizedContentVersionId'
+      required:
+        - ItemId
+        - ExpectedContentVersionId
+    SynchronizedCreationSlotExpectationDto:
+      type: object
+      properties:
+        Parent:
+          $ref: '#/components/schemas/SynchronizedParentDto'
+        Name:
+          type: string
+        ExpectedSlotVersion:
+          $ref: '#/components/schemas/SynchronizedNamespaceSlotVersion'
+        ExpectedState:
+          type: string
+          enum:
+            - vacant
+      required:
+        - Parent
+        - Name
+        - ExpectedSlotVersion
+        - ExpectedState
+    SynchronizedMutationDto:
+      type: object
+      properties:
+        Cursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        OperationId:
+          $ref: '#/components/schemas/SynchronizedOperationId'
+        MutationKind:
+          $ref: '#/components/schemas/SynchronizedMutationKind'
+        ItemId:
+          $ref: '#/components/schemas/SynchronizedItemId'
+        ItemKind:
+          $ref: '#/components/schemas/SynchronizedItemKind'
+        AcceptedAt:
+          $ref: '#/components/schemas/Instant'
+        AcceptedBy:
+          type: string
+        RootConfigurationVersion:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        Namespace:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedNamespaceDto'
+          nullable: true
+        Content:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedContentVersionDto'
+          nullable: true
+        Tombstone:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedTombstoneDto'
+          nullable: true
+        Conflict:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedConflictProvenanceDto'
+          nullable: true
+      required:
+        - Cursor
+        - OperationId
+        - MutationKind
+        - ItemId
+        - ItemKind
+        - AcceptedAt
+        - AcceptedBy
+        - RootConfigurationVersion
+        - Namespace
+        - Content
+        - Tombstone
+        - Conflict
+    SynchronizedRebaselineDto:
+      type: object
+      properties:
+        Reason:
+          type: string
+        CurrentEpoch:
+          $ref: '#/components/schemas/SynchronizedCursorEpoch'
+        ServiceFloorCursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        RecommendedBootstrap:
+          type: boolean
+      required:
+        - Reason
+        - CurrentEpoch
+        - ServiceFloorCursor
+        - RecommendedBootstrap
+    SynchronizedOperationReceiptDto:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/SynchronizedOperationId'
+        RequestHash:
+          type: string
+        Outcome:
+          $ref: '#/components/schemas/SynchronizedOutcomeKind'
+        RootConfigurationVersion:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        RecordedAt:
+          $ref: '#/components/schemas/Instant'
+        PrincipalId:
+          type: string
+        Mutation:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedMutationDto'
+          nullable: true
+        Cursor:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedCursor'
+          nullable: true
+        Item:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedItemDto'
+          nullable: true
+        Conflict:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedConflictProvenanceDto'
+          nullable: true
+        ReasonCode:
+          type: string
+          nullable: true
+        CurrentRootConfiguration:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+          nullable: true
+        Rebaseline:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedRebaselineDto'
+          nullable: true
+      required:
+        - OperationId
+        - RequestHash
+        - Outcome
+        - RootConfigurationVersion
+        - RecordedAt
+        - PrincipalId
+        - Mutation
+        - Cursor
+        - Item
+        - Conflict
+        - ReasonCode
+        - CurrentRootConfiguration
+        - Rebaseline
+    SynchronizedRootMutationResultDto:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/SynchronizedOperationId'
+        Outcome:
+          $ref: '#/components/schemas/SynchronizedOutcomeKind'
+        RootConfiguration:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+        ReasonCode:
+          type: string
+          nullable: true
+        RecordedAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - OperationId
+        - Outcome
+        - RootConfiguration
+        - ReasonCode
+        - RecordedAt
+    SynchronizedBootstrapPageDto:
+      type: object
+      properties:
+        BootstrapId:
+          $ref: '#/components/schemas/SynchronizedBootstrapId'
+        BoundaryCursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        CursorEpoch:
+          $ref: '#/components/schemas/SynchronizedCursorEpoch'
+        RootConfiguration:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+        Items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SynchronizedItemDto'
+        NextPageToken:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedPageToken'
+          nullable: true
+      required:
+        - BootstrapId
+        - BoundaryCursor
+        - CursorEpoch
+        - RootConfiguration
+        - Items
+        - NextPageToken
+    SynchronizedDeltaResultDto:
+      type: object
+      properties:
+        Outcome:
+          $ref: '#/components/schemas/SynchronizedOutcomeKind'
+        CursorEpoch:
+          $ref: '#/components/schemas/SynchronizedCursorEpoch'
+        Mutations:
+          type: array
+          items:
+            $ref: '#/components/schemas/SynchronizedMutationDto'
+        LastCursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        HasMore:
+          type: boolean
+        NextPageToken:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedPageToken'
+          nullable: true
+        Rebaseline:
+          allOf:
+            - $ref: '#/components/schemas/SynchronizedRebaselineDto'
+          nullable: true
+      required:
+        - Outcome
+        - CursorEpoch
+        - Mutations
+        - LastCursor
+        - HasMore
+        - NextPageToken
+        - Rebaseline
+    SynchronizedPreparedContentDto:
+      type: object
+      properties:
+        PreparedContentId:
+          $ref: '#/components/schemas/SynchronizedPreparedContentId'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Size:
+          type: integer
+          format: int64
+          minimum: 1
+        UploadRequired:
+          type: boolean
+        UploadInstructions:
+          type: string
+          nullable: true
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - PreparedContentId
+        - Blake3Hash
+        - Sha256Hash
+        - Size
+        - UploadRequired
+        - UploadInstructions
+        - ExpiresAt
+    SynchronizedContentReadGrantDto:
+      type: object
+      properties:
+        GrantId:
+          type: string
+        DownloadPath:
+          type: string
+        Content:
+          $ref: '#/components/schemas/SynchronizedContentVersionDto'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - GrantId
+        - DownloadPath
+        - Content
+        - ExpiresAt
+    SynchronizedRepositoryStatusDto:
+      type: object
+      properties:
+        State:
+          type: string
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RootConfigurationVersion:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        IsCaughtUp:
+          type: boolean
+        RebaselineRequired:
+          type: boolean
+        IsBlocked:
+          type: boolean
+        PendingOperationCount:
+          type: integer
+          format: int32
+          minimum: 0
+        OldestPendingAgeMilliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+        ProjectionLagCount:
+          type: integer
+          format: int64
+          minimum: 0
+        LastCompletedAt:
+          allOf:
+            - $ref: '#/components/schemas/Instant'
+          nullable: true
+      required:
+        - State
+        - RepositoryId
+        - RootConfigurationVersion
+        - IsCaughtUp
+        - RebaselineRequired
+        - IsBlocked
+        - PendingOperationCount
+        - OldestPendingAgeMilliseconds
+        - ProjectionLagCount
+        - LastCompletedAt
+    SynchronizedContentAvailable:
+      type: object
+      description: Content-free best-effort wake. Authorized clients pull durable deltas after receipt.
+      properties:
+        EventName:
+          type: string
+          const: SynchronizedContentAvailable.v1
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        CursorEpoch:
+          $ref: '#/components/schemas/SynchronizedCursorEpoch'
+        AvailableAfterCursor:
+          $ref: '#/components/schemas/SynchronizedCursor'
+        RootConfigurationVersion:
+          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        OccurredAt:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+      required:
+        - EventName
+        - RepositoryId
+        - CursorEpoch
+        - AvailableAfterCursor
+        - RootConfigurationVersion
+        - OccurredAt
+        - CorrelationId
+    SynchronizedContentParameters:
+      description: Repository locator shared by every remote synchronized-content request.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+    GetSynchronizedRootConfigurationParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+    ListSynchronizedRootsParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+    AddSynchronizedRootParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ExpectedVersion:
+              $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+            RootPath:
+              type: string
+            OperationId:
+              $ref: '#/components/schemas/SynchronizedOperationId'
+          required:
+            - ExpectedVersion
+            - RootPath
+            - OperationId
+    RemoveSynchronizedRootParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ExpectedVersion:
+              $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+            RootPath:
+              type: string
+            OperationId:
+              $ref: '#/components/schemas/SynchronizedOperationId'
+          required:
+            - ExpectedVersion
+            - RootPath
+            - OperationId
+    StartSynchronizedBootstrapParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required:
+            - PageSize
+    ContinueSynchronizedBootstrapParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            BootstrapId:
+              $ref: '#/components/schemas/SynchronizedBootstrapId'
+            PageToken:
+              $ref: '#/components/schemas/SynchronizedPageToken'
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required:
+            - BootstrapId
+            - PageToken
+            - PageSize
+    GetSynchronizedDeltasParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            AfterCursor:
+              $ref: '#/components/schemas/SynchronizedCursor'
+            PageToken:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedPageToken'
+              nullable: true
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required:
+            - AfterCursor
+            - PageToken
+            - PageSize
+    SubmitSynchronizedMutationParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            OperationId:
+              $ref: '#/components/schemas/SynchronizedOperationId'
+            RootConfigurationVersion:
+              $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+            MutationKind:
+              $ref: '#/components/schemas/SynchronizedMutationKind'
+            ItemKind:
+              $ref: '#/components/schemas/SynchronizedItemKind'
+            ItemId:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedItemId'
+              nullable: true
+            NamespacePrecondition:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedNamespacePreconditionDto'
+              nullable: true
+            ContentPrecondition:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedContentPreconditionDto'
+              nullable: true
+            CreationSlotExpectation:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedCreationSlotExpectationDto'
+              nullable: true
+            DestinationParent:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedParentDto'
+              nullable: true
+            DestinationName:
+              type: string
+              nullable: true
+            PreparedContentId:
+              allOf:
+                - $ref: '#/components/schemas/SynchronizedPreparedContentId'
+              nullable: true
+          required:
+            - OperationId
+            - RootConfigurationVersion
+            - MutationKind
+            - ItemKind
+    GetSynchronizedOperationParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            OperationId:
+              $ref: '#/components/schemas/SynchronizedOperationId'
+          required:
+            - OperationId
+    PrepareSynchronizedContentParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            OperationId:
+              $ref: '#/components/schemas/SynchronizedOperationId'
+            Blake3Hash:
+              $ref: '#/components/schemas/Blake3Hash'
+            Sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
+            Size:
+              type: integer
+              format: int64
+              minimum: 1
+          required:
+            - OperationId
+            - Blake3Hash
+            - Sha256Hash
+            - Size
+    PrepareSynchronizedContentReadParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ItemId:
+              $ref: '#/components/schemas/SynchronizedItemId'
+            ContentVersionId:
+              $ref: '#/components/schemas/SynchronizedContentVersionId'
+          required:
+            - ItemId
+            - ContentVersionId
+    GetSynchronizedItemParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            ItemId:
+              $ref: '#/components/schemas/SynchronizedItemId'
+          required:
+            - ItemId
+    GetSynchronizedNamespaceSlotParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - type: object
+          properties:
+            Parent:
+              $ref: '#/components/schemas/SynchronizedParentDto'
+            Name:
+              type: string
+          required:
+            - Parent
+            - Name
+    GetSynchronizedStatusParameters:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedContentParameters'
+    SynchronizedReturnValueBase:
+      type: object
+      properties:
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    SynchronizedRootConfigurationReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+    SynchronizedRootMutationReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedRootMutationResultDto'
+    SynchronizedBootstrapPageReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedBootstrapPageDto'
+    SynchronizedDeltaReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedDeltaResultDto'
+    SynchronizedOperationReceiptReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedOperationReceiptDto'
+    SynchronizedPreparedContentReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedPreparedContentDto'
+    SynchronizedContentReadGrantReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedContentReadGrantDto'
+    SynchronizedItemReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedItemDto'
+    SynchronizedNamespaceSlotReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedNamespaceSlotDto'
+    SynchronizedStatusReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/SynchronizedRepositoryStatusDto'
     Instant:
       type: string
       format: date-time
@@ -8029,6 +9304,24 @@ components:
             forbidden:
               summary: Framework authorization failure
               value: Forbidden.
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+    '409':
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+    '410':
+      description: Gone
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
     '500':
       description: Internal Server Error
       content:
@@ -8591,3 +9884,63 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RepositoryReferencesReturnValue'
+    SynchronizedRootConfigurationResponse:
+      description: Current persisted synchronized-root configuration.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedRootConfigurationReturnValue'
+    SynchronizedRootMutationResponse:
+      description: Exact-version synchronized-root mutation result.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedRootMutationReturnValue'
+    SynchronizedBootstrapPageResponse:
+      description: One immutable bootstrap baseline page.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedBootstrapPageReturnValue'
+    SynchronizedDeltaResponse:
+      description: Ordered accepted mutations or a rebaseline instruction.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedDeltaReturnValue'
+    SynchronizedOperationReceiptResponse:
+      description: Stable synchronized operation receipt.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedOperationReceiptReturnValue'
+    SynchronizedPreparedContentResponse:
+      description: Authorized immutable-content preparation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedPreparedContentReturnValue'
+    SynchronizedContentReadGrantResponse:
+      description: One-use authorized immutable-content read grant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedContentReadGrantReturnValue'
+    SynchronizedItemResponse:
+      description: Current synchronized item state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedItemReturnValue'
+    SynchronizedNamespaceSlotResponse:
+      description: Current occupied or remembered-vacant namespace slot.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedNamespaceSlotReturnValue'
+    SynchronizedStatusResponse:
+      description: Content-free synchronized repository status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SynchronizedStatusReturnValue'
