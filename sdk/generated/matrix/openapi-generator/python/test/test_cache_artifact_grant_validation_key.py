@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.directory_version_zip_fill_source import DirectoryVersionZipFillSource
+from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key import CacheArtifactGrantValidationKey
 
-class TestDirectoryVersionZipFillSource(unittest.TestCase):
-    """DirectoryVersionZipFillSource unit test stubs"""
+class TestCacheArtifactGrantValidationKey(unittest.TestCase):
+    """CacheArtifactGrantValidationKey unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,36 +26,42 @@ class TestDirectoryVersionZipFillSource(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> DirectoryVersionZipFillSource:
-        """Test DirectoryVersionZipFillSource
+    def make_instance(self, include_optional) -> CacheArtifactGrantValidationKey:
+        """Test CacheArtifactGrantValidationKey
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `DirectoryVersionZipFillSource`
+        # uncomment below to create an instance of `CacheArtifactGrantValidationKey`
         """
-        model = DirectoryVersionZipFillSource()
+        model = CacheArtifactGrantValidationKey()
         if include_optional:
-            return DirectoryVersionZipFillSource(
-                artifact = grace_generated_openapi_probe.models.directory_version_zip_cache_artifact.DirectoryVersionZipCacheArtifact(
-                    repository_id = '', 
-                    directory_version_id = '', 
-                    blake3_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', ),
-                source_uri = '',
-                source_expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f')
+            return CacheArtifactGrantValidationKey(
+                issuer = 'Grace.Server.CacheArtifactGrant.v1',
+                audience = 'Grace.Cache.Artifact.v1',
+                algorithm = 'ES256',
+                key_id = '',
+                public_jwk = grace_generated_openapi_probe.models.p256_public_jwk.P256PublicJwk(
+                    kty = 'EC', 
+                    crv = 'P-256', 
+                    x = '', 
+                    y = '', )
             )
         else:
-            return DirectoryVersionZipFillSource(
-                artifact = grace_generated_openapi_probe.models.directory_version_zip_cache_artifact.DirectoryVersionZipCacheArtifact(
-                    repository_id = '', 
-                    directory_version_id = '', 
-                    blake3_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', ),
-                source_uri = '',
-                source_expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
+            return CacheArtifactGrantValidationKey(
+                issuer = 'Grace.Server.CacheArtifactGrant.v1',
+                audience = 'Grace.Cache.Artifact.v1',
+                algorithm = 'ES256',
+                key_id = '',
+                public_jwk = grace_generated_openapi_probe.models.p256_public_jwk.P256PublicJwk(
+                    kty = 'EC', 
+                    crv = 'P-256', 
+                    x = '', 
+                    y = '', ),
         )
         """
 
-    def testDirectoryVersionZipFillSource(self):
-        """Test DirectoryVersionZipFillSource"""
+    def testCacheArtifactGrantValidationKey(self):
+        """Test CacheArtifactGrantValidationKey"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

@@ -170,6 +170,8 @@ paths:
   /diff/getDiffByBlake3Hash:
     $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiffByBlake3Hash'
 
+  /cache/artifact-grant-validation-key:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1artifact-grant-validation-key'
   /cache/prepareDirectoryVersionZip:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1prepareDirectoryVersionZip'
   /cache/redeemDirectoryVersionZipFill:
@@ -410,10 +412,12 @@ components:
     GetDiffByBlake3HashParameters:
       $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffByBlake3HashParameters'
 
-    CachePublicJwk:
-      $ref: 'Cache.Components.OpenAPI.yaml#/CachePublicJwk'
-    CacheArtifactDescriptor:
-      $ref: 'Cache.Components.OpenAPI.yaml#/CacheArtifactDescriptor'
+    P256PublicJwk:
+      $ref: 'Cache.Components.OpenAPI.yaml#/P256PublicJwk'
+    DirectoryVersionZipCacheArtifact:
+      $ref: 'Cache.Components.OpenAPI.yaml#/DirectoryVersionZipCacheArtifact'
+    CacheArtifactGrantValidationKey:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheArtifactGrantValidationKey'
     PrepareDirectoryVersionZipParameters:
       $ref: 'Cache.Components.OpenAPI.yaml#/PrepareDirectoryVersionZipParameters'
     RedeemDirectoryVersionZipFillParameters:

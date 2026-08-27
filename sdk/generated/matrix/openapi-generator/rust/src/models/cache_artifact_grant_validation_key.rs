@@ -12,30 +12,64 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PrepareDirectoryVersionZipParameters {
-    /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
-    #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
-    pub correlation_id: Option<String>,
-    /// The entity on whose behalf the action is being performed.
-    #[serde(rename = "Principal", skip_serializing_if = "Option::is_none")]
-    pub principal: Option<String>,
-    #[serde(rename = "RepositoryId")]
-    pub repository_id: uuid::Uuid,
-    #[serde(rename = "DirectoryVersionId")]
-    pub directory_version_id: uuid::Uuid,
-    #[serde(rename = "CachePublicKey")]
-    pub cache_public_key: Box<models::P256PublicJwk>,
+pub struct CacheArtifactGrantValidationKey {
+    #[serde(rename = "Issuer")]
+    pub issuer: Issuer,
+    #[serde(rename = "Audience")]
+    pub audience: Audience,
+    #[serde(rename = "Algorithm")]
+    pub algorithm: Algorithm,
+    #[serde(rename = "KeyId")]
+    pub key_id: String,
+    #[serde(rename = "PublicJwk")]
+    pub public_jwk: Box<models::P256PublicJwk>,
 }
 
-impl PrepareDirectoryVersionZipParameters {
-    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, cache_public_key: models::P256PublicJwk) -> PrepareDirectoryVersionZipParameters {
-        PrepareDirectoryVersionZipParameters {
-            correlation_id: None,
-            principal: None,
-            repository_id,
-            directory_version_id,
-            cache_public_key: Box::new(cache_public_key),
+impl CacheArtifactGrantValidationKey {
+    pub fn new(issuer: Issuer, audience: Audience, algorithm: Algorithm, key_id: String, public_jwk: models::P256PublicJwk) -> CacheArtifactGrantValidationKey {
+        CacheArtifactGrantValidationKey {
+            issuer,
+            audience,
+            algorithm,
+            key_id,
+            public_jwk: Box::new(public_jwk),
         }
+    }
+}
+/// 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum Issuer {
+    #[serde(rename = "Grace.Server.CacheArtifactGrant.v1")]
+    GraceServerCacheArtifactGrantV1,
+}
+
+impl Default for Issuer {
+    fn default() -> Issuer {
+        Self::GraceServerCacheArtifactGrantV1
+    }
+}
+/// 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum Audience {
+    #[serde(rename = "Grace.Cache.Artifact.v1")]
+    GraceCacheArtifactV1,
+}
+
+impl Default for Audience {
+    fn default() -> Audience {
+        Self::GraceCacheArtifactV1
+    }
+}
+/// 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum Algorithm {
+    #[serde(rename = "ES256")]
+    Es256,
+}
+
+impl Default for Algorithm {
+    fn default() -> Algorithm {
+        Self::Es256
     }
 }
 

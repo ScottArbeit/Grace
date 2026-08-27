@@ -27,10 +27,17 @@ class TestCacheApi(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
+    def test_get_cache_artifact_grant_validation_key(self) -> None:
+        """Test case for get_cache_artifact_grant_validation_key
+
+        Get the current Server process public key for local Cache grant validation.
+        """
+        pass
+
     def test_prepare_directory_version_zip(self) -> None:
         """Test case for prepare_directory_version_zip
 
-        Prepare one Server-approved DirectoryVersion ZIP fill.
+        Prepare one Server-approved DirectoryVersion ZIP read and fill.
         """
         pass
 

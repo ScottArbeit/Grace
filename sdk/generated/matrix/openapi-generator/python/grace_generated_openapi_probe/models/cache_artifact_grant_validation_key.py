@@ -18,22 +18,44 @@ import pprint
 import re  # noqa: F401
 import json
 
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List
-from grace_generated_openapi_probe.models.directory_version_zip_cache_artifact import DirectoryVersionZipCacheArtifact
+from grace_generated_openapi_probe.models.p256_public_jwk import P256PublicJwk
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class DirectoryVersionZipFillSource(BaseModel):
+class CacheArtifactGrantValidationKey(BaseModel):
     """
-    DirectoryVersionZipFillSource
+    CacheArtifactGrantValidationKey
     """ # noqa: E501
-    artifact: DirectoryVersionZipCacheArtifact = Field(alias="Artifact")
-    source_uri: StrictStr = Field(alias="SourceUri")
-    source_expires_at: datetime = Field(alias="SourceExpiresAt")
-    __properties: ClassVar[List[str]] = ["Artifact", "SourceUri", "SourceExpiresAt"]
+    issuer: StrictStr = Field(alias="Issuer")
+    audience: StrictStr = Field(alias="Audience")
+    algorithm: StrictStr = Field(alias="Algorithm")
+    key_id: StrictStr = Field(alias="KeyId")
+    public_jwk: P256PublicJwk = Field(alias="PublicJwk")
+    __properties: ClassVar[List[str]] = ["Issuer", "Audience", "Algorithm", "KeyId", "PublicJwk"]
+
+    @field_validator('issuer')
+    def issuer_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['Grace.Server.CacheArtifactGrant.v1']):
+            raise ValueError("must be one of enum values ('Grace.Server.CacheArtifactGrant.v1')")
+        return value
+
+    @field_validator('audience')
+    def audience_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['Grace.Cache.Artifact.v1']):
+            raise ValueError("must be one of enum values ('Grace.Cache.Artifact.v1')")
+        return value
+
+    @field_validator('algorithm')
+    def algorithm_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['ES256']):
+            raise ValueError("must be one of enum values ('ES256')")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -53,7 +75,7 @@ class DirectoryVersionZipFillSource(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of DirectoryVersionZipFillSource from a JSON string"""
+        """Create an instance of CacheArtifactGrantValidationKey from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -74,14 +96,14 @@ class DirectoryVersionZipFillSource(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of artifact
-        if self.artifact:
-            _dict['Artifact'] = self.artifact.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of public_jwk
+        if self.public_jwk:
+            _dict['PublicJwk'] = self.public_jwk.to_dict()
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of DirectoryVersionZipFillSource from a dict"""
+        """Create an instance of CacheArtifactGrantValidationKey from a dict"""
         if obj is None:
             return None
 
@@ -89,9 +111,11 @@ class DirectoryVersionZipFillSource(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "Artifact": DirectoryVersionZipCacheArtifact.from_dict(obj["Artifact"]) if obj.get("Artifact") is not None else None,
-            "SourceUri": obj.get("SourceUri"),
-            "SourceExpiresAt": obj.get("SourceExpiresAt")
+            "Issuer": obj.get("Issuer"),
+            "Audience": obj.get("Audience"),
+            "Algorithm": obj.get("Algorithm"),
+            "KeyId": obj.get("KeyId"),
+            "PublicJwk": P256PublicJwk.from_dict(obj["PublicJwk"]) if obj.get("PublicJwk") is not None else None
         })
         return _obj
 

@@ -37,8 +37,7 @@ docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
 docs/BranchesApi.md
 docs/CacheApi.md
-docs/CacheArtifactDescriptor.md
-docs/CachePublicJwk.md
+docs/CacheArtifactGrantValidationKey.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -86,6 +85,7 @@ docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
 docs/DirectoryVersionSha256HashLookupReturnValue.md
+docs/DirectoryVersionZipCacheArtifact.md
 docs/DirectoryVersionZipFillSource.md
 docs/DirectoryVersionZipPreparation.md
 docs/DiscoverContentBlocksParameters.md
@@ -165,6 +165,7 @@ docs/OwnerParameters.md
 docs/OwnerReturnValue.md
 docs/OwnerType.md
 docs/OwnersApi.md
+docs/P256PublicJwk.md
 docs/PopulateParameters.md
 docs/PrepareDirectoryVersionZipParameters.md
 docs/ProblemDetails.md
@@ -308,8 +309,7 @@ src/models/branch_hash_query_parameters.rs
 src/models/branch_parameters.rs
 src/models/branch_query_parameters.rs
 src/models/branch_return_value.rs
-src/models/cache_artifact_descriptor.rs
-src/models/cache_public_jwk.rs
+src/models/cache_artifact_grant_validation_key.rs
 src/models/change_type.rs
 src/models/claim_reuse_ranges_parameters.rs
 src/models/claimed_reuse_range.rs
@@ -354,6 +354,7 @@ src/models/directory_version_hash_lookup_return_value.rs
 src/models/directory_version_list_return_value.rs
 src/models/directory_version_return_value.rs
 src/models/directory_version_sha256_hash_lookup_return_value.rs
+src/models/directory_version_zip_cache_artifact.rs
 src/models/directory_version_zip_fill_source.rs
 src/models/directory_version_zip_preparation.rs
 src/models/discover_content_blocks_parameters.rs
@@ -432,6 +433,7 @@ src/models/owner_dto.rs
 src/models/owner_parameters.rs
 src/models/owner_return_value.rs
 src/models/owner_type.rs
+src/models/p256_public_jwk.rs
 src/models/populate_parameters.rs
 src/models/prepare_directory_version_zip_parameters.rs
 src/models/problem_details.rs

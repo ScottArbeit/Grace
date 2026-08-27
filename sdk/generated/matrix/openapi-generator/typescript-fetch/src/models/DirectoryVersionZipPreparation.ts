@@ -13,13 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
-import type { CacheArtifactDescriptor } from './CacheArtifactDescriptor';
+import type { DirectoryVersionZipCacheArtifact } from './DirectoryVersionZipCacheArtifact';
 import {
-    CacheArtifactDescriptorFromJSON,
-    CacheArtifactDescriptorFromJSONTyped,
-    CacheArtifactDescriptorToJSON,
-    CacheArtifactDescriptorToJSONTyped,
-} from './CacheArtifactDescriptor';
+    DirectoryVersionZipCacheArtifactFromJSON,
+    DirectoryVersionZipCacheArtifactFromJSONTyped,
+    DirectoryVersionZipCacheArtifactToJSON,
+    DirectoryVersionZipCacheArtifactToJSONTyped,
+} from './DirectoryVersionZipCacheArtifact';
 
 /**
  * 
@@ -29,10 +29,22 @@ import {
 export interface DirectoryVersionZipPreparation {
     /**
      * 
-     * @type {CacheArtifactDescriptor}
+     * @type {DirectoryVersionZipCacheArtifact}
      * @memberof DirectoryVersionZipPreparation
      */
-    descriptor: CacheArtifactDescriptor;
+    artifact: DirectoryVersionZipCacheArtifact;
+    /**
+     * 
+     * @type {string}
+     * @memberof DirectoryVersionZipPreparation
+     */
+    artifactGrant: string;
+    /**
+     * 
+     * @type {Date}
+     * @memberof DirectoryVersionZipPreparation
+     */
+    artifactGrantExpiresAt: Date;
     /**
      * 
      * @type {string}
@@ -57,7 +69,9 @@ export interface DirectoryVersionZipPreparation {
  * Check if a given object implements the DirectoryVersionZipPreparation interface.
  */
 export function instanceOfDirectoryVersionZipPreparation(value: object): value is DirectoryVersionZipPreparation {
-    if (!('descriptor' in value) || value['descriptor'] === undefined) return false;
+    if (!('artifact' in value) || value['artifact'] === undefined) return false;
+    if (!('artifactGrant' in value) || value['artifactGrant'] === undefined) return false;
+    if (!('artifactGrantExpiresAt' in value) || value['artifactGrantExpiresAt'] === undefined) return false;
     if (!('permit' in value) || value['permit'] === undefined) return false;
     if (!('permitExpiresAt' in value) || value['permitExpiresAt'] === undefined) return false;
     if (!('redemptionBytes' in value) || value['redemptionBytes'] === undefined) return false;
@@ -74,7 +88,9 @@ export function DirectoryVersionZipPreparationFromJSONTyped(json: any, ignoreDis
     }
     return {
         
-        'descriptor': CacheArtifactDescriptorFromJSON(json['Descriptor']),
+        'artifact': DirectoryVersionZipCacheArtifactFromJSON(json['Artifact']),
+        'artifactGrant': json['ArtifactGrant'],
+        'artifactGrantExpiresAt': (new Date(json['ArtifactGrantExpiresAt'])),
         'permit': json['Permit'],
         'permitExpiresAt': (new Date(json['PermitExpiresAt'])),
         'redemptionBytes': json['RedemptionBytes'],
@@ -92,7 +108,9 @@ export function DirectoryVersionZipPreparationToJSONTyped(value?: DirectoryVersi
 
     return {
         
-        'Descriptor': CacheArtifactDescriptorToJSON(value['descriptor']),
+        'Artifact': DirectoryVersionZipCacheArtifactToJSON(value['artifact']),
+        'ArtifactGrant': value['artifactGrant'],
+        'ArtifactGrantExpiresAt': value['artifactGrantExpiresAt'].toISOString(),
         'Permit': value['permit'],
         'PermitExpiresAt': value['permitExpiresAt'].toISOString(),
         'RedemptionBytes': value['redemptionBytes'],

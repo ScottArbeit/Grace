@@ -1,26 +1,30 @@
 
-# DirectoryVersionZipFillSource
+# CacheArtifactGrantValidationKey
 
 
 ## Properties
 
 Name | Type
 ------------ | -------------
-`artifact` | [DirectoryVersionZipCacheArtifact](DirectoryVersionZipCacheArtifact.md)
-`sourceUri` | string
-`sourceExpiresAt` | Date
+`issuer` | string
+`audience` | string
+`algorithm` | string
+`keyId` | string
+`publicJwk` | [P256PublicJwk](P256PublicJwk.md)
 
 ## Example
 
 ```typescript
-import type { DirectoryVersionZipFillSource } from '@grace-vcs/generated-openapi-probe'
+import type { CacheArtifactGrantValidationKey } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
-  "artifact": null,
-  "sourceUri": null,
-  "sourceExpiresAt": null,
-} satisfies DirectoryVersionZipFillSource
+  "issuer": null,
+  "audience": null,
+  "algorithm": null,
+  "keyId": null,
+  "publicJwk": null,
+} satisfies CacheArtifactGrantValidationKey
 
 console.log(example)
 
@@ -29,7 +33,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as DirectoryVersionZipFillSource
+const exampleParsed = JSON.parse(exampleJSON) as CacheArtifactGrantValidationKey
 console.log(exampleParsed)
 ```
 

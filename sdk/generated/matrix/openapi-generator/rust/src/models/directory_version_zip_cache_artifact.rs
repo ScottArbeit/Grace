@@ -12,40 +12,22 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CacheArtifactDescriptor {
+pub struct DirectoryVersionZipCacheArtifact {
     #[serde(rename = "RepositoryId")]
     pub repository_id: uuid::Uuid,
     #[serde(rename = "DirectoryVersionId")]
     pub directory_version_id: uuid::Uuid,
-    #[serde(rename = "Kind")]
-    pub kind: Kind,
-    #[serde(rename = "Sha256")]
-    pub sha256: String,
-    #[serde(rename = "Size")]
-    pub size: i64,
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
 }
 
-impl CacheArtifactDescriptor {
-    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, kind: Kind, sha256: String, size: i64) -> CacheArtifactDescriptor {
-        CacheArtifactDescriptor {
+impl DirectoryVersionZipCacheArtifact {
+    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, blake3_hash: String) -> DirectoryVersionZipCacheArtifact {
+        DirectoryVersionZipCacheArtifact {
             repository_id,
             directory_version_id,
-            kind,
-            sha256,
-            size,
+            blake3_hash,
         }
-    }
-}
-/// 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum Kind {
-    #[serde(rename = "DirectoryVersionZip")]
-    DirectoryVersionZip,
-}
-
-impl Default for Kind {
-    fn default() -> Kind {
-        Self::DirectoryVersionZip
     }
 }
 

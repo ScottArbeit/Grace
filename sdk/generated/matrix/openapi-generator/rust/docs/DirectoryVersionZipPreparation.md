@@ -4,7 +4,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**descriptor** | [**models::CacheArtifactDescriptor**](CacheArtifactDescriptor.md) |  | 
+**artifact** | [**models::DirectoryVersionZipCacheArtifact**](DirectoryVersionZipCacheArtifact.md) |  | 
+**artifact_grant** | **String** |  | 
+**artifact_grant_expires_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **permit** | **String** |  | 
 **permit_expires_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **redemption_bytes** | **String** |  | 

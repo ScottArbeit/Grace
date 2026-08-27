@@ -95,7 +95,8 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**resolveReferenceEventBoundary**](docs/BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
-*CacheApi* | [**prepareDirectoryVersionZip**](docs/CacheApi.md#preparedirectoryversionzip) | **POST** /cache/prepareDirectoryVersionZip | Prepare one Server-approved DirectoryVersion ZIP fill.
+*CacheApi* | [**getCacheArtifactGrantValidationKey**](docs/CacheApi.md#getcacheartifactgrantvalidationkey) | **GET** /cache/artifact-grant-validation-key | Get the current Server process public key for local Cache grant validation.
+*CacheApi* | [**prepareDirectoryVersionZip**](docs/CacheApi.md#preparedirectoryversionzip) | **POST** /cache/prepareDirectoryVersionZip | Prepare one Server-approved DirectoryVersion ZIP read and fill.
 *CacheApi* | [**redeemDirectoryVersionZipFill**](docs/CacheApi.md#redeemdirectoryversionzipfill) | **POST** /cache/redeemDirectoryVersionZipFill | Redeem one permit and Cache process signature for a read-only ZIP source.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirmContentBlockUpload**](docs/DefaultApi.md#confirmcontentblockupload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
@@ -205,8 +206,7 @@ All URIs are relative to *http://localhost:5000*
 - [BranchParameters](docs/BranchParameters.md)
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
-- [CacheArtifactDescriptor](docs/CacheArtifactDescriptor.md)
-- [CachePublicJwk](docs/CachePublicJwk.md)
+- [CacheArtifactGrantValidationKey](docs/CacheArtifactGrantValidationKey.md)
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
@@ -251,6 +251,7 @@ All URIs are relative to *http://localhost:5000*
 - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
 - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
 - [DirectoryVersionSha256HashLookupReturnValue](docs/DirectoryVersionSha256HashLookupReturnValue.md)
+- [DirectoryVersionZipCacheArtifact](docs/DirectoryVersionZipCacheArtifact.md)
 - [DirectoryVersionZipFillSource](docs/DirectoryVersionZipFillSource.md)
 - [DirectoryVersionZipPreparation](docs/DirectoryVersionZipPreparation.md)
 - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
@@ -328,6 +329,7 @@ All URIs are relative to *http://localhost:5000*
 - [OwnerParameters](docs/OwnerParameters.md)
 - [OwnerReturnValue](docs/OwnerReturnValue.md)
 - [OwnerType](docs/OwnerType.md)
+- [P256PublicJwk](docs/P256PublicJwk.md)
 - [PopulateParameters](docs/PopulateParameters.md)
 - [PrepareDirectoryVersionZipParameters](docs/PrepareDirectoryVersionZipParameters.md)
 - [ProblemDetails](docs/ProblemDetails.md)

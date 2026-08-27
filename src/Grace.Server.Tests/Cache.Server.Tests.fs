@@ -14,6 +14,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Parameters.Cache
 open Grace.Shared.Utilities
+open Grace.Types.ArtifactGrant
 open Grace.Types.Common
 open NUnit.Framework
 
@@ -138,10 +139,14 @@ type CacheServerIntegrationTests() =
             try
                 do! waitForCache cacheClient
                 let artifactPath = $"/repositories/{repositoryId}/directory-version-zips/{directoryVersion.DirectoryVersionId}"
-                use! miss = cacheClient.GetAsync(artifactPath)
-                Assert.That(miss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+                let! publicKey = cacheClient.GetFromJsonAsync<P256PublicJwk>("/fill-public-key", Constants.JsonSerializerOptions)
 
-                let! publicKey = cacheClient.GetFromJsonAsync<CachePublicJwk>("/fill-public-key", Constants.JsonSerializerOptions)
+                let getArtifact grant =
+                    task {
+                        use request = new HttpRequestMessage(HttpMethod.Get, artifactPath)
+                        request.Headers.Authorization <- Headers.AuthenticationHeaderValue("Bearer", grant)
+                        return! cacheClient.SendAsync(request)
+                    }
 
                 let prepare () =
                     task {
@@ -156,22 +161,24 @@ type CacheServerIntegrationTests() =
                     }
 
                 let! stalePreparation = prepare ()
+                use! miss = getArtifact stalePreparation.ArtifactGrant
+                Assert.That(miss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
                 do! changeReaderRole false callerId repositoryId
                 use! staleFill = cacheClient.PostAsJsonAsync(artifactPath + "/fill", {| Permit = stalePreparation.Permit |}, Constants.JsonSerializerOptions)
                 Assert.That(staleFill.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
-                use! stillMissing = cacheClient.GetAsync(artifactPath)
+                use! stillMissing = getArtifact stalePreparation.ArtifactGrant
                 Assert.That(stillMissing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
 
                 do! changeReaderRole true callerId repositoryId
                 let! freshPreparation = prepare ()
                 use! fill = cacheClient.PostAsJsonAsync(artifactPath + "/fill", {| Permit = freshPreparation.Permit |}, Constants.JsonSerializerOptions)
                 Assert.That(fill.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), fill.Content.ReadAsStringAsync().Result)
-                use! hit = cacheClient.GetAsync(artifactPath)
+                use! hit = getArtifact freshPreparation.ArtifactGrant
                 Assert.That(hit.StatusCode, Is.EqualTo(HttpStatusCode.OK))
                 Assert.That(hit.Content.Headers.ContentType.MediaType, Is.EqualTo("application/zip"))
 
-                use! hitBypassesRedemption = cacheClient.PostAsJsonAsync(artifactPath + "/fill", {| Permit = "invalid-on-hit" |})
-                Assert.That(hitBypassesRedemption.StatusCode, Is.EqualTo(HttpStatusCode.NoContent))
+                use! invalidHitPermit = cacheClient.PostAsJsonAsync(artifactPath + "/fill", {| Permit = "invalid-on-hit" |})
+                Assert.That(invalidHitPermit.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
                 let direct = Parameters.DirectoryVersion.GetZipFileParameters()
                 direct.OwnerId <- ownerId
@@ -188,9 +195,9 @@ type CacheServerIntegrationTests() =
                 Directory.Delete(root, true)
         }
 
-    /// Proves an existing ZIP without its exact descriptor metadata has no compatibility preparation path.
+    /// Proves an existing ZIP without its exact artifact metadata has no compatibility preparation path.
     [<Test>]
-    member _.``preparation rejects an existing ZIP without descriptor metadata``() =
+    member _.``preparation rejects an existing ZIP without artifact metadata``() =
         task {
             let repositoryId = repositoryIds[1]
 
@@ -215,7 +222,7 @@ type CacheServerIntegrationTests() =
             use! response = Client.PostAsync("/cache/prepareDirectoryVersionZip", createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
-            Assert.That(body, Does.Contain("descriptor metadata is unavailable"))
+            Assert.That(body, Does.Contain("artifact metadata is unavailable"))
             Assert.That(body, Does.Not.Contain("sig="))
             Assert.That(body, Does.Not.Contain("SharedAccessSignature"))
         }
@@ -270,9 +277,9 @@ type CacheServerIntegrationTests() =
             Assert.That(Uri.IsWellFormedUriString(redemptionEnvelope.ReturnValue.SourceUri, UriKind.Absolute), Is.True)
         }
 
-    /// Proves access revoked after descriptor preparation still prevents the prepared SAS from leaving Server.
+    /// Proves access revoked after artifact preparation still prevents the prepared SAS from leaving Server.
     [<Test>]
-    member _.``redemption rechecks access after descriptor preparation before releasing source``() =
+    member _.``redemption rechecks access after artifact preparation before releasing source``() =
         task {
             let repositoryId = repositoryIds[2]
 
@@ -309,7 +316,9 @@ type CacheServerIntegrationTests() =
             try
                 do! waitForCache cacheClient
                 let artifactPath = $"/repositories/{repositoryId}/directory-version-zips/{rootDirectory.DirectoryVersionId}"
-                use! initialMiss = cacheClient.GetAsync(artifactPath)
+                use initialMissRequest = new HttpRequestMessage(HttpMethod.Get, artifactPath)
+                initialMissRequest.Headers.Authorization <- Headers.AuthenticationHeaderValue("Bearer", preparation.ArtifactGrant)
+                use! initialMiss = cacheClient.SendAsync(initialMissRequest)
                 Assert.That(initialMiss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
                 use request = new HttpRequestMessage(HttpMethod.Post, "/cache/redeemDirectoryVersionZipFill")
                 request.Headers.Add("X-Grace-Test-Cache-Redemption-Gate-Port", string gatePort)
@@ -331,7 +340,9 @@ type CacheServerIntegrationTests() =
                 Assert.That(body, Does.Not.Contain("sourceUri"))
                 Assert.That(body, Does.Not.Contain("sig="))
                 Assert.That(body, Does.Not.Contain("SharedAccessSignature"))
-                use! finalMiss = cacheClient.GetAsync(artifactPath)
+                use finalMissRequest = new HttpRequestMessage(HttpMethod.Get, artifactPath)
+                finalMissRequest.Headers.Authorization <- Headers.AuthenticationHeaderValue("Bearer", preparation.ArtifactGrant)
+                use! finalMiss = cacheClient.SendAsync(finalMissRequest)
                 Assert.That(finalMiss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
             finally
                 AspireTestHost.releaseDescriptionClearPreAppendTestGate listener

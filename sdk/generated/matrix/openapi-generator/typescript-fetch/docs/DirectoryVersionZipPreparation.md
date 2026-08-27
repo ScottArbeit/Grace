@@ -6,7 +6,9 @@
 
 Name | Type
 ------------ | -------------
-`descriptor` | [CacheArtifactDescriptor](CacheArtifactDescriptor.md)
+`artifact` | [DirectoryVersionZipCacheArtifact](DirectoryVersionZipCacheArtifact.md)
+`artifactGrant` | string
+`artifactGrantExpiresAt` | Date
 `permit` | string
 `permitExpiresAt` | Date
 `redemptionBytes` | string
@@ -18,7 +20,9 @@ import type { DirectoryVersionZipPreparation } from '@grace-vcs/generated-openap
 
 // TODO: Update the object below with actual values
 const example = {
-  "descriptor": null,
+  "artifact": null,
+  "artifactGrant": null,
+  "artifactGrantExpiresAt": null,
   "permit": null,
   "permitExpiresAt": null,
   "redemptionBytes": null,

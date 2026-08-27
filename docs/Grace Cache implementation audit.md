@@ -1,136 +1,65 @@
 # Grace Cache implementation audit
 
-## GC-CAL-01 clean-main translation
+## Delivery history
 
-Issue [#965](https://github.com/ScottArbeit/Grace/issues/965) translates the proven GC-CAL-00 one-ZIP lifecycle into
-the internal `Grace.Cache.Storage` library on clean `main`. The selected base is
-`3346f8244babbd222ec1f8f5f591eafe31c45190`; the prior Cache pull request is source-level salvage only and does not
-provide ancestry or host topology.
-
-## Implemented storage boundary
-
-| Area | Result |
+| Calibration | Delivered behavior |
 | --- | --- |
-| Project shape | F# `Microsoft.NET.Sdk` library compiling only `CacheStore.fs` and `CacheArtifactStore.fs` |
-| Database ownership | Stable database path, sidecar process lock, lease lifetime, WAL, foreign keys, bounded busy handling, and one-operation serialization |
-| Artifact state | Exact immutable tuple with `Absent -> Staging -> Complete` only |
-| Publication | Same-root staging, exact streaming SHA-256 and size verification, deterministic opaque final path, and no replacement |
-| Restart behavior | Verified `Staging` plus final file completes; incomplete staging cleans to `Absent`; `Complete` disagreement fails closed |
-| Validation | Sixteen injected before/after crash cases, integrity mismatch, tuple conflicts, traversal-shaped identity, unknown residue, disagreement, and child-process locking |
+| GC-CAL-01 and GC-CAL-02 | Private SQLite ownership, same-root staging, exact publication order, finite restart classification, and loopback ZIP serving |
+| GC-CAL-03 | HTTP miss-to-hit tracer with a separate fill operation |
+| GC-CAL-04 | Cache-required Connect, typed capacity retry, ZIP staging, and the unchanged Working Directory Update boundary |
+| GC-CAL-05 | Server-signed BLAKE3 read grants, grant-before-lookup admission, exact-generation storage, and client BLAKE3 verification |
 
-## GC-CAL-02 loopback read delivery
+Issue #597 remains completed. Issue #1035 is the first post-Issue #597 Product V1 tracer and does not reuse legacy Cache branch ancestry.
 
-GC-CAL-02 added one F# ASP.NET Core host and one localhost-only exact-tuple read route. Its separate storage reader
-opened the existing SQLite database in immutable read-only mode, queried only an exact `Complete` tuple, derived the
-opaque final path, and verified the stored size and lowercase SHA-256 before serving `application/zip`. Startup required
-the existing database, managed root, artifact directory, and schema. The reader did not open the writer store, acquire
-its process lock, create sidecars or directories, classify residue, clean up, or mutate.
+## GC-CAL-05 implementation
 
-That calibration route required caller-supplied `canonicalIdentity`, `sha256`, and `size` query values and exposed no
-fill route. Its writer held the global operation gate across staging, streaming, hashing, and publication. Issue #999
-replaced those temporary boundaries with the delivered Product V1 HTTP path below.
+Grace Server owns one ephemeral P-256 process key. Authenticated `POST /cache/prepareDirectoryVersionZip` checks current repository access, confirms or creates the root ZIP, reads `zip_blake3hash`, and returns:
 
-## Delivered miss-to-hit implementation
+- `DirectoryVersionZipCacheArtifact` with repository ID, directory-version ID, and BLAKE3;
+- a compact ES256 read grant with a fixed five-minute lifetime;
+- the existing separate fill permit and redemption bytes.
 
-Issue #999 replaced the exact-tuple read route with an identity-only repository and immutable directory-version route.
-`grace connect` first asks Cache for a verified hit. On a miss, it obtains a Server-signed
-60-second permit bound to the authenticated user, artifact, and an ephemeral Cache process key. Cache redeems that
-permit for the Server-owned descriptor and a 15-minute read-only Blob SAS, retrieves and validates the bytes, commits
-them, and returns no ZIP bytes from the fill operation. Connect repeats the independent Cache `GET`; there is no Direct
-fallback.
+Anonymous `GET /cache/artifact-grant-validation-key` publishes only the fixed issuer, audience, algorithm, key ID, and public P-256 JWK.
 
-The fill coordinator is process-local and keyed by the immutable artifact. Same-artifact callers share one leader.
-Different artifacts use bounded active-fill capacity and typed backpressure without an unbounded queue. Connect retries
-only that backpressure for a 60-second monotonic budget. Once redemption starts, client cancellation detaches the
-waiter but does not cancel the shared immutable fill.
+Grace Cache validates the Bearer grant before any local state lookup. It checks algorithm, key ID, signature, issuer, audience, time bounds, method, route, artifact kind, repository, directory version, and BLAKE3. A known key stays local. An unknown key ID performs at most one refresh from the configured Server.
 
-### Algorithm test result
+The fill operation validates the separate permit before an existing-hit shortcut. Read grants and fill permits remain distinct capabilities.
 
-Before Issue #999, a disposable F# executable test used a real scratch filesystem and SQLite database to test the
-effect order. All nine cases passed:
+## Storage and producer audit
 
-- happy-path commit;
-- 200 concurrent same-artifact callers with one source request;
-- follower cancellation without leader cancellation;
-- conflicting immutable tuples;
-- bounded distinct-fill capacity and later retry;
-- two overlapping downloads with serialized publication;
-- size or SHA-256 rejection;
-- restart after staged bytes, `Staging`, final move, and `Complete`; and
-- 500 concurrent verified hits.
+The development Cache schema version is 3. The exact stored generation includes repository ID, directory-version ID, and BLAKE3. Cache commit, reopen, staged-byte, and final-byte checks recompute only BLAKE3. SHA-256 and size are not Cache integrity inputs.
 
-Issue #999 implemented that effect order. Network streaming and hashing run outside the global store-operation gate.
-Only a short publication section reclassifies the artifact, inserts `Staging`, moves the verified same-root file, and
-transitions to `Complete`. Restart classifies SQLite plus filesystem state and never resumes a network stream.
+Directory-version ZIP production computes SHA-256 and BLAKE3 once over the same temporary stream, resets that stream, and reuses it for Blob upload. Blob metadata names are `zip_sha256hash`, `zip_blake3hash`, and `zip_size`.
 
-### Implemented seams
+The durable lifecycle remains `Absent -> Staging -> Complete`. No migration, retirement state, cleanup scheduler, replay store, or second lifecycle was added.
 
-| Area | Implemented result |
-| --- | --- |
-| `Grace.Cache.Storage` | Separates network staging from short exact publication and retains existing restart classifications. |
-| `Grace.Cache` | Provides ephemeral P-256 identity, identity-only read, permit-only fill, coalescing, bounded capacity, and typed errors. |
-| `Grace.Server` | Provides narrow ZIP preparation and signed-permit redemption while leaving Direct `getZipFile` unchanged. |
-| Directory-version ZIP producer | Writes lowercase SHA-256 and exact size as Blob metadata with the ZIP. |
-| `Grace.SDK` and shared contracts | Provide preparation and redemption DTOs and typed calls without exposing the SAS to CLI code. |
-| `Grace.CLI` | Provides explicit Cache-required Connect selection, Cache stream orchestration, and bounded typed backpressure retry. |
-| Tests and generated surfaces | Cover bindings, access revalidation, effects, restart, concurrency, generated API artifacts, CLI selection, and Cache stream orchestration. |
+## CLI and Working Directory Update audit
 
-Persistent identity, enrollment, liveness, assignment, revocation, recursive metadata, complete-root publication,
-prefetch, scheduling, durable retry queues, reconciliation, and generalized recovery remain deferred.
+Cache-required Connect reads the Cache fill key and completes Server preparation before its first artifact GET. Both the initial and post-fill GET carry a read grant. The post-fill request reuses the grant while valid and obtains a replacement after expiry.
 
-## GC-CAL-03 delivered HTTP tracer
+The CLI copies the complete response to a temporary staging file, recomputes BLAKE3, and resets the stream before invoking ZIP staging. A mismatch does not invoke the ZIP consumer, Working Directory Update, or Direct fallback.
 
-Issue #999, merged by PR #1001, delivered the Server-approved HTTP miss-to-hit path on `main`. The current Cache host
-now supports identity-only verified reads, ephemeral process-key publication, permit-only fill, Server redemption,
-independent integrity validation, bounded distinct fills, same-artifact coalescing, and a separate post-commit `GET`.
-At the GC-CAL-03 checkpoint, Direct `directory/getZipFile` behavior and `grace connect` remained unchanged.
+Direct Connect and Working Directory Update source contracts are unchanged.
 
-## GC-CAL-04 delivery result
+## Contract propagation
 
-Issue #1031, merged by PR #1032 as `05e7dd6c5fab8c2f613d9bb97c8d1395606be0c5`, completed the Cache-required Connect
-contract with these fixed integration choices:
+The shared DTOs, Server SDK, OpenAPI source fragments, bundled OpenAPI 3.2 document, 3.1.2 generator projection, proof manifest, and generated SDK metadata are derived from the same contract. The Server endpoint authorization manifest lists preparation as authenticated and both validation-key publication and permit redemption as anonymous transport boundaries.
 
-- Syntax: `grace connect <repository> --cache-required`; absence means Direct.
-- Selection: per invocation only. No configuration or environment value silently selects Cache, and no
-  `CachePreferred` mode exists.
-- URI precedence: `--cache-uri`, then `GRACE_CACHE_URI`, otherwise fail before effects. The accepted value is an
-  absolute loopback HTTP URI with an explicit port and is never persisted in repository configuration.
-- Failure: every Cache failure is terminal except the accepted 60-second retry for typed capacity backpressure. There
-  is no Direct fallback.
-- Cache sequence: exact verified `GET`; on `404`, public-key `GET`, authenticated Server preparation, permit-only fill
-  `POST`, and an independent verified `GET`.
-- Retry: only HTTP `429` with problem code `CacheFillCapacityExceeded` retries. Each retry obtains a fresh Server permit
-  and uses a monotonic 60-second budget with bounded exponential delay capped at two seconds.
-- Local update: both Direct and Cache ZIP streams enter `ConnectZipStaging.prepare`; prepared content then enters the
-  existing `WorkingDirectoryUpdate.Connect.run` call exactly once.
-- Unchanged surfaces: Direct retrieval, WDU contracts and algorithms, Cache and Server routes, SDK and shared contracts,
-  OpenAPI and generated artifacts, persisted configuration, and local status shapes do not change in GC-CAL-04.
+## Focused validation
 
-GC-CAL-04 changed only the Connect Cache HTTP client, the two CLI options and URI validation, Cache-required source
-selection and orchestration, typed capacity retry, focused CLI tests, and these two Cache documents. CachePreferred,
-repository-persisted Cache location, durable retry, and any second working-directory writer remain outside this slice.
+The implementation includes focused tests for:
 
-### Review and validation
+- compact ES256 issuance, exact validation, malformed artifacts, substitution, and strict expiry;
+- Server process signing and fill-permit binding;
+- known-key local validation and one unknown-key refresh;
+- grant-required Cache reads and exact-generation serving;
+- BLAKE3 commit, reopen, corruption, conflict, and injected restart boundaries;
+- fill coalescing, permit-before-hit behavior, and distinct-fill capacity;
+- preparation-before-GET, grant reuse, controlled-clock replacement, and BLAKE3-before-consumption;
+- Cache-required Connect composition with no Direct fallback or Working Directory Update on failure.
 
-- R1 reviewed candidate `6ea3489e3df354d9262b26f34433c662f1829dcb` and accepted three repairs: bound Server
-  preparation by the remaining 60-second retry budget, detach promptly when the caller cancels an in-flight
-  preparation, and add deterministic Cache-to-staging-to-WDU composition coverage.
-- The consolidated repair produced approved head `ef47dbe2d9cff7cda9d555e6f0fa9ca69ba2dedc`. R2 returned `VERIFIED` with all
-  three items closed, no direct repair regression, and no scope escape.
-- GitHub Validate run `32934622196` passed on the approved head. The approved head and merge commit have the same tree,
-  `61bab6337f400bbeb06c71abf9ebe4eba6c04ca1`.
-- Focused tests covered deadline crossing, prompt cancellation, real ZIP staging and local WDU application, and
-  invalid-ZIP cleanup with no WDU entry.
-- A live external Server plus loopback Cache pair was not run. Deterministic tests cover the Server-to-Cache seams and
-  Cache-to-staging-to-WDU composition, including real local ZIP staging and WDU behavior.
+## Residual risk and deferred work
 
-### Issue #597 completion verdict
+A bearer grant may be replayed for the same immutable generation during its five-minute lifetime. A Server restart replaces the ephemeral validation key. Unmatched old generations may remain on disk until later retirement work, but exact BLAKE3 selection prevents them from satisfying a new grant.
 
-No next Tier 2 child is selected. The accepted Product V1 outcome is implemented, reviewed, validated, and present on
-`main`. PR #1033 merged the current-state reconciliation in this document and `docs/Grace Cache.md`, closing Issue #597
-as completed. Future Cache capabilities require fresh design and issue-readiness work against then-current evidence.
-
-Historical Cache issues, branches, pull requests, worktrees, and dirty state remain preserved. Persistent identity,
-enrollment, liveness, assignment, revocation, recursive metadata, complete-root publication, prefetch, scheduling,
-retention, cleanup, Watch or Operations integration, durable retry queues, reconciliation, generalized recovery,
-platform parity, HA/DR, and hostile-root defense remain deferred.
+Status commands, persisted Cache configuration, FileVersion and ContentBlock retrieval, non-loopback operation, durable keys, replay tracking, rotation, retirement delivery, prefetch, and HA/DR remain deferred.

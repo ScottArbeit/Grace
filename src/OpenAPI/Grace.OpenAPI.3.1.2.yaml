@@ -1683,11 +1683,25 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /cache/artifact-grant-validation-key:
+    get:
+      tags:
+        - Cache
+      summary: Get the current Server process public key for local Cache grant validation.
+      operationId: GetCacheArtifactGrantValidationKey
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheArtifactGrantValidationKeyResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /cache/prepareDirectoryVersionZip:
     post:
       tags:
         - Cache
-      summary: Prepare one Server-approved DirectoryVersion ZIP fill.
+      summary: Prepare one Server-approved DirectoryVersion ZIP read and fill.
       operationId: PrepareDirectoryVersionZip
       requestBody:
         required: true
@@ -4075,7 +4089,7 @@ components:
               $ref: '#/components/schemas/Blake3HashPrefix'
             Blake3Hash2:
               $ref: '#/components/schemas/Blake3HashPrefix'
-    CachePublicJwk:
+    P256PublicJwk:
       type: object
       required:
         - Kty
@@ -4093,14 +4107,12 @@ components:
           type: string
         'Y':
           type: string
-    CacheArtifactDescriptor:
+    DirectoryVersionZipCacheArtifact:
       type: object
       required:
         - RepositoryId
         - DirectoryVersionId
-        - Kind
-        - Sha256
-        - Size
+        - Blake3Hash
       properties:
         RepositoryId:
           type: string
@@ -4108,16 +4120,31 @@ components:
         DirectoryVersionId:
           type: string
           format: uuid
-        Kind:
-          type: string
-          const: DirectoryVersionZip
-        Sha256:
+        Blake3Hash:
           type: string
           pattern: ^[0-9a-f]{64}$
-        Size:
-          type: integer
-          format: int64
-          minimum: 0
+    CacheArtifactGrantValidationKey:
+      type: object
+      required:
+        - Issuer
+        - Audience
+        - Algorithm
+        - KeyId
+        - PublicJwk
+      properties:
+        Issuer:
+          type: string
+          const: Grace.Server.CacheArtifactGrant.v1
+        Audience:
+          type: string
+          const: Grace.Cache.Artifact.v1
+        Algorithm:
+          type: string
+          const: ES256
+        KeyId:
+          type: string
+        PublicJwk:
+          $ref: '#/components/schemas/P256PublicJwk'
     PrepareDirectoryVersionZipParameters:
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
@@ -4134,7 +4161,7 @@ components:
               type: string
               format: uuid
             CachePublicKey:
-              $ref: '#/components/schemas/CachePublicJwk'
+              $ref: '#/components/schemas/P256PublicJwk'
     RedeemDirectoryVersionZipFillParameters:
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
@@ -4150,13 +4177,20 @@ components:
     DirectoryVersionZipPreparation:
       type: object
       required:
-        - Descriptor
+        - Artifact
+        - ArtifactGrant
+        - ArtifactGrantExpiresAt
         - Permit
         - PermitExpiresAt
         - RedemptionBytes
       properties:
-        Descriptor:
-          $ref: '#/components/schemas/CacheArtifactDescriptor'
+        Artifact:
+          $ref: '#/components/schemas/DirectoryVersionZipCacheArtifact'
+        ArtifactGrant:
+          type: string
+        ArtifactGrantExpiresAt:
+          type: string
+          format: date-time
         Permit:
           type: string
         PermitExpiresAt:
@@ -4167,12 +4201,12 @@ components:
     DirectoryVersionZipFillSource:
       type: object
       required:
-        - Descriptor
+        - Artifact
         - SourceUri
         - SourceExpiresAt
       properties:
-        Descriptor:
-          $ref: '#/components/schemas/CacheArtifactDescriptor'
+        Artifact:
+          $ref: '#/components/schemas/DirectoryVersionZipCacheArtifact'
         SourceUri:
           type: string
           format: uri
@@ -8338,14 +8372,20 @@ components:
                 Properties:
                   DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
                   DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    CacheArtifactGrantValidationKeyResponse:
+      description: Current Server process public key and fixed Cache grant validation contract.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CacheArtifactGrantValidationKey'
     DirectoryVersionZipPreparationResponse:
-      description: Prepared immutable artifact, permit, expiry, and exact redemption bytes.
+      description: Exact immutable artifact with a five-minute read grant and separate fill permit.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/DirectoryVersionZipPreparation'
     DirectoryVersionZipFillSourceResponse:
-      description: Exact descriptor and fresh read-only Blob source.
+      description: Exact artifact and fresh read-only Blob source.
       content:
         application/json:
           schema:

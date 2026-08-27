@@ -1,8 +1,23 @@
+  /cache/artifact-grant-validation-key:
+    get:
+      tags:
+        - Cache
+      summary: Get the current Server process public key for local Cache grant validation.
+      operationId: GetCacheArtifactGrantValidationKey
+      security: []
+      responses:
+        '200':
+          $ref: './Cache.Components.OpenAPI.yaml#/CacheArtifactGrantValidationKeyResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /cache/prepareDirectoryVersionZip:
     post:
       tags:
         - Cache
-      summary: Prepare one Server-approved DirectoryVersion ZIP fill.
+      summary: Prepare one Server-approved DirectoryVersion ZIP read and fill.
       operationId: PrepareDirectoryVersionZip
       requestBody:
         required: true

@@ -1,5 +1,5 @@
 
-# CacheArtifactDescriptor
+# DirectoryVersionZipCacheArtifact
 
 
 ## Properties
@@ -8,23 +8,19 @@ Name | Type
 ------------ | -------------
 `repositoryId` | string
 `directoryVersionId` | string
-`kind` | string
-`sha256` | string
-`size` | number
+`blake3Hash` | string
 
 ## Example
 
 ```typescript
-import type { CacheArtifactDescriptor } from '@grace-vcs/generated-openapi-probe'
+import type { DirectoryVersionZipCacheArtifact } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
   "repositoryId": null,
   "directoryVersionId": null,
-  "kind": null,
-  "sha256": null,
-  "size": null,
-} satisfies CacheArtifactDescriptor
+  "blake3Hash": null,
+} satisfies DirectoryVersionZipCacheArtifact
 
 console.log(example)
 
@@ -33,7 +29,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as CacheArtifactDescriptor
+const exampleParsed = JSON.parse(exampleJSON) as DirectoryVersionZipCacheArtifact
 console.log(exampleParsed)
 ```
 

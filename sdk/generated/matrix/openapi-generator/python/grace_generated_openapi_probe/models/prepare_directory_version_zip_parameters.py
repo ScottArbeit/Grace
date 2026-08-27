@@ -21,7 +21,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
-from grace_generated_openapi_probe.models.cache_public_jwk import CachePublicJwk
+from grace_generated_openapi_probe.models.p256_public_jwk import P256PublicJwk
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -34,7 +34,7 @@ class PrepareDirectoryVersionZipParameters(BaseModel):
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
     repository_id: UUID = Field(alias="RepositoryId")
     directory_version_id: UUID = Field(alias="DirectoryVersionId")
-    cache_public_key: CachePublicJwk = Field(alias="CachePublicKey")
+    cache_public_key: P256PublicJwk = Field(alias="CachePublicKey")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "RepositoryId", "DirectoryVersionId", "CachePublicKey"]
 
     model_config = ConfigDict(
@@ -95,7 +95,7 @@ class PrepareDirectoryVersionZipParameters(BaseModel):
             "Principal": obj.get("Principal"),
             "RepositoryId": obj.get("RepositoryId"),
             "DirectoryVersionId": obj.get("DirectoryVersionId"),
-            "CachePublicKey": CachePublicJwk.from_dict(obj["CachePublicKey"]) if obj.get("CachePublicKey") is not None else None
+            "CachePublicKey": P256PublicJwk.from_dict(obj["CachePublicKey"]) if obj.get("CachePublicKey") is not None else None
         })
         return _obj
 

@@ -13,13 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
-import type { CachePublicJwk } from './CachePublicJwk';
+import type { P256PublicJwk } from './P256PublicJwk';
 import {
-    CachePublicJwkFromJSON,
-    CachePublicJwkFromJSONTyped,
-    CachePublicJwkToJSON,
-    CachePublicJwkToJSONTyped,
-} from './CachePublicJwk';
+    P256PublicJwkFromJSON,
+    P256PublicJwkFromJSONTyped,
+    P256PublicJwkToJSON,
+    P256PublicJwkToJSONTyped,
+} from './P256PublicJwk';
 
 /**
  * 
@@ -53,10 +53,10 @@ export interface PrepareDirectoryVersionZipParameters {
     directoryVersionId: string;
     /**
      * 
-     * @type {CachePublicJwk}
+     * @type {P256PublicJwk}
      * @memberof PrepareDirectoryVersionZipParameters
      */
-    cachePublicKey: CachePublicJwk;
+    cachePublicKey: P256PublicJwk;
 }
 
 /**
@@ -83,7 +83,7 @@ export function PrepareDirectoryVersionZipParametersFromJSONTyped(json: any, ign
         'principal': json['Principal'] == null ? undefined : json['Principal'],
         'repositoryId': json['RepositoryId'],
         'directoryVersionId': json['DirectoryVersionId'],
-        'cachePublicKey': CachePublicJwkFromJSON(json['CachePublicKey']),
+        'cachePublicKey': P256PublicJwkFromJSON(json['CachePublicKey']),
     };
 }
 
@@ -102,7 +102,7 @@ export function PrepareDirectoryVersionZipParametersToJSONTyped(value?: PrepareD
         'Principal': value['principal'],
         'RepositoryId': value['repositoryId'],
         'DirectoryVersionId': value['directoryVersionId'],
-        'CachePublicKey': CachePublicJwkToJSON(value['cachePublicKey']),
+        'CachePublicKey': P256PublicJwkToJSON(value['cachePublicKey']),
     };
 }
 

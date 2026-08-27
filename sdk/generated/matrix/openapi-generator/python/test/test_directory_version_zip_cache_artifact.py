@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.cache_artifact_descriptor import CacheArtifactDescriptor
+from grace_generated_openapi_probe.models.directory_version_zip_cache_artifact import DirectoryVersionZipCacheArtifact
 
-class TestCacheArtifactDescriptor(unittest.TestCase):
-    """CacheArtifactDescriptor unit test stubs"""
+class TestDirectoryVersionZipCacheArtifact(unittest.TestCase):
+    """DirectoryVersionZipCacheArtifact unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,34 +26,30 @@ class TestCacheArtifactDescriptor(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> CacheArtifactDescriptor:
-        """Test CacheArtifactDescriptor
+    def make_instance(self, include_optional) -> DirectoryVersionZipCacheArtifact:
+        """Test DirectoryVersionZipCacheArtifact
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `CacheArtifactDescriptor`
+        # uncomment below to create an instance of `DirectoryVersionZipCacheArtifact`
         """
-        model = CacheArtifactDescriptor()
+        model = DirectoryVersionZipCacheArtifact()
         if include_optional:
-            return CacheArtifactDescriptor(
+            return DirectoryVersionZipCacheArtifact(
                 repository_id = '',
                 directory_version_id = '',
-                kind = 'DirectoryVersionZip',
-                sha256 = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
-                size = 0
+                blake3_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b'
             )
         else:
-            return CacheArtifactDescriptor(
+            return DirectoryVersionZipCacheArtifact(
                 repository_id = '',
                 directory_version_id = '',
-                kind = 'DirectoryVersionZip',
-                sha256 = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
-                size = 0,
+                blake3_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
         )
         """
 
-    def testCacheArtifactDescriptor(self):
-        """Test CacheArtifactDescriptor"""
+    def testDirectoryVersionZipCacheArtifact(self):
+        """Test DirectoryVersionZipCacheArtifact"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

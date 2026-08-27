@@ -1,4 +1,4 @@
-    CachePublicJwk:
+    P256PublicJwk:
       type: object
       required: [Kty, Crv, X, Y]
       properties:
@@ -6,15 +6,22 @@
         Crv: { type: string, const: P-256 }
         X: { type: string }
         Y: { type: string }
-    CacheArtifactDescriptor:
+    DirectoryVersionZipCacheArtifact:
       type: object
-      required: [RepositoryId, DirectoryVersionId, Kind, Sha256, Size]
+      required: [RepositoryId, DirectoryVersionId, Blake3Hash]
       properties:
         RepositoryId: { type: string, format: uuid }
         DirectoryVersionId: { type: string, format: uuid }
-        Kind: { type: string, const: DirectoryVersionZip }
-        Sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
-        Size: { type: integer, format: int64, minimum: 0 }
+        Blake3Hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+    CacheArtifactGrantValidationKey:
+      type: object
+      required: [Issuer, Audience, Algorithm, KeyId, PublicJwk]
+      properties:
+        Issuer: { type: string, const: Grace.Server.CacheArtifactGrant.v1 }
+        Audience: { type: string, const: Grace.Cache.Artifact.v1 }
+        Algorithm: { type: string, const: ES256 }
+        KeyId: { type: string }
+        PublicJwk: { $ref: '#/P256PublicJwk' }
     PrepareDirectoryVersionZipParameters:
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
@@ -23,7 +30,7 @@
           properties:
             RepositoryId: { type: string, format: uuid }
             DirectoryVersionId: { type: string, format: uuid }
-            CachePublicKey: { $ref: '#/CachePublicJwk' }
+            CachePublicKey: { $ref: '#/P256PublicJwk' }
     RedeemDirectoryVersionZipFillParameters:
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
@@ -34,26 +41,33 @@
             Signature: { type: string }
     DirectoryVersionZipPreparation:
       type: object
-      required: [Descriptor, Permit, PermitExpiresAt, RedemptionBytes]
+      required: [Artifact, ArtifactGrant, ArtifactGrantExpiresAt, Permit, PermitExpiresAt, RedemptionBytes]
       properties:
-        Descriptor: { $ref: '#/CacheArtifactDescriptor' }
+        Artifact: { $ref: '#/DirectoryVersionZipCacheArtifact' }
+        ArtifactGrant: { type: string }
+        ArtifactGrantExpiresAt: { type: string, format: date-time }
         Permit: { type: string }
         PermitExpiresAt: { type: string, format: date-time }
         RedemptionBytes: { type: string }
     DirectoryVersionZipFillSource:
       type: object
-      required: [Descriptor, SourceUri, SourceExpiresAt]
+      required: [Artifact, SourceUri, SourceExpiresAt]
       properties:
-        Descriptor: { $ref: '#/CacheArtifactDescriptor' }
+        Artifact: { $ref: '#/DirectoryVersionZipCacheArtifact' }
         SourceUri: { type: string, format: uri }
         SourceExpiresAt: { type: string, format: date-time }
     DirectoryVersionZipPreparationResponse:
-      description: Prepared immutable artifact, permit, expiry, and exact redemption bytes.
+      description: Exact immutable artifact with a five-minute read grant and separate fill permit.
       content:
         application/json:
           schema: { $ref: '#/DirectoryVersionZipPreparation' }
     DirectoryVersionZipFillSourceResponse:
-      description: Exact descriptor and fresh read-only Blob source.
+      description: Exact artifact and fresh read-only Blob source.
       content:
         application/json:
           schema: { $ref: '#/DirectoryVersionZipFillSource' }
+    CacheArtifactGrantValidationKeyResponse:
+      description: Current Server process public key and fixed Cache grant validation contract.
+      content:
+        application/json:
+          schema: { $ref: '#/CacheArtifactGrantValidationKey' }

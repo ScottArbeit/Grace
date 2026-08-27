@@ -40,7 +40,7 @@ class TestPrepareDirectoryVersionZipParameters(unittest.TestCase):
                 principal = '',
                 repository_id = '',
                 directory_version_id = '',
-                cache_public_key = grace_generated_openapi_probe.models.cache_public_jwk.CachePublicJwk(
+                cache_public_key = grace_generated_openapi_probe.models.p256_public_jwk.P256PublicJwk(
                     kty = 'EC', 
                     crv = 'P-256', 
                     x = '', 
@@ -50,7 +50,7 @@ class TestPrepareDirectoryVersionZipParameters(unittest.TestCase):
             return PrepareDirectoryVersionZipParameters(
                 repository_id = '',
                 directory_version_id = '',
-                cache_public_key = grace_generated_openapi_probe.models.cache_public_jwk.CachePublicJwk(
+                cache_public_key = grace_generated_openapi_probe.models.p256_public_jwk.P256PublicJwk(
                     kty = 'EC', 
                     crv = 'P-256', 
                     x = '', 

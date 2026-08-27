@@ -14,6 +14,11 @@
 
 import * as runtime from '../runtime';
 import {
+    type CacheArtifactGrantValidationKey,
+    CacheArtifactGrantValidationKeyFromJSON,
+    CacheArtifactGrantValidationKeyToJSON,
+} from '../models/CacheArtifactGrantValidationKey';
+import {
     type DirectoryVersionZipFillSource,
     DirectoryVersionZipFillSourceFromJSON,
     DirectoryVersionZipFillSourceToJSON,
@@ -53,6 +58,43 @@ export interface RedeemDirectoryVersionZipFillRequest {
 export class CacheApi extends runtime.BaseAPI {
 
     /**
+     * Creates request options for getCacheArtifactGrantValidationKey without sending the request
+     */
+    async getCacheArtifactGrantValidationKeyRequestOpts(): Promise<runtime.RequestOpts> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/cache/artifact-grant-validation-key`;
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     * Get the current Server process public key for local Cache grant validation.
+     */
+    async getCacheArtifactGrantValidationKeyRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheArtifactGrantValidationKey>> {
+        const requestOptions = await this.getCacheArtifactGrantValidationKeyRequestOpts();
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => CacheArtifactGrantValidationKeyFromJSON(jsonValue));
+    }
+
+    /**
+     * Get the current Server process public key for local Cache grant validation.
+     */
+    async getCacheArtifactGrantValidationKey(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheArtifactGrantValidationKey> {
+        const response = await this.getCacheArtifactGrantValidationKeyRaw(initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Creates request options for prepareDirectoryVersionZip without sending the request
      */
     async prepareDirectoryVersionZipRequestOpts(requestParameters: PrepareDirectoryVersionZipRequest): Promise<runtime.RequestOpts> {
@@ -90,7 +132,7 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Prepare one Server-approved DirectoryVersion ZIP fill.
+     * Prepare one Server-approved DirectoryVersion ZIP read and fill.
      */
     async prepareDirectoryVersionZipRaw(requestParameters: PrepareDirectoryVersionZipRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionZipPreparation>> {
         const requestOptions = await this.prepareDirectoryVersionZipRequestOpts(requestParameters);
@@ -100,7 +142,7 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Prepare one Server-approved DirectoryVersion ZIP fill.
+     * Prepare one Server-approved DirectoryVersion ZIP read and fill.
      */
     async prepareDirectoryVersionZip(requestParameters: PrepareDirectoryVersionZipRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionZipPreparation> {
         const response = await this.prepareDirectoryVersionZipRaw(requestParameters, initOverrides);

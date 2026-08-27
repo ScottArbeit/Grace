@@ -13,8 +13,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DirectoryVersionZipPreparation {
-    #[serde(rename = "Descriptor")]
-    pub descriptor: Box<models::CacheArtifactDescriptor>,
+    #[serde(rename = "Artifact")]
+    pub artifact: Box<models::DirectoryVersionZipCacheArtifact>,
+    #[serde(rename = "ArtifactGrant")]
+    pub artifact_grant: String,
+    #[serde(rename = "ArtifactGrantExpiresAt")]
+    pub artifact_grant_expires_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "Permit")]
     pub permit: String,
     #[serde(rename = "PermitExpiresAt")]
@@ -24,9 +28,11 @@ pub struct DirectoryVersionZipPreparation {
 }
 
 impl DirectoryVersionZipPreparation {
-    pub fn new(descriptor: models::CacheArtifactDescriptor, permit: String, permit_expires_at: chrono::DateTime<chrono::FixedOffset>, redemption_bytes: String) -> DirectoryVersionZipPreparation {
+    pub fn new(artifact: models::DirectoryVersionZipCacheArtifact, artifact_grant: String, artifact_grant_expires_at: chrono::DateTime<chrono::FixedOffset>, permit: String, permit_expires_at: chrono::DateTime<chrono::FixedOffset>, redemption_bytes: String) -> DirectoryVersionZipPreparation {
         DirectoryVersionZipPreparation {
-            descriptor: Box::new(descriptor),
+            artifact: Box::new(artifact),
+            artifact_grant,
+            artifact_grant_expires_at,
             permit,
             permit_expires_at,
             redemption_bytes,

@@ -10,7 +10,7 @@ Name | Type
 `principal` | string
 `repositoryId` | string
 `directoryVersionId` | string
-`cachePublicKey` | [CachePublicJwk](CachePublicJwk.md)
+`cachePublicKey` | [P256PublicJwk](P256PublicJwk.md)
 
 ## Example
 

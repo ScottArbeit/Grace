@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**descriptor** | [**models::CacheArtifactDescriptor**](CacheArtifactDescriptor.md) |  | 
+**artifact** | [**models::DirectoryVersionZipCacheArtifact**](DirectoryVersionZipCacheArtifact.md) |  | 
 **source_uri** | **String** |  | 
 **source_expires_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 

@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CachePublicJwk {
+pub struct P256PublicJwk {
     #[serde(rename = "Kty")]
     pub kty: Kty,
     #[serde(rename = "Crv")]
@@ -23,9 +23,9 @@ pub struct CachePublicJwk {
     pub y: String,
 }
 
-impl CachePublicJwk {
-    pub fn new(kty: Kty, crv: Crv, x: String, y: String) -> CachePublicJwk {
-        CachePublicJwk {
+impl P256PublicJwk {
+    pub fn new(kty: Kty, crv: Crv, x: String, y: String) -> P256PublicJwk {
+        P256PublicJwk {
             kty,
             crv,
             x,
