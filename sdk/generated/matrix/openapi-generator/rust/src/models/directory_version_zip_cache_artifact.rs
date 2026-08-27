@@ -12,49 +12,22 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CachePublicJwk {
-    #[serde(rename = "Kty")]
-    pub kty: Kty,
-    #[serde(rename = "Crv")]
-    pub crv: Crv,
-    #[serde(rename = "X")]
-    pub x: String,
-    #[serde(rename = "Y")]
-    pub y: String,
+pub struct DirectoryVersionZipCacheArtifact {
+    #[serde(rename = "RepositoryId")]
+    pub repository_id: uuid::Uuid,
+    #[serde(rename = "DirectoryVersionId")]
+    pub directory_version_id: uuid::Uuid,
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
 }
 
-impl CachePublicJwk {
-    pub fn new(kty: Kty, crv: Crv, x: String, y: String) -> CachePublicJwk {
-        CachePublicJwk {
-            kty,
-            crv,
-            x,
-            y,
+impl DirectoryVersionZipCacheArtifact {
+    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, blake3_hash: String) -> DirectoryVersionZipCacheArtifact {
+        DirectoryVersionZipCacheArtifact {
+            repository_id,
+            directory_version_id,
+            blake3_hash,
         }
-    }
-}
-/// 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum Kty {
-    #[serde(rename = "EC")]
-    Ec,
-}
-
-impl Default for Kty {
-    fn default() -> Kty {
-        Self::Ec
-    }
-}
-/// 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum Crv {
-    #[serde(rename = "P-256")]
-    P256,
-}
-
-impl Default for Crv {
-    fn default() -> Crv {
-        Self::P256
     }
 }
 

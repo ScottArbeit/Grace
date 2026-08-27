@@ -16,68 +16,44 @@ import { mapValues } from '../runtime';
 /**
  * 
  * @export
- * @interface CacheArtifactDescriptor
+ * @interface DirectoryVersionZipCacheArtifact
  */
-export interface CacheArtifactDescriptor {
+export interface DirectoryVersionZipCacheArtifact {
     /**
      * 
      * @type {string}
-     * @memberof CacheArtifactDescriptor
+     * @memberof DirectoryVersionZipCacheArtifact
      */
     repositoryId: string;
     /**
      * 
      * @type {string}
-     * @memberof CacheArtifactDescriptor
+     * @memberof DirectoryVersionZipCacheArtifact
      */
     directoryVersionId: string;
     /**
      * 
-     * @type {CacheArtifactDescriptorKindEnum}
-     * @memberof CacheArtifactDescriptor
-     */
-    kind: CacheArtifactDescriptorKindEnum;
-    /**
-     * 
      * @type {string}
-     * @memberof CacheArtifactDescriptor
+     * @memberof DirectoryVersionZipCacheArtifact
      */
-    sha256: string;
-    /**
-     * 
-     * @type {number}
-     * @memberof CacheArtifactDescriptor
-     */
-    size: number;
+    blake3Hash: string;
 }
 
-
 /**
- * @export
+ * Check if a given object implements the DirectoryVersionZipCacheArtifact interface.
  */
-export const CacheArtifactDescriptorKindEnum = {
-    DirectoryVersionZip: 'DirectoryVersionZip'
-} as const;
-export type CacheArtifactDescriptorKindEnum = typeof CacheArtifactDescriptorKindEnum[keyof typeof CacheArtifactDescriptorKindEnum];
-
-
-/**
- * Check if a given object implements the CacheArtifactDescriptor interface.
- */
-export function instanceOfCacheArtifactDescriptor(value: object): value is CacheArtifactDescriptor {
+export function instanceOfDirectoryVersionZipCacheArtifact(value: object): value is DirectoryVersionZipCacheArtifact {
     if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
     if (!('directoryVersionId' in value) || value['directoryVersionId'] === undefined) return false;
-    if (!('kind' in value) || value['kind'] === undefined) return false;
-    if (!('sha256' in value) || value['sha256'] === undefined) return false;
-    if (!('size' in value) || value['size'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
     return true;
 }
 
-export function CacheArtifactDescriptorFromJSON(json: any): CacheArtifactDescriptor {
-    return CacheArtifactDescriptorFromJSONTyped(json, false);
+export function DirectoryVersionZipCacheArtifactFromJSON(json: any): DirectoryVersionZipCacheArtifact {
+    return DirectoryVersionZipCacheArtifactFromJSONTyped(json, false);
 }
 
-export function CacheArtifactDescriptorFromJSONTyped(json: any, ignoreDiscriminator: boolean): CacheArtifactDescriptor {
+export function DirectoryVersionZipCacheArtifactFromJSONTyped(json: any, ignoreDiscriminator: boolean): DirectoryVersionZipCacheArtifact {
     if (json == null) {
         return json;
     }
@@ -85,17 +61,15 @@ export function CacheArtifactDescriptorFromJSONTyped(json: any, ignoreDiscrimina
         
         'repositoryId': json['RepositoryId'],
         'directoryVersionId': json['DirectoryVersionId'],
-        'kind': json['Kind'],
-        'sha256': json['Sha256'],
-        'size': json['Size'],
+        'blake3Hash': json['Blake3Hash'],
     };
 }
 
-export function CacheArtifactDescriptorToJSON(json: any): CacheArtifactDescriptor {
-    return CacheArtifactDescriptorToJSONTyped(json, false);
+export function DirectoryVersionZipCacheArtifactToJSON(json: any): DirectoryVersionZipCacheArtifact {
+    return DirectoryVersionZipCacheArtifactToJSONTyped(json, false);
 }
 
-export function CacheArtifactDescriptorToJSONTyped(value?: CacheArtifactDescriptor | null, ignoreDiscriminator: boolean = false): any {
+export function DirectoryVersionZipCacheArtifactToJSONTyped(value?: DirectoryVersionZipCacheArtifact | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
@@ -104,9 +78,7 @@ export function CacheArtifactDescriptorToJSONTyped(value?: CacheArtifactDescript
         
         'RepositoryId': value['repositoryId'],
         'DirectoryVersionId': value['directoryVersionId'],
-        'Kind': value['kind'],
-        'Sha256': value['sha256'],
-        'Size': value['size'],
+        'Blake3Hash': value['blake3Hash'],
     };
 }
 

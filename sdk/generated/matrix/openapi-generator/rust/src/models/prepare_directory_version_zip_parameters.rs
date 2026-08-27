@@ -24,11 +24,11 @@ pub struct PrepareDirectoryVersionZipParameters {
     #[serde(rename = "DirectoryVersionId")]
     pub directory_version_id: uuid::Uuid,
     #[serde(rename = "CachePublicKey")]
-    pub cache_public_key: Box<models::CachePublicJwk>,
+    pub cache_public_key: Box<models::P256PublicJwk>,
 }
 
 impl PrepareDirectoryVersionZipParameters {
-    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, cache_public_key: models::CachePublicJwk) -> PrepareDirectoryVersionZipParameters {
+    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, cache_public_key: models::P256PublicJwk) -> PrepareDirectoryVersionZipParameters {
         PrepareDirectoryVersionZipParameters {
             correlation_id: None,
             principal: None,

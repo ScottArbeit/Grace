@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Security.Cryptography
 open System.Text
+open Blake3
 open Grace.Cache.Storage
 open NUnit.Framework
 
@@ -13,20 +14,30 @@ module CacheArtifactStoreTestSupport =
     /// Returns fixed ZIP-shaped bytes used to verify size and digest independently on every test write.
     let payload = Encoding.UTF8.GetBytes("grace-cache-directory-version-zip\n")
 
-    /// Returns the lowercase SHA-256 digest required by the calibrated artifact tuple.
+    /// Returns the lowercase BLAKE3 digest required by the exact artifact generation.
     let digest (bytes: byte array) =
-        Convert
-            .ToHexString(SHA256.HashData(bytes))
-            .ToLowerInvariant()
+        use hasher = Hasher.New()
+        hasher.Update(bytes)
+        let digest = Array.zeroCreate<byte> Hash.Size
+        hasher.Finalize(digest)
+        Convert.ToHexString(digest).ToLowerInvariant()
 
-    /// Creates the one supported local tuple for a test identity and exact byte sequence.
-    let createTuple canonicalIdentity (bytes: byte array) =
+    /// Creates one supported exact generation from a stable test seed and byte sequence.
+    let createTuple (identitySeed: string) (bytes: byte array) =
+        let repositoryId = "11111111-1111-1111-1111-111111111111"
+
+        let directoryVersionId =
+            Guid(SHA256.HashData(Encoding.UTF8.GetBytes(identitySeed))[0..15])
+                .ToString("D")
+
+        let blake3 = digest bytes
+
         {
             Kind = "DirectoryVersionZip"
-            CanonicalIdentity = canonicalIdentity
-            DirectoryVersionId = "directory-version-001"
-            ExpectedSha256 = digest bytes
-            ExpectedSize = int64 bytes.LongLength
+            CanonicalIdentity = CacheArtifactStore.canonicalIdentity repositoryId directoryVersionId blake3
+            RepositoryId = repositoryId
+            DirectoryVersionId = directoryVersionId
+            ExpectedBlake3 = blake3
         }
 
     /// Opens an isolated private database and managed artifact root for a single test case.
@@ -68,7 +79,7 @@ module CacheArtifactStoreTestSupport =
             | "staging-allocation" -> StagingAllocation
             | "staging-file-creation" -> StagingFileCreation
             | "byte-write-and-close" -> ByteWriteAndClose
-            | "size-and-sha256-verification" -> SizeAndSha256Verification
+            | "blake3-verification" -> Blake3Verification
             | "staging-state-transaction" -> StagingStateTransaction
             | "final-file-publication" -> FinalFilePublication
             | "complete-state-transaction" -> CompleteStateTransaction
@@ -174,7 +185,7 @@ type CacheArtifactStoreTests() =
                 "staging-allocation"
                 "staging-file-creation"
                 "byte-write-and-close"
-                "size-and-sha256-verification"
+                "blake3-verification"
                 "staging-state-transaction"
                 "final-file-publication"
                 "complete-state-transaction"
@@ -284,7 +295,7 @@ type CacheArtifactStoreTests() =
 
     /// Confirms immutable tuple differences cannot replace the already completed baseline bytes.
     [<Test>]
-    member _.``digest size root kind and canonical identity controls preserve completed bytes``() =
+    member _.``generation binding and invalid tuple controls preserve completed bytes``() =
         let databasePath, _, store, artifacts = CacheArtifactStoreTestSupport.createSession ()
         let baseline = CacheArtifactStoreTestSupport.createTuple "artifact://grace/root/zip/001" CacheArtifactStoreTestSupport.payload
 
@@ -299,11 +310,11 @@ type CacheArtifactStoreTests() =
 
             let controls =
                 [
-                    "digest", { baseline with ExpectedSha256 = String.replicate 64 "0" }, ShouldConflict
-                    "size", { baseline with ExpectedSize = baseline.ExpectedSize + 1L }, ShouldConflict
-                    "root", { baseline with DirectoryVersionId = "directory-version-002" }, ShouldConflict
+                    "digest", { baseline with ExpectedBlake3 = String.replicate 64 "0" }, ShouldReject
+                    "repository", { baseline with RepositoryId = "22222222-2222-2222-2222-222222222222" }, ShouldReject
+                    "directory-version", { baseline with DirectoryVersionId = "22222222-2222-2222-2222-222222222222" }, ShouldReject
                     "kind", { baseline with Kind = "OtherKind" }, ShouldReject
-                    "canonical-identity", { baseline with CanonicalIdentity = "artifact://grace/root/zip/002" }, ShouldFill
+                    "canonical-identity", { baseline with CanonicalIdentity = "artifact://grace/root/zip/002" }, ShouldReject
                 ]
 
             for name, candidate, expectedKind in controls do

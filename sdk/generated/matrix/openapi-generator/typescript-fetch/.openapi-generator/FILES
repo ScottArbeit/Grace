@@ -36,8 +36,8 @@ docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
 docs/BranchesApi.md
 docs/CacheApi.md
-docs/CacheArtifactDescriptor.md
-docs/CachePublicJwk.md
+docs/CacheArtifactGrantValidationKey.md
+docs/CacheArtifactGrantValidationKeyReturnValue.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -85,6 +85,7 @@ docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
 docs/DirectoryVersionSha256HashLookupReturnValue.md
+docs/DirectoryVersionZipCacheArtifact.md
 docs/DirectoryVersionZipFillSource.md
 docs/DirectoryVersionZipPreparation.md
 docs/DiscoverContentBlocksParameters.md
@@ -164,6 +165,7 @@ docs/OwnerParameters.md
 docs/OwnerReturnValue.md
 docs/OwnerType.md
 docs/OwnersApi.md
+docs/P256PublicJwk.md
 docs/PopulateParameters.md
 docs/PrepareDirectoryVersionZipParameters.md
 docs/ProblemDetails.md
@@ -306,8 +308,8 @@ src/models/BranchHashQueryParameters.ts
 src/models/BranchParameters.ts
 src/models/BranchQueryParameters.ts
 src/models/BranchReturnValue.ts
-src/models/CacheArtifactDescriptor.ts
-src/models/CachePublicJwk.ts
+src/models/CacheArtifactGrantValidationKey.ts
+src/models/CacheArtifactGrantValidationKeyReturnValue.ts
 src/models/ChangeType.ts
 src/models/ClaimReuseRangesParameters.ts
 src/models/ClaimedReuseRange.ts
@@ -352,6 +354,7 @@ src/models/DirectoryVersionHashLookupReturnValue.ts
 src/models/DirectoryVersionListReturnValue.ts
 src/models/DirectoryVersionReturnValue.ts
 src/models/DirectoryVersionSha256HashLookupReturnValue.ts
+src/models/DirectoryVersionZipCacheArtifact.ts
 src/models/DirectoryVersionZipFillSource.ts
 src/models/DirectoryVersionZipPreparation.ts
 src/models/DiscoverContentBlocksParameters.ts
@@ -429,6 +432,7 @@ src/models/OwnerDto.ts
 src/models/OwnerParameters.ts
 src/models/OwnerReturnValue.ts
 src/models/OwnerType.ts
+src/models/P256PublicJwk.ts
 src/models/PopulateParameters.ts
 src/models/PrepareDirectoryVersionZipParameters.ts
 src/models/ProblemDetails.ts

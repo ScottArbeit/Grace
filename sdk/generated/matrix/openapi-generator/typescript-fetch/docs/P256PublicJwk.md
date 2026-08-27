@@ -1,5 +1,5 @@
 
-# CachePublicJwk
+# P256PublicJwk
 
 
 ## Properties
@@ -14,7 +14,7 @@ Name | Type
 ## Example
 
 ```typescript
-import type { CachePublicJwk } from '@grace-vcs/generated-openapi-probe'
+import type { P256PublicJwk } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
@@ -22,7 +22,7 @@ const example = {
   "crv": null,
   "x": null,
   "y": null,
-} satisfies CachePublicJwk
+} satisfies P256PublicJwk
 
 console.log(example)
 
@@ -31,7 +31,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as CachePublicJwk
+const exampleParsed = JSON.parse(exampleJSON) as P256PublicJwk
 console.log(exampleParsed)
 ```
 

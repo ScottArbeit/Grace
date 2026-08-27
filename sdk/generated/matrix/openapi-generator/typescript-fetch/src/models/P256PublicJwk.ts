@@ -16,31 +16,31 @@ import { mapValues } from '../runtime';
 /**
  * 
  * @export
- * @interface CachePublicJwk
+ * @interface P256PublicJwk
  */
-export interface CachePublicJwk {
+export interface P256PublicJwk {
     /**
      * 
-     * @type {CachePublicJwkKtyEnum}
-     * @memberof CachePublicJwk
+     * @type {P256PublicJwkKtyEnum}
+     * @memberof P256PublicJwk
      */
-    kty: CachePublicJwkKtyEnum;
+    kty: P256PublicJwkKtyEnum;
     /**
      * 
-     * @type {CachePublicJwkCrvEnum}
-     * @memberof CachePublicJwk
+     * @type {P256PublicJwkCrvEnum}
+     * @memberof P256PublicJwk
      */
-    crv: CachePublicJwkCrvEnum;
+    crv: P256PublicJwkCrvEnum;
     /**
      * 
      * @type {string}
-     * @memberof CachePublicJwk
+     * @memberof P256PublicJwk
      */
     x: string;
     /**
      * 
      * @type {string}
-     * @memberof CachePublicJwk
+     * @memberof P256PublicJwk
      */
     y: string;
 }
@@ -49,24 +49,24 @@ export interface CachePublicJwk {
 /**
  * @export
  */
-export const CachePublicJwkKtyEnum = {
+export const P256PublicJwkKtyEnum = {
     Ec: 'EC'
 } as const;
-export type CachePublicJwkKtyEnum = typeof CachePublicJwkKtyEnum[keyof typeof CachePublicJwkKtyEnum];
+export type P256PublicJwkKtyEnum = typeof P256PublicJwkKtyEnum[keyof typeof P256PublicJwkKtyEnum];
 
 /**
  * @export
  */
-export const CachePublicJwkCrvEnum = {
+export const P256PublicJwkCrvEnum = {
     P256: 'P-256'
 } as const;
-export type CachePublicJwkCrvEnum = typeof CachePublicJwkCrvEnum[keyof typeof CachePublicJwkCrvEnum];
+export type P256PublicJwkCrvEnum = typeof P256PublicJwkCrvEnum[keyof typeof P256PublicJwkCrvEnum];
 
 
 /**
- * Check if a given object implements the CachePublicJwk interface.
+ * Check if a given object implements the P256PublicJwk interface.
  */
-export function instanceOfCachePublicJwk(value: object): value is CachePublicJwk {
+export function instanceOfP256PublicJwk(value: object): value is P256PublicJwk {
     if (!('kty' in value) || value['kty'] === undefined) return false;
     if (!('crv' in value) || value['crv'] === undefined) return false;
     if (!('x' in value) || value['x'] === undefined) return false;
@@ -74,11 +74,11 @@ export function instanceOfCachePublicJwk(value: object): value is CachePublicJwk
     return true;
 }
 
-export function CachePublicJwkFromJSON(json: any): CachePublicJwk {
-    return CachePublicJwkFromJSONTyped(json, false);
+export function P256PublicJwkFromJSON(json: any): P256PublicJwk {
+    return P256PublicJwkFromJSONTyped(json, false);
 }
 
-export function CachePublicJwkFromJSONTyped(json: any, ignoreDiscriminator: boolean): CachePublicJwk {
+export function P256PublicJwkFromJSONTyped(json: any, ignoreDiscriminator: boolean): P256PublicJwk {
     if (json == null) {
         return json;
     }
@@ -91,11 +91,11 @@ export function CachePublicJwkFromJSONTyped(json: any, ignoreDiscriminator: bool
     };
 }
 
-export function CachePublicJwkToJSON(json: any): CachePublicJwk {
-    return CachePublicJwkToJSONTyped(json, false);
+export function P256PublicJwkToJSON(json: any): P256PublicJwk {
+    return P256PublicJwkToJSONTyped(json, false);
 }
 
-export function CachePublicJwkToJSONTyped(value?: CachePublicJwk | null, ignoreDiscriminator: boolean = false): any {
+export function P256PublicJwkToJSONTyped(value?: P256PublicJwk | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }

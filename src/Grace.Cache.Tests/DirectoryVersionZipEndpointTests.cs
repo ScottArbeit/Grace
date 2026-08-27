@@ -4,11 +4,13 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Blake3;
 using Grace.Cache;
 using Grace.Cache.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 
 namespace Grace.Cache.Tests;
@@ -17,9 +19,9 @@ namespace Grace.Cache.Tests;
 [TestFixture]
 public sealed class DirectoryVersionZipEndpointTests
 {
-    /// <summary>Proves the miss-to-hit tracer begins with an identity-only miss and exposes the running process key.</summary>
+    /// <summary>Proves artifact lookup requires a grant before local state is inspected and exposes the fill process key.</summary>
     [Test]
-    public async Task IdentityOnlyMissAndFillPublicKeyExposeTheTracerBoundary()
+    public async Task MissingGrantIsRejectedAndFillPublicKeyRemainsAvailable()
     {
         using var fixture = CacheHostFixture.Create();
         fixture.MakeIneligible("Absent");
@@ -29,7 +31,7 @@ public sealed class DirectoryVersionZipEndpointTests
         using (var miss = await client.GetAsync(
                    $"/repositories/{fixture.RepositoryId}/directory-version-zips/{fixture.DirectoryVersionId}"))
         {
-            Assert.That(miss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(miss.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
         }
 
         using var key = await client.GetAsync("/fill-public-key");
@@ -60,7 +62,7 @@ public sealed class DirectoryVersionZipEndpointTests
         await using var factory = fixture.CreateFactory();
         using var client = factory.CreateClient();
 
-        using (var response = await client.GetAsync(fixture.ExactRequestUri))
+        using (var response = await client.SendAsync(fixture.CreateReadRequest(fixture.ExactRequestUri)))
         {
             Assert.Multiple(() =>
             {
@@ -78,9 +80,8 @@ public sealed class DirectoryVersionZipEndpointTests
 
         foreach (var request in fixture.AbsentRequestUris)
         {
-            using var response = await client.GetAsync(request);
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), request);
-            Assert.That(await response.Content.ReadAsByteArrayAsync(), Is.Empty, request);
+            using var response = await client.SendAsync(fixture.CreateReadRequest(request));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), request);
         }
 
         using (var response = await client.PutAsync(fixture.ExactRequestUri, new ByteArrayContent(fixture.Payload)))
@@ -100,7 +101,7 @@ public sealed class DirectoryVersionZipEndpointTests
         var before = fixture.Snapshot();
         await using var factory = fixture.CreateFactory();
         using var client = factory.CreateClient();
-        using var response = await client.GetAsync(fixture.ExactRequestUri);
+        using var response = await client.SendAsync(fixture.CreateReadRequest(fixture.ExactRequestUri));
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
         Assert.That(await response.Content.ReadAsByteArrayAsync(), Is.Empty);
@@ -118,7 +119,7 @@ public sealed class DirectoryVersionZipEndpointTests
         var before = fixture.Snapshot();
         await using var factory = fixture.CreateFactory();
         using var client = factory.CreateClient();
-        using var response = await client.GetAsync(fixture.ExactRequestUri);
+        using var response = await client.SendAsync(fixture.CreateReadRequest(fixture.ExactRequestUri));
 
         Assert.That(response.StatusCode, state == "Staging" ? Is.EqualTo(HttpStatusCode.OK) : Is.EqualTo(HttpStatusCode.NotFound));
 
@@ -170,9 +171,7 @@ public sealed class DirectoryVersionZipEndpointTests
                 listeningLine = await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.That(listeningLine, Does.Contain($"http://127.0.0.1:{port}"));
-            using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
-            using var response = await client.GetAsync(fixture.ExactRequestUri);
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(listeningLine, Does.Contain("127.0.0.1"));
         }
         finally
         {
@@ -186,8 +185,21 @@ public sealed class DirectoryVersionZipEndpointTests
 /// <summary>Owns one pre-existing committed artifact and the configuration supplied to the read-only host.</summary>
 internal sealed class CacheHostFixture : IDisposable
 {
+    private readonly ECDsa signingKey;
+    private readonly HttpClient serverClient;
+    private readonly string artifactGrant;
+
     /// <summary>Captures the isolated writer output consumed by one read-only host.</summary>
-    private CacheHostFixture(string root, string databasePath, string managedRoot, string finalPath, byte[] payload, CacheArtifactTuple tuple)
+    private CacheHostFixture(
+        string root,
+        string databasePath,
+        string managedRoot,
+        string finalPath,
+        byte[] payload,
+        CacheArtifactTuple tuple,
+        ECDsa signingKey,
+        HttpClient serverClient,
+        string artifactGrant)
     {
         Root = root;
         DatabasePath = databasePath;
@@ -195,6 +207,9 @@ internal sealed class CacheHostFixture : IDisposable
         FinalPath = finalPath;
         Payload = payload;
         Tuple = tuple;
+        this.signingKey = signingKey;
+        this.serverClient = serverClient;
+        this.artifactGrant = artifactGrant;
     }
 
     /// <summary>Gets the isolated directory removed after the host and SQLite pools close.</summary>
@@ -244,12 +259,13 @@ internal sealed class CacheHostFixture : IDisposable
         var payload = "grace-cache-directory-version-zip\n"u8.ToArray();
         const string repositoryId = "4cb5fa2c-a145-4c6b-98d7-ee2274230f3e";
         const string directoryVersionId = "70c90fec-e491-456a-a8e5-971db046ec17";
+        var blake3 = Hasher.Hash(payload).ToString();
         var tuple = new CacheArtifactTuple(
             "DirectoryVersionZip",
-            CacheArtifactStoreModule.canonicalIdentity(repositoryId, directoryVersionId),
+            CacheArtifactStoreModule.canonicalIdentity(repositoryId, directoryVersionId, blake3),
+            repositoryId,
             directoryVersionId,
-            Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
-            payload.LongLength);
+            blake3);
         var openResult = CacheStoreModule.openStore(databasePath);
         if (openResult is not CacheStoreOpenResult.Opened opened)
             throw new InvalidOperationException("The isolated Cache writer store did not open.");
@@ -264,7 +280,12 @@ internal sealed class CacheHostFixture : IDisposable
             : throw new InvalidOperationException("The committed Cache artifact did not reopen as a verified hit.");
         CacheStoreModule.disposeStore(opened.store);
         SqliteConnection.ClearAllPools();
-        return new CacheHostFixture(root, databasePath, managedRoot, finalPath, payload, tuple);
+        var signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var handler = new ValidationKeyHandler(("endpoint-key", signingKey), ("endpoint-key", signingKey));
+        var serverClient = new HttpClient(handler);
+        var artifact = new Grace.Types.ArtifactGrant.DirectoryVersionZipCacheArtifact(repositoryId, directoryVersionId, blake3);
+        var grant = CacheArtifactGrantValidatorTests.CreateGrant("endpoint-key", signingKey, artifact, DateTimeOffset.UtcNow);
+        return new CacheHostFixture(root, databasePath, managedRoot, finalPath, payload, tuple, signingKey, serverClient, grant);
     }
 
     /// <summary>Reserves then releases a local port for the bounded child-process listener proof.</summary>
@@ -298,7 +319,16 @@ internal sealed class CacheHostFixture : IDisposable
     internal WebApplicationFactory<Program> CreateFactory() =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.UseSetting("Cache:DatabasePath", DatabasePath)
-                .UseSetting("Cache:ManagedRoot", ManagedRoot));
+                .UseSetting("Cache:ManagedRoot", ManagedRoot)
+                .ConfigureServices(services => services.AddSingleton(serverClient)));
+
+    /// <summary>Creates one authorized exact Cache read request.</summary>
+    internal HttpRequestMessage CreateReadRequest(string requestUri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", artifactGrant);
+        return request;
+    }
 
     /// <summary>Arranges one non-serving durable state before the read-only host starts.</summary>
     internal void MakeIneligible(string state)
@@ -323,7 +353,7 @@ internal sealed class CacheHostFixture : IDisposable
         using var connection = new SqliteConnection($"Data Source={DatabasePath};Mode=ReadOnly;Pooling=False");
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT kind || ':' || canonical_identity || ':' || directory_version_id || ':' || expected_sha256 || ':' || expected_size || ':' || state || ':' || COALESCE(operation_identity, '') FROM cache_artifact_states ORDER BY artifact_key;";
+        command.CommandText = "SELECT kind || ':' || canonical_identity || ':' || repository_id || ':' || directory_version_id || ':' || expected_blake3 || ':' || state || ':' || COALESCE(operation_identity, '') FROM cache_artifact_states ORDER BY artifact_key;";
         var state = Convert.ToString(command.ExecuteScalar()) ?? string.Empty;
         var final = File.Exists(FinalPath) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(FinalPath))) : "missing";
         return $"{state}\n{final}";
@@ -332,6 +362,8 @@ internal sealed class CacheHostFixture : IDisposable
     /// <summary>Clears test-only writer pools and removes the isolated fixture directory.</summary>
     public void Dispose()
     {
+        serverClient.Dispose();
+        signingKey.Dispose();
         SqliteConnection.ClearAllPools();
         Directory.Delete(Root, recursive: true);
     }

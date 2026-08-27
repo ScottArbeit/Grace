@@ -5,7 +5,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**descriptor** | [**CacheArtifactDescriptor**](CacheArtifactDescriptor.md) |  | 
+**artifact** | [**DirectoryVersionZipCacheArtifact**](DirectoryVersionZipCacheArtifact.md) |  | 
 **source_uri** | **str** |  | 
 **source_expires_at** | **datetime** |  | 
 

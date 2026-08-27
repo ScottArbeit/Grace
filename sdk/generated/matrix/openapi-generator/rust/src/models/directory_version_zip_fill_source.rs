@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DirectoryVersionZipFillSource {
-    #[serde(rename = "Descriptor")]
-    pub descriptor: Box<models::CacheArtifactDescriptor>,
+    #[serde(rename = "Artifact")]
+    pub artifact: Box<models::DirectoryVersionZipCacheArtifact>,
     #[serde(rename = "SourceUri")]
     pub source_uri: String,
     #[serde(rename = "SourceExpiresAt")]
@@ -22,9 +22,9 @@ pub struct DirectoryVersionZipFillSource {
 }
 
 impl DirectoryVersionZipFillSource {
-    pub fn new(descriptor: models::CacheArtifactDescriptor, source_uri: String, source_expires_at: chrono::DateTime<chrono::FixedOffset>) -> DirectoryVersionZipFillSource {
+    pub fn new(artifact: models::DirectoryVersionZipCacheArtifact, source_uri: String, source_expires_at: chrono::DateTime<chrono::FixedOffset>) -> DirectoryVersionZipFillSource {
         DirectoryVersionZipFillSource {
-            descriptor: Box::new(descriptor),
+            artifact: Box::new(artifact),
             source_uri,
             source_expires_at,
         }

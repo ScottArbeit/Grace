@@ -13,13 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
-import type { CacheArtifactDescriptor } from './CacheArtifactDescriptor';
+import type { DirectoryVersionZipCacheArtifact } from './DirectoryVersionZipCacheArtifact';
 import {
-    CacheArtifactDescriptorFromJSON,
-    CacheArtifactDescriptorFromJSONTyped,
-    CacheArtifactDescriptorToJSON,
-    CacheArtifactDescriptorToJSONTyped,
-} from './CacheArtifactDescriptor';
+    DirectoryVersionZipCacheArtifactFromJSON,
+    DirectoryVersionZipCacheArtifactFromJSONTyped,
+    DirectoryVersionZipCacheArtifactToJSON,
+    DirectoryVersionZipCacheArtifactToJSONTyped,
+} from './DirectoryVersionZipCacheArtifact';
 
 /**
  * 
@@ -29,10 +29,10 @@ import {
 export interface DirectoryVersionZipFillSource {
     /**
      * 
-     * @type {CacheArtifactDescriptor}
+     * @type {DirectoryVersionZipCacheArtifact}
      * @memberof DirectoryVersionZipFillSource
      */
-    descriptor: CacheArtifactDescriptor;
+    artifact: DirectoryVersionZipCacheArtifact;
     /**
      * 
      * @type {string}
@@ -51,7 +51,7 @@ export interface DirectoryVersionZipFillSource {
  * Check if a given object implements the DirectoryVersionZipFillSource interface.
  */
 export function instanceOfDirectoryVersionZipFillSource(value: object): value is DirectoryVersionZipFillSource {
-    if (!('descriptor' in value) || value['descriptor'] === undefined) return false;
+    if (!('artifact' in value) || value['artifact'] === undefined) return false;
     if (!('sourceUri' in value) || value['sourceUri'] === undefined) return false;
     if (!('sourceExpiresAt' in value) || value['sourceExpiresAt'] === undefined) return false;
     return true;
@@ -67,7 +67,7 @@ export function DirectoryVersionZipFillSourceFromJSONTyped(json: any, ignoreDisc
     }
     return {
         
-        'descriptor': CacheArtifactDescriptorFromJSON(json['Descriptor']),
+        'artifact': DirectoryVersionZipCacheArtifactFromJSON(json['Artifact']),
         'sourceUri': json['SourceUri'],
         'sourceExpiresAt': (new Date(json['SourceExpiresAt'])),
     };
@@ -84,7 +84,7 @@ export function DirectoryVersionZipFillSourceToJSONTyped(value?: DirectoryVersio
 
     return {
         
-        'Descriptor': CacheArtifactDescriptorToJSON(value['descriptor']),
+        'Artifact': DirectoryVersionZipCacheArtifactToJSON(value['artifact']),
         'SourceUri': value['sourceUri'],
         'SourceExpiresAt': value['sourceExpiresAt'].toISOString(),
     };

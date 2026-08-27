@@ -9,7 +9,7 @@ Name | Type | Description | Notes
 **principal** | **str** | The entity on whose behalf the action is being performed. | [optional] 
 **repository_id** | **UUID** |  | 
 **directory_version_id** | **UUID** |  | 
-**cache_public_key** | [**CachePublicJwk**](CachePublicJwk.md) |  | 
+**cache_public_key** | [**P256PublicJwk**](P256PublicJwk.md) |  | 
 
 ## Example
 

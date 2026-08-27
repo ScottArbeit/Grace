@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 **principal** | Option<**String**> | The entity on whose behalf the action is being performed. | [optional]
 **repository_id** | **uuid::Uuid** |  | 
 **directory_version_id** | **uuid::Uuid** |  | 
-**cache_public_key** | [**models::CachePublicJwk**](CachePublicJwk.md) |  | 
+**cache_public_key** | [**models::P256PublicJwk**](P256PublicJwk.md) |  | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

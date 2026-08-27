@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.cache_public_jwk import CachePublicJwk
+from grace_generated_openapi_probe.models.p256_public_jwk import P256PublicJwk
 
-class TestCachePublicJwk(unittest.TestCase):
-    """CachePublicJwk unit test stubs"""
+class TestP256PublicJwk(unittest.TestCase):
+    """P256PublicJwk unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,23 +26,23 @@ class TestCachePublicJwk(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> CachePublicJwk:
-        """Test CachePublicJwk
+    def make_instance(self, include_optional) -> P256PublicJwk:
+        """Test P256PublicJwk
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `CachePublicJwk`
+        # uncomment below to create an instance of `P256PublicJwk`
         """
-        model = CachePublicJwk()
+        model = P256PublicJwk()
         if include_optional:
-            return CachePublicJwk(
+            return P256PublicJwk(
                 kty = 'EC',
                 crv = 'P-256',
                 x = '',
                 y = ''
             )
         else:
-            return CachePublicJwk(
+            return P256PublicJwk(
                 kty = 'EC',
                 crv = 'P-256',
                 x = '',
@@ -50,8 +50,8 @@ class TestCachePublicJwk(unittest.TestCase):
         )
         """
 
-    def testCachePublicJwk(self):
-        """Test CachePublicJwk"""
+    def testP256PublicJwk(self):
+        """Test P256PublicJwk"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

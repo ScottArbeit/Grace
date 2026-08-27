@@ -5,7 +5,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**descriptor** | [**CacheArtifactDescriptor**](CacheArtifactDescriptor.md) |  | 
+**artifact** | [**DirectoryVersionZipCacheArtifact**](DirectoryVersionZipCacheArtifact.md) |  | 
+**artifact_grant** | **str** |  | 
+**artifact_grant_expires_at** | **datetime** |  | 
 **permit** | **str** |  | 
 **permit_expires_at** | **datetime** |  | 
 **redemption_bytes** | **str** |  | 

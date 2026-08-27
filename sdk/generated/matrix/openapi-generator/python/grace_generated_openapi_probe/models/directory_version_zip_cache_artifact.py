@@ -18,7 +18,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
 from uuid import UUID
@@ -26,26 +26,17 @@ from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class CacheArtifactDescriptor(BaseModel):
+class DirectoryVersionZipCacheArtifact(BaseModel):
     """
-    CacheArtifactDescriptor
+    DirectoryVersionZipCacheArtifact
     """ # noqa: E501
     repository_id: UUID = Field(alias="RepositoryId")
     directory_version_id: UUID = Field(alias="DirectoryVersionId")
-    kind: StrictStr = Field(alias="Kind")
-    sha256: Annotated[str, Field(strict=True)] = Field(alias="Sha256")
-    size: Annotated[int, Field(strict=True, ge=0)] = Field(alias="Size")
-    __properties: ClassVar[List[str]] = ["RepositoryId", "DirectoryVersionId", "Kind", "Sha256", "Size"]
+    blake3_hash: Annotated[str, Field(strict=True)] = Field(alias="Blake3Hash")
+    __properties: ClassVar[List[str]] = ["RepositoryId", "DirectoryVersionId", "Blake3Hash"]
 
-    @field_validator('kind')
-    def kind_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['DirectoryVersionZip']):
-            raise ValueError("must be one of enum values ('DirectoryVersionZip')")
-        return value
-
-    @field_validator('sha256')
-    def sha256_validate_regular_expression(cls, value):
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
         if not isinstance(value, str):
             value = str(value)
@@ -72,7 +63,7 @@ class CacheArtifactDescriptor(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of CacheArtifactDescriptor from a JSON string"""
+        """Create an instance of DirectoryVersionZipCacheArtifact from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -97,7 +88,7 @@ class CacheArtifactDescriptor(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of CacheArtifactDescriptor from a dict"""
+        """Create an instance of DirectoryVersionZipCacheArtifact from a dict"""
         if obj is None:
             return None
 
@@ -107,9 +98,7 @@ class CacheArtifactDescriptor(BaseModel):
         _obj = cls.model_validate({
             "RepositoryId": obj.get("RepositoryId"),
             "DirectoryVersionId": obj.get("DirectoryVersionId"),
-            "Kind": obj.get("Kind"),
-            "Sha256": obj.get("Sha256"),
-            "Size": obj.get("Size")
+            "Blake3Hash": obj.get("Blake3Hash")
         })
         return _obj
 

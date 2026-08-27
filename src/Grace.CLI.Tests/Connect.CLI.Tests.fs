@@ -6,7 +6,9 @@ open Grace.CLI.Command
 open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Cache
 open Grace.Shared.Utilities
+open Grace.Types.ArtifactGrant
 open Grace.Types.Common
 open Grace.Types.Branch
 open Grace.Types.Reference
@@ -24,6 +26,7 @@ open System.Text
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open Blake3
 
 /// Groups connect coverage for the CLI test project.
 [<NonParallelizable>]
@@ -126,6 +129,25 @@ module ConnectTests =
         let response = new HttpResponseMessage(HttpStatusCode.OK)
         response.Content <- new ByteArrayContent(bytes)
         response
+
+    /// Creates one JSON response for the fake Cache process public key.
+    let private jsonResponse value =
+        let response = new HttpResponseMessage(HttpStatusCode.OK)
+        response.Content <- Net.Http.Json.JsonContent.Create(value, options = Constants.JsonSerializerOptions)
+        response
+
+    /// Creates the Server preparation required before the first Cache artifact GET.
+    let private cachePreparation repositoryId directoryVersionId (bytes: byte array) =
+        let artifact = DirectoryVersionZipCacheArtifact.Create(repositoryId, directoryVersionId, Hasher.Hash(bytes).ToString())
+
+        {
+            Artifact = artifact
+            ArtifactGrant = "connect-cache-grant"
+            ArtifactGrantExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5.0)
+            Permit = "unused-cache-hit-permit"
+            PermitExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1.0)
+            RedemptionBytes = "unused"
+        }
 
     /// Creates a complete one-file target status and its exact root metadata.
     let private oneFileStatus (configuration: GraceConfiguration) (path: string) (bytes: byte array) =
@@ -528,6 +550,9 @@ module ConnectTests =
                 let mutable workingDirectoryUpdateCount = 0
                 let mutable observedCursor = String.Empty
                 let mutable observedForce = false
+                let cacheBytes = createZip [ selectedPath, selectedBytes ]
+                let preparation = cachePreparation configuration.RepositoryId targetStatus.RootDirectoryId cacheBytes
+                let publicKey = P256PublicJwk.Create("cache-x", "cache-y")
 
                 try
                     let cacheDependencies: ConnectCache.Dependencies =
@@ -539,14 +564,18 @@ module ConnectTests =
 
                                         request.Method |> should equal HttpMethod.Get
 
-                                        request.RequestUri.AbsolutePath
-                                        |> should equal $"/repositories/{configuration.RepositoryId}/directory-version-zips/{targetStatus.RootDirectoryId}"
+                                        if request.RequestUri.AbsolutePath = "/fill-public-key" then
+                                            return jsonResponse publicKey
+                                        else
+                                            request.RequestUri.AbsolutePath
+                                            |> should equal $"/repositories/{configuration.RepositoryId}/directory-version-zips/{targetStatus.RootDirectoryId}"
 
-                                        return zipResponse (createZip [ selectedPath, selectedBytes ])
+                                            return zipResponse cacheBytes
                                     }
-                            Prepare = fun _ -> Task.FromResult(Error(GraceError.Create "unexpected Cache fill" correlationId))
+                            Prepare = fun _ -> Task.FromResult(Ok(GraceReturnValue.Create preparation correlationId))
                             StartTimer = fun () -> fun () -> TimeSpan.Zero
                             Delay = fun _ _ -> Task.CompletedTask
+                            UtcNow = fun () -> DateTimeOffset.UtcNow
                         }
 
                     let! sourceResult =
@@ -635,7 +664,7 @@ module ConnectTests =
                     |> Option.map (fun value -> value.EventCursor)
                     |> should equal (Some eventCursor)
 
-                    cacheGetCount |> should equal 1
+                    cacheGetCount |> should equal 2
                     directLookupCount |> should equal 0
                     directOpenCount |> should equal 0
                     workingDirectoryUpdateCount |> should equal 1
@@ -677,14 +706,23 @@ module ConnectTests =
                 let mutable directLookupCount = 0
                 let mutable directOpenCount = 0
                 let mutable workingDirectoryUpdateCount = 0
+                let invalidBytes = Encoding.UTF8.GetBytes("not a ZIP archive")
+                let preparation = cachePreparation configuration.RepositoryId targetStatus.RootDirectoryId invalidBytes
+                let publicKey = P256PublicJwk.Create("cache-x", "cache-y")
 
                 try
                     let cacheDependencies: ConnectCache.Dependencies =
                         {
-                            Send = fun _ _ -> Task.FromResult(zipResponse (Encoding.UTF8.GetBytes("not a ZIP archive")))
-                            Prepare = fun _ -> Task.FromResult(Error(GraceError.Create "unexpected Cache fill" correlationId))
+                            Send =
+                                fun request _ ->
+                                    if request.RequestUri.AbsolutePath = "/fill-public-key" then
+                                        Task.FromResult(jsonResponse publicKey)
+                                    else
+                                        Task.FromResult(zipResponse invalidBytes)
+                            Prepare = fun _ -> Task.FromResult(Ok(GraceReturnValue.Create preparation correlationId))
                             StartTimer = fun () -> fun () -> TimeSpan.Zero
                             Delay = fun _ _ -> Task.CompletedTask
+                            UtcNow = fun () -> DateTimeOffset.UtcNow
                         }
 
                     let! sourceResult =

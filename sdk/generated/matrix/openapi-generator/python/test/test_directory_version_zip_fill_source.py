@@ -36,23 +36,19 @@ class TestDirectoryVersionZipFillSource(unittest.TestCase):
         model = DirectoryVersionZipFillSource()
         if include_optional:
             return DirectoryVersionZipFillSource(
-                descriptor = grace_generated_openapi_probe.models.cache_artifact_descriptor.CacheArtifactDescriptor(
+                artifact = grace_generated_openapi_probe.models.directory_version_zip_cache_artifact.DirectoryVersionZipCacheArtifact(
                     repository_id = '', 
                     directory_version_id = '', 
-                    kind = 'DirectoryVersionZip', 
-                    sha256 = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
-                    size = 0, ),
+                    blake3_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', ),
                 source_uri = '',
                 source_expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f')
             )
         else:
             return DirectoryVersionZipFillSource(
-                descriptor = grace_generated_openapi_probe.models.cache_artifact_descriptor.CacheArtifactDescriptor(
+                artifact = grace_generated_openapi_probe.models.directory_version_zip_cache_artifact.DirectoryVersionZipCacheArtifact(
                     repository_id = '', 
                     directory_version_id = '', 
-                    kind = 'DirectoryVersionZip', 
-                    sha256 = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
-                    size = 0, ),
+                    blake3_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', ),
                 source_uri = '',
                 source_expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
         )

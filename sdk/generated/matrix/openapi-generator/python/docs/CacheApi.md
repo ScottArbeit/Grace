@@ -4,14 +4,79 @@ All URIs are relative to *http://localhost:5000*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**prepare_directory_version_zip**](CacheApi.md#prepare_directory_version_zip) | **POST** /cache/prepareDirectoryVersionZip | Prepare one Server-approved DirectoryVersion ZIP fill.
+[**get_cache_artifact_grant_validation_key**](CacheApi.md#get_cache_artifact_grant_validation_key) | **GET** /cache/artifact-grant-validation-key | Get the current Server process public key for local Cache grant validation.
+[**prepare_directory_version_zip**](CacheApi.md#prepare_directory_version_zip) | **POST** /cache/prepareDirectoryVersionZip | Prepare one Server-approved DirectoryVersion ZIP read and fill.
 [**redeem_directory_version_zip_fill**](CacheApi.md#redeem_directory_version_zip_fill) | **POST** /cache/redeemDirectoryVersionZipFill | Redeem one permit and Cache process signature for a read-only ZIP source.
 
+
+# **get_cache_artifact_grant_validation_key**
+> CacheArtifactGrantValidationKeyReturnValue get_cache_artifact_grant_validation_key()
+
+Get the current Server process public key for local Cache grant validation.
+
+### Example
+
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.cache_artifact_grant_validation_key_return_value import CacheArtifactGrantValidationKeyReturnValue
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.CacheApi(api_client)
+
+    try:
+        # Get the current Server process public key for local Cache grant validation.
+        api_response = api_instance.get_cache_artifact_grant_validation_key()
+        print("The response of CacheApi->get_cache_artifact_grant_validation_key:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling CacheApi->get_cache_artifact_grant_validation_key: %s\n" % e)
+```
+
+
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**CacheArtifactGrantValidationKeyReturnValue**](CacheArtifactGrantValidationKeyReturnValue.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Current Server process public key and fixed Cache grant validation contract. |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **prepare_directory_version_zip**
 > DirectoryVersionZipPreparation prepare_directory_version_zip(prepare_directory_version_zip_parameters)
 
-Prepare one Server-approved DirectoryVersion ZIP fill.
+Prepare one Server-approved DirectoryVersion ZIP read and fill.
 
 ### Example
 
@@ -47,7 +112,7 @@ with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     prepare_directory_version_zip_parameters = grace_generated_openapi_probe.PrepareDirectoryVersionZipParameters() # PrepareDirectoryVersionZipParameters | 
 
     try:
-        # Prepare one Server-approved DirectoryVersion ZIP fill.
+        # Prepare one Server-approved DirectoryVersion ZIP read and fill.
         api_response = api_instance.prepare_directory_version_zip(prepare_directory_version_zip_parameters)
         print("The response of CacheApi->prepare_directory_version_zip:\n")
         pprint(api_response)
@@ -81,7 +146,7 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Prepared immutable artifact, permit, expiry, and exact redemption bytes. |  -  |
+**200** | Exact immutable artifact with a five-minute read grant and separate fill permit. |  -  |
 **400** | Bad Request |  -  |
 **403** | Forbidden |  -  |
 **500** | Internal Server Error |  -  |
@@ -151,7 +216,7 @@ No authorization required
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Exact descriptor and fresh read-only Blob source. |  -  |
+**200** | Exact artifact and fresh read-only Blob source. |  -  |
 **400** | Bad Request |  -  |
 **403** | Forbidden |  -  |
 **500** | Internal Server Error |  -  |

@@ -6,7 +6,7 @@
 
 Name | Type
 ------------ | -------------
-`descriptor` | [CacheArtifactDescriptor](CacheArtifactDescriptor.md)
+`artifact` | [DirectoryVersionZipCacheArtifact](DirectoryVersionZipCacheArtifact.md)
 `sourceUri` | string
 `sourceExpiresAt` | Date
 
@@ -17,7 +17,7 @@ import type { DirectoryVersionZipFillSource } from '@grace-vcs/generated-openapi
 
 // TODO: Update the object below with actual values
 const example = {
-  "descriptor": null,
+  "artifact": null,
   "sourceUri": null,
   "sourceExpiresAt": null,
 } satisfies DirectoryVersionZipFillSource

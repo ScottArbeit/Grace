@@ -36,7 +36,7 @@ class TestGraceReturnValue(unittest.TestCase):
         model = GraceReturnValue()
         if include_optional:
             return GraceReturnValue(
-                return_value = None,
+                return_value = grace_generated_openapi_probe.models.return_value.ReturnValue(),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = '',
                 properties = {

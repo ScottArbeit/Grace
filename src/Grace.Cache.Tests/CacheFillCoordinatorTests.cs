@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Blake3;
 using Grace.Cache;
 using Grace.Cache.Storage;
 using NUnit.Framework;
@@ -149,16 +150,14 @@ internal sealed class FillHttpHandler(byte[] payload) : HttpMessageHandler
         if (request.RequestUri?.AbsolutePath == "/cache/redeemDirectoryVersionZipFill")
         {
             Interlocked.Increment(ref redemptionCount);
-            var sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+            var blake3 = Hasher.Hash(payload).ToString();
             var body = $$"""
                 {
                   "returnValue": {
-                    "descriptor": {
+                    "artifact": {
                       "repositoryId": "4cb5fa2c-a145-4c6b-98d7-ee2274230f3e",
                       "directoryVersionId": "70c90fec-e491-456a-a8e5-971db046ec17",
-                      "kind": "DirectoryVersionZip",
-                      "sha256": "{{sha256}}",
-                      "size": {{payload.LongLength}}
+                      "blake3Hash": "{{blake3}}"
                     },
                     "sourceUri": "http://source/artifact.zip",
                     "sourceExpiresAt": "2030-01-01T00:00:00Z"

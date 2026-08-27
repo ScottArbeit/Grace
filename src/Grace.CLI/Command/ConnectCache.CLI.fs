@@ -3,6 +3,7 @@ namespace Grace.CLI.Command
 open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Parameters.Cache
+open Grace.Types.ArtifactGrant
 open Grace.Types.Common
 open System
 open System.CommandLine
@@ -30,6 +31,7 @@ module internal ConnectCache =
             Prepare: PrepareDirectoryVersionZipParameters -> Task<Result<GraceReturnValue<DirectoryVersionZipPreparation>, GraceError>>
             StartTimer: unit -> (unit -> TimeSpan)
             Delay: TimeSpan -> CancellationToken -> Task
+            UtcNow: unit -> DateTimeOffset
         }
 
     /// Carries only the opaque Server permit accepted by the Cache fill route.
@@ -168,9 +170,13 @@ module internal ConnectCache =
         Uri(cacheUri, $"repositories/{Uri.EscapeDataString(repositoryId)}/directory-version-zips/{Uri.EscapeDataString(directoryVersionId)}/fill")
 
     /// Runs one Cache request with response streaming enabled.
-    let private send (dependencies: Dependencies) (method': HttpMethod) (uri: Uri) cancellationToken =
+    let private send (dependencies: Dependencies) (method': HttpMethod) (uri: Uri) (artifactGrant: string option) cancellationToken =
         task {
             use request = new HttpRequestMessage(method', uri)
+
+            artifactGrant
+            |> Option.iter (fun grant -> request.Headers.Authorization <- Headers.AuthenticationHeaderValue("Bearer", grant))
+
             return! dependencies.Send request cancellationToken
         }
 
@@ -219,12 +225,12 @@ module internal ConnectCache =
     /// Reads the current Cache process public key from its loopback endpoint.
     let private readPublicKey dependencies cacheUri correlationId cancellationToken =
         task {
-            use! response = send dependencies HttpMethod.Get (publicKeyUri cacheUri) cancellationToken
+            use! response = send dependencies HttpMethod.Get (publicKeyUri cacheUri) None cancellationToken
 
             if response.StatusCode <> HttpStatusCode.OK then
                 return Error(unexpectedStatus correlationId "Cache public-key GET" response.StatusCode)
             else
-                let! publicKey = response.Content.ReadFromJsonAsync<CachePublicJwk>(Constants.JsonSerializerOptions, cancellationToken)
+                let! publicKey = response.Content.ReadFromJsonAsync<P256PublicJwk>(Constants.JsonSerializerOptions, cancellationToken)
 
                 if isNull (box publicKey) then
                     return Error(GraceError.Create "Cache public-key GET returned no key." correlationId)
@@ -275,11 +281,12 @@ module internal ConnectCache =
         (cacheUri: Uri)
         (repositoryId: string)
         (directoryVersionId: string)
-        (publicKey: CachePublicJwk)
+        (publicKey: P256PublicJwk)
         (correlationId: string)
         (cancellationToken: CancellationToken)
         (elapsed: (unit -> TimeSpan) option)
         (attempt: int)
+        (prepared: GraceReturnValue<DirectoryVersionZipPreparation> option)
         =
         task {
             cancellationToken.ThrowIfCancellationRequested()
@@ -293,7 +300,10 @@ module internal ConnectCache =
                |> Option.exists (fun value -> value <= TimeSpan.Zero) then
                 return Error(retryBudgetError correlationId)
             else
-                let! awaitedPreparation = awaitPreparation dependencies repositoryId directoryVersionId publicKey correlationId remaining cancellationToken
+                let! awaitedPreparation =
+                    match prepared with
+                    | Some preparation -> Task.FromResult(Ok(Ok preparation))
+                    | None -> awaitPreparation dependencies repositoryId directoryVersionId publicKey correlationId remaining cancellationToken
 
                 match awaitedPreparation with
                 | Error () -> return Error(retryBudgetError correlationId)
@@ -308,7 +318,7 @@ module internal ConnectCache =
                         sendFill dependencies (fillUri cacheUri repositoryId directoryVersionId) preparation.ReturnValue.Permit cancellationToken
 
                     if fillResponse.StatusCode = HttpStatusCode.NoContent then
-                        return Ok()
+                        return Ok preparation
                     elif fillResponse.StatusCode = HttpStatusCode.TooManyRequests then
                         let! problemResult = readProblem fillResponse correlationId cancellationToken
 
@@ -339,47 +349,95 @@ module internal ConnectCache =
                                         cancellationToken
                                         (Some readElapsed)
                                         (attempt + 1)
+                                        None
                         | Ok problem -> return Error(problemError correlationId "Cache fill" problem)
                     else
                         return Error(unexpectedStatus correlationId "Cache fill" fillResponse.StatusCode)
         }
 
-    /// Supplies a successful Cache GET stream to the caller before disposing the response.
-    let private consumeResponse (response: HttpResponseMessage) (cancellationToken: CancellationToken) consume =
+    /// Stages the complete Cache response, verifies only BLAKE3, then permits downstream ZIP consumption.
+    let private consumeResponse (response: HttpResponseMessage) expectedBlake3 correlationId (cancellationToken: CancellationToken) consume =
         task {
-            use! stream = response.Content.ReadAsStreamAsync(cancellationToken)
-            return! consume stream
+            let temporaryPath = Path.GetTempFileName()
+
+            try
+                use! responseStream = response.Content.ReadAsStreamAsync(cancellationToken)
+                use staged = new FileStream(temporaryPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 64 * 1024, FileOptions.Asynchronous)
+                do! responseStream.CopyToAsync(staged, cancellationToken)
+                staged.Position <- 0L
+                let! observedBlake3 = Services.computeBlake3ForFile staged
+
+                if observedBlake3 <> expectedBlake3 then
+                    return Error(GraceError.Create "Cache artifact BLAKE3 verification failed before Connect consumed the ZIP." correlationId)
+                else
+                    staged.Position <- 0L
+                    let! result = consume (staged :> Stream)
+                    return Ok result
+            finally
+                if File.Exists(temporaryPath) then File.Delete(temporaryPath)
         }
 
     /// Supplies one exact verified Cache GET stream to the caller while its HTTP response remains alive.
     let internal useVerifiedZipWith (dependencies: Dependencies) cacheUri repositoryId directoryVersionId correlationId cancellationToken consume =
         task {
             let uri = artifactUri cacheUri repositoryId directoryVersionId
-            use! response = send dependencies HttpMethod.Get uri cancellationToken
+            let! publicKeyResult = readPublicKey dependencies cacheUri correlationId cancellationToken
 
-            if response.StatusCode = HttpStatusCode.OK then
-                let! result = consumeResponse response cancellationToken consume
-                return Ok result
-            elif response.StatusCode = HttpStatusCode.NotFound then
-                let! publicKeyResult = readPublicKey dependencies cacheUri correlationId cancellationToken
+            match publicKeyResult with
+            | Error error -> return Error error
+            | Ok publicKey ->
+                let! initialPreparation = awaitPreparation dependencies repositoryId directoryVersionId publicKey correlationId None cancellationToken
 
-                match publicKeyResult with
-                | Error error -> return Error error
-                | Ok publicKey ->
-                    let! fillResult = fillUntilAvailable dependencies cacheUri repositoryId directoryVersionId publicKey correlationId cancellationToken None 0
+                match initialPreparation with
+                | Error () -> return Error(retryBudgetError correlationId)
+                | Ok (Error error) -> return Error error
+                | Ok (Ok preparation) ->
+                    use! response = send dependencies HttpMethod.Get uri (Some preparation.ReturnValue.ArtifactGrant) cancellationToken
 
-                    match fillResult with
-                    | Error error -> return Error error
-                    | Ok () ->
-                        use! verifiedResponse = send dependencies HttpMethod.Get uri cancellationToken
+                    if response.StatusCode = HttpStatusCode.OK then
+                        return! consumeResponse response preparation.ReturnValue.Artifact.Blake3Hash correlationId cancellationToken consume
+                    elif response.StatusCode = HttpStatusCode.NotFound then
+                        let! fillResult =
+                            fillUntilAvailable
+                                dependencies
+                                cacheUri
+                                repositoryId
+                                directoryVersionId
+                                publicKey
+                                correlationId
+                                cancellationToken
+                                None
+                                0
+                                (Some preparation)
 
-                        if verifiedResponse.StatusCode <> HttpStatusCode.OK then
-                            return Error(unexpectedStatus correlationId "Post-fill Cache GET" verifiedResponse.StatusCode)
-                        else
-                            let! result = consumeResponse verifiedResponse cancellationToken consume
-                            return Ok result
-            else
-                return Error(unexpectedStatus correlationId "Cache GET" response.StatusCode)
+                        match fillResult with
+                        | Error error -> return Error error
+                        | Ok usedPreparation ->
+                            let! postFillPreparation =
+                                if dependencies.UtcNow()
+                                   >= usedPreparation.ReturnValue.ArtifactGrantExpiresAt then
+                                    prepareFill dependencies repositoryId directoryVersionId publicKey correlationId
+                                else
+                                    Task.FromResult(Ok usedPreparation)
+
+                            match postFillPreparation with
+                            | Error error -> return Error error
+                            | Ok currentPreparation ->
+                                use! verifiedResponse =
+                                    send dependencies HttpMethod.Get uri (Some currentPreparation.ReturnValue.ArtifactGrant) cancellationToken
+
+                                if verifiedResponse.StatusCode <> HttpStatusCode.OK then
+                                    return Error(unexpectedStatus correlationId "Post-fill Cache GET" verifiedResponse.StatusCode)
+                                else
+                                    return!
+                                        consumeResponse
+                                            verifiedResponse
+                                            currentPreparation.ReturnValue.Artifact.Blake3Hash
+                                            correlationId
+                                            cancellationToken
+                                            consume
+                    else
+                        return Error(unexpectedStatus correlationId "Cache GET" response.StatusCode)
         }
 
     let private httpClient = new HttpClient()
@@ -394,6 +452,7 @@ module internal ConnectCache =
                     let stopwatch = Stopwatch.StartNew()
                     fun () -> stopwatch.Elapsed
             Delay = fun delay cancellationToken -> Task.Delay(delay, cancellationToken)
+            UtcNow = fun () -> DateTimeOffset.UtcNow
         }
 
     /// Retrieves one exact DirectoryVersion ZIP through the selected loopback Cache and supplies its verified GET stream.

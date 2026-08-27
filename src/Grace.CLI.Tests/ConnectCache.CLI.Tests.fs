@@ -15,6 +15,8 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Threading
 open System.Threading.Tasks
+open Blake3
+open Grace.Types.ArtifactGrant
 
 /// Covers Cache-required Connect selection and loopback endpoint validation.
 module ConnectCacheTests =
@@ -23,19 +25,16 @@ module ConnectCacheTests =
     let private parse arguments = GraceCommand.rootCommand.Parse(Array.append [| "connect" |] arguments)
 
     /// Represents the deterministic public key returned by the fake Cache process.
-    let private cachePublicKey = { Kty = "EC"; Crv = "P-256"; X = "cache-x"; Y = "cache-y" }
+    let private cachePublicKey = P256PublicJwk.Create("cache-x", "cache-y")
 
     /// Creates one deterministic Server preparation bound to the requested artifact and permit.
-    let private createPreparation repositoryId directoryVersionId permit hashCharacter size =
+    let private createPreparation repositoryId directoryVersionId permit (bytes: byte array) =
+        let blake3 = Hasher.Hash(bytes).ToString()
+
         {
-            Descriptor =
-                {
-                    RepositoryId = string repositoryId
-                    DirectoryVersionId = string directoryVersionId
-                    Kind = "DirectoryVersionZip"
-                    Sha256 = String.replicate 64 hashCharacter
-                    Size = size
-                }
+            Artifact = DirectoryVersionZipCacheArtifact.Create(repositoryId, directoryVersionId, blake3)
+            ArtifactGrant = $"grant-{permit}"
+            ArtifactGrantExpiresAt = DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero)
             Permit = permit
             PermitExpiresAt = DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero)
             RedemptionBytes = "unused-by-cli"
@@ -201,7 +200,7 @@ module ConnectCacheTests =
             | Error _ -> ()
             | Ok uri -> Assert.Fail($"Expected '{value}' to be rejected, got {uri}.")
 
-    /// A Cache hit returns the exact response stream without entering preparation or fill.
+    /// A Cache hit prepares before the first authorized GET and never enters fill.
     [<Test>]
     let ``cache hit consumes one exact verified GET without fill`` () =
         task {
@@ -211,6 +210,7 @@ module ConnectCacheTests =
             let requests = ResizeArray<string>()
             let mutable preparationCalled = false
             let mutable consumed = 0
+            let preparation = createPreparation repositoryId directoryVersionId "unused-hit-permit" expectedBytes
 
             let dependencies: ConnectCache.Dependencies =
                 {
@@ -218,14 +218,25 @@ module ConnectCacheTests =
                         fun request _ ->
                             task {
                                 requests.Add($"{request.Method} {request.RequestUri.AbsolutePath}")
-                                return zipResponse expectedBytes
+
+                                if request.RequestUri.AbsolutePath = "/fill-public-key" then
+                                    return jsonResponse HttpStatusCode.OK cachePublicKey
+                                else
+                                    request.Headers.Authorization.Scheme
+                                    |> should equal "Bearer"
+
+                                    request.Headers.Authorization.Parameter
+                                    |> should equal preparation.ArtifactGrant
+
+                                    return zipResponse expectedBytes
                             }
                     Prepare =
                         fun _ ->
                             preparationCalled <- true
-                            Task.FromResult(Error(GraceError.Create "unexpected preparation" "cache-hit"))
+                            Task.FromResult(Ok(GraceReturnValue.Create preparation "cache-hit"))
                     StartTimer = fun () -> fun () -> TimeSpan.Zero
                     Delay = fun _ _ -> Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let! result =
@@ -249,11 +260,58 @@ module ConnectCacheTests =
             |> should
                 equal
                 [|
+                    "GET /fill-public-key"
                     $"GET /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}"
                 |]
 
-            preparationCalled |> should equal false
+            preparationCalled |> should equal true
             consumed |> should equal 1
+        }
+
+    /// A complete response with the wrong BLAKE3 value never reaches ZIP consumption.
+    [<Test>]
+    let ``cache GET verifies BLAKE3 before consuming ZIP bytes`` () =
+        task {
+            let repositoryId = Guid.NewGuid()
+            let directoryVersionId = Guid.NewGuid()
+            let expectedBytes = [| 1uy; 2uy; 3uy |]
+            let wrongBytes = [| 4uy; 5uy; 6uy |]
+            let preparation = createPreparation repositoryId directoryVersionId "unused-integrity-permit" expectedBytes
+            let mutable consumed = false
+
+            let dependencies: ConnectCache.Dependencies =
+                {
+                    Send =
+                        fun request _ ->
+                            if request.RequestUri.AbsolutePath = "/fill-public-key" then
+                                Task.FromResult(jsonResponse HttpStatusCode.OK cachePublicKey)
+                            else
+                                Task.FromResult(zipResponse wrongBytes)
+                    Prepare = fun _ -> Task.FromResult(Ok(GraceReturnValue.Create preparation "cache-integrity"))
+                    StartTimer = fun () -> fun () -> TimeSpan.Zero
+                    Delay = fun _ _ -> Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
+                }
+
+            let! result =
+                ConnectCache.useVerifiedZipWith
+                    dependencies
+                    (Uri("http://localhost:5341/"))
+                    (string repositoryId)
+                    (string directoryVersionId)
+                    "cache-integrity"
+                    CancellationToken.None
+                    (fun _ ->
+                        consumed <- true
+                        Task.FromResult())
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected Cache BLAKE3 verification failure.")
+            | Error error ->
+                error.Error
+                |> should contain "BLAKE3 verification failed"
+
+            consumed |> should equal false
         }
 
     /// A Cache miss binds one Server permit to the Cache key, fills with only that permit, then performs an independent GET.
@@ -267,7 +325,7 @@ module ConnectCacheTests =
             let mutable requestNumber = 0
             let mutable preparationCount = 0
 
-            let preparation = createPreparation repositoryId directoryVersionId "permit-1" "a" (int64 expectedBytes.Length)
+            let preparation = createPreparation repositoryId directoryVersionId "permit-1" expectedBytes
 
             let dependencies: ConnectCache.Dependencies =
                 {
@@ -278,8 +336,12 @@ module ConnectCacheTests =
                                 requests.Add($"{request.Method} {request.RequestUri.AbsolutePath}")
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 ->
+                                    request.Headers.Authorization.Parameter
+                                    |> should equal preparation.ArtifactGrant
+
+                                    return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | 3 ->
                                     let! body = request.Content.ReadAsStringAsync(cancellationToken)
                                     body |> should contain "permit-1"
@@ -310,6 +372,7 @@ module ConnectCacheTests =
                             }
                     StartTimer = fun () -> fun () -> TimeSpan.Zero
                     Delay = fun _ _ -> Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let! result =
@@ -331,8 +394,8 @@ module ConnectCacheTests =
             |> should
                 equal
                 [|
-                    $"GET /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}"
                     "GET /fill-public-key"
+                    $"GET /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}"
                     $"POST /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}/fill"
                     $"GET /repositories/{repositoryId}/directory-version-zips/{directoryVersionId}"
                 |]
@@ -353,7 +416,7 @@ module ConnectCacheTests =
             let mutable preparationCount = 0
             let mutable elapsed = TimeSpan.Zero
 
-            let preparationForPermit permit = createPreparation repositoryId directoryVersionId permit "b" (int64 expectedBytes.Length)
+            let preparationForPermit permit = createPreparation repositoryId directoryVersionId permit expectedBytes
 
             let dependencies: ConnectCache.Dependencies =
                 {
@@ -363,8 +426,8 @@ module ConnectCacheTests =
                                 requestNumber <- requestNumber + 1
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | capacityResponse when capacityResponse >= 3 && capacityResponse <= 9 ->
                                     let! body = request.Content.ReadAsStringAsync(cancellationToken)
                                     postedPermits.Add(body)
@@ -390,6 +453,7 @@ module ConnectCacheTests =
                             delays.Add(delay)
                             elapsed <- elapsed + delay
                             Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let! result =
@@ -436,18 +500,18 @@ module ConnectCacheTests =
             let mutable preparationCount = 0
             let mutable delayCount = 0
 
-            let preparation = createPreparation repositoryId directoryVersionId "permit-terminal" "c" 1L
+            let preparation = createPreparation repositoryId directoryVersionId "permit-terminal" [| 1uy |]
 
             let dependencies: ConnectCache.Dependencies =
                 {
                     Send =
-                        fun _ _ ->
+                        fun request _ ->
                             task {
                                 requestNumber <- requestNumber + 1
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | 3 -> return jsonResponse HttpStatusCode.TooManyRequests { Code = "CacheRecoveryRequired"; Detail = "Reset is required." }
                                 | other -> return raise (InvalidOperationException($"Unexpected Cache request {other}."))
                             }
@@ -460,6 +524,7 @@ module ConnectCacheTests =
                         fun _ _ ->
                             delayCount <- delayCount + 1
                             Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let! result =
@@ -494,7 +559,7 @@ module ConnectCacheTests =
             let mutable elapsed = TimeSpan.FromMilliseconds(59950.0)
             let delays = ResizeArray<TimeSpan>()
 
-            let preparation = createPreparation repositoryId directoryVersionId "permit-budget" "d" 1L
+            let preparation = createPreparation repositoryId directoryVersionId "permit-budget" [| 1uy |]
 
             let dependencies: ConnectCache.Dependencies =
                 {
@@ -504,8 +569,8 @@ module ConnectCacheTests =
                                 requestNumber <- requestNumber + 1
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | 3 ->
                                     return
                                         jsonResponse
@@ -523,6 +588,7 @@ module ConnectCacheTests =
                             delays.Add(delay)
                             elapsed <- elapsed + delay
                             Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let! result =
@@ -560,7 +626,7 @@ module ConnectCacheTests =
             let mutable elapsed = TimeSpan.Zero
             let delays = ResizeArray<TimeSpan>()
 
-            let preparationForPermit permit = createPreparation repositoryId directoryVersionId permit "f" 1L
+            let preparationForPermit permit = createPreparation repositoryId directoryVersionId permit [| 1uy |]
 
             let dependencies: ConnectCache.Dependencies =
                 {
@@ -570,8 +636,8 @@ module ConnectCacheTests =
                                 requestNumber <- requestNumber + 1
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | 3 ->
                                     return
                                         jsonResponse
@@ -592,6 +658,7 @@ module ConnectCacheTests =
                             delays.Add(delay)
                             elapsed <- elapsed + delay
                             Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let! result =
@@ -634,7 +701,7 @@ module ConnectCacheTests =
             let preparationCompletion =
                 TaskCompletionSource<Result<GraceReturnValue<DirectoryVersionZipPreparation>, GraceError>>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-            let preparation = createPreparation repositoryId directoryVersionId "permit-cancelled" "g" 1L
+            let preparation = createPreparation repositoryId directoryVersionId "permit-cancelled" [| 1uy |]
 
             let dependencies: ConnectCache.Dependencies =
                 {
@@ -644,8 +711,8 @@ module ConnectCacheTests =
                                 requestNumber <- requestNumber + 1
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | other -> return raise (InvalidOperationException($"Unexpected Cache request {other}."))
                             }
                     Prepare =
@@ -654,6 +721,7 @@ module ConnectCacheTests =
                             preparationCompletion.Task
                     StartTimer = fun () -> fun () -> TimeSpan.Zero
                     Delay = fun _ _ -> Task.CompletedTask
+                    UtcNow = fun () -> DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
                 }
 
             let operation =
@@ -689,39 +757,55 @@ module ConnectCacheTests =
             preparationCompletion.SetResult(Ok(GraceReturnValue.Create preparation "cache-cancelled-preparation"))
             do! Task.Yield()
 
-            requestNumber |> should equal 2
+            requestNumber |> should equal 1
             zipStagingCount |> should equal 0
             workingDirectoryUpdateCount |> should equal 0
         }
 
-    /// A successful fill never substitutes for the required independent verified GET.
+    /// An expired grant is replaced before the required independent post-fill GET.
     [<Test>]
     let ``post-fill Cache GET failure is terminal without consuming ZIP bytes`` () =
         task {
             let repositoryId = Guid.NewGuid()
             let directoryVersionId = Guid.NewGuid()
             let mutable requestNumber = 0
+            let mutable preparationCount = 0
             let mutable consumed = false
+            let mutable now = DateTimeOffset(2029, 1, 1, 0, 0, 0, TimeSpan.Zero)
 
-            let preparation = createPreparation repositoryId directoryVersionId "permit-post-fill" "e" 1L
+            let firstPreparation = createPreparation repositoryId directoryVersionId "permit-post-fill" [| 1uy |]
+            let replacementPreparation = createPreparation repositoryId directoryVersionId "permit-replacement" [| 1uy |]
 
             let dependencies: ConnectCache.Dependencies =
                 {
                     Send =
-                        fun _ _ ->
+                        fun request _ ->
                             task {
                                 requestNumber <- requestNumber + 1
 
                                 match requestNumber with
-                                | 1 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
-                                | 2 -> return jsonResponse HttpStatusCode.OK cachePublicKey
-                                | 3 -> return new HttpResponseMessage(HttpStatusCode.NoContent)
-                                | 4 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
+                                | 1 -> return jsonResponse HttpStatusCode.OK cachePublicKey
+                                | 2 -> return new HttpResponseMessage(HttpStatusCode.NotFound)
+                                | 3 ->
+                                    now <- DateTimeOffset(2031, 1, 1, 0, 0, 0, TimeSpan.Zero)
+                                    return new HttpResponseMessage(HttpStatusCode.NoContent)
+                                | 4 ->
+                                    request.Headers.Authorization.Parameter
+                                    |> should equal replacementPreparation.ArtifactGrant
+
+                                    return new HttpResponseMessage(HttpStatusCode.NotFound)
                                 | other -> return raise (InvalidOperationException($"Unexpected Cache request {other}."))
                             }
-                    Prepare = fun _ -> Task.FromResult(Ok(GraceReturnValue.Create preparation "cache-post-fill"))
+                    Prepare =
+                        fun _ ->
+                            preparationCount <- preparationCount + 1
+
+                            let preparation = if preparationCount = 1 then firstPreparation else replacementPreparation
+
+                            Task.FromResult(Ok(GraceReturnValue.Create preparation "cache-post-fill"))
                     StartTimer = fun () -> fun () -> TimeSpan.Zero
                     Delay = fun _ _ -> Task.CompletedTask
+                    UtcNow = fun () -> now
                 }
 
             let! result =
@@ -743,5 +827,6 @@ module ConnectCacheTests =
                 |> should contain "Post-fill Cache GET"
 
             requestNumber |> should equal 4
+            preparationCount |> should equal 2
             consumed |> should equal false
         }

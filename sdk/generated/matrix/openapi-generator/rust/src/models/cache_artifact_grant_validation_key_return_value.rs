@@ -11,41 +11,28 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// CacheArtifactGrantValidationKeyReturnValue : Grace response envelope containing the current Server process validation key.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CacheArtifactDescriptor {
-    #[serde(rename = "RepositoryId")]
-    pub repository_id: uuid::Uuid,
-    #[serde(rename = "DirectoryVersionId")]
-    pub directory_version_id: uuid::Uuid,
-    #[serde(rename = "Kind")]
-    pub kind: Kind,
-    #[serde(rename = "Sha256")]
-    pub sha256: String,
-    #[serde(rename = "Size")]
-    pub size: i64,
+pub struct CacheArtifactGrantValidationKeyReturnValue {
+    #[serde(rename = "ReturnValue")]
+    pub return_value: Box<models::CacheArtifactGrantValidationKey>,
+    #[serde(rename = "EventTime", skip_serializing_if = "Option::is_none")]
+    pub event_time: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(rename = "Properties", skip_serializing_if = "Option::is_none")]
+    pub properties: Option<std::collections::HashMap<String, String>>,
 }
 
-impl CacheArtifactDescriptor {
-    pub fn new(repository_id: uuid::Uuid, directory_version_id: uuid::Uuid, kind: Kind, sha256: String, size: i64) -> CacheArtifactDescriptor {
-        CacheArtifactDescriptor {
-            repository_id,
-            directory_version_id,
-            kind,
-            sha256,
-            size,
+impl CacheArtifactGrantValidationKeyReturnValue {
+    /// Grace response envelope containing the current Server process validation key.
+    pub fn new(return_value: models::CacheArtifactGrantValidationKey) -> CacheArtifactGrantValidationKeyReturnValue {
+        CacheArtifactGrantValidationKeyReturnValue {
+            return_value: Box::new(return_value),
+            event_time: None,
+            correlation_id: None,
+            properties: None,
         }
-    }
-}
-/// 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum Kind {
-    #[serde(rename = "DirectoryVersionZip")]
-    DirectoryVersionZip,
-}
-
-impl Default for Kind {
-    fn default() -> Kind {
-        Self::DirectoryVersionZip
     }
 }
 

@@ -21,7 +21,7 @@ import json
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
-from grace_generated_openapi_probe.models.cache_artifact_descriptor import CacheArtifactDescriptor
+from grace_generated_openapi_probe.models.directory_version_zip_cache_artifact import DirectoryVersionZipCacheArtifact
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -30,11 +30,13 @@ class DirectoryVersionZipPreparation(BaseModel):
     """
     DirectoryVersionZipPreparation
     """ # noqa: E501
-    descriptor: CacheArtifactDescriptor = Field(alias="Descriptor")
+    artifact: DirectoryVersionZipCacheArtifact = Field(alias="Artifact")
+    artifact_grant: StrictStr = Field(alias="ArtifactGrant")
+    artifact_grant_expires_at: datetime = Field(alias="ArtifactGrantExpiresAt")
     permit: StrictStr = Field(alias="Permit")
     permit_expires_at: datetime = Field(alias="PermitExpiresAt")
     redemption_bytes: StrictStr = Field(alias="RedemptionBytes")
-    __properties: ClassVar[List[str]] = ["Descriptor", "Permit", "PermitExpiresAt", "RedemptionBytes"]
+    __properties: ClassVar[List[str]] = ["Artifact", "ArtifactGrant", "ArtifactGrantExpiresAt", "Permit", "PermitExpiresAt", "RedemptionBytes"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -75,9 +77,9 @@ class DirectoryVersionZipPreparation(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of descriptor
-        if self.descriptor:
-            _dict['Descriptor'] = self.descriptor.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of artifact
+        if self.artifact:
+            _dict['Artifact'] = self.artifact.to_dict()
         return _dict
 
     @classmethod
@@ -90,7 +92,9 @@ class DirectoryVersionZipPreparation(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "Descriptor": CacheArtifactDescriptor.from_dict(obj["Descriptor"]) if obj.get("Descriptor") is not None else None,
+            "Artifact": DirectoryVersionZipCacheArtifact.from_dict(obj["Artifact"]) if obj.get("Artifact") is not None else None,
+            "ArtifactGrant": obj.get("ArtifactGrant"),
+            "ArtifactGrantExpiresAt": obj.get("ArtifactGrantExpiresAt"),
             "Permit": obj.get("Permit"),
             "PermitExpiresAt": obj.get("PermitExpiresAt"),
             "RedemptionBytes": obj.get("RedemptionBytes")

@@ -54,7 +54,7 @@ type CacheStoreTests() =
 
         try
             let diagnostics = CacheStore.getDiagnostics store
-            Assert.That(diagnostics.SchemaVersion, Is.EqualTo 2)
+            Assert.That(diagnostics.SchemaVersion, Is.EqualTo 3)
             Assert.That(diagnostics.ForeignKeysEnabled, Is.True)
             Assert.That(diagnostics.JournalMode, Is.EqualTo "wal")
             Assert.That(diagnostics.BusyTimeoutMilliseconds, Is.GreaterThanOrEqualTo 5000)
