@@ -1395,6 +1395,25 @@ module Branch =
     /// Models create reference command values passed between the parser and branch handlers.
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<String>>
 
+    /// Reads the remote repository root policy that ordinary version-control paths must exclude for one operation.
+    let private getCurrentLibraries ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId =
+        task {
+            let parameters =
+                Grace.Shared.Parameters.Library.GetLibraryCatalogParameters(
+                    OwnerId = string ownerId,
+                    OwnerName = string ownerName,
+                    OrganizationId = string organizationId,
+                    OrganizationName = string organizationName,
+                    RepositoryId = string repositoryId,
+                    RepositoryName = string repositoryName,
+                    CorrelationId = correlationId
+                )
+
+            match! Grace.SDK.Libraries.GetCatalog parameters with
+            | Ok result -> return result.ReturnValue.Libraries
+            | Error error -> return raise (InvalidOperationException($"Error retrieving Library policy: {error.Error}"))
+        }
+
     /// Routes the create reference command from parsed options through validation, the SDK call, and result rendering.
     let private createReferenceHandler (parseResult: ParseResult) (message: string) (command: CreateReferenceCommand) (commandType: string) =
         task {
@@ -1408,6 +1427,18 @@ module Branch =
                 match (validateIncomingParameters, referenceMessage) with
                 | Ok _, Ok referenceMessage ->
                     let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    let! libraries =
+                        getCurrentLibraries
+                            graceIds.OwnerIdString
+                            graceIds.OwnerName
+                            graceIds.OrganizationIdString
+                            graceIds.OrganizationName
+                            graceIds.RepositoryIdString
+                            graceIds.RepositoryName
+                            (getCorrelationId parseResult)
+
+                    use _libraryPolicy = beginLibraryPolicy libraries
 
                     //let sha256Bytes = SHA256.HashData(Encoding.ASCII.GetBytes(rnd.NextInt64().ToString("x8")))
                     //let sha256Hash = Seq.fold (fun (sb: StringBuilder) currentByte ->
@@ -3907,6 +3938,18 @@ module Branch =
                                                             (getCorrelationId parseResult)
                                                         |> Result.defaultWith invalidOp
 
+                                                    let! libraries =
+                                                        getCurrentLibraries
+                                                            configuration.OwnerId
+                                                            configuration.OwnerName
+                                                            configuration.OrganizationId
+                                                            configuration.OrganizationName
+                                                            configuration.RepositoryId
+                                                            configuration.RepositoryName
+                                                            (getCorrelationId parseResult)
+
+                                                    use _libraryPolicy = beginLibraryPolicy libraries
+
                                                     let! runOutcome =
                                                         WorkingDirectoryUpdate.run
                                                             acceptedPhase
@@ -4713,6 +4756,18 @@ module Branch =
                                                                     targetDirectories
                                                                     manifest
                                                                 |> Result.defaultWith invalidOp
+
+                                                            let! libraries =
+                                                                getCurrentLibraries
+                                                                    configuration.OwnerId
+                                                                    configuration.OwnerName
+                                                                    configuration.OrganizationId
+                                                                    configuration.OrganizationName
+                                                                    configuration.RepositoryId
+                                                                    configuration.RepositoryName
+                                                                    (getCorrelationId parseResult)
+
+                                                            use _libraryPolicy = beginLibraryPolicy libraries
 
                                                             let! runOutcome =
                                                                 WorkingDirectoryUpdate.run

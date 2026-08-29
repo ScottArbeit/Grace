@@ -1,0 +1,44 @@
+
+# LibraryCatalogDto
+
+
+## Properties
+
+Name | Type
+------------ | -------------
+`repositoryId` | string
+`version` | string
+`libraries` | Array&lt;string&gt;
+`createdAt` | Date
+`createdBy` | string
+`previousVersion` | string
+
+## Example
+
+```typescript
+import type { LibraryCatalogDto } from '@grace-vcs/generated-openapi-probe'
+
+// TODO: Update the object below with actual values
+const example = {
+  "repositoryId": ab6f35ef-6e01-440b-8f9b-c343a5272095,
+  "version": null,
+  "libraries": null,
+  "createdAt": null,
+  "createdBy": null,
+  "previousVersion": null,
+} satisfies LibraryCatalogDto
+
+console.log(example)
+
+// Convert the instance to a JSON string
+const exampleJSON: string = JSON.stringify(example)
+console.log(exampleJSON)
+
+// Parse the JSON string back to an object
+const exampleParsed = JSON.parse(exampleJSON) as LibraryCatalogDto
+console.log(exampleParsed)
+```
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+

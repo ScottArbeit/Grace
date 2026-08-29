@@ -20,6 +20,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Events
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
@@ -85,7 +86,11 @@ module Repository =
         && persisted.Size = expected.Size
 
     /// Implements the Orleans grain for repository actor.
-    type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
+    type RepositoryActor
+        (
+            [<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>,
+            grainFactory: IGrainFactory
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.Repository
@@ -154,6 +159,18 @@ module Repository =
                         task {
                             match repositoryEvent.Event with
                             | Created (name, repositoryId, ownerId, organizationId, objectStorageProvider) ->
+                                let actorRepositoryId = this.GetPrimaryKey()
+                                let libraryActor = grainFactory.GetGrain<IRepositoryLibraryActor>(actorRepositoryId)
+
+                                do!
+                                    libraryActor.InitializeCatalog
+                                        (LibraryCatalogDto.CreateInitial(
+                                            actorRepositoryId,
+                                            repositoryEvent.Metadata.Timestamp,
+                                            repositoryEvent.Metadata.Principal
+                                        ))
+                                        repositoryEvent.Metadata.CorrelationId
+
                                 // Create the default branch.
                                 let branchId = buildInitialWorkflowId "branch" repositoryId
                                 let initialPromotionReferenceId = buildInitialWorkflowId "promotion-reference" repositoryId

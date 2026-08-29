@@ -41,6 +41,7 @@
 		<Compile Include="Command\Connect.CLI.fs" />
 		<Compile Include="Command\Organization.CLI.fs" />
 		<Compile Include="Command\Repository.CLI.fs" />
+		<Compile Include="Command\Library.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />
 		<Compile Include="Command\Branch.CLI.fs" />
 		<Compile Include="Command\Reference.CLI.fs" />

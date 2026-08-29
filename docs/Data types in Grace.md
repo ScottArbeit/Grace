@@ -76,6 +76,22 @@ Some examples:
 
 In general, once a Repository is created and the settings adjusted to taste, the Repository record will be updated very infrequently.
 
+### Library root configuration
+
+Every Repository contains one persisted `LibraryCatalogDto`, including repositories with no configured Libraries. Its version changes only through exact-version, idempotent Library add or remove operations.
+
+Configured Libraries divide repository path ownership. A Library and its descendants belong to the Libraries namespace and are excluded from version-control Save, Reference, Branch, and Working Directory Update planning. Catalog configuration does not copy files or enable local synchronization.
+
+Libraries keep stable item identities separate from mutable placement and immutable bytes:
+
+- `LibraryItemDto` holds a stable item ID, item kind, current state, and last change cursor.
+- `LibraryNamespaceDto` holds the current parent, name, normalized path, namespace version, and destination-slot version.
+- `LibraryContentVersionDto` identifies immutable complete bytes by content version, BLAKE3, SHA-256, size, and creation time.
+- `LibraryTombstoneDto` records deletion without reusing the item identity.
+- `LibraryOperationReceiptDto` is the stable result for an idempotent remote operation.
+
+The Library catalog and accepted change stream are repository-owned remote state. Product V1 adds no working-copy participation setting, local SQLite Library-item state, or filesystem publication.
+
 ## Branch
 
 Branch is where branches in a repository are defined. It just holds settings that apply to the Branch.

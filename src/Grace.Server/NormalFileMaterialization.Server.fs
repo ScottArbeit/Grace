@@ -570,3 +570,18 @@ module internal NormalFileMaterialization =
             objectKey
             correlationId
             cancellationToken
+
+    /// Reconstructs exact verified immutable bytes for an already-authorized server response without publishing a filesystem object.
+    let materializeBytes (repositoryDto: RepositoryDto) (authorizedScope: string) (fileVersion: FileVersion) correlationId cancellationToken =
+        /// Resolves only finalized ContentBlock metadata reachable through the retained synchronized scope and manifest.
+        let metadataResolver manifest contentBlockAddresses correlationId cancellationToken =
+            finalizedManifestMetadataResolver repositoryDto authorizedScope manifest contentBlockAddresses correlationId cancellationToken
+
+        materializeBytesWithReaders
+            (azureObjectPayloadReader repositoryDto)
+            metadataResolver
+            azureContentBlockPlacementPayloadReader
+            fileVersion
+            $"synchronized/{fileVersion.Blake3Hash}"
+            correlationId
+            cancellationToken

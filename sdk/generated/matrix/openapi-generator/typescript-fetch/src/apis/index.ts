@@ -6,6 +6,7 @@ export * from './CacheApi';
 export * from './DefaultApi';
 export * from './DiffsApi';
 export * from './DirectoriesApi';
+export * from './LibrariesApi';
 export * from './OrganizationsApi';
 export * from './OwnersApi';
 export * from './RepositoriesApi';

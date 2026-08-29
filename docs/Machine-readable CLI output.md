@@ -26,6 +26,8 @@ grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 grace --output Json watch --check
 grace watch --check --select Mode
+grace --output Json library get shared --repository-id $repositoryId
+grace --output Json library list --repository-id $repositoryId
 ```
 
 bash / zsh:
@@ -38,6 +40,8 @@ grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 grace --output Json watch --check
 grace watch --check --select Mode
+grace --output Json library get shared --repository-id "$repository_id"
+grace --output Json library list --repository-id "$repository_id"
 ```
 
 ## Output Envelopes
@@ -143,8 +147,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `207`
-- JSON-ready routed commands: `186`
+- Total leaf commands: `211`
+- JSON-ready routed commands: `190`
 - Conditionally JSON-ready routed commands: `1`
 - Intentionally human-only commands: `0`
 - Deferred routed commands with explicit V2 scope: `11`
@@ -190,6 +194,18 @@ envelope.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
+
+## Library command outcomes
+
+The remote-only `library` command group uses the same result envelope as other JSON-ready commands:
+
+- `library get <path>` and `library list` return the persisted `LibraryCatalogDto`.
+- `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
+
+Catalog changes require a positional Library path, `--expected-version`, and `--operation-id`. Automation must inspect
+`ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process
+exit code as evidence that a repository change was accepted. These commands configure the server-owned remote
+namespace. They do not activate local synchronization, Watch participation, or filesystem publication.
 
 ## Agent Recipes
 

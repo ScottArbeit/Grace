@@ -30,6 +30,8 @@ module Authorization =
                   RepositoryAdmin
                   RepositoryWrite
                   RepositoryRead
+                  LibraryRead
+                  LibraryWrite
                   BranchAdmin
                   BranchWrite
                   BranchRead
@@ -53,6 +55,8 @@ module Authorization =
                   RepositoryAdmin
                   RepositoryWrite
                   RepositoryRead
+                  LibraryRead
+                  LibraryWrite
                   BranchAdmin
                   BranchWrite
                   BranchRead
@@ -84,6 +88,8 @@ module Authorization =
                   RepositoryAdmin
                   RepositoryWrite
                   RepositoryRead
+                  LibraryRead
+                  LibraryWrite
                   BranchAdmin
                   BranchWrite
                   BranchRead
@@ -121,6 +127,8 @@ module Authorization =
                   RepositoryAdmin
                   RepositoryWrite
                   RepositoryRead
+                  LibraryRead
+                  LibraryWrite
                   PathWrite
                   PathRead
                   BranchAdmin
@@ -152,6 +160,8 @@ module Authorization =
             set [ RepositoryAdmin
                   RepositoryWrite
                   RepositoryRead
+                  LibraryRead
+                  LibraryWrite
                   PathWrite
                   PathRead
                   BranchAdmin
@@ -176,6 +186,13 @@ module Authorization =
                   PathRead
                   BranchRead
                   ApprovalRequestRead ]
+
+        let private libraryReaderOperations = set [ RepositoryRead; LibraryRead ]
+
+        let private libraryWriterOperations =
+            set [ RepositoryRead
+                  LibraryRead
+                  LibraryWrite ]
 
         let private branchAdminOperations =
             set [ BranchAdmin
@@ -207,6 +224,8 @@ module Authorization =
                 { RoleId = "RepositoryAdmin"; AllowedOperations = repositoryAdminOperations; AppliesTo = Set.ofList [ scopeRepository ] }
                 { RoleId = "RepositoryContributor"; AllowedOperations = repositoryContributorOperations; AppliesTo = Set.ofList [ scopeRepository ] }
                 { RoleId = "RepositoryReader"; AllowedOperations = repositoryReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "LibraryReader"; AllowedOperations = libraryReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "LibraryWriter"; AllowedOperations = libraryWriterOperations; AppliesTo = Set.ofList [ scopeRepository ] }
                 { RoleId = "BranchAdmin"; AllowedOperations = branchAdminOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchWriter"; AllowedOperations = branchWriterOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchReader"; AllowedOperations = branchReaderOperations; AppliesTo = Set.ofList [ scopeBranch ] }

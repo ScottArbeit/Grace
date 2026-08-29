@@ -290,6 +290,37 @@ paths:
   /storage/finalizeManifestUpload:
     $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1finalizeManifestUpload'
 
+  /libraries/catalog/get:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1catalog~1get'
+  /libraries/list:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1list'
+  /libraries/add:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1add'
+  /libraries/remove:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1remove'
+  /libraries/bootstrap/start:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1bootstrap~1start'
+  /libraries/bootstrap/continue:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1bootstrap~1continue'
+  /libraries/changes/get:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1changes~1get'
+  /libraries/changes/submit:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1changes~1submit'
+  /libraries/operations/get:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1operations~1get'
+  /libraries/content/prepare:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1prepare'
+  /libraries/content/read:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1read'
+  /libraries/content/{grantId}:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1{grantId}'
+  /libraries/items/get:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1items~1get'
+  /libraries/namespace/get-slot:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1namespace~1get-slot'
+  /libraries/status/get:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1status~1get'
+
 components:
   schemas:
     ApprovalPolicyParameters:
@@ -588,6 +619,133 @@ components:
       $ref: 'Storage.Components.OpenAPI.yaml#/ChunkingSuiteId'
     UploadSessionOperationId:
       $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionOperationId'
+
+    LibraryItemId:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemId'
+    LibraryOperationId:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryOperationId'
+    LibraryCatalogVersion:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogVersion'
+    LibraryNamespaceVersion:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceVersion'
+    LibraryNamespaceSlotVersion:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotVersion'
+    LibraryContentVersionId:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentVersionId'
+    LibraryBootstrapId:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryBootstrapId'
+    LibraryPreparedContentId:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentId'
+    LibraryCursor:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCursor'
+    LibraryCursorEpoch:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCursorEpoch'
+    LibraryPageToken:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPageToken'
+    LibraryItemKind:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemKind'
+    LibraryChangeKind:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangeKind'
+    LibraryOutcomeKind:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryOutcomeKind'
+    LibraryRejectionReason:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryRejectionReason'
+    LibraryCatalogRejectionReason:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogRejectionReason'
+    LibraryParentDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryParentDto'
+    LibraryNamespaceDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceDto'
+    LibraryContentVersionDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentVersionDto'
+    LibraryTombstoneDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryTombstoneDto'
+    LibraryConflictProvenanceDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryConflictProvenanceDto'
+    LibraryItemDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemDto'
+    LibraryNamespaceSlotDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotDto'
+    LibraryCatalogDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogDto'
+    LibraryNamespacePreconditionDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespacePreconditionDto'
+    LibraryContentPreconditionDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentPreconditionDto'
+    LibraryCreationSlotExpectationDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCreationSlotExpectationDto'
+    LibraryChangeDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangeDto'
+    LibraryRebaselineDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryRebaselineDto'
+    LibraryOperationReceiptDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptDto'
+    LibraryCatalogChangeResultDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogChangeResultDto'
+    LibraryBootstrapPageDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryBootstrapPageDto'
+    LibraryChangePageDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangePageDto'
+    LibraryPreparedContentDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentDto'
+    LibraryContentReadGrantDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadGrantDto'
+    LibraryRepositoryStatusDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryRepositoryStatusDto'
+    LibraryContentAvailable:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentAvailable'
+    LibraryParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryParameters'
+    GetLibraryCatalogParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryCatalogParameters'
+    ListLibrariesParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/ListLibrariesParameters'
+    AddLibraryParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/AddLibraryParameters'
+    RemoveLibraryParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/RemoveLibraryParameters'
+    StartLibraryBootstrapParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/StartLibraryBootstrapParameters'
+    ContinueLibraryBootstrapParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/ContinueLibraryBootstrapParameters'
+    GetLibraryChangesParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryChangesParameters'
+    SubmitLibraryChangeParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/SubmitLibraryChangeParameters'
+    GetLibraryOperationParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryOperationParameters'
+    PrepareLibraryContentParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentParameters'
+    PrepareLibraryContentReadParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentReadParameters'
+    GetLibraryItemParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryItemParameters'
+    GetLibraryNamespaceSlotParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryNamespaceSlotParameters'
+    GetLibraryStatusParameters:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryStatusParameters'
+    LibraryReturnValueBase:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryReturnValueBase'
+    LibraryCatalogReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogReturnValue'
+    LibraryCatalogChangeReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogChangeReturnValue'
+    LibraryBootstrapPageReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryBootstrapPageReturnValue'
+    LibraryChangePageReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangePageReturnValue'
+    LibraryOperationReceiptReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptReturnValue'
+    LibraryPreparedContentReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentReturnValue'
+    LibraryContentReadGrantReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadGrantReturnValue'
+    LibraryItemReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemReturnValue'
+    LibraryNamespaceSlotReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotReturnValue'
+    LibraryStatusReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryStatusReturnValue'
 
     Instant:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'

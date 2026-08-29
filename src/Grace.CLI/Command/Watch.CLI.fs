@@ -376,6 +376,7 @@ module Watch =
             GraceStatusFile = snapshot.GraceStatusFile
             DirectoryIgnoreEntries = snapshot.DirectoryEntries
             FileIgnoreEntries = snapshot.FileEntries
+            Libraries = Array.empty
             PathComparison = watchPathComparison
         }
 
@@ -420,6 +421,7 @@ module Watch =
                 GraceStatusFile = snapshot.GraceStatusFile
                 DirectoryIgnoreEntries = snapshot.DirectoryEntries
                 FileIgnoreEntries = snapshot.FileEntries
+                Libraries = Array.empty
             }
 
         scanWorkingTreeForDifferencesReadOnlyWithComparison watchPathComparison scanInput previousGraceStatus
@@ -3646,7 +3648,7 @@ module Watch =
             do! admitCallbacks ()
         }
 
-    /// Applies a Watch-owned incremental status mutation and remembers its committed local-status revision.
+    /// Applies a Watch-owned incremental status change and remembers its committed local-status revision.
     let private applyGraceStatusIncrementalAndRecordRevision graceStatus directoryVersions differences =
         runWatchOwnedLocalStatusWrite (fun () ->
             Grace.CLI.LocalStateDb.applyStatusIncrementalWithRevision (Current().GraceStatusFile) graceStatus directoryVersions differences)
@@ -6033,7 +6035,7 @@ module Watch =
     let internal currentBranchMaterializationRetainedDirectoryMatchesStatusForWatchTests currentStatus relativePath =
         targetDirectoryStillMatchesStatus currentStatus relativePath
 
-    /// Fails before exact target mutation when a tracked parent directory no longer matches the accepted clean snapshot.
+    /// Fails before exact target change when a tracked parent directory no longer matches the accepted clean snapshot.
     let private verifyCurrentBranchMaterializationRetainedDirectories (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
         task {
             for directoryVersion in plan.RetainedDirectories do
@@ -6050,9 +6052,9 @@ module Watch =
                 let fullPath = materializationTargetFullPath directoryVersion.RelativePath
 
                 if not (Directory.Exists(fullPath)) then
-                    invalidOp $"Remote materialization retained ancestor directory changed at mutation boundary: {directoryVersion.RelativePath}."
+                    invalidOp $"Remote materialization retained ancestor directory changed at change boundary: {directoryVersion.RelativePath}."
 
-    /// Fails before target mutation when a changed target no longer matches the trusted local status.
+    /// Fails before target change when a changed target no longer matches the trusted local status.
     let private verifyCurrentBranchMaterializationTargetsUnchanged (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
         task {
             let currentFiles = materializationFilesByPath currentStatus
@@ -6108,7 +6110,7 @@ module Watch =
                         invalidOp $"Remote materialization create target appeared before apply: {relativePath}."
         }
 
-    /// Verifies files omitted from mutation still match the clean snapshot represented by replacement status.
+    /// Verifies files omitted from change still match the clean snapshot represented by replacement status.
     let private verifyCurrentBranchMaterializationRetainedFiles (plan: CurrentBranchRemoteMaterializationPlan) =
         task {
             for fileVersion in plan.RetainedFiles do
@@ -6542,7 +6544,7 @@ module Watch =
             StartedAt: Instant
         }
 
-    /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
+    /// Publishes and verifies the dirty materialization boundary before target change can begin.
     let private tryPublishCurrentBranchMaterializationPendingStatus () =
         try
             let expectedStatus =
@@ -6570,7 +6572,7 @@ module Watch =
         | NotCurrentBranch = 0
         /// The notification failed the concrete Reference and root-identity protocol checks.
         | ProtocolRejected = 1
-        /// The latest eligible Reference comparison or current Watch evidence rejected the notification without mutation.
+        /// The latest eligible Reference comparison or current Watch evidence rejected the notification without change.
         | LatestEligibleReferenceRejected = 2
         /// Local Watch status is clean and trusted, so the apply seam completed for this exact Reference.
         | Applied = 3
@@ -7160,7 +7162,7 @@ module Watch =
     let mutable private afterWatchStartupClaim = fun () -> ()
     let mutable private beforeWatchCallbackRuntimeSetup = fun () -> ()
 
-    /// Installs a deterministic mutation after IPC claim so tests can prove the second trust boundary fails closed.
+    /// Installs a deterministic change after IPC claim so tests can prove the second trust boundary fails closed.
     let internal setAfterWatchStartupClaimForTests probe = afterWatchStartupClaim <- probe
 
     /// Restores the production Watch startup path after post-claim race tests.
@@ -7821,6 +7823,7 @@ module Watch =
         match classifyRawLocalObservation fallbackKind fullPath with
         | LocalStateArtifact -> recordLocalStatusRevisionCheckObservation ()
         | GraceInternal
+        | Library
         | Ignored -> ()
         | Eligible when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate fallbackKind fullPath seenAt
         | Eligible when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately fallbackKind fullPath
@@ -8503,7 +8506,7 @@ module Watch =
                         requestGraceWatchExplicitResyncRetainingPendingFiles
                             $"Watch file identity scope changed before stabilization for {pendingFile.FullPath}."
                     elif updateInProgress () then
-                        // A pre-marker local candidate remains pending until the marker ends; do not inspect bytes during Grace-owned mutation.
+                        // A pre-marker local candidate remains pending until the marker ends; do not inspect bytes during Grace-owned change.
                         ()
                     elif Directory.Exists(pendingFile.FullPath) then
                         (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
@@ -9382,7 +9385,7 @@ module Watch =
             isTrackedDirectory status parentRelativePath
             || replayRowsContainDirectoryAdd replayRows parentRelativePath
 
-    /// Classifies compatible durable replay rows against current startup scan applicability before status mutation.
+    /// Classifies compatible durable replay rows against current startup scan applicability before status change.
     let private tryStartupReplayRetirementReason
         (status: GraceStatus)
         (compatibleReplayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)

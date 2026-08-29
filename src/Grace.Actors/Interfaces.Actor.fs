@@ -25,6 +25,7 @@ open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans
@@ -741,6 +742,38 @@ module Interfaces =
 
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the bounded repository owner for the Library catalog and serialized Library changes.
+    [<Interface>]
+    type IRepositoryLibraryActor =
+        inherit IGrainWithGuidKey
+
+        /// Creates the initial empty catalog from immutable repository creation facts when control state is absent.
+        abstract member InitializeCatalog: libraryCatalog: LibraryCatalogDto -> correlationId: CorrelationId -> Task
+
+        /// Reads the current authoritative Library catalog.
+        abstract member GetCatalog: correlationId: CorrelationId -> Task<LibraryCatalogDto>
+
+        /// Persists one catalog result, atomically applying an accepted exact-predecessor mutation.
+        abstract member SetCatalog:
+            requestHash: string -> result: LibraryCatalogChangeResultDto -> correlationId: CorrelationId -> Task<LibraryCatalogChangeResultDto>
+
+        /// Classifies one normalized repository-relative path against the catalog state observed for this actor call.
+        abstract member IsInLibrary: relativePath: string -> correlationId: CorrelationId -> Task<bool>
+
+        /// Repairs prior accepted work, then submits one deterministic command against the actor-owned catalog policy.
+        abstract member Submit:
+            command: LibraryChangeCommand ->
+            principalId: PrincipalId ->
+            authorization: LibraryWriteAuthorization ->
+            correlationId: CorrelationId ->
+                Task<LibrarySubmitResult>
+
+        /// Repairs any pending accepted operation without admitting another command.
+        abstract member Repair: correlationId: CorrelationId -> Task
+
+        /// Returns truthful content-free Library repository status after repair.
+        abstract member GetStatus: correlationId: CorrelationId -> Task<LibraryRepositoryStatusDto>
 
     /// Defines the operations for the AccessControl actor.
     [<Interface>]

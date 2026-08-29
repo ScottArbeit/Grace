@@ -117,6 +117,7 @@ pub mod cache_api;
 pub mod default_api;
 pub mod diffs_api;
 pub mod directories_api;
+pub mod libraries_api;
 pub mod organizations_api;
 pub mod owners_api;
 pub mod repositories_api;

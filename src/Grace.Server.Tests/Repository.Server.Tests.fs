@@ -17,6 +17,7 @@ open System.Text
 open System.Diagnostics
 open Grace.Types.Common
 open Grace.Types
+open Grace.Types.Library
 open System.Net.Http
 open Grace.Shared.Validation
 
@@ -84,6 +85,28 @@ type Repository() =
 
     /// Exposes test context for test diagnostics.
     member val public TestContext = TestContext.CurrentContext with get, set
+
+    /// Verifies hosted repository creation initializes the actor-keyed empty Library catalog exposed by the remote contract.
+    [<Test>]
+    member _.CreateInitializesMatchingEmptyLibraryCatalog() =
+        task {
+            let! repositoryId = createRepositoryAsync ()
+            do! grantRepositoryAdminAsync repositoryId
+
+            let parameters = Parameters.Library.GetLibraryCatalogParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/libraries/catalog/get", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+            let result = deserialize<GraceReturnValue<LibraryCatalogDto>> body
+            Assert.That(result.ReturnValue.RepositoryId, Is.EqualTo(Guid.Parse repositoryId))
+            Assert.That(result.ReturnValue.Libraries, Is.Empty)
+        }
 
     /// Verifies repository Reference lookup rejects any default ReferenceId before the repository query pipeline.
     [<Test>]

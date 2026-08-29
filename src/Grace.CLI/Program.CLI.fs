@@ -512,6 +512,7 @@ module GraceCommand =
                         "branch"
                         "diff"
                         "directory-version"
+                        "library"
                         "watch"
                     ]
             }
@@ -577,6 +578,11 @@ module GraceCommand =
                     ]
             }
             { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
+        ]
+
+    let private libraryHelpSections =
+        [
+            { Heading = "Configure Libraries"; CommandNames = [ "list"; "get"; "add"; "remove" ] }
         ]
 
     let private branchHelpSections =
@@ -674,6 +680,7 @@ module GraceCommand =
         let lookup = Dictionary<string, HelpSection list>(StringComparer.InvariantCultureIgnoreCase)
         lookup["repository"] <- repositoryHelpSections
         lookup["repo"] <- repositoryHelpSections
+        lookup["library"] <- libraryHelpSections
         lookup["branch"] <- branchHelpSections
         lookup["br"] <- branchHelpSections
         lookup["owner"] <- ownerHelpSections
@@ -862,6 +869,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(DirectoryVersion.Build)
         rootCommand.Subcommands.Add(Diff.Build)
         rootCommand.Subcommands.Add(Repository.Build)
+        rootCommand.Subcommands.Add(LibraryCommand.Build)
         rootCommand.Subcommands.Add(Organization.Build)
         rootCommand.Subcommands.Add(Owner.Build)
         rootCommand.Subcommands.Add(Config.Build)
@@ -1511,11 +1519,7 @@ module GraceCommand =
                                  |> Seq.exists (fun cmd -> cmd.Name.Equals("authorize", comparison)))
                                 && (commandLineage
                                     |> Seq.exists (fun cmd -> cmd.Name.Equals("check", comparison)))
-                                && String.Equals(
-                                    parseResult.GetValue<string>(OptionName.ResourceKind),
-                                    "system",
-                                    comparison
-                                )
+                                && String.Equals(parseResult.GetValue<string>(OptionName.ResourceKind), "system", comparison)
 
                             isAgentBootstrap
                             || isSystemAuthorizationCheck

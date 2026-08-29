@@ -6,6 +6,7 @@ from grace_generated_openapi_probe.api.branches_api import BranchesApi
 from grace_generated_openapi_probe.api.cache_api import CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi
+from grace_generated_openapi_probe.api.libraries_api import LibrariesApi
 from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi
 from grace_generated_openapi_probe.api.owners_api import OwnersApi
 from grace_generated_openapi_probe.api.repositories_api import RepositoriesApi

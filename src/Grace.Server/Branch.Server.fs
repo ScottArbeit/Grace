@@ -22,6 +22,7 @@ open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
+open Grace.Shared.Validation.Library
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
@@ -102,7 +103,7 @@ module Branch =
         |> Seq.toArray
         |> Array.iter (fun key -> pendingWatchPublications.Remove key |> ignore)
 
-    /// Captures the exact active connection before the authorized Reference mutation can publish its broker event.
+    /// Captures the exact active connection before the authorized Reference change can publish its broker event.
     let internal prepareWatchPublicationSourceAt now processId repositoryId branchId referenceId =
         lock watchSourceSuppressionLock (fun () ->
             pruneExpiredWatchPublicationsLocked now
@@ -131,7 +132,7 @@ module Branch =
     let internal prepareWatchPublicationSource processId repositoryId branchId referenceId =
         prepareWatchPublicationSourceAt DateTimeOffset.UtcNow processId repositoryId branchId referenceId
 
-    /// Removes a pending binding when the corresponding Reference mutation fails or is cancelled.
+    /// Removes a pending binding when the corresponding Reference change fails or is cancelled.
     let internal removeWatchPublicationSource publication =
         lock watchSourceSuppressionLock (fun () ->
             pendingWatchPublications.Remove publication
@@ -194,6 +195,14 @@ module Branch =
     /// Writes ambiguous branch hash lookup error onto the current response or server state.
     let private setAmbiguousBranchHashLookupError (context: HttpContext) sha256Hash blake3Hash correlationId =
         let graceError = GraceError.Create $"The supplied {branchHashLookupDescription sha256Hash blake3Hash} is ambiguous in repository scope." correlationId
+
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        context.Items[ branchHashLookupErrorItemKey ] <- graceError
+
+    /// Records a pre-change rejection when the selected root contains content owned by the current Library policy.
+    let private setLibraryPolicyError (context: HttpContext) path correlationId =
+        let graceError =
+            GraceError.Create $"Path '{path}' belongs to the current Library policy and cannot be referenced as version-controlled content." correlationId
 
         graceError.Properties.Add("Path", context.Request.Path.Value)
         context.Items[ branchHashLookupErrorItemKey ] <- graceError
@@ -1092,6 +1101,21 @@ module Branch =
     let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
         task { return! Services.getDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
+    /// Returns the first path owned by the Library catalog snapshot observed for each actor read.
+    let private tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
+        task {
+            let actor = ApplicationContext.grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+            let mutable ownedPath = None
+
+            for relativePath in relativePaths do
+                if ownedPath.IsNone then
+                    let! isInLibrary = actor.IsInLibrary relativePath correlationId
+
+                    if isInLibrary then ownedPath <- Some relativePath
+
+            return ownedPath
+        }
+
     /// Implements reference command from root for the server request pipeline.
     let private referenceCommandFromRoot
         (context: HttpContext)
@@ -1107,6 +1131,34 @@ module Branch =
         task {
             match! resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
             | Services.UniqueMatch directoryVersion ->
+                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                let! descendants = directoryVersionActor.GetRecursiveDirectoryVersions false correlationId
+
+                let candidatePaths =
+                    seq {
+                        yield string directoryVersion.RelativePath
+
+                        yield!
+                            directoryVersion.Files
+                            |> Seq.map (fun file -> string file.RelativePath)
+
+                        yield!
+                            descendants
+                            |> Seq.collect (fun descendant ->
+                                seq {
+                                    yield string descendant.DirectoryVersion.RelativePath
+
+                                    yield!
+                                        descendant.DirectoryVersion.Files
+                                        |> Seq.map (fun file -> string file.RelativePath)
+                                })
+                    }
+
+                let! libraryPath = tryFindLibraryPath repositoryId correlationId candidatePaths
+
+                libraryPath
+                |> Option.iter (fun path -> setLibraryPolicyError context path correlationId)
+
                 return createCommand (referenceId, directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
             | Services.NoMatches -> return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
             | Services.AmbiguousMatches _ ->
@@ -1560,7 +1612,7 @@ module Branch =
                 let graceIds = getGraceIds context
                 let mutable pendingWatchPublication: WatchPublicationKey option = None
 
-                /// Clears delivery-only source state when the durable Reference mutation does not succeed.
+                /// Clears delivery-only source state when the durable Reference change does not succeed.
                 let clearPendingWatchPublication () =
                     pendingWatchPublication
                     |> Option.iter removeWatchPublicationSource

@@ -276,6 +276,34 @@ module WorkingDirectoryUpdateTopologyTests =
 
             snapshotTree root |> should equal before)
 
+    /// Proves a configured Library namespace can never become a version-controlled Branch/WDU target.
+    [<Test>]
+    let ``topology rejects target beneath Library before mutation`` () =
+        withTempRepo (fun root _ ->
+            let libraryDirectory = Path.Combine(root, "library")
+
+            Directory.CreateDirectory(libraryDirectory)
+            |> ignore
+
+            let existingPath = Path.Combine(libraryDirectory, "remote.txt")
+            let existingBytes = Encoding.UTF8.GetBytes("remote-owned bytes")
+            File.WriteAllBytes(existingPath, existingBytes)
+            use _libraryPolicy = Services.beginLibraryPolicy [| "library" |]
+
+            let preparedManifest = manifest [ targetFile "library/remote.txt" (Encoding.UTF8.GetBytes("version-controlled bytes")) ]
+            let before = snapshotTree root
+
+            match plan (status [] []) preparedManifest with
+            | WorkingDirectoryUpdate.Topology.Rejected rejection ->
+                WorkingDirectoryUpdate.Topology.Rejection.path rejection
+                |> should equal (RelativePath "library")
+            | WorkingDirectoryUpdate.Topology.Planned _ -> Assert.Fail("A Library target must reject before WDU mutation planning.")
+
+            File.ReadAllBytes(existingPath)
+            |> should equal existingBytes
+
+            snapshotTree root |> should equal before)
+
     /// Proves absent targets and verified tracked matches make a complete materialization plan without destructive actions.
     [<Test>]
     let ``topology retains matching tracked files and plans absent files and directories`` () =

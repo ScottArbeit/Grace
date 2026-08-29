@@ -214,6 +214,37 @@ type EndpointAuthorizationManifestTests() =
 
             Assert.Fail($"EndpointAuthorizationManifest contains duplicate entries:{Environment.NewLine}{message}")
 
+    /// Verifies Library catalog changes remain repository-admin policy while ordinary Library operations use the specialized roles.
+    [<Test>]
+    member _.LibraryContentRoutesUseAcceptedRepositoryPolicies() =
+        [
+            "POST", "/libraries/catalog/get"
+            "POST", "/libraries/list"
+            "POST", "/libraries/bootstrap/start"
+            "POST", "/libraries/bootstrap/continue"
+            "POST", "/libraries/changes/get"
+            "POST", "/libraries/operations/get"
+            "POST", "/libraries/content/read"
+            "POST", "/libraries/items/get"
+            "POST", "/libraries/namespace/get-slot"
+            "POST", "/libraries/status/get"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.LibraryRead, ResourceKind.Repository))
+
+        [
+            "POST", "/libraries/changes/submit"
+            "POST", "/libraries/content/prepare"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.LibraryWrite, ResourceKind.Repository))
+
+        [
+            "POST", "/libraries/add"
+            "POST", "/libraries/remove"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.RepositoryAdmin, ResourceKind.Repository))
+
+        assertRouteSecurity "GET" "/libraries/content/%s" AllowAnonymous
+
     /// Verifies that approval policy routes require repository policy manage.
     [<Test>]
     member _.ApprovalPolicyRoutesRequireRepositoryPolicyManage() =

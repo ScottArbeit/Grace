@@ -3331,6 +3331,353 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /libraries/catalog/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get the persisted Library configuration.
+      operationId: GetLibraryCatalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLibraryCatalogParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryCatalogResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/list:
+    post:
+      tags:
+        - Libraries
+      summary: List the sorted Libraries and their exact configuration version.
+      operationId: ListLibraries
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListLibrariesParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryCatalogResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/add:
+    post:
+      tags:
+        - Libraries
+      summary: Add one empty normalized Library under an exact configuration version.
+      operationId: AddLibrary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddLibraryParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryCatalogChangeResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/remove:
+    post:
+      tags:
+        - Libraries
+      summary: Remove one empty normalized Library under an exact configuration version.
+      operationId: RemoveLibrary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveLibraryParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryCatalogChangeResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/bootstrap/start:
+    post:
+      tags:
+        - Libraries
+      summary: Start a bounded bootstrap from the current immutable baseline.
+      operationId: StartLibraryBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartLibraryBootstrapParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryBootstrapPageResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/bootstrap/continue:
+    post:
+      tags:
+        - Libraries
+      summary: Continue one immutable bootstrap baseline page sequence.
+      operationId: ContinueLibraryBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContinueLibraryBootstrapParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryBootstrapPageResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '410':
+          $ref: '#/components/responses/410'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/changes/get:
+    post:
+      tags:
+        - Libraries
+      summary: Read repository-ordered accepted Library changes after an opaque cursor.
+      operationId: GetLibraryChanges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLibraryChangesParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryChangePageResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/changes/submit:
+    post:
+      tags:
+        - Libraries
+      summary: Submit one exact idempotent Library namespace or content change.
+      operationId: SubmitLibraryChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitLibraryChangeParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryOperationReceiptResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '410':
+          $ref: '#/components/responses/410'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/operations/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get the stable receipt for one authorized Library operation identity.
+      operationId: GetLibraryOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLibraryOperationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryOperationReceiptResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/content/prepare:
+    post:
+      tags:
+        - Libraries
+      summary: Prepare exact immutable bytes for a later Library change.
+      operationId: PrepareLibraryContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareLibraryContentParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryPreparedContentResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/content/read:
+    post:
+      tags:
+        - Libraries
+      summary: Prepare a one-use read grant for an authorized retained content version.
+      operationId: PrepareLibraryContentRead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareLibraryContentReadParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryContentReadGrantResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/content/{grantId}:
+    get:
+      tags:
+        - Libraries
+      summary: Redeem one authorized short-lived immutable-content read grant.
+      operationId: DownloadLibraryContent
+      security: []
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        '200':
+          description: Exact immutable bytes authorized by the one-use grant.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '410':
+          $ref: '#/components/responses/410'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/items/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get one current Library item.
+      operationId: GetLibraryItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLibraryItemParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryItemResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/namespace/get-slot:
+    post:
+      tags:
+        - Libraries
+      summary: Get one current occupied or remembered-vacant Library namespace slot.
+      operationId: GetLibraryNamespaceSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLibraryNamespaceSlotParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryNamespaceSlotResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/status/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get content-free Library repository status.
+      operationId: GetLibraryStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLibraryStatusParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryStatusResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
 components:
   schemas:
     ApprovalPolicyParameters:
@@ -5195,6 +5542,934 @@ components:
     UploadSessionOperationId:
       description: Caller-supplied idempotency key for one upload-session operation.
       type: string
+    LibraryItemId:
+      type: string
+      format: uuid
+    LibraryOperationId:
+      type: string
+      format: uuid
+    LibraryCatalogVersion:
+      type: string
+      format: uuid
+    LibraryNamespaceVersion:
+      type: string
+      format: uuid
+    LibraryNamespaceSlotVersion:
+      type: string
+      format: uuid
+    LibraryContentVersionId:
+      type: string
+      format: uuid
+    LibraryBootstrapId:
+      type: string
+      format: uuid
+    LibraryPreparedContentId:
+      type: string
+      format: uuid
+    LibraryCursor:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque repository cursor. Clients must not parse or compare its contents.
+    LibraryCursorEpoch:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque repository epoch. Clients compare only exact equality.
+    LibraryPageToken:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Opaque token for continuing one immutable page sequence.
+    LibraryItemKind:
+      type: string
+      enum:
+        - file
+        - directory
+    LibraryChangeKind:
+      type: string
+      enum:
+        - createFile
+        - createDirectory
+        - updateContent
+        - rename
+        - move
+        - delete
+    LibraryOutcomeKind:
+      type: string
+      enum:
+        - accepted
+        - unchanged
+        - rejected
+        - conflictCopy
+        - stalePolicy
+        - rebaselineRequired
+        - localIncomplete
+    LibraryRejectionReason:
+      type: string
+      enum:
+        - namespaceChanged
+        - contentChanged
+        - slotOccupied
+        - itemMissing
+        - itemTombstoned
+        - directoryNotEmpty
+        - kindMismatch
+        - preparedContentExpired
+        - operationIdentityMismatch
+    LibraryCatalogRejectionReason:
+      type: string
+      enum:
+        - slotOccupied
+        - outgoingSystemNotEmpty
+        - libraryOverlap
+        - libraryLimitExceeded
+        - unsupportedPath
+    LibraryParentDto:
+      description: Repository-owned root or directory parent identity.
+      type: object
+      properties:
+        Kind:
+          type: string
+          enum:
+            - root
+            - item
+        LibraryPath:
+          type: string
+          nullable: true
+        ItemId:
+          allOf:
+            - $ref: '#/components/schemas/LibraryItemId'
+          nullable: true
+      required:
+        - Kind
+        - LibraryPath
+        - ItemId
+    LibraryNamespaceDto:
+      type: object
+      properties:
+        Parent:
+          $ref: '#/components/schemas/LibraryParentDto'
+        Name:
+          type: string
+        NormalizedPath:
+          type: string
+        NamespaceVersion:
+          $ref: '#/components/schemas/LibraryNamespaceVersion'
+        SlotVersion:
+          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
+      required:
+        - Parent
+        - Name
+        - NormalizedPath
+        - NamespaceVersion
+        - SlotVersion
+    LibraryContentVersionDto:
+      type: object
+      properties:
+        ContentVersionId:
+          $ref: '#/components/schemas/LibraryContentVersionId'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Size:
+          type: integer
+          format: int64
+          minimum: 0
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - ContentVersionId
+        - Blake3Hash
+        - Sha256Hash
+        - Size
+        - CreatedAt
+    LibraryTombstoneDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ItemKind:
+          $ref: '#/components/schemas/LibraryItemKind'
+        DeletedAt:
+          $ref: '#/components/schemas/Instant'
+        DeletedBy:
+          type: string
+        DeleteCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        LastNamespaceVersion:
+          $ref: '#/components/schemas/LibraryNamespaceVersion'
+        LastContentVersionId:
+          allOf:
+            - $ref: '#/components/schemas/LibraryContentVersionId'
+          nullable: true
+      required:
+        - ItemId
+        - ItemKind
+        - DeletedAt
+        - DeletedBy
+        - DeleteCursor
+        - LastNamespaceVersion
+        - LastContentVersionId
+    LibraryConflictProvenanceDto:
+      type: object
+      properties:
+        SourceOperationId:
+          $ref: '#/components/schemas/LibraryOperationId'
+        SourceItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        CanonicalItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ConflictItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ConflictPath:
+          type: string
+        AcceptedAt:
+          $ref: '#/components/schemas/Instant'
+        SourceContentVersionId:
+          allOf:
+            - $ref: '#/components/schemas/LibraryContentVersionId'
+          nullable: true
+        BaseContentVersionId:
+          allOf:
+            - $ref: '#/components/schemas/LibraryContentVersionId'
+          nullable: true
+      required:
+        - SourceOperationId
+        - SourceItemId
+        - CanonicalItemId
+        - ConflictItemId
+        - ConflictPath
+        - AcceptedAt
+        - SourceContentVersionId
+        - BaseContentVersionId
+    LibraryItemDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ItemKind:
+          $ref: '#/components/schemas/LibraryItemKind'
+        State:
+          type: string
+          enum:
+            - live
+            - tombstoned
+        LastChangeCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        Namespace:
+          allOf:
+            - $ref: '#/components/schemas/LibraryNamespaceDto'
+          nullable: true
+        Content:
+          allOf:
+            - $ref: '#/components/schemas/LibraryContentVersionDto'
+          nullable: true
+        Tombstone:
+          allOf:
+            - $ref: '#/components/schemas/LibraryTombstoneDto'
+          nullable: true
+      required:
+        - ItemId
+        - ItemKind
+        - State
+        - LastChangeCursor
+        - LibraryCatalogVersion
+        - Namespace
+        - Content
+        - Tombstone
+    LibraryNamespaceSlotDto:
+      type: object
+      properties:
+        Parent:
+          $ref: '#/components/schemas/LibraryParentDto'
+        Name:
+          type: string
+        NormalizedPath:
+          type: string
+        SlotVersion:
+          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
+        State:
+          type: string
+          enum:
+            - occupied
+            - vacant
+        OccupantItemId:
+          allOf:
+            - $ref: '#/components/schemas/LibraryItemId'
+          nullable: true
+      required:
+        - Parent
+        - Name
+        - NormalizedPath
+        - SlotVersion
+        - State
+        - OccupantItemId
+    LibraryCatalogDto:
+      type: object
+      properties:
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        Version:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        Libraries:
+          type: array
+          maxItems: 128
+          items:
+            type: string
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        CreatedBy:
+          type: string
+        PreviousVersion:
+          allOf:
+            - $ref: '#/components/schemas/LibraryCatalogVersion'
+          nullable: true
+      required:
+        - RepositoryId
+        - Version
+        - Libraries
+        - CreatedAt
+        - CreatedBy
+        - PreviousVersion
+    LibraryNamespacePreconditionDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ExpectedNamespaceVersion:
+          $ref: '#/components/schemas/LibraryNamespaceVersion'
+      required:
+        - ItemId
+        - ExpectedNamespaceVersion
+    LibraryContentPreconditionDto:
+      type: object
+      properties:
+        ItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ExpectedContentVersionId:
+          $ref: '#/components/schemas/LibraryContentVersionId'
+      required:
+        - ItemId
+        - ExpectedContentVersionId
+    LibraryCreationSlotExpectationDto:
+      type: object
+      properties:
+        Parent:
+          $ref: '#/components/schemas/LibraryParentDto'
+        Name:
+          type: string
+        ExpectedSlotVersion:
+          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
+        ExpectedState:
+          type: string
+          enum:
+            - vacant
+      required:
+        - Parent
+        - Name
+        - ExpectedSlotVersion
+        - ExpectedState
+    LibraryChangeDto:
+      type: object
+      properties:
+        Cursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        OperationId:
+          $ref: '#/components/schemas/LibraryOperationId'
+        ChangeKind:
+          $ref: '#/components/schemas/LibraryChangeKind'
+        ItemId:
+          $ref: '#/components/schemas/LibraryItemId'
+        ItemKind:
+          $ref: '#/components/schemas/LibraryItemKind'
+        AcceptedAt:
+          $ref: '#/components/schemas/Instant'
+        AcceptedBy:
+          type: string
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        Namespace:
+          allOf:
+            - $ref: '#/components/schemas/LibraryNamespaceDto'
+          nullable: true
+        Content:
+          allOf:
+            - $ref: '#/components/schemas/LibraryContentVersionDto'
+          nullable: true
+        Tombstone:
+          allOf:
+            - $ref: '#/components/schemas/LibraryTombstoneDto'
+          nullable: true
+        Conflict:
+          allOf:
+            - $ref: '#/components/schemas/LibraryConflictProvenanceDto'
+          nullable: true
+      required:
+        - Cursor
+        - OperationId
+        - ChangeKind
+        - ItemId
+        - ItemKind
+        - AcceptedAt
+        - AcceptedBy
+        - LibraryCatalogVersion
+        - Namespace
+        - Content
+        - Tombstone
+        - Conflict
+    LibraryRebaselineDto:
+      type: object
+      properties:
+        Reason:
+          type: string
+        CurrentEpoch:
+          $ref: '#/components/schemas/LibraryCursorEpoch'
+        ServiceFloorCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        RecommendedBootstrap:
+          type: boolean
+      required:
+        - Reason
+        - CurrentEpoch
+        - ServiceFloorCursor
+        - RecommendedBootstrap
+    LibraryOperationReceiptDto:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/LibraryOperationId'
+        RequestHash:
+          type: string
+        Outcome:
+          $ref: '#/components/schemas/LibraryOutcomeKind'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        RecordedAt:
+          $ref: '#/components/schemas/Instant'
+        PrincipalId:
+          type: string
+        Change:
+          allOf:
+            - $ref: '#/components/schemas/LibraryChangeDto'
+          nullable: true
+        Cursor:
+          allOf:
+            - $ref: '#/components/schemas/LibraryCursor'
+          nullable: true
+        Item:
+          allOf:
+            - $ref: '#/components/schemas/LibraryItemDto'
+          nullable: true
+        Conflict:
+          allOf:
+            - $ref: '#/components/schemas/LibraryConflictProvenanceDto'
+          nullable: true
+        ReasonCode:
+          type: string
+          nullable: true
+        CurrentLibraryCatalog:
+          allOf:
+            - $ref: '#/components/schemas/LibraryCatalogDto'
+          nullable: true
+        Rebaseline:
+          allOf:
+            - $ref: '#/components/schemas/LibraryRebaselineDto'
+          nullable: true
+      required:
+        - OperationId
+        - RequestHash
+        - Outcome
+        - LibraryCatalogVersion
+        - RecordedAt
+        - PrincipalId
+        - Change
+        - Cursor
+        - Item
+        - Conflict
+        - ReasonCode
+        - CurrentLibraryCatalog
+        - Rebaseline
+    LibraryCatalogChangeResultDto:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/LibraryOperationId'
+        Outcome:
+          $ref: '#/components/schemas/LibraryOutcomeKind'
+        LibraryCatalog:
+          $ref: '#/components/schemas/LibraryCatalogDto'
+        ReasonCode:
+          type: string
+          nullable: true
+        RecordedAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - OperationId
+        - Outcome
+        - LibraryCatalog
+        - ReasonCode
+        - RecordedAt
+    LibraryBootstrapPageDto:
+      type: object
+      properties:
+        BootstrapId:
+          $ref: '#/components/schemas/LibraryBootstrapId'
+        BoundaryCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        CursorEpoch:
+          $ref: '#/components/schemas/LibraryCursorEpoch'
+        LibraryCatalog:
+          $ref: '#/components/schemas/LibraryCatalogDto'
+        Items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibraryItemDto'
+        NextPageToken:
+          allOf:
+            - $ref: '#/components/schemas/LibraryPageToken'
+          nullable: true
+      required:
+        - BootstrapId
+        - BoundaryCursor
+        - CursorEpoch
+        - LibraryCatalog
+        - Items
+        - NextPageToken
+    LibraryChangePageDto:
+      type: object
+      properties:
+        Outcome:
+          $ref: '#/components/schemas/LibraryOutcomeKind'
+        CursorEpoch:
+          $ref: '#/components/schemas/LibraryCursorEpoch'
+        Changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibraryChangeDto'
+        LastCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        HasMore:
+          type: boolean
+        NextPageToken:
+          allOf:
+            - $ref: '#/components/schemas/LibraryPageToken'
+          nullable: true
+        Rebaseline:
+          allOf:
+            - $ref: '#/components/schemas/LibraryRebaselineDto'
+          nullable: true
+      required:
+        - Outcome
+        - CursorEpoch
+        - Changes
+        - LastCursor
+        - HasMore
+        - NextPageToken
+        - Rebaseline
+    LibraryPreparedContentDto:
+      type: object
+      properties:
+        PreparedContentId:
+          $ref: '#/components/schemas/LibraryPreparedContentId'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Size:
+          type: integer
+          format: int64
+          minimum: 1
+        UploadRequired:
+          type: boolean
+        UploadInstructions:
+          type: string
+          nullable: true
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - PreparedContentId
+        - Blake3Hash
+        - Sha256Hash
+        - Size
+        - UploadRequired
+        - UploadInstructions
+        - ExpiresAt
+    LibraryContentReadGrantDto:
+      type: object
+      properties:
+        GrantId:
+          type: string
+        DownloadPath:
+          type: string
+        Content:
+          $ref: '#/components/schemas/LibraryContentVersionDto'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - GrantId
+        - DownloadPath
+        - Content
+        - ExpiresAt
+    LibraryRepositoryStatusDto:
+      type: object
+      properties:
+        State:
+          type: string
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        IsCaughtUp:
+          type: boolean
+        RebaselineRequired:
+          type: boolean
+        IsBlocked:
+          type: boolean
+        PendingOperationCount:
+          type: integer
+          format: int32
+          minimum: 0
+        OldestPendingAgeMilliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+        ProjectionLagCount:
+          type: integer
+          format: int64
+          minimum: 0
+        LastCompletedAt:
+          allOf:
+            - $ref: '#/components/schemas/Instant'
+          nullable: true
+      required:
+        - State
+        - RepositoryId
+        - LibraryCatalogVersion
+        - IsCaughtUp
+        - RebaselineRequired
+        - IsBlocked
+        - PendingOperationCount
+        - OldestPendingAgeMilliseconds
+        - ProjectionLagCount
+        - LastCompletedAt
+    LibraryContentAvailable:
+      type: object
+      description: Content-free best-effort wake. Authorized clients pull durable changes after receipt.
+      properties:
+        EventName:
+          type: string
+          const: LibraryContentAvailable.v1
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        CursorEpoch:
+          $ref: '#/components/schemas/LibraryCursorEpoch'
+        AvailableAfterCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        OccurredAt:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+      required:
+        - EventName
+        - RepositoryId
+        - CursorEpoch
+        - AvailableAfterCursor
+        - LibraryCatalogVersion
+        - OccurredAt
+        - CorrelationId
+    LibraryParameters:
+      description: Repository locator shared by every remote library request.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+    GetLibraryCatalogParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+    ListLibrariesParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+    AddLibraryParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            ExpectedVersion:
+              $ref: '#/components/schemas/LibraryCatalogVersion'
+            LibraryPath:
+              type: string
+            OperationId:
+              $ref: '#/components/schemas/LibraryOperationId'
+          required:
+            - ExpectedVersion
+            - LibraryPath
+            - OperationId
+    RemoveLibraryParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            ExpectedVersion:
+              $ref: '#/components/schemas/LibraryCatalogVersion'
+            LibraryPath:
+              type: string
+            OperationId:
+              $ref: '#/components/schemas/LibraryOperationId'
+          required:
+            - ExpectedVersion
+            - LibraryPath
+            - OperationId
+    StartLibraryBootstrapParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required:
+            - PageSize
+    ContinueLibraryBootstrapParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            BootstrapId:
+              $ref: '#/components/schemas/LibraryBootstrapId'
+            PageToken:
+              $ref: '#/components/schemas/LibraryPageToken'
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required:
+            - BootstrapId
+            - PageToken
+            - PageSize
+    GetLibraryChangesParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            AfterCursor:
+              $ref: '#/components/schemas/LibraryCursor'
+            PageToken:
+              allOf:
+                - $ref: '#/components/schemas/LibraryPageToken'
+              nullable: true
+            PageSize:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 2000
+          required:
+            - AfterCursor
+            - PageToken
+            - PageSize
+    SubmitLibraryChangeParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            OperationId:
+              $ref: '#/components/schemas/LibraryOperationId'
+            LibraryCatalogVersion:
+              $ref: '#/components/schemas/LibraryCatalogVersion'
+            ChangeKind:
+              $ref: '#/components/schemas/LibraryChangeKind'
+            ItemKind:
+              $ref: '#/components/schemas/LibraryItemKind'
+            ItemId:
+              allOf:
+                - $ref: '#/components/schemas/LibraryItemId'
+              nullable: true
+            NamespacePrecondition:
+              allOf:
+                - $ref: '#/components/schemas/LibraryNamespacePreconditionDto'
+              nullable: true
+            ContentPrecondition:
+              allOf:
+                - $ref: '#/components/schemas/LibraryContentPreconditionDto'
+              nullable: true
+            CreationSlotExpectation:
+              allOf:
+                - $ref: '#/components/schemas/LibraryCreationSlotExpectationDto'
+              nullable: true
+            DestinationParent:
+              allOf:
+                - $ref: '#/components/schemas/LibraryParentDto'
+              nullable: true
+            DestinationName:
+              type: string
+              nullable: true
+            PreparedContentId:
+              allOf:
+                - $ref: '#/components/schemas/LibraryPreparedContentId'
+              nullable: true
+          required:
+            - OperationId
+            - LibraryCatalogVersion
+            - ChangeKind
+            - ItemKind
+    GetLibraryOperationParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            OperationId:
+              $ref: '#/components/schemas/LibraryOperationId'
+          required:
+            - OperationId
+    PrepareLibraryContentParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            OperationId:
+              $ref: '#/components/schemas/LibraryOperationId'
+            Blake3Hash:
+              $ref: '#/components/schemas/Blake3Hash'
+            Sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
+            Size:
+              type: integer
+              format: int64
+              minimum: 1
+          required:
+            - OperationId
+            - Blake3Hash
+            - Sha256Hash
+            - Size
+    PrepareLibraryContentReadParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            ItemId:
+              $ref: '#/components/schemas/LibraryItemId'
+            ContentVersionId:
+              $ref: '#/components/schemas/LibraryContentVersionId'
+          required:
+            - ItemId
+            - ContentVersionId
+    GetLibraryItemParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            ItemId:
+              $ref: '#/components/schemas/LibraryItemId'
+          required:
+            - ItemId
+    GetLibraryNamespaceSlotParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+        - type: object
+          properties:
+            Parent:
+              $ref: '#/components/schemas/LibraryParentDto'
+            Name:
+              type: string
+          required:
+            - Parent
+            - Name
+    GetLibraryStatusParameters:
+      allOf:
+        - $ref: '#/components/schemas/LibraryParameters'
+    LibraryReturnValueBase:
+      type: object
+      properties:
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    LibraryCatalogReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryCatalogDto'
+    LibraryCatalogChangeReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryCatalogChangeResultDto'
+    LibraryBootstrapPageReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryBootstrapPageDto'
+    LibraryChangePageReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryChangePageDto'
+    LibraryOperationReceiptReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryOperationReceiptDto'
+    LibraryPreparedContentReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryPreparedContentDto'
+    LibraryContentReadGrantReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryContentReadGrantDto'
+    LibraryItemReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryItemDto'
+    LibraryNamespaceSlotReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryNamespaceSlotDto'
+    LibraryStatusReturnValue:
+      allOf:
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
+        - type: object
+          properties:
+            ReturnValue:
+              $ref: '#/components/schemas/LibraryRepositoryStatusDto'
     Instant:
       type: string
       format: date-time
@@ -8029,6 +9304,24 @@ components:
             forbidden:
               summary: Framework authorization failure
               value: Forbidden.
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+    '409':
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+    '410':
+      description: Gone
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
     '500':
       description: Internal Server Error
       content:
@@ -8591,3 +9884,63 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RepositoryReferencesReturnValue'
+    LibraryCatalogResponse:
+      description: Current persisted Library configuration.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryCatalogReturnValue'
+    LibraryCatalogChangeResponse:
+      description: Exact-version Library change result.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryCatalogChangeReturnValue'
+    LibraryBootstrapPageResponse:
+      description: One immutable bootstrap baseline page.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryBootstrapPageReturnValue'
+    LibraryChangePageResponse:
+      description: Ordered accepted changes or a rebaseline instruction.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryChangePageReturnValue'
+    LibraryOperationReceiptResponse:
+      description: Stable Library operation receipt.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryOperationReceiptReturnValue'
+    LibraryPreparedContentResponse:
+      description: Authorized immutable-content preparation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryPreparedContentReturnValue'
+    LibraryContentReadGrantResponse:
+      description: One-use authorized immutable-content read grant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryContentReadGrantReturnValue'
+    LibraryItemResponse:
+      description: Current Library item state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryItemReturnValue'
+    LibraryNamespaceSlotResponse:
+      description: Current occupied or remembered-vacant namespace slot.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryNamespaceSlotReturnValue'
+    LibraryStatusResponse:
+      description: Content-free Library repository status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LibraryStatusReturnValue'

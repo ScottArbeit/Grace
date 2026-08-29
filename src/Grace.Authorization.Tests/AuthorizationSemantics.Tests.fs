@@ -94,6 +94,8 @@ type AuthorizationSemanticsTests() =
                 "RepositoryAdmin"
                 "RepositoryContributor"
                 "RepositoryReader"
+                "LibraryReader"
+                "LibraryWriter"
                 "BranchAdmin"
                 "BranchWriter"
                 "BranchReader"
@@ -185,6 +187,21 @@ type AuthorizationSemanticsTests() =
             |> List.find (fun role -> role.RoleId.Equals("RepositoryAdmin", StringComparison.OrdinalIgnoreCase))
 
         Assert.That(repositoryAdmin.AllowedOperations.Contains BranchAdmin, Is.True)
+
+    /// Verifies Library roles are repository-scoped and repository write alone does not imply Library write.
+    [<Test>]
+    member _.LibraryContentRolesHaveIndependentReadAndWriteAuthority() =
+        let repositoryScope = Scope.Repository(ownerId, organizationId, repositoryId)
+        let repositoryResource = Resource.Repository(ownerId, organizationId, repositoryId)
+
+        assertOperationAllowed "LibraryReader" repositoryScope RepositoryRead repositoryResource
+        assertOperationAllowed "LibraryReader" repositoryScope LibraryRead repositoryResource
+        assertOperationDenied "LibraryReader" repositoryScope LibraryWrite repositoryResource
+        assertOperationAllowed "LibraryWriter" repositoryScope LibraryRead repositoryResource
+        assertOperationAllowed "LibraryWriter" repositoryScope LibraryWrite repositoryResource
+        assertOperationDenied "RepositoryContributor" repositoryScope LibraryWrite repositoryResource
+        assertOperationAllowed "RepositoryAdmin" repositoryScope LibraryRead repositoryResource
+        assertOperationAllowed "RepositoryAdmin" repositoryScope LibraryWrite repositoryResource
 
     /// Verifies that every role maps to exactly one assignment scope.
     [<Test>]

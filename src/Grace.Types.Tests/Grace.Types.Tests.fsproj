@@ -22,6 +22,7 @@
     <Compile Include="Webhooks.Types.Tests.fs" />
     <Compile Include="Validation.Types.Tests.fs" />
     <Compile Include="Common.Types.Tests.fs" />
+    <Compile Include="Library.Types.Tests.fs" />
     <Compile Include="Usage.Types.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Types.Tests.fs" />
     <Compile Include="ManifestContributionAccounting.Types.Tests.fs" />

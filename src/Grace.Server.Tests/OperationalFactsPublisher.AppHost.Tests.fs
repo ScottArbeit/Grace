@@ -4,6 +4,7 @@ open Grace.Shared
 open Microsoft.Extensions.Configuration
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.IO
 
 /// Covers Aspire AppHost wiring for the operational usage facts Service Bus topic.
@@ -13,6 +14,9 @@ type OperationalFactsPublisherAppHostTests() =
 
     /// Reads the AppHost source so focused wiring assertions stay on the Aspire-facing test surface.
     let appHostSource () = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs")))
+
+    /// Reads the integration-host source so readiness wiring remains pinned to the AppHost container contract.
+    let aspireTestHostSource () = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "AspireTestHost.fs")))
 
     /// Runs an assertion while restoring every process-level environment value it changes.
     let withEnvironmentVariables (values: (string * string) list) assertion =
@@ -28,6 +32,50 @@ type OperationalFactsPublisherAppHostTests() =
         finally
             originals
             |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process))
+
+    /// Verifies integration readiness creates and validates all fixed Library containers from the AppHost source of truth.
+    [<Test>]
+    member _.LibraryContainersUseAcceptedContractsAndGateTestReadiness() =
+        let expected =
+            [
+                "grace-library-control", [| "/RepositoryId" |]
+                "grace-library-changes", [| "/RepositoryId"; "/StreamSegment" |]
+                "grace-library-current", [| "/RepositoryId"; "/ProjectionKind" |]
+                "grace-library-receipts",
+                [|
+                    "/RepositoryId"
+                    "/RecordKind"
+                    "/RecordKey"
+                |]
+                "grace-library-history",
+                [|
+                    "/RepositoryId"
+                    "/HistoryKey"
+                    "/HistorySegment"
+                |]
+                "grace-library-baselines",
+                [|
+                    "/RepositoryId"
+                    "/BaselineId"
+                    "/ShardKey"
+                |]
+            ]
+            |> Map.ofList
+
+        let actual =
+            Program.LibraryContainers
+            |> Seq.map (fun (KeyValue (name, paths)) -> name, paths)
+            |> Map.ofSeq
+
+        let readinessSource = aspireTestHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That((actual = expected), Is.True)
+                Assert.That(readinessSource, Does.Contain("Program.LibraryContainers"))
+                Assert.That(readinessSource, Does.Contain("CreateContainerIfNotExistsAsync(properties)"))
+                Assert.That(readinessSource, Does.Contain("actualPaths <> partitionKeyPaths")))
+        )
 
     /// Verifies DebugAzure gives an explicitly configured storage account precedence over ambient connection strings.
     [<Test>]

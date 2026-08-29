@@ -20,10 +20,12 @@ open Grace.Server.Security
 open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
+open Grace.Shared.Parameters.Library
 open Grace.Types.Automation
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.PersonalAccessToken
+open Grace.Types.Library
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.JwtBearer
 open Microsoft.AspNetCore.Authorization
@@ -480,6 +482,12 @@ module Application =
 
         /// Handles the Grace Server require repository write request.
         let requireRepositoryWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryWrite repositoryResourceFromContext
+
+        /// Requires repository-scoped library read permission.
+        let requireLibraryRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.LibraryRead repositoryResourceFromContext
+
+        /// Requires repository-scoped library write permission.
+        let requireLibraryWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.LibraryWrite repositoryResourceFromContext
 
         /// Handles the Grace Server require artifact repository read request.
         let requireArtifactRepositoryRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved artifactRepositoryPermissionFromQuery
@@ -1720,6 +1728,54 @@ module Application =
                         GET [ routef "/%O/download-uri" (fun artifactId -> composeHandlers requireArtifactRepositoryRead (Artifact.GetDownloadUri artifactId)) ]
                     ]
                 subRoute
+                    "/libraries"
+                    [
+                        POST [ route "/catalog/get" (composeHandlers requireLibraryRead Library.GetCatalog)
+                               |> addMetadata typeof<GetLibraryCatalogParameters>
+
+                               route "/list" (composeHandlers requireLibraryRead Library.ListLibraries)
+                               |> addMetadata typeof<ListLibrariesParameters>
+
+                               route "/add" (composeHandlers requireRepositoryAdmin Library.AddLibrary)
+                               |> addMetadata typeof<AddLibraryParameters>
+
+                               route "/remove" (composeHandlers requireRepositoryAdmin Library.RemoveLibrary)
+                               |> addMetadata typeof<RemoveLibraryParameters>
+
+                               route "/bootstrap/start" (composeHandlers requireLibraryRead Library.StartBootstrap)
+                               |> addMetadata typeof<StartLibraryBootstrapParameters>
+
+                               route "/bootstrap/continue" (composeHandlers requireLibraryRead Library.ContinueBootstrap)
+                               |> addMetadata typeof<ContinueLibraryBootstrapParameters>
+
+                               route "/changes/get" (composeHandlers requireLibraryRead Library.GetChanges)
+                               |> addMetadata typeof<GetLibraryChangesParameters>
+
+                               route "/changes/submit" (composeHandlers requireLibraryWrite Library.SubmitChange)
+                               |> addMetadata typeof<SubmitLibraryChangeParameters>
+
+                               route "/operations/get" (composeHandlers requireLibraryRead Library.GetOperation)
+                               |> addMetadata typeof<GetLibraryOperationParameters>
+
+                               route "/content/prepare" (composeHandlers requireLibraryWrite Library.PrepareContent)
+                               |> addMetadata typeof<PrepareLibraryContentParameters>
+
+                               route "/content/read" (composeHandlers requireLibraryRead Library.PrepareContentRead)
+                               |> addMetadata typeof<PrepareLibraryContentReadParameters>
+
+                               route "/items/get" (composeHandlers requireLibraryRead Library.GetItem)
+                               |> addMetadata typeof<GetLibraryItemParameters>
+
+                               route "/namespace/get-slot" (composeHandlers requireLibraryRead Library.GetNamespaceSlot)
+                               |> addMetadata typeof<GetLibraryNamespaceSlotParameters>
+
+                               route "/status/get" (composeHandlers requireLibraryRead Library.GetStatus)
+                               |> addMetadata typeof<GetLibraryStatusParameters> ]
+
+                        GET [ routef "/content/%s" Library.DownloadContent
+                              |> addMetadata (AllowAnonymousAttribute()) ]
+                    ]
+                subRoute
                     "/repository"
                     [
                         POST [ route "/create" (composeHandlers requireOrganizationWriteOrAdmin Repository.Create)
@@ -2135,6 +2191,9 @@ module Application =
             services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
             |> ignore
 
+            services.AddSingleton<ILibraryWriteAuthorizer, LibraryWriteAuthorizer>()
+            |> ignore
+
             services.AddW3CLogging (fun options ->
                 options.FileName <- "Grace.Server.log-"
 
@@ -2197,6 +2256,52 @@ module Application =
                         invalidOp "Azure Cosmos DB connection string is required when managed identity is disabled."
 
                     new CosmosClient(cosmosConnectionString, options))
+            |> ignore
+
+            services.AddSingleton<ILibraryStore>(
+                Func<IServiceProvider, ILibraryStore> (fun serviceProvider ->
+                    let client = serviceProvider.GetRequiredService<CosmosClient>()
+                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
+                    LibraryPersistence.createStore client databaseName)
+            )
+            |> ignore
+
+            services.AddSingleton<ILibraryTransferStore>(
+                Func<IServiceProvider, ILibraryTransferStore> (fun serviceProvider ->
+                    let client = serviceProvider.GetRequiredService<CosmosClient>()
+                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
+                    LibraryPersistence.createTransferStore client databaseName)
+            )
+            |> ignore
+
+            let libraryTokenSecret = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.LibrariesTokenSecret)
+
+            if String.IsNullOrWhiteSpace libraryTokenSecret then
+                invalidOp "A library token secret is required."
+
+            let libraryTokenKey =
+                try
+                    Convert.FromBase64String libraryTokenSecret
+                with
+                | :? FormatException -> invalidOp "The library token secret must be valid base64."
+
+            if libraryTokenKey.Length < 32 then
+                invalidOp "The library token secret must decode to at least 32 bytes."
+
+            services.AddSingleton<ILibraryCursorCodec>(LibraryCoordinator.LibraryCursorCodec(libraryTokenKey))
+            |> ignore
+
+            services.AddSingleton<LibraryOpaqueTokenCodec>(LibraryOpaqueTokenCodec(libraryTokenKey))
+            |> ignore
+
+            services.AddSingleton<ILibraryCoordinator>(
+                Func<IServiceProvider, ILibraryCoordinator> (fun serviceProvider ->
+                    LibraryCoordinator.Coordinator(
+                        serviceProvider.GetRequiredService<ILibraryStore>(),
+                        serviceProvider.GetRequiredService<ILibraryCursorCodec>()
+                    )
+                    :> ILibraryCoordinator)
+            )
             |> ignore
 
             services.AddSingleton<IRepositoryCounterRecentResult> (fun serviceProvider ->

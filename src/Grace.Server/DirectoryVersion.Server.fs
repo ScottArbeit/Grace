@@ -16,6 +16,7 @@ open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
+open Grace.Shared.Validation.Library
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open System
@@ -51,6 +52,21 @@ module DirectoryVersion =
                     StringSplitOptions.RemoveEmptyEntries
                 )
                 .Length
+
+    /// Returns the first path owned by the Library catalog snapshot observed for each actor read.
+    let private tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
+        task {
+            let actor = ApplicationContext.grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+            let mutable ownedPath = None
+
+            for relativePath in relativePaths do
+                if ownedPath.IsNone then
+                    let! isInLibrary = actor.IsInLibrary relativePath correlationId
+
+                    if isInLibrary then ownedPath <- Some relativePath
+
+            return ownedPath
+        }
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> DirectoryVersionParameters>
@@ -506,44 +522,70 @@ module DirectoryVersion =
                         let results = ConcurrentQueue<GraceResult<string>>()
 
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
-                        let! repositoryDto = repositoryActorProxy.Get(correlationId)
+
+                        let! repositoryDto = repositoryActorProxy.Get correlationId
 
                         let orderedDirectoryVersions =
                             parameters.DirectoryVersions
                             |> Seq.sortByDescending (fun directoryVersion -> directorySaveDepth directoryVersion.RelativePath)
                             |> Seq.toArray
 
+                        let candidatePaths =
+                            orderedDirectoryVersions
+                            |> Seq.collect (fun directoryVersion ->
+                                seq {
+                                    yield string directoryVersion.RelativePath
+
+                                    yield!
+                                        directoryVersion.Files
+                                        |> Seq.map (fun file -> string file.RelativePath)
+                                })
+
+                        let! libraryPath = tryFindLibraryPath graceIds.RepositoryId correlationId candidatePaths
+
+                        match libraryPath with
+                        | Some path ->
+                            results.Enqueue(
+                                Error(
+                                    GraceError.Create
+                                        $"Path '{path}' belongs to the current Library policy and cannot be saved as version-controlled content."
+                                        correlationId
+                                )
+                            )
+                        | None -> ()
+
                         for directoryVersion in orderedDirectoryVersions do
-                            try
-                                // Check if the directory version exists. If it doesn't, create it.
-                                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                            if libraryPath.IsNone then
+                                try
+                                    // Check if the directory version exists. If it doesn't, create it.
+                                    let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
-                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
-                                if not <| exists then
-                                    if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
-                                        results.Enqueue(
-                                            Error(
-                                                GraceError.Create
-                                                    $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
-                                                    correlationId
+                                    let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                    //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                    if not <| exists then
+                                        if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
+                                            results.Enqueue(
+                                                Error(
+                                                    GraceError.Create
+                                                        $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
+                                                        correlationId
+                                                )
                                             )
-                                        )
-                                    else
-                                        let! createResult =
-                                            directoryVersionActor.Handle
-                                                (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
-                                                (createMetadata context)
+                                        else
+                                            let! createResult =
+                                                directoryVersionActor.Handle
+                                                    (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
+                                                    (createMetadata context)
 
-                                        results.Enqueue(createResult)
-                            with
-                            | ex ->
-                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
+                                            results.Enqueue(createResult)
+                                with
+                                | ex ->
+                                    let exceptionResponse = Utilities.ExceptionResponse.Create ex
 
-                                logToConsole
-                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+                                    logToConsole
+                                        $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
 
-                                logToConsole $"{exceptionResponse}"
+                                    logToConsole $"{exceptionResponse}"
 
                         let firstError =
                             results

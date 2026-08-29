@@ -112,6 +112,17 @@ contracts.
 | Repository | `RepositoryAdmin` | `RepositoryContributor` | `RepositoryReader` |
 | Branch | `BranchAdmin` | `BranchWriter` | `BranchReader` |
 
+Library Content uses two additional repository-scoped roles:
+
+| Role ID | Allows |
+| ------- | ------ |
+| `LibraryReader` | `RepositoryRead` and `LibraryRead` for roots, status, bootstrap, deltas, current state, receipts, authorized bytes, and wake subscriptions |
+| `LibraryWriter` | Reader access plus `LibraryWrite` for content preparation and change submission |
+
+`RepositoryAdmin` and the broader administrator roles include both library operations. Root add and remove require repository administration. A library reader or writer does not gain root-management permission merely by receiving the specialized role.
+
+Library routes and SignalR wake registration resolve the stored repository resource before checking permission. Missing, denied, and cross-repository identifiers use the same hidden failure behavior so callers cannot use authorization errors as an existence oracle.
+
 Approval-specific role IDs:
 
 | Scope | Role ID | Allows |
