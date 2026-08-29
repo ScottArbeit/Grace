@@ -25,7 +25,7 @@
         <Compile Include="Storage.SDK.fs" />
         <Compile Include="ManifestDownload.SDK.fs" />
         <Compile Include="ManifestUpload.SDK.fs" />
-		<Compile Include="SynchronizedContent.SDK.fs" />
+		<Compile Include="Libraries.SDK.fs" />
 		<Compile Include="Branch.SDK.fs" />
 		<Compile Include="Owner.SDK.fs" />
 		<Compile Include="Organization.SDK.fs" />

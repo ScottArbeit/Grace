@@ -31,12 +31,14 @@ Branch, Connect, and Watch share the local-application and completion transactio
 publishing caller completion after marker cleanup fails, keeps partial failures truthful and recoverable, and gives
 implementation workers one user-safety goal when lower-level details are incomplete.
 
-### Synchronized Root Boundary
+### Library boundary
 
-Configured synchronized roots and their descendants are excluded from version-control planning and complete-root
-verification using exact path-segment matching. A root named `shared` owns `shared` and `shared/design.md`, but not
-`shared-old`. This boundary does not add another Working Directory Update caller, selection, completion, or publication
-path. Product V1 Synchronized Content remains remote-only and does not write local SQLite or the filesystem.
+Configured Libraries and their descendants are excluded from version-control planning and complete-root
+verification using exact path-segment matching. A Library named `shared` owns `shared` and `shared/design.md`, but not
+`shared-old`. The current `RepositoryLibraryActor.IsInLibrary` result can become stale after it returns, so existing WDU
+stale-authority checks remain authoritative. This boundary does not add another Working Directory Update caller,
+selection, completion, or publication path. Product V1 Libraries remain remote-only and do not write local SQLite or
+the filesystem.
 
 ## 2. Accepted decisions
 

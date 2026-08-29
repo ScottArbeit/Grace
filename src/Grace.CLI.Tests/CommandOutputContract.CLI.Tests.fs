@@ -456,9 +456,9 @@ module CommandOutputContractRegistryTests =
             |> should equal CompositeLocalAndServer
         | None -> Assert.Fail("branch annotate should have a registry entry.")
 
-    /// Verifies that the work item status mutation has only its explicit mutating registry identity.
+    /// Verifies that the work item status change has only its explicit mutating registry identity.
     [<Test>]
-    let ``workitem set-status registry entry is the only status mutation identity`` () =
+    let ``workitem set-status registry entry is the only status change identity`` () =
         let identity = CommandOutputContract.commandIdentity [ "workitem" ] "set-status"
         let oldIdentity = CommandOutputContract.commandIdentity [ "workitem" ] "status"
 

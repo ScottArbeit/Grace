@@ -19,7 +19,7 @@ open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.Queue
 open Grace.Types.Reference
-open Grace.Types.SynchronizedContent
+open Grace.Types.Library
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.Validation
@@ -72,8 +72,8 @@ module Notification =
     /// Builds the SignalR group key for same-branch Reference notifications without colliding with raw GUID groups.
     let internal currentBranchGroupKey (repositoryId: RepositoryId) (branchId: BranchId) = $"current-branch:{repositoryId:N}:{branchId:N}"
 
-    /// Builds the SignalR group key reserved for authorized synchronized-content wake subscribers.
-    let internal synchronizedContentGroupKey (repositoryId: RepositoryId) = $"synchronized-content:{repositoryId:N}"
+    /// Builds the SignalR group key reserved for authorized library wake subscribers.
+    let internal libraryGroupKey (repositoryId: RepositoryId) = $"library:{repositoryId:N}"
 
     [<Literal>]
     let private CurrentBranchGroupItemKey = "Grace.Notification.CurrentBranchGroup"
@@ -132,8 +132,8 @@ module Notification =
                 | Denied _ -> return false
         }
 
-    /// Checks whether the caller can subscribe to synchronized-content wakes for the stored repository identity.
-    let internal canRegisterSynchronizedContentSubscription
+    /// Checks whether the caller can subscribe to library wakes for the stored repository identity.
+    let internal canRegisterLibraryContentSubscription
         (evaluator: IGracePermissionEvaluator)
         principal
         (repositoryId: RepositoryId)
@@ -150,7 +150,7 @@ module Notification =
                 let claims = PrincipalMapper.getEffectiveClaims principal
                 let resource = Resource.Repository(repositoryDto.OwnerId, repositoryDto.OrganizationId, repositoryDto.RepositoryId)
 
-                match! evaluator.CheckAsync(principals, claims, Operation.SynchronizedContentRead, resource) with
+                match! evaluator.CheckAsync(principals, claims, Operation.LibraryRead, resource) with
                 | Allowed _ -> return true
                 | Denied _ -> return false
         }
@@ -163,12 +163,12 @@ module Notification =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
         /// Defines the register current branch operation for implementers.
         abstract member RegisterCurrentBranch: RepositoryId -> BranchId -> Task
-        /// Defines the authorized synchronized-content wake registration operation for implementers.
-        abstract member RegisterSynchronizedContent: RepositoryId -> Task
+        /// Defines the authorized library wake registration operation for implementers.
+        abstract member RegisterLibraryContent: RepositoryId -> Task
         /// Defines the notify repository operation for implementers.
         abstract member NotifyRepository: RepositoryId * ReferenceId -> Task
-        /// Defines the coarse synchronized-content wake hint for implementers.
-        abstract member NotifySynchronizedContentAvailable: SynchronizedContentAvailable -> Task
+        /// Defines the coarse library wake hint for implementers.
+        abstract member NotifyLibraryContentAvailable: LibraryContentAvailable -> Task
         /// Defines the notify current branch reference operation for implementers.
         abstract member NotifyCurrentBranchReference: Reference.CurrentBranchReferenceNotification -> Task
         /// Defines the notify on commit operation for implementers.
@@ -228,8 +228,8 @@ module Notification =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{repositoryId}")
             }
 
-        /// Adds the current SignalR connection to the synchronized-content wake group after repository-scoped read authorization.
-        member this.RegisterSynchronizedContent(repositoryId: RepositoryId) =
+        /// Adds the current SignalR connection to the library wake group after repository-scoped read authorization.
+        member this.RegisterLibraryContent(repositoryId: RepositoryId) =
             task {
                 let correlationId = generateCorrelationId ()
 
@@ -243,25 +243,25 @@ module Notification =
                             .GetHttpContext()
                             .RequestServices.GetRequiredService<IGracePermissionEvaluator>()
 
-                    let! allowed = canRegisterSynchronizedContentSubscription evaluator this.Context.User repositoryId repositoryDto
+                    let! allowed = canRegisterLibraryContentSubscription evaluator this.Context.User repositoryId repositoryDto
 
                     if not allowed then
-                        raise (HubException("Synchronized-content SignalR registration requires synchronized-content read permission."))
+                        raise (HubException("Library-content SignalR registration requires library read permission."))
 
-                    do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, synchronizedContentGroupKey repositoryId)
+                    do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, libraryGroupKey repositoryId)
                 with
-                | :? HubException -> return raise (HubException("Synchronized-content SignalR registration requires synchronized-content read permission."))
+                | :? HubException -> return raise (HubException("Library-content SignalR registration requires library read permission."))
                 | ex ->
                     log.LogWarning(
                         ex,
-                        "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} denied synchronized-content SignalR registration for RepositoryId: {RepositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} denied library SignalR registration for RepositoryId: {RepositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         this.Context.ConnectionId,
                         repositoryId
                     )
 
-                    return raise (HubException("Synchronized-content SignalR registration requires synchronized-content read permission."))
+                    return raise (HubException("Library-content SignalR registration requires library read permission."))
             }
 
         /// Adds the current SignalR connection to the parent-branch group used for branch notifications.
@@ -456,11 +456,8 @@ module Notification =
             }
             :> Task
 
-    /// Attempts one repository-scoped synchronized-content wake without making live delivery part of durable success.
-    let internal notifySynchronizedContentAvailableClients
-        (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
-        (payload: SynchronizedContentAvailable)
-        =
+    /// Attempts one repository-scoped library wake without making live delivery part of durable success.
+    let internal notifyLibraryContentAvailableClients (hubContext: IHubContext<NotificationHub, IGraceClientConnection>) (payload: LibraryContentAvailable) =
         task {
             try
                 if isNull hubContext then
@@ -469,15 +466,15 @@ module Notification =
                     do!
                         hubContext
                             .Clients
-                            .Group(synchronizedContentGroupKey payload.RepositoryId)
-                            .NotifySynchronizedContentAvailable(payload)
+                            .Group(libraryGroupKey payload.RepositoryId)
+                            .NotifyLibraryContentAvailable(payload)
 
                     return true
             with
             | ex ->
                 log.LogWarning(
                     ex,
-                    "{CurrentInstant}: Node: {HostName}; Best-effort synchronized-content wake failed for RepositoryId: {RepositoryId}; cursor: {Cursor}.",
+                    "{CurrentInstant}: Node: {HostName}; Best-effort library wake failed for RepositoryId: {RepositoryId}; cursor: {Cursor}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     payload.RepositoryId,

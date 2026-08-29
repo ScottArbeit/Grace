@@ -20,12 +20,12 @@ open Grace.Server.Security
 open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
-open Grace.Shared.Parameters.SynchronizedContent
+open Grace.Shared.Parameters.Library
 open Grace.Types.Automation
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.PersonalAccessToken
-open Grace.Types.SynchronizedContent
+open Grace.Types.Library
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.JwtBearer
 open Microsoft.AspNetCore.Authorization
@@ -483,13 +483,11 @@ module Application =
         /// Handles the Grace Server require repository write request.
         let requireRepositoryWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryWrite repositoryResourceFromContext
 
-        /// Requires repository-scoped synchronized-content read permission.
-        let requireSynchronizedContentRead: HttpHandler =
-            AuthorizationMiddleware.requiresPermission Operation.SynchronizedContentRead repositoryResourceFromContext
+        /// Requires repository-scoped library read permission.
+        let requireLibraryRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.LibraryRead repositoryResourceFromContext
 
-        /// Requires repository-scoped synchronized-content write permission.
-        let requireSynchronizedContentWrite: HttpHandler =
-            AuthorizationMiddleware.requiresPermission Operation.SynchronizedContentWrite repositoryResourceFromContext
+        /// Requires repository-scoped library write permission.
+        let requireLibraryWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.LibraryWrite repositoryResourceFromContext
 
         /// Handles the Grace Server require artifact repository read request.
         let requireArtifactRepositoryRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved artifactRepositoryPermissionFromQuery
@@ -1730,51 +1728,51 @@ module Application =
                         GET [ routef "/%O/download-uri" (fun artifactId -> composeHandlers requireArtifactRepositoryRead (Artifact.GetDownloadUri artifactId)) ]
                     ]
                 subRoute
-                    "/sync"
+                    "/libraries"
                     [
-                        POST [ route "/roots/get" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetRoots)
-                               |> addMetadata typeof<GetSynchronizedRootConfigurationParameters>
+                        POST [ route "/catalog/get" (composeHandlers requireLibraryRead Library.GetCatalog)
+                               |> addMetadata typeof<GetLibraryCatalogParameters>
 
-                               route "/roots/list" (composeHandlers requireSynchronizedContentRead SynchronizedContent.ListRoots)
-                               |> addMetadata typeof<ListSynchronizedRootsParameters>
+                               route "/list" (composeHandlers requireLibraryRead Library.ListLibraries)
+                               |> addMetadata typeof<ListLibrariesParameters>
 
-                               route "/roots/add" (composeHandlers requireRepositoryAdmin SynchronizedContent.AddRoot)
-                               |> addMetadata typeof<AddSynchronizedRootParameters>
+                               route "/add" (composeHandlers requireRepositoryAdmin Library.AddLibrary)
+                               |> addMetadata typeof<AddLibraryParameters>
 
-                               route "/roots/remove" (composeHandlers requireRepositoryAdmin SynchronizedContent.RemoveRoot)
-                               |> addMetadata typeof<RemoveSynchronizedRootParameters>
+                               route "/remove" (composeHandlers requireRepositoryAdmin Library.RemoveLibrary)
+                               |> addMetadata typeof<RemoveLibraryParameters>
 
-                               route "/bootstrap/start" (composeHandlers requireSynchronizedContentRead SynchronizedContent.StartBootstrap)
-                               |> addMetadata typeof<StartSynchronizedBootstrapParameters>
+                               route "/bootstrap/start" (composeHandlers requireLibraryRead Library.StartBootstrap)
+                               |> addMetadata typeof<StartLibraryBootstrapParameters>
 
-                               route "/bootstrap/continue" (composeHandlers requireSynchronizedContentRead SynchronizedContent.ContinueBootstrap)
-                               |> addMetadata typeof<ContinueSynchronizedBootstrapParameters>
+                               route "/bootstrap/continue" (composeHandlers requireLibraryRead Library.ContinueBootstrap)
+                               |> addMetadata typeof<ContinueLibraryBootstrapParameters>
 
-                               route "/deltas/get" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetDeltas)
-                               |> addMetadata typeof<GetSynchronizedDeltasParameters>
+                               route "/changes/get" (composeHandlers requireLibraryRead Library.GetChanges)
+                               |> addMetadata typeof<GetLibraryChangesParameters>
 
-                               route "/mutations/submit" (composeHandlers requireSynchronizedContentWrite SynchronizedContent.SubmitMutation)
-                               |> addMetadata typeof<SubmitSynchronizedMutationParameters>
+                               route "/changes/submit" (composeHandlers requireLibraryWrite Library.SubmitChange)
+                               |> addMetadata typeof<SubmitLibraryChangeParameters>
 
-                               route "/operations/get" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetOperation)
-                               |> addMetadata typeof<GetSynchronizedOperationParameters>
+                               route "/operations/get" (composeHandlers requireLibraryRead Library.GetOperation)
+                               |> addMetadata typeof<GetLibraryOperationParameters>
 
-                               route "/content/prepare" (composeHandlers requireSynchronizedContentWrite SynchronizedContent.PrepareContent)
-                               |> addMetadata typeof<PrepareSynchronizedContentParameters>
+                               route "/content/prepare" (composeHandlers requireLibraryWrite Library.PrepareContent)
+                               |> addMetadata typeof<PrepareLibraryContentParameters>
 
-                               route "/content/read" (composeHandlers requireSynchronizedContentRead SynchronizedContent.PrepareContentRead)
-                               |> addMetadata typeof<PrepareSynchronizedContentReadParameters>
+                               route "/content/read" (composeHandlers requireLibraryRead Library.PrepareContentRead)
+                               |> addMetadata typeof<PrepareLibraryContentReadParameters>
 
-                               route "/items/get" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetItem)
-                               |> addMetadata typeof<GetSynchronizedItemParameters>
+                               route "/items/get" (composeHandlers requireLibraryRead Library.GetItem)
+                               |> addMetadata typeof<GetLibraryItemParameters>
 
-                               route "/namespace/get-slot" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetNamespaceSlot)
-                               |> addMetadata typeof<GetSynchronizedNamespaceSlotParameters>
+                               route "/namespace/get-slot" (composeHandlers requireLibraryRead Library.GetNamespaceSlot)
+                               |> addMetadata typeof<GetLibraryNamespaceSlotParameters>
 
-                               route "/status/get" (composeHandlers requireSynchronizedContentRead SynchronizedContent.GetStatus)
-                               |> addMetadata typeof<GetSynchronizedStatusParameters> ]
+                               route "/status/get" (composeHandlers requireLibraryRead Library.GetStatus)
+                               |> addMetadata typeof<GetLibraryStatusParameters> ]
 
-                        GET [ routef "/content/%s" SynchronizedContent.DownloadContent
+                        GET [ routef "/content/%s" Library.DownloadContent
                               |> addMetadata (AllowAnonymousAttribute()) ]
                     ]
                 subRoute
@@ -2257,49 +2255,49 @@ module Application =
                     new CosmosClient(cosmosConnectionString, options))
             |> ignore
 
-            services.AddSingleton<ISynchronizedContentStore>(
-                Func<IServiceProvider, ISynchronizedContentStore> (fun serviceProvider ->
+            services.AddSingleton<ILibraryStore>(
+                Func<IServiceProvider, ILibraryStore> (fun serviceProvider ->
                     let client = serviceProvider.GetRequiredService<CosmosClient>()
                     let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    SynchronizedContentPersistence.createStore client databaseName)
+                    LibraryPersistence.createStore client databaseName)
             )
             |> ignore
 
-            services.AddSingleton<ISynchronizedContentTransferStore>(
-                Func<IServiceProvider, ISynchronizedContentTransferStore> (fun serviceProvider ->
+            services.AddSingleton<ILibraryTransferStore>(
+                Func<IServiceProvider, ILibraryTransferStore> (fun serviceProvider ->
                     let client = serviceProvider.GetRequiredService<CosmosClient>()
                     let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    SynchronizedContentPersistence.createTransferStore client databaseName)
+                    LibraryPersistence.createTransferStore client databaseName)
             )
             |> ignore
 
-            let synchronizedTokenSecret = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.SynchronizedContentTokenSecret)
+            let libraryTokenSecret = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.LibrariesTokenSecret)
 
-            if String.IsNullOrWhiteSpace synchronizedTokenSecret then
-                invalidOp "A synchronized-content token secret is required."
+            if String.IsNullOrWhiteSpace libraryTokenSecret then
+                invalidOp "A library token secret is required."
 
-            let synchronizedTokenKey =
+            let libraryTokenKey =
                 try
-                    Convert.FromBase64String synchronizedTokenSecret
+                    Convert.FromBase64String libraryTokenSecret
                 with
-                | :? FormatException -> invalidOp "The synchronized-content token secret must be valid base64."
+                | :? FormatException -> invalidOp "The library token secret must be valid base64."
 
-            if synchronizedTokenKey.Length < 32 then
-                invalidOp "The synchronized-content token secret must decode to at least 32 bytes."
+            if libraryTokenKey.Length < 32 then
+                invalidOp "The library token secret must decode to at least 32 bytes."
 
-            services.AddSingleton<ISynchronizedCursorCodec>(SynchronizedContentCoordinator.SynchronizedCursorCodec(synchronizedTokenKey))
+            services.AddSingleton<ILibraryCursorCodec>(LibraryCoordinator.LibraryCursorCodec(libraryTokenKey))
             |> ignore
 
-            services.AddSingleton<SynchronizedOpaqueTokenCodec>(SynchronizedOpaqueTokenCodec(synchronizedTokenKey))
+            services.AddSingleton<LibraryOpaqueTokenCodec>(LibraryOpaqueTokenCodec(libraryTokenKey))
             |> ignore
 
-            services.AddSingleton<ISynchronizedContentCoordinator>(
-                Func<IServiceProvider, ISynchronizedContentCoordinator> (fun serviceProvider ->
-                    SynchronizedContentCoordinator.Coordinator(
-                        serviceProvider.GetRequiredService<ISynchronizedContentStore>(),
-                        serviceProvider.GetRequiredService<ISynchronizedCursorCodec>()
+            services.AddSingleton<ILibraryCoordinator>(
+                Func<IServiceProvider, ILibraryCoordinator> (fun serviceProvider ->
+                    LibraryCoordinator.Coordinator(
+                        serviceProvider.GetRequiredService<ILibraryStore>(),
+                        serviceProvider.GetRequiredService<ILibraryCursorCodec>()
                     )
-                    :> ISynchronizedContentCoordinator)
+                    :> ILibraryCoordinator)
             )
             |> ignore
 

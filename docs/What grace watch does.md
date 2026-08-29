@@ -6,16 +6,16 @@ One of the most important pieces of Grace is `grace watch`. `grace watch` is a b
 
 Most Grace users will be programmers, and we're a more technical audience. We know that background processes can be used in ways that are helpful, harmful, or just wasteful. As someone asking you to run a background process, I have a special responsibility to be transparent with you about what `grace watch` does if you allow it to run. (Which you totally should.) I want you to have complete confidence that running `grace watch` is safe and trustworthy.
 
-## Synchronized Roots Are Remote-Only
+## Libraries are remote-only
 
-Product V1 Synchronized Content does not add a fourth local caller to Working Directory Update. Configuring a
-synchronized root changes repository path ownership: Save and Reference reject it, while Branch and Working Directory
+Product V1 Libraries do not add a fourth local caller to Working Directory Update. Configuring a
+Library changes repository path ownership: Save and Reference reject it, while Branch and Working Directory
 Update exclude that root and its descendants using exact path-segment matching. Watch continues to replay only the
-accepted Reference events and version-controlled paths described below; it cannot publish synchronized paths through
+accepted Reference events and version-controlled paths described below; it cannot publish Library paths through
 those server boundaries.
 
-The server's synchronized-content wake belongs to authorized remote SDK clients. `grace watch` does not subscribe to
-it, materialize synchronized bytes, write synchronized metadata to local SQLite, or publish synchronized files. Those
+The server's library wake belongs to authorized remote SDK clients. `grace watch` does not subscribe to
+it, materialize Library bytes, write Library metadata to local SQLite, or publish Library files. Those
 local behaviors remain deferred.
 
 ## No dark patterns

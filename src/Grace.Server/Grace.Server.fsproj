@@ -83,8 +83,8 @@
 		<Compile Include="Owner.Server.fs" />
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
-		<Compile Include="SynchronizedContent.Persistence.Server.fs" />
-		<Compile Include="SynchronizedContent.Coordinator.Server.fs" />
+		<Compile Include="Library.Persistence.Server.fs" />
+		<Compile Include="Library.Coordinator.Server.fs" />
 		<Compile Include="AnnotationMaterialization.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
                 
@@ -121,7 +121,7 @@
                 <Compile Include="ReminderService.Server.fs" />
                 <Compile Include="DerivedComputation.Server.fs" />
                 <Compile Include="Notification.Server.fs" />
-		<Compile Include="SynchronizedContent.Server.fs" />
+		<Compile Include="Library.Server.fs" />
 		<Compile Include="Startup.Server.fs" />
 		<Compile Include="DiffBlobGrainStorage.Server.fs" />
 		<Compile Include="Program.Server.fs" />

@@ -20,6 +20,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Events
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
@@ -84,15 +85,12 @@ module Repository =
         && persisted.Files.SequenceEqual(expected.Files)
         && persisted.Size = expected.Size
 
-    /// Confirms a root-configuration command was derived from the Repository actor's exact current configuration.
-    let internal synchronizedRootConfigurationMatchesCurrent
-        (currentConfiguration: Grace.Types.SynchronizedContent.SynchronizedRootConfigurationDto)
-        (proposedConfiguration: Grace.Types.SynchronizedContent.SynchronizedRootConfigurationDto)
-        =
-        proposedConfiguration.PreviousVersion = Some currentConfiguration.Version
-
     /// Implements the Orleans grain for repository actor.
-    type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
+    type RepositoryActor
+        (
+            [<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>,
+            grainFactory: IGrainFactory
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.Repository
@@ -161,6 +159,13 @@ module Repository =
                         task {
                             match repositoryEvent.Event with
                             | Created (name, repositoryId, ownerId, organizationId, objectStorageProvider) ->
+                                let libraryActor = grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+
+                                do!
+                                    libraryActor.InitializeCatalog
+                                        (LibraryCatalogDto.CreateInitial(repositoryId, repositoryEvent.Metadata.Timestamp, repositoryEvent.Metadata.Principal))
+                                        repositoryEvent.Metadata.CorrelationId
+
                                 // Create the default branch.
                                 let branchId = buildInitialWorkflowId "branch" repositoryId
                                 let initialPromotionReferenceId = buildInitialWorkflowId "promotion-reference" repositoryId
@@ -572,15 +577,6 @@ module Repository =
                                 | Some _ when matchingCreateRetry -> return Ok command
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
-                            | RepositoryCommand.SetSynchronizedRootConfiguration (configuration, _) when
-                                not (synchronizedRootConfigurationMatchesCurrent repositoryDto.SynchronizedRootConfiguration configuration)
-                                ->
-                                return
-                                    Error(
-                                        GraceError.Create
-                                            "The synchronized root configuration no longer matches its exact predecessor version."
-                                            metadata.CorrelationId
-                                    )
                             | _ ->
                                 match repositoryDto.UpdatedAt with
                                 | Some _ -> return Ok command
@@ -628,8 +624,6 @@ module Repository =
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | SetConflictResolutionPolicy policy -> return ConflictResolutionPolicySet policy
-                                    | SetSynchronizedRootConfiguration (configuration, operationId) ->
-                                        return SynchronizedRootConfigurationSet(configuration, operationId)
                                     | DeleteLogical (force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches =

@@ -21,17 +21,16 @@ using static Shared::Grace.Shared.Constants;
 
 public partial class Program
 {
-    private static readonly string[] SynchronizedContentContainers =
-    [
-        "grace-synchronized-control",
-        "grace-synchronized-mutations",
-        "grace-synchronized-current",
-        "grace-synchronized-receipts",
-        "grace-synchronized-history",
-        "grace-synchronized-baselines"
-    ];
-
-    private static readonly string[] SynchronizedContentPartitionKeys = ["/RepositoryId", "/Scope", "/id"];
+    private static readonly IReadOnlyDictionary<string, string[]> LibraryContainers =
+        new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["grace-library-control"] = ["/RepositoryId"],
+            ["grace-library-changes"] = ["/RepositoryId", "/StreamSegment"],
+            ["grace-library-current"] = ["/RepositoryId", "/ProjectionKind"],
+            ["grace-library-receipts"] = ["/RepositoryId", "/RecordKind", "/RecordKey"],
+            ["grace-library-history"] = ["/RepositoryId", "/HistoryKey", "/HistorySegment"],
+            ["grace-library-baselines"] = ["/RepositoryId", "/BaselineId", "/ShardKey"]
+        };
     private const string AspireResourceModeEnvVar = "ASPIRE_RESOURCE_MODE";
     private const string AspireResourceModeLocal = "Local";
     private const string AspireResourceModeAzure = "Azure";
@@ -308,13 +307,13 @@ public partial class Program
                     var cosmosDatabase = cosmos.AddCosmosDatabase(cosmosDatabaseName);
                     _ = cosmosDatabase.AddContainer(cosmosDbContainerName, "/PartitionKey");
 
-                    foreach (var synchronizedContainer in SynchronizedContentContainers)
+                    foreach (var libraryContainer in LibraryContainers)
                     {
-                        _ = cosmosDatabase.AddContainer(synchronizedContainer, SynchronizedContentPartitionKeys);
+                        _ = cosmosDatabase.AddContainer(libraryContainer.Key, libraryContainer.Value);
                     }
 
                     var cosmosConnStr = cosmos.Resource.ConnectionStringExpression;
-                    var synchronizedContentTokenSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+                    var libraryTokenSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
                     graceServer
                         .WithParentRelationship(azurite)
@@ -329,7 +328,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBConnectionString, cosmosConnStr)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDatabaseName)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosDbContainerName)
-                        .WithEnvironment(EnvironmentVariables.SynchronizedContentTokenSecret, synchronizedContentTokenSecret)
+                        .WithEnvironment(EnvironmentVariables.LibrariesTokenSecret, libraryTokenSecret)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Local");
 
@@ -480,7 +479,7 @@ public partial class Program
 
                     var cosmosDatabaseName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBDatabaseName);
                     var cosmosContainerName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBContainerName);
-                    var synchronizedContentTokenSecret = GetRequiredSetting(configuration, EnvironmentVariables.SynchronizedContentTokenSecret);
+                    var libraryTokenSecret = GetRequiredSetting(configuration, EnvironmentVariables.LibrariesTokenSecret);
                     var serviceBusConnectionString = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusConnectionString);
                     var serviceBusNamespace = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusNamespace);
                     if (string.IsNullOrWhiteSpace(serviceBusConnectionString) && string.IsNullOrWhiteSpace(serviceBusNamespace))
@@ -521,7 +520,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBEndpoint, cosmosdbEndpoint)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDatabaseName)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosContainerName)
-                        .WithEnvironment(EnvironmentVariables.SynchronizedContentTokenSecret, synchronizedContentTokenSecret)
+                        .WithEnvironment(EnvironmentVariables.LibrariesTokenSecret, libraryTokenSecret)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
@@ -570,9 +569,9 @@ public partial class Program
                 var cosmosDatabase = cosmos.AddCosmosDatabase(configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev");
                 _ = cosmosDatabase.AddContainer(configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events", "/PartitionKey");
 
-                foreach (var synchronizedContainer in SynchronizedContentContainers)
+                foreach (var libraryContainer in LibraryContainers)
                 {
-                    _ = cosmosDatabase.AddContainer(synchronizedContainer, SynchronizedContentPartitionKeys);
+                    _ = cosmosDatabase.AddContainer(libraryContainer.Key, libraryContainer.Value);
                 }
 
                 var storage = builder.AddAzureStorage("storage");
@@ -625,7 +624,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.GraceServerUri, configuration[getConfigKey(EnvironmentVariables.GraceServerUri)] ?? "https://localhost:5001")
                     .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev")
                     .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events")
-                    .WithEnvironment(EnvironmentVariables.SynchronizedContentTokenSecret, configuration[getConfigKey(EnvironmentVariables.SynchronizedContentTokenSecret)] ?? string.Empty)
+                    .WithEnvironment(EnvironmentVariables.LibrariesTokenSecret, configuration[getConfigKey(EnvironmentVariables.LibrariesTokenSecret)] ?? string.Empty)
                     .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
                     .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")

@@ -6,7 +6,7 @@ open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Repository
-open Grace.Types.SynchronizedContent
+open Grace.Types.Library
 open Grace.Types.UploadSession
 open NUnit.Framework
 open System
@@ -17,13 +17,13 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
-/// Captures synchronized preparation completions while satisfying the transfer-store contract used by the storage seam.
+/// Captures Library preparation completions while satisfying the transfer-store contract used by the storage seam.
 type private RecordingTransferStore() =
     let finalized = Dictionary<struct (RepositoryId * Guid), FileManifest>()
 
     member _.Finalized = finalized
 
-    interface ISynchronizedContentTransferStore with
+    interface ILibraryTransferStore with
         member _.CreatePreparedAsync(_, _) = Task.CompletedTask
         member _.ReadPreparedAsync(_, _, _) = Task.FromResult(None)
 
@@ -41,7 +41,7 @@ type private RecordingTransferStore() =
         member _.ReadContentLocationAsync(_, _, _) = Task.FromResult(None)
         member _.CreateReadGrantAsync(_, _) = Task.CompletedTask
         member _.ReadReadGrantAsync(_, _, _) = Task.FromResult(None)
-        member _.ConsumeReadGrantAsync(_, _, _) = Task.FromResult(SynchronizedControlWriteResult.PreconditionFailed)
+        member _.ConsumeReadGrantAsync(_, _, _) = Task.FromResult(LibraryControlWriteResult.PreconditionFailed)
 
 /// Covers storage Content Block Sdk Contract behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -88,9 +88,9 @@ type StorageContentBlockSdkContract() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
-    /// Builds one valid immutable manifest for synchronized upload-completion tests.
-    let synchronizedManifest () =
-        let payload = bytes "synchronized upload payload"
+    /// Builds one valid immutable manifest for Library upload-completion tests.
+    let libraryManifest () =
+        let payload = bytes "Library upload payload"
         buildManifest "fastcdc-v1" payload [| contentBlockPayload 0L payload |]
 
     /// Asserts the content Block Parameter Shape condition so failures identify the violated server unit storage invariant.
@@ -1101,40 +1101,28 @@ type StorageContentBlockSdkContract() =
         Assert.That(compactedSource, Does.Not.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
         Assert.That(compactedSource, Does.Contain("deleteContentBlockStagingPayloadparameters.StoragePlacement"))
 
-    /// Verifies that ordinary upload completion does not enter the synchronized preparation lifecycle.
+    /// Verifies that ordinary upload completion does not enter the Library preparation lifecycle.
     [<Test>]
-    member _.OrdinaryUploadCompletionDoesNotRecordSynchronizedPreparation() =
+    member _.OrdinaryUploadCompletionDoesNotRecordLibraryPreparation() =
         task {
             let transferStore = RecordingTransferStore()
 
-            do!
-                Storage.recordFinalizedSynchronizedPreparationWith
-                    transferStore
-                    (Guid.NewGuid())
-                    "/ordinary/file.bin"
-                    (synchronizedManifest ())
-                    CancellationToken.None
+            do! Storage.recordFinalizedLibraryPreparationWith transferStore (Guid.NewGuid()) "/ordinary/file.bin" (libraryManifest ()) CancellationToken.None
 
             Assert.That(transferStore.Finalized, Is.Empty)
         }
 
-    /// Verifies that accepted synchronized upload replay retains one exact durable preparation result.
+    /// Verifies that accepted Library upload replay retains one exact durable preparation result.
     [<Test>]
-    member _.SynchronizedUploadCompletionReplayRetainsOneExactPreparationResult() =
+    member _.LibraryUploadCompletionReplayRetainsOneExactPreparationResult() =
         task {
             let transferStore = RecordingTransferStore()
             let repositoryId = Guid.Parse("ed650a58-16cb-463d-a181-c853cf2ee7b3")
             let preparedContentId = Guid.Parse("9f493e0c-e0fe-4e1f-9181-c1b84786d750")
-            let manifest = synchronizedManifest ()
+            let manifest = libraryManifest ()
 
             for _ in 1..2 do
-                do!
-                    Storage.recordFinalizedSynchronizedPreparationWith
-                        transferStore
-                        repositoryId
-                        $"synchronized/{preparedContentId:D}"
-                        manifest
-                        CancellationToken.None
+                do! Storage.recordFinalizedLibraryPreparationWith transferStore repositoryId $"library/{preparedContentId:D}" manifest CancellationToken.None
 
             Assert.That(transferStore.Finalized, Has.Count.EqualTo(1))
             Assert.That(transferStore.Finalized[struct (repositoryId, preparedContentId)], Is.EqualTo(manifest))

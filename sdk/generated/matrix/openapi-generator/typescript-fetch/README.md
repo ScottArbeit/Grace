@@ -122,6 +122,21 @@ All URIs are relative to *http://localhost:5000*
 *DirectoriesApi* | [**listDirectoryVersionsById**](docs/DirectoriesApi.md#listdirectoryversionsbyid) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**listDirectoryVersionsRecursive**](docs/DirectoriesApi.md#listdirectoryversionsrecursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
 *DirectoriesApi* | [**saveDirectoryVersions**](docs/DirectoriesApi.md#savedirectoryversions) | **POST** /directory/saveDirectoryVersions | Save directory versions.
+*LibrariesApi* | [**addLibrary**](docs/LibrariesApi.md#addlibrary) | **POST** /libraries/add | Add one empty normalized Library under an exact configuration version.
+*LibrariesApi* | [**continueLibraryBootstrap**](docs/LibrariesApi.md#continuelibrarybootstrap) | **POST** /libraries/bootstrap/continue | Continue one immutable bootstrap baseline page sequence.
+*LibrariesApi* | [**downloadLibraryContent**](docs/LibrariesApi.md#downloadlibrarycontent) | **GET** /libraries/content/{grantId} | Redeem one authorized short-lived immutable-content read grant.
+*LibrariesApi* | [**getLibraryCatalog**](docs/LibrariesApi.md#getlibrarycatalog) | **POST** /libraries/catalog/get | Get the persisted Library configuration.
+*LibrariesApi* | [**getLibraryChanges**](docs/LibrariesApi.md#getlibrarychanges) | **POST** /libraries/changes/get | Read repository-ordered accepted Library changes after an opaque cursor.
+*LibrariesApi* | [**getLibraryItem**](docs/LibrariesApi.md#getlibraryitem) | **POST** /libraries/items/get | Get one current Library item.
+*LibrariesApi* | [**getLibraryNamespaceSlot**](docs/LibrariesApi.md#getlibrarynamespaceslot) | **POST** /libraries/namespace/get-slot | Get one current occupied or remembered-vacant Library namespace slot.
+*LibrariesApi* | [**getLibraryOperation**](docs/LibrariesApi.md#getlibraryoperation) | **POST** /libraries/operations/get | Get the stable receipt for one authorized Library operation identity.
+*LibrariesApi* | [**getLibraryStatus**](docs/LibrariesApi.md#getlibrarystatus) | **POST** /libraries/status/get | Get content-free Library repository status.
+*LibrariesApi* | [**listLibraries**](docs/LibrariesApi.md#listlibraries) | **POST** /libraries/list | List the sorted Libraries and their exact configuration version.
+*LibrariesApi* | [**prepareLibraryContent**](docs/LibrariesApi.md#preparelibrarycontent) | **POST** /libraries/content/prepare | Prepare exact immutable bytes for a later Library change.
+*LibrariesApi* | [**prepareLibraryContentRead**](docs/LibrariesApi.md#preparelibrarycontentread) | **POST** /libraries/content/read | Prepare a one-use read grant for an authorized retained content version.
+*LibrariesApi* | [**removeLibrary**](docs/LibrariesApi.md#removelibrary) | **POST** /libraries/remove | Remove one empty normalized Library under an exact configuration version.
+*LibrariesApi* | [**startLibraryBootstrap**](docs/LibrariesApi.md#startlibrarybootstrap) | **POST** /libraries/bootstrap/start | Start a bounded bootstrap from the current immutable baseline.
+*LibrariesApi* | [**submitLibraryChange**](docs/LibrariesApi.md#submitlibrarychange) | **POST** /libraries/changes/submit | Submit one exact idempotent Library namespace or content change.
 *OrganizationsApi* | [**createOrganization**](docs/OrganizationsApi.md#createorganization) | **POST** /organization/create | Create an organization.
 *OrganizationsApi* | [**deleteOrganization**](docs/OrganizationsApi.md#deleteorganization) | **POST** /organization/delete | Delete an organization.
 *OrganizationsApi* | [**getOrganization**](docs/OrganizationsApi.md#getorganization) | **POST** /organization/get | Get an organization.
@@ -157,21 +172,6 @@ All URIs are relative to *http://localhost:5000*
 *RepositoriesApi* | [**setRepositoryStatus**](docs/RepositoriesApi.md#setrepositorystatus) | **POST** /repository/setStatus | Set repository status.
 *RepositoriesApi* | [**setRepositoryVisibility**](docs/RepositoriesApi.md#setrepositoryvisibility) | **POST** /repository/setVisibility | Set repository visibility.
 *RepositoriesApi* | [**undeleteRepository**](docs/RepositoriesApi.md#undeleterepository) | **POST** /repository/undelete | Undelete a previously deleted repository.
-*SynchronizedContentApi* | [**addSynchronizedRoot**](docs/SynchronizedContentApi.md#addsynchronizedroot) | **POST** /sync/roots/add | Add one empty normalized synchronized root under an exact configuration version.
-*SynchronizedContentApi* | [**continueSynchronizedBootstrap**](docs/SynchronizedContentApi.md#continuesynchronizedbootstrap) | **POST** /sync/bootstrap/continue | Continue one immutable bootstrap baseline page sequence.
-*SynchronizedContentApi* | [**downloadSynchronizedContent**](docs/SynchronizedContentApi.md#downloadsynchronizedcontent) | **GET** /sync/content/{grantId} | Redeem one authorized short-lived immutable-content read grant.
-*SynchronizedContentApi* | [**getSynchronizedDeltas**](docs/SynchronizedContentApi.md#getsynchronizeddeltas) | **POST** /sync/deltas/get | Read repository-ordered accepted synchronized mutations after an opaque cursor.
-*SynchronizedContentApi* | [**getSynchronizedItem**](docs/SynchronizedContentApi.md#getsynchronizeditem) | **POST** /sync/items/get | Get one current synchronized item.
-*SynchronizedContentApi* | [**getSynchronizedNamespaceSlot**](docs/SynchronizedContentApi.md#getsynchronizednamespaceslot) | **POST** /sync/namespace/get-slot | Get one current occupied or remembered-vacant synchronized namespace slot.
-*SynchronizedContentApi* | [**getSynchronizedOperation**](docs/SynchronizedContentApi.md#getsynchronizedoperation) | **POST** /sync/operations/get | Get the stable receipt for one authorized synchronized operation identity.
-*SynchronizedContentApi* | [**getSynchronizedRootConfiguration**](docs/SynchronizedContentApi.md#getsynchronizedrootconfiguration) | **POST** /sync/roots/get | Get the persisted synchronized-root configuration.
-*SynchronizedContentApi* | [**getSynchronizedStatus**](docs/SynchronizedContentApi.md#getsynchronizedstatus) | **POST** /sync/status/get | Get content-free synchronized repository status.
-*SynchronizedContentApi* | [**listSynchronizedRoots**](docs/SynchronizedContentApi.md#listsynchronizedroots) | **POST** /sync/roots/list | List the sorted synchronized roots and their exact configuration version.
-*SynchronizedContentApi* | [**prepareSynchronizedContent**](docs/SynchronizedContentApi.md#preparesynchronizedcontent) | **POST** /sync/content/prepare | Prepare exact immutable bytes for a later synchronized mutation.
-*SynchronizedContentApi* | [**prepareSynchronizedContentRead**](docs/SynchronizedContentApi.md#preparesynchronizedcontentread) | **POST** /sync/content/read | Prepare a one-use read grant for an authorized retained content version.
-*SynchronizedContentApi* | [**removeSynchronizedRoot**](docs/SynchronizedContentApi.md#removesynchronizedroot) | **POST** /sync/roots/remove | Remove one empty normalized synchronized root under an exact configuration version.
-*SynchronizedContentApi* | [**startSynchronizedBootstrap**](docs/SynchronizedContentApi.md#startsynchronizedbootstrap) | **POST** /sync/bootstrap/start | Start a bounded bootstrap from the current immutable baseline.
-*SynchronizedContentApi* | [**submitSynchronizedMutation**](docs/SynchronizedContentApi.md#submitsynchronizedmutation) | **POST** /sync/mutations/submit | Submit one exact idempotent synchronized namespace or content mutation.
 *WebhooksApi* | [**createWebhookRule**](docs/WebhooksApi.md#createwebhookrule) | **POST** /webhook/rule/create | Create a webhook rule.
 *WebhooksApi* | [**deleteWebhookRule**](docs/WebhooksApi.md#deletewebhookrule) | **POST** /webhook/rule/delete | Delete a webhook rule.
 *WebhooksApi* | [**disableWebhookRule**](docs/WebhooksApi.md#disablewebhookrule) | **POST** /webhook/rule/disable | Disable a webhook rule.
@@ -190,7 +190,7 @@ All URIs are relative to *http://localhost:5000*
 
 ### Models
 
-- [AddSynchronizedRootParameters](docs/AddSynchronizedRootParameters.md)
+- [AddLibraryParameters](docs/AddLibraryParameters.md)
 - [AnnotateParameters](docs/AnnotateParameters.md)
 - [AnnotationBoundary](docs/AnnotationBoundary.md)
 - [AnnotationLine](docs/AnnotationLine.md)
@@ -237,7 +237,7 @@ All URIs are relative to *http://localhost:5000*
 - [ContentBlockMetadataRange](docs/ContentBlockMetadataRange.md)
 - [ContentBlockReuseRangeHint](docs/ContentBlockReuseRangeHint.md)
 - [ContentBlockStoragePlacement](docs/ContentBlockStoragePlacement.md)
-- [ContinueSynchronizedBootstrapParameters](docs/ContinueSynchronizedBootstrapParameters.md)
+- [ContinueLibraryBootstrapParameters](docs/ContinueLibraryBootstrapParameters.md)
 - [CreateApprovalPolicyParameters](docs/CreateApprovalPolicyParameters.md)
 - [CreateBranchParameters](docs/CreateBranchParameters.md)
 - [CreateOrganizationParameters](docs/CreateOrganizationParameters.md)
@@ -303,6 +303,12 @@ All URIs are relative to *http://localhost:5000*
 - [GetDiffsForReferenceTypeParameters](docs/GetDiffsForReferenceTypeParameters.md)
 - [GetDiffsForReferencesParameters](docs/GetDiffsForReferencesParameters.md)
 - [GetDownloadUriParameters](docs/GetDownloadUriParameters.md)
+- [GetLibraryCatalogParameters](docs/GetLibraryCatalogParameters.md)
+- [GetLibraryChangesParameters](docs/GetLibraryChangesParameters.md)
+- [GetLibraryItemParameters](docs/GetLibraryItemParameters.md)
+- [GetLibraryNamespaceSlotParameters](docs/GetLibraryNamespaceSlotParameters.md)
+- [GetLibraryOperationParameters](docs/GetLibraryOperationParameters.md)
+- [GetLibraryStatusParameters](docs/GetLibraryStatusParameters.md)
 - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
 - [GetOwnerParameters](docs/GetOwnerParameters.md)
 - [GetParameters](docs/GetParameters.md)
@@ -310,12 +316,6 @@ All URIs are relative to *http://localhost:5000*
 - [GetReferenceParameters](docs/GetReferenceParameters.md)
 - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
 - [GetReferencesParameters](docs/GetReferencesParameters.md)
-- [GetSynchronizedDeltasParameters](docs/GetSynchronizedDeltasParameters.md)
-- [GetSynchronizedItemParameters](docs/GetSynchronizedItemParameters.md)
-- [GetSynchronizedNamespaceSlotParameters](docs/GetSynchronizedNamespaceSlotParameters.md)
-- [GetSynchronizedOperationParameters](docs/GetSynchronizedOperationParameters.md)
-- [GetSynchronizedRootConfigurationParameters](docs/GetSynchronizedRootConfigurationParameters.md)
-- [GetSynchronizedStatusParameters](docs/GetSynchronizedStatusParameters.md)
 - [GetUploadMetadataForFilesParameters](docs/GetUploadMetadataForFilesParameters.md)
 - [GetUploadUriParameters](docs/GetUploadUriParameters.md)
 - [GraceError](docs/GraceError.md)
@@ -335,11 +335,49 @@ All URIs are relative to *http://localhost:5000*
 - [InlineObject9](docs/InlineObject9.md)
 - [IsEmptyParameters](docs/IsEmptyParameters.md)
 - [IssueDedupeDiscoveryParameters](docs/IssueDedupeDiscoveryParameters.md)
+- [LibraryBootstrapPageDto](docs/LibraryBootstrapPageDto.md)
+- [LibraryBootstrapPageReturnValue](docs/LibraryBootstrapPageReturnValue.md)
+- [LibraryCatalogChangeResultDto](docs/LibraryCatalogChangeResultDto.md)
+- [LibraryCatalogChangeReturnValue](docs/LibraryCatalogChangeReturnValue.md)
+- [LibraryCatalogDto](docs/LibraryCatalogDto.md)
+- [LibraryCatalogRejectionReason](docs/LibraryCatalogRejectionReason.md)
+- [LibraryCatalogReturnValue](docs/LibraryCatalogReturnValue.md)
+- [LibraryChangeDto](docs/LibraryChangeDto.md)
+- [LibraryChangeKind](docs/LibraryChangeKind.md)
+- [LibraryChangePageDto](docs/LibraryChangePageDto.md)
+- [LibraryChangePageReturnValue](docs/LibraryChangePageReturnValue.md)
+- [LibraryConflictProvenanceDto](docs/LibraryConflictProvenanceDto.md)
+- [LibraryContentAvailable](docs/LibraryContentAvailable.md)
+- [LibraryContentPreconditionDto](docs/LibraryContentPreconditionDto.md)
+- [LibraryContentReadGrantDto](docs/LibraryContentReadGrantDto.md)
+- [LibraryContentReadGrantReturnValue](docs/LibraryContentReadGrantReturnValue.md)
+- [LibraryContentVersionDto](docs/LibraryContentVersionDto.md)
+- [LibraryCreationSlotExpectationDto](docs/LibraryCreationSlotExpectationDto.md)
+- [LibraryItemDto](docs/LibraryItemDto.md)
+- [LibraryItemKind](docs/LibraryItemKind.md)
+- [LibraryItemReturnValue](docs/LibraryItemReturnValue.md)
+- [LibraryNamespaceDto](docs/LibraryNamespaceDto.md)
+- [LibraryNamespacePreconditionDto](docs/LibraryNamespacePreconditionDto.md)
+- [LibraryNamespaceSlotDto](docs/LibraryNamespaceSlotDto.md)
+- [LibraryNamespaceSlotReturnValue](docs/LibraryNamespaceSlotReturnValue.md)
+- [LibraryOperationReceiptDto](docs/LibraryOperationReceiptDto.md)
+- [LibraryOperationReceiptReturnValue](docs/LibraryOperationReceiptReturnValue.md)
+- [LibraryOutcomeKind](docs/LibraryOutcomeKind.md)
+- [LibraryParameters](docs/LibraryParameters.md)
+- [LibraryParentDto](docs/LibraryParentDto.md)
+- [LibraryPreparedContentDto](docs/LibraryPreparedContentDto.md)
+- [LibraryPreparedContentReturnValue](docs/LibraryPreparedContentReturnValue.md)
+- [LibraryRebaselineDto](docs/LibraryRebaselineDto.md)
+- [LibraryRejectionReason](docs/LibraryRejectionReason.md)
+- [LibraryRepositoryStatusDto](docs/LibraryRepositoryStatusDto.md)
+- [LibraryReturnValueBase](docs/LibraryReturnValueBase.md)
+- [LibraryStatusReturnValue](docs/LibraryStatusReturnValue.md)
+- [LibraryTombstoneDto](docs/LibraryTombstoneDto.md)
 - [ListApprovalPoliciesParameters](docs/ListApprovalPoliciesParameters.md)
 - [ListApprovalRequestsParameters](docs/ListApprovalRequestsParameters.md)
+- [ListLibrariesParameters](docs/ListLibrariesParameters.md)
 - [ListOrganizationsParameters](docs/ListOrganizationsParameters.md)
 - [ListRepositoriesParameters](docs/ListRepositoriesParameters.md)
-- [ListSynchronizedRootsParameters](docs/ListSynchronizedRootsParameters.md)
 - [ListWebhookDeliveriesParameters](docs/ListWebhookDeliveriesParameters.md)
 - [ListWebhookRulesParameters](docs/ListWebhookRulesParameters.md)
 - [ObjectStorageProvider](docs/ObjectStorageProvider.md)
@@ -357,8 +395,8 @@ All URIs are relative to *http://localhost:5000*
 - [P256PublicJwk](docs/P256PublicJwk.md)
 - [PopulateParameters](docs/PopulateParameters.md)
 - [PrepareDirectoryVersionZipParameters](docs/PrepareDirectoryVersionZipParameters.md)
-- [PrepareSynchronizedContentParameters](docs/PrepareSynchronizedContentParameters.md)
-- [PrepareSynchronizedContentReadParameters](docs/PrepareSynchronizedContentReadParameters.md)
+- [PrepareLibraryContentParameters](docs/PrepareLibraryContentParameters.md)
+- [PrepareLibraryContentReadParameters](docs/PrepareLibraryContentReadParameters.md)
 - [ProblemDetails](docs/ProblemDetails.md)
 - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)
 - [PromotionSetApprovalSummary](docs/PromotionSetApprovalSummary.md)
@@ -378,7 +416,7 @@ All URIs are relative to *http://localhost:5000*
 - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
 - [ReferenceType](docs/ReferenceType.md)
 - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
-- [RemoveSynchronizedRootParameters](docs/RemoveSynchronizedRootParameters.md)
+- [RemoveLibraryParameters](docs/RemoveLibraryParameters.md)
 - [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
 - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
 - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
@@ -410,50 +448,12 @@ All URIs are relative to *http://localhost:5000*
 - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
 - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
 - [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
+- [StartLibraryBootstrapParameters](docs/StartLibraryBootstrapParameters.md)
 - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
-- [StartSynchronizedBootstrapParameters](docs/StartSynchronizedBootstrapParameters.md)
 - [StartUploadSession](docs/StartUploadSession.md)
 - [StorageParameters](docs/StorageParameters.md)
-- [SubmitSynchronizedMutationParameters](docs/SubmitSynchronizedMutationParameters.md)
+- [SubmitLibraryChangeParameters](docs/SubmitLibraryChangeParameters.md)
 - [SwitchParameters](docs/SwitchParameters.md)
-- [SynchronizedBootstrapPageDto](docs/SynchronizedBootstrapPageDto.md)
-- [SynchronizedBootstrapPageReturnValue](docs/SynchronizedBootstrapPageReturnValue.md)
-- [SynchronizedConflictProvenanceDto](docs/SynchronizedConflictProvenanceDto.md)
-- [SynchronizedContentAvailable](docs/SynchronizedContentAvailable.md)
-- [SynchronizedContentParameters](docs/SynchronizedContentParameters.md)
-- [SynchronizedContentPreconditionDto](docs/SynchronizedContentPreconditionDto.md)
-- [SynchronizedContentReadGrantDto](docs/SynchronizedContentReadGrantDto.md)
-- [SynchronizedContentReadGrantReturnValue](docs/SynchronizedContentReadGrantReturnValue.md)
-- [SynchronizedContentVersionDto](docs/SynchronizedContentVersionDto.md)
-- [SynchronizedCreationSlotExpectationDto](docs/SynchronizedCreationSlotExpectationDto.md)
-- [SynchronizedDeltaResultDto](docs/SynchronizedDeltaResultDto.md)
-- [SynchronizedDeltaReturnValue](docs/SynchronizedDeltaReturnValue.md)
-- [SynchronizedItemDto](docs/SynchronizedItemDto.md)
-- [SynchronizedItemKind](docs/SynchronizedItemKind.md)
-- [SynchronizedItemReturnValue](docs/SynchronizedItemReturnValue.md)
-- [SynchronizedMutationDto](docs/SynchronizedMutationDto.md)
-- [SynchronizedMutationKind](docs/SynchronizedMutationKind.md)
-- [SynchronizedNamespaceDto](docs/SynchronizedNamespaceDto.md)
-- [SynchronizedNamespacePreconditionDto](docs/SynchronizedNamespacePreconditionDto.md)
-- [SynchronizedNamespaceSlotDto](docs/SynchronizedNamespaceSlotDto.md)
-- [SynchronizedNamespaceSlotReturnValue](docs/SynchronizedNamespaceSlotReturnValue.md)
-- [SynchronizedOperationReceiptDto](docs/SynchronizedOperationReceiptDto.md)
-- [SynchronizedOperationReceiptReturnValue](docs/SynchronizedOperationReceiptReturnValue.md)
-- [SynchronizedOutcomeKind](docs/SynchronizedOutcomeKind.md)
-- [SynchronizedParentDto](docs/SynchronizedParentDto.md)
-- [SynchronizedPreparedContentDto](docs/SynchronizedPreparedContentDto.md)
-- [SynchronizedPreparedContentReturnValue](docs/SynchronizedPreparedContentReturnValue.md)
-- [SynchronizedRebaselineDto](docs/SynchronizedRebaselineDto.md)
-- [SynchronizedRejectionReason](docs/SynchronizedRejectionReason.md)
-- [SynchronizedRepositoryStatusDto](docs/SynchronizedRepositoryStatusDto.md)
-- [SynchronizedReturnValueBase](docs/SynchronizedReturnValueBase.md)
-- [SynchronizedRootConfigurationDto](docs/SynchronizedRootConfigurationDto.md)
-- [SynchronizedRootConfigurationReturnValue](docs/SynchronizedRootConfigurationReturnValue.md)
-- [SynchronizedRootMutationResultDto](docs/SynchronizedRootMutationResultDto.md)
-- [SynchronizedRootMutationReturnValue](docs/SynchronizedRootMutationReturnValue.md)
-- [SynchronizedRootRejectionReason](docs/SynchronizedRootRejectionReason.md)
-- [SynchronizedStatusReturnValue](docs/SynchronizedStatusReturnValue.md)
-- [SynchronizedTombstoneDto](docs/SynchronizedTombstoneDto.md)
 - [TestWebhookRuleParameters](docs/TestWebhookRuleParameters.md)
 - [TypedReferenceApiDto](docs/TypedReferenceApiDto.md)
 - [UndeleteOrganizationParameters](docs/UndeleteOrganizationParameters.md)

@@ -1018,7 +1018,7 @@ module WatchTests =
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
-    /// Records a marker deletion without the completed sidecar produced by a successful branch switch mutation.
+    /// Records a marker deletion without the completed sidecar produced by a successful branch switch change.
     let private recordIncompleteUpdateMarkerDeletion (updateMarkerFile: string) =
         Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
         |> ignore
@@ -1668,7 +1668,7 @@ module WatchTests =
                     GraceStatusFile = current.GraceStatusFile
                     DirectoryIgnoreEntries = Array.empty
                     FileIgnoreEntries = [| "ignored.tmp" |]
-                    SynchronizedRoots = [| "synchronized" |]
+                    Libraries = [| "library" |]
                     PathComparison = StringComparison.OrdinalIgnoreCase
                 }
 
@@ -1676,7 +1676,7 @@ module WatchTests =
             let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
             let sharedPrefixPath = Path.Combine(root, ".grace-old", "ordinary.txt")
             let internalPath = Path.Combine(current.GraceDirectory, "objects", "cached.bin")
-            let synchronizedPath = Path.Combine(root, "synchronized", "remote.bin")
+            let libraryPath = Path.Combine(root, "library", "remote.bin")
             let outsidePath = Path.Combine(Path.GetDirectoryName(root), $"outside-{Guid.NewGuid():N}.txt")
 
             classify Services.RepositoryPathKind.FilePath graceIgnorePath
@@ -1685,8 +1685,8 @@ module WatchTests =
             classify Services.RepositoryPathKind.FilePath sharedPrefixPath
             |> should equal Services.RepositoryPathClassification.Eligible
 
-            classify Services.RepositoryPathKind.FilePath synchronizedPath
-            |> should equal Services.RepositoryPathClassification.Synchronized
+            classify Services.RepositoryPathKind.FilePath libraryPath
+            |> should equal Services.RepositoryPathClassification.Library
 
             classify Services.RepositoryPathKind.FilePath (internalPath.ToUpperInvariant())
             |> should equal Services.RepositoryPathClassification.GraceInternal
@@ -8525,7 +8525,7 @@ module WatchTests =
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
 
-    /// Verifies that replayed file rows inconsistent with current GraceStatus retire before status mutation.
+    /// Verifies that replayed file rows inconsistent with current GraceStatus retire before status change.
     [<Test>]
     let ``watch startup recovery quarantines replayed file rows inconsistent with GraceStatus`` () =
         withTempRepo (fun root ->
@@ -8721,7 +8721,7 @@ module WatchTests =
                 /// Keeps the legacy status helper unused by the current Watch path.
                 let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
 
-                /// Fails if same-content replay reaches status mutation instead of retiring through cleanup.
+                /// Fails if same-content replay reaches status change instead of retiring through cleanup.
                 let updateGraceStatusFromDifferences _ _ _ =
                     applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
                     Task.FromException<GraceStatus option>(InvalidOperationException("same-content replay should not apply a status difference"))
@@ -21678,7 +21678,7 @@ module WatchTests =
                     referenceB.ReferenceId
                 |])
 
-    /// Verifies that local Watch work arriving after dirty publication blocks mutation at the final pre-apply inspection.
+    /// Verifies that local Watch work arriving after dirty publication blocks change at the final pre-apply inspection.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
     let ``current branch materialization coordinator rechecks clean gate after pending publication`` () =
         withTempRepo (fun root ->
@@ -22171,7 +22171,7 @@ module WatchTests =
             finally
                 Watch.clearPendingWatchWorkForTests ())
 
-    /// Verifies a dirty IPC publication failure prevents the coordinator from starting target mutation.
+    /// Verifies a dirty IPC publication failure prevents the coordinator from starting target change.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationApplyBoundary")>]
     let ``current branch materialization coordinator refuses apply when dirty ipc publication is not proven`` () =
         withTempRepo (fun root ->

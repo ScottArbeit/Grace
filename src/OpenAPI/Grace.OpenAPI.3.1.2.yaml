@@ -3331,86 +3331,63 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
-  /sync/roots/get:
+  /libraries/catalog/get:
     post:
       tags:
-        - Synchronized Content
-      summary: Get the persisted synchronized-root configuration.
-      operationId: GetSynchronizedRootConfiguration
+        - Libraries
+      summary: Get the persisted Library configuration.
+      operationId: GetLibraryCatalog
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GetSynchronizedRootConfigurationParameters'
+              $ref: '#/components/schemas/GetLibraryCatalogParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedRootConfigurationResponse'
+          $ref: '#/components/responses/LibraryCatalogResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /sync/roots/list:
+  /libraries/list:
     post:
       tags:
-        - Synchronized Content
-      summary: List the sorted synchronized roots and their exact configuration version.
-      operationId: ListSynchronizedRoots
+        - Libraries
+      summary: List the sorted Libraries and their exact configuration version.
+      operationId: ListLibraries
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ListSynchronizedRootsParameters'
+              $ref: '#/components/schemas/ListLibrariesParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedRootConfigurationResponse'
+          $ref: '#/components/responses/LibraryCatalogResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /sync/roots/add:
+  /libraries/add:
     post:
       tags:
-        - Synchronized Content
-      summary: Add one empty normalized synchronized root under an exact configuration version.
-      operationId: AddSynchronizedRoot
+        - Libraries
+      summary: Add one empty normalized Library under an exact configuration version.
+      operationId: AddLibrary
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AddSynchronizedRootParameters'
+              $ref: '#/components/schemas/AddLibraryParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedRootMutationResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '403':
-          $ref: '#/components/responses/403'
-        '409':
-          $ref: '#/components/responses/409'
-        '500':
-          $ref: '#/components/responses/500'
-  /sync/roots/remove:
-    post:
-      tags:
-        - Synchronized Content
-      summary: Remove one empty normalized synchronized root under an exact configuration version.
-      operationId: RemoveSynchronizedRoot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RemoveSynchronizedRootParameters'
-      responses:
-        '200':
-          $ref: '#/components/responses/SynchronizedRootMutationResponse'
+          $ref: '#/components/responses/LibraryCatalogChangeResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3419,42 +3396,65 @@ paths:
           $ref: '#/components/responses/409'
         '500':
           $ref: '#/components/responses/500'
-  /sync/bootstrap/start:
+  /libraries/remove:
     post:
       tags:
-        - Synchronized Content
+        - Libraries
+      summary: Remove one empty normalized Library under an exact configuration version.
+      operationId: RemoveLibrary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveLibraryParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/LibraryCatalogChangeResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '403':
+          $ref: '#/components/responses/403'
+        '409':
+          $ref: '#/components/responses/409'
+        '500':
+          $ref: '#/components/responses/500'
+  /libraries/bootstrap/start:
+    post:
+      tags:
+        - Libraries
       summary: Start a bounded bootstrap from the current immutable baseline.
-      operationId: StartSynchronizedBootstrap
+      operationId: StartLibraryBootstrap
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/StartSynchronizedBootstrapParameters'
+              $ref: '#/components/schemas/StartLibraryBootstrapParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedBootstrapPageResponse'
+          $ref: '#/components/responses/LibraryBootstrapPageResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /sync/bootstrap/continue:
+  /libraries/bootstrap/continue:
     post:
       tags:
-        - Synchronized Content
+        - Libraries
       summary: Continue one immutable bootstrap baseline page sequence.
-      operationId: ContinueSynchronizedBootstrap
+      operationId: ContinueLibraryBootstrap
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ContinueSynchronizedBootstrapParameters'
+              $ref: '#/components/schemas/ContinueLibraryBootstrapParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedBootstrapPageResponse'
+          $ref: '#/components/responses/LibraryBootstrapPageResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3465,42 +3465,42 @@ paths:
           $ref: '#/components/responses/410'
         '500':
           $ref: '#/components/responses/500'
-  /sync/deltas/get:
+  /libraries/changes/get:
     post:
       tags:
-        - Synchronized Content
-      summary: Read repository-ordered accepted synchronized mutations after an opaque cursor.
-      operationId: GetSynchronizedDeltas
+        - Libraries
+      summary: Read repository-ordered accepted Library changes after an opaque cursor.
+      operationId: GetLibraryChanges
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GetSynchronizedDeltasParameters'
+              $ref: '#/components/schemas/GetLibraryChangesParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedDeltaResponse'
+          $ref: '#/components/responses/LibraryChangePageResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /sync/mutations/submit:
+  /libraries/changes/submit:
     post:
       tags:
-        - Synchronized Content
-      summary: Submit one exact idempotent synchronized namespace or content mutation.
-      operationId: SubmitSynchronizedMutation
+        - Libraries
+      summary: Submit one exact idempotent Library namespace or content change.
+      operationId: SubmitLibraryChange
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SubmitSynchronizedMutationParameters'
+              $ref: '#/components/schemas/SubmitLibraryChangeParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedOperationReceiptResponse'
+          $ref: '#/components/responses/LibraryOperationReceiptResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3511,21 +3511,21 @@ paths:
           $ref: '#/components/responses/410'
         '500':
           $ref: '#/components/responses/500'
-  /sync/operations/get:
+  /libraries/operations/get:
     post:
       tags:
-        - Synchronized Content
-      summary: Get the stable receipt for one authorized synchronized operation identity.
-      operationId: GetSynchronizedOperation
+        - Libraries
+      summary: Get the stable receipt for one authorized Library operation identity.
+      operationId: GetLibraryOperation
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GetSynchronizedOperationParameters'
+              $ref: '#/components/schemas/GetLibraryOperationParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedOperationReceiptResponse'
+          $ref: '#/components/responses/LibraryOperationReceiptResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3534,21 +3534,21 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /sync/content/prepare:
+  /libraries/content/prepare:
     post:
       tags:
-        - Synchronized Content
-      summary: Prepare exact immutable bytes for a later synchronized mutation.
-      operationId: PrepareSynchronizedContent
+        - Libraries
+      summary: Prepare exact immutable bytes for a later Library change.
+      operationId: PrepareLibraryContent
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PrepareSynchronizedContentParameters'
+              $ref: '#/components/schemas/PrepareLibraryContentParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedPreparedContentResponse'
+          $ref: '#/components/responses/LibraryPreparedContentResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3557,21 +3557,21 @@ paths:
           $ref: '#/components/responses/409'
         '500':
           $ref: '#/components/responses/500'
-  /sync/content/read:
+  /libraries/content/read:
     post:
       tags:
-        - Synchronized Content
+        - Libraries
       summary: Prepare a one-use read grant for an authorized retained content version.
-      operationId: PrepareSynchronizedContentRead
+      operationId: PrepareLibraryContentRead
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PrepareSynchronizedContentReadParameters'
+              $ref: '#/components/schemas/PrepareLibraryContentReadParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedContentReadGrantResponse'
+          $ref: '#/components/responses/LibraryContentReadGrantResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3580,12 +3580,12 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /sync/content/{grantId}:
+  /libraries/content/{grantId}:
     get:
       tags:
-        - Synchronized Content
+        - Libraries
       summary: Redeem one authorized short-lived immutable-content read grant.
-      operationId: DownloadSynchronizedContent
+      operationId: DownloadLibraryContent
       security: []
       parameters:
         - name: grantId
@@ -3613,21 +3613,21 @@ paths:
           $ref: '#/components/responses/410'
         '500':
           $ref: '#/components/responses/500'
-  /sync/items/get:
+  /libraries/items/get:
     post:
       tags:
-        - Synchronized Content
-      summary: Get one current synchronized item.
-      operationId: GetSynchronizedItem
+        - Libraries
+      summary: Get one current Library item.
+      operationId: GetLibraryItem
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GetSynchronizedItemParameters'
+              $ref: '#/components/schemas/GetLibraryItemParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedItemResponse'
+          $ref: '#/components/responses/LibraryItemResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -3636,42 +3636,42 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /sync/namespace/get-slot:
+  /libraries/namespace/get-slot:
     post:
       tags:
-        - Synchronized Content
-      summary: Get one current occupied or remembered-vacant synchronized namespace slot.
-      operationId: GetSynchronizedNamespaceSlot
+        - Libraries
+      summary: Get one current occupied or remembered-vacant Library namespace slot.
+      operationId: GetLibraryNamespaceSlot
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GetSynchronizedNamespaceSlotParameters'
+              $ref: '#/components/schemas/GetLibraryNamespaceSlotParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedNamespaceSlotResponse'
+          $ref: '#/components/responses/LibraryNamespaceSlotResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /sync/status/get:
+  /libraries/status/get:
     post:
       tags:
-        - Synchronized Content
-      summary: Get content-free synchronized repository status.
-      operationId: GetSynchronizedStatus
+        - Libraries
+      summary: Get content-free Library repository status.
+      operationId: GetLibraryStatus
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GetSynchronizedStatusParameters'
+              $ref: '#/components/schemas/GetLibraryStatusParameters'
       responses:
         '200':
-          $ref: '#/components/responses/SynchronizedStatusResponse'
+          $ref: '#/components/responses/LibraryStatusResponse'
         '400':
           $ref: '#/components/responses/400'
         '403':
@@ -5542,51 +5542,51 @@ components:
     UploadSessionOperationId:
       description: Caller-supplied idempotency key for one upload-session operation.
       type: string
-    SynchronizedItemId:
+    LibraryItemId:
       type: string
       format: uuid
-    SynchronizedOperationId:
+    LibraryOperationId:
       type: string
       format: uuid
-    SynchronizedRootConfigurationVersion:
+    LibraryCatalogVersion:
       type: string
       format: uuid
-    SynchronizedNamespaceVersion:
+    LibraryNamespaceVersion:
       type: string
       format: uuid
-    SynchronizedNamespaceSlotVersion:
+    LibraryNamespaceSlotVersion:
       type: string
       format: uuid
-    SynchronizedContentVersionId:
+    LibraryContentVersionId:
       type: string
       format: uuid
-    SynchronizedBootstrapId:
+    LibraryBootstrapId:
       type: string
       format: uuid
-    SynchronizedPreparedContentId:
+    LibraryPreparedContentId:
       type: string
       format: uuid
-    SynchronizedCursor:
+    LibraryCursor:
       type: string
       minLength: 1
       maxLength: 2048
       description: Opaque repository cursor. Clients must not parse or compare its contents.
-    SynchronizedCursorEpoch:
+    LibraryCursorEpoch:
       type: string
       minLength: 1
       maxLength: 2048
       description: Opaque repository epoch. Clients compare only exact equality.
-    SynchronizedPageToken:
+    LibraryPageToken:
       type: string
       minLength: 1
       maxLength: 2048
       description: Opaque token for continuing one immutable page sequence.
-    SynchronizedItemKind:
+    LibraryItemKind:
       type: string
       enum:
         - file
         - directory
-    SynchronizedMutationKind:
+    LibraryChangeKind:
       type: string
       enum:
         - createFile
@@ -5595,7 +5595,7 @@ components:
         - rename
         - move
         - delete
-    SynchronizedOutcomeKind:
+    LibraryOutcomeKind:
       type: string
       enum:
         - accepted
@@ -5605,7 +5605,7 @@ components:
         - stalePolicy
         - rebaselineRequired
         - localIncomplete
-    SynchronizedRejectionReason:
+    LibraryRejectionReason:
       type: string
       enum:
         - namespaceChanged
@@ -5617,15 +5617,15 @@ components:
         - kindMismatch
         - preparedContentExpired
         - operationIdentityMismatch
-    SynchronizedRootRejectionReason:
+    LibraryCatalogRejectionReason:
       type: string
       enum:
         - slotOccupied
         - outgoingSystemNotEmpty
-        - rootOverlap
-        - rootLimitExceeded
+        - libraryOverlap
+        - libraryLimitExceeded
         - unsupportedPath
-    SynchronizedParentDto:
+    LibraryParentDto:
       description: Repository-owned root or directory parent identity.
       type: object
       properties:
@@ -5634,41 +5634,41 @@ components:
           enum:
             - root
             - item
-        RootPath:
+        LibraryPath:
           type: string
           nullable: true
         ItemId:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedItemId'
+            - $ref: '#/components/schemas/LibraryItemId'
           nullable: true
       required:
         - Kind
-        - RootPath
+        - LibraryPath
         - ItemId
-    SynchronizedNamespaceDto:
+    LibraryNamespaceDto:
       type: object
       properties:
         Parent:
-          $ref: '#/components/schemas/SynchronizedParentDto'
+          $ref: '#/components/schemas/LibraryParentDto'
         Name:
           type: string
         NormalizedPath:
           type: string
         NamespaceVersion:
-          $ref: '#/components/schemas/SynchronizedNamespaceVersion'
+          $ref: '#/components/schemas/LibraryNamespaceVersion'
         SlotVersion:
-          $ref: '#/components/schemas/SynchronizedNamespaceSlotVersion'
+          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
       required:
         - Parent
         - Name
         - NormalizedPath
         - NamespaceVersion
         - SlotVersion
-    SynchronizedContentVersionDto:
+    LibraryContentVersionDto:
       type: object
       properties:
         ContentVersionId:
-          $ref: '#/components/schemas/SynchronizedContentVersionId'
+          $ref: '#/components/schemas/LibraryContentVersionId'
         Blake3Hash:
           $ref: '#/components/schemas/Blake3Hash'
         Sha256Hash:
@@ -5685,24 +5685,24 @@ components:
         - Sha256Hash
         - Size
         - CreatedAt
-    SynchronizedTombstoneDto:
+    LibraryTombstoneDto:
       type: object
       properties:
         ItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ItemKind:
-          $ref: '#/components/schemas/SynchronizedItemKind'
+          $ref: '#/components/schemas/LibraryItemKind'
         DeletedAt:
           $ref: '#/components/schemas/Instant'
         DeletedBy:
           type: string
         DeleteCursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
+          $ref: '#/components/schemas/LibraryCursor'
         LastNamespaceVersion:
-          $ref: '#/components/schemas/SynchronizedNamespaceVersion'
+          $ref: '#/components/schemas/LibraryNamespaceVersion'
         LastContentVersionId:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedContentVersionId'
+            - $ref: '#/components/schemas/LibraryContentVersionId'
           nullable: true
       required:
         - ItemId
@@ -5712,28 +5712,28 @@ components:
         - DeleteCursor
         - LastNamespaceVersion
         - LastContentVersionId
-    SynchronizedConflictProvenanceDto:
+    LibraryConflictProvenanceDto:
       type: object
       properties:
         SourceOperationId:
-          $ref: '#/components/schemas/SynchronizedOperationId'
+          $ref: '#/components/schemas/LibraryOperationId'
         SourceItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         CanonicalItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ConflictItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ConflictPath:
           type: string
         AcceptedAt:
           $ref: '#/components/schemas/Instant'
         SourceContentVersionId:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedContentVersionId'
+            - $ref: '#/components/schemas/LibraryContentVersionId'
           nullable: true
         BaseContentVersionId:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedContentVersionId'
+            - $ref: '#/components/schemas/LibraryContentVersionId'
           nullable: true
       required:
         - SourceOperationId
@@ -5744,54 +5744,54 @@ components:
         - AcceptedAt
         - SourceContentVersionId
         - BaseContentVersionId
-    SynchronizedItemDto:
+    LibraryItemDto:
       type: object
       properties:
         ItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ItemKind:
-          $ref: '#/components/schemas/SynchronizedItemKind'
+          $ref: '#/components/schemas/LibraryItemKind'
         State:
           type: string
           enum:
             - live
             - tombstoned
-        LastMutationCursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
-        RootConfigurationVersion:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        LastChangeCursor:
+          $ref: '#/components/schemas/LibraryCursor'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
         Namespace:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedNamespaceDto'
+            - $ref: '#/components/schemas/LibraryNamespaceDto'
           nullable: true
         Content:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedContentVersionDto'
+            - $ref: '#/components/schemas/LibraryContentVersionDto'
           nullable: true
         Tombstone:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedTombstoneDto'
+            - $ref: '#/components/schemas/LibraryTombstoneDto'
           nullable: true
       required:
         - ItemId
         - ItemKind
         - State
-        - LastMutationCursor
-        - RootConfigurationVersion
+        - LastChangeCursor
+        - LibraryCatalogVersion
         - Namespace
         - Content
         - Tombstone
-    SynchronizedNamespaceSlotDto:
+    LibraryNamespaceSlotDto:
       type: object
       properties:
         Parent:
-          $ref: '#/components/schemas/SynchronizedParentDto'
+          $ref: '#/components/schemas/LibraryParentDto'
         Name:
           type: string
         NormalizedPath:
           type: string
         SlotVersion:
-          $ref: '#/components/schemas/SynchronizedNamespaceSlotVersion'
+          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
         State:
           type: string
           enum:
@@ -5799,7 +5799,7 @@ components:
             - vacant
         OccupantItemId:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedItemId'
+            - $ref: '#/components/schemas/LibraryItemId'
           nullable: true
       required:
         - Parent
@@ -5808,14 +5808,14 @@ components:
         - SlotVersion
         - State
         - OccupantItemId
-    SynchronizedRootConfigurationDto:
+    LibraryCatalogDto:
       type: object
       properties:
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
         Version:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
-        Roots:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
+        Libraries:
           type: array
           maxItems: 128
           items:
@@ -5826,44 +5826,44 @@ components:
           type: string
         PreviousVersion:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+            - $ref: '#/components/schemas/LibraryCatalogVersion'
           nullable: true
       required:
         - RepositoryId
         - Version
-        - Roots
+        - Libraries
         - CreatedAt
         - CreatedBy
         - PreviousVersion
-    SynchronizedNamespacePreconditionDto:
+    LibraryNamespacePreconditionDto:
       type: object
       properties:
         ItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ExpectedNamespaceVersion:
-          $ref: '#/components/schemas/SynchronizedNamespaceVersion'
+          $ref: '#/components/schemas/LibraryNamespaceVersion'
       required:
         - ItemId
         - ExpectedNamespaceVersion
-    SynchronizedContentPreconditionDto:
+    LibraryContentPreconditionDto:
       type: object
       properties:
         ItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ExpectedContentVersionId:
-          $ref: '#/components/schemas/SynchronizedContentVersionId'
+          $ref: '#/components/schemas/LibraryContentVersionId'
       required:
         - ItemId
         - ExpectedContentVersionId
-    SynchronizedCreationSlotExpectationDto:
+    LibraryCreationSlotExpectationDto:
       type: object
       properties:
         Parent:
-          $ref: '#/components/schemas/SynchronizedParentDto'
+          $ref: '#/components/schemas/LibraryParentDto'
         Name:
           type: string
         ExpectedSlotVersion:
-          $ref: '#/components/schemas/SynchronizedNamespaceSlotVersion'
+          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
         ExpectedState:
           type: string
           enum:
@@ -5873,63 +5873,63 @@ components:
         - Name
         - ExpectedSlotVersion
         - ExpectedState
-    SynchronizedMutationDto:
+    LibraryChangeDto:
       type: object
       properties:
         Cursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
+          $ref: '#/components/schemas/LibraryCursor'
         OperationId:
-          $ref: '#/components/schemas/SynchronizedOperationId'
-        MutationKind:
-          $ref: '#/components/schemas/SynchronizedMutationKind'
+          $ref: '#/components/schemas/LibraryOperationId'
+        ChangeKind:
+          $ref: '#/components/schemas/LibraryChangeKind'
         ItemId:
-          $ref: '#/components/schemas/SynchronizedItemId'
+          $ref: '#/components/schemas/LibraryItemId'
         ItemKind:
-          $ref: '#/components/schemas/SynchronizedItemKind'
+          $ref: '#/components/schemas/LibraryItemKind'
         AcceptedAt:
           $ref: '#/components/schemas/Instant'
         AcceptedBy:
           type: string
-        RootConfigurationVersion:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
         Namespace:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedNamespaceDto'
+            - $ref: '#/components/schemas/LibraryNamespaceDto'
           nullable: true
         Content:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedContentVersionDto'
+            - $ref: '#/components/schemas/LibraryContentVersionDto'
           nullable: true
         Tombstone:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedTombstoneDto'
+            - $ref: '#/components/schemas/LibraryTombstoneDto'
           nullable: true
         Conflict:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedConflictProvenanceDto'
+            - $ref: '#/components/schemas/LibraryConflictProvenanceDto'
           nullable: true
       required:
         - Cursor
         - OperationId
-        - MutationKind
+        - ChangeKind
         - ItemId
         - ItemKind
         - AcceptedAt
         - AcceptedBy
-        - RootConfigurationVersion
+        - LibraryCatalogVersion
         - Namespace
         - Content
         - Tombstone
         - Conflict
-    SynchronizedRebaselineDto:
+    LibraryRebaselineDto:
       type: object
       properties:
         Reason:
           type: string
         CurrentEpoch:
-          $ref: '#/components/schemas/SynchronizedCursorEpoch'
+          $ref: '#/components/schemas/LibraryCursorEpoch'
         ServiceFloorCursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
+          $ref: '#/components/schemas/LibraryCursor'
         RecommendedBootstrap:
           type: boolean
       required:
@@ -5937,71 +5937,71 @@ components:
         - CurrentEpoch
         - ServiceFloorCursor
         - RecommendedBootstrap
-    SynchronizedOperationReceiptDto:
+    LibraryOperationReceiptDto:
       type: object
       properties:
         OperationId:
-          $ref: '#/components/schemas/SynchronizedOperationId'
+          $ref: '#/components/schemas/LibraryOperationId'
         RequestHash:
           type: string
         Outcome:
-          $ref: '#/components/schemas/SynchronizedOutcomeKind'
-        RootConfigurationVersion:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+          $ref: '#/components/schemas/LibraryOutcomeKind'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
         RecordedAt:
           $ref: '#/components/schemas/Instant'
         PrincipalId:
           type: string
-        Mutation:
+        Change:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedMutationDto'
+            - $ref: '#/components/schemas/LibraryChangeDto'
           nullable: true
         Cursor:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedCursor'
+            - $ref: '#/components/schemas/LibraryCursor'
           nullable: true
         Item:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedItemDto'
+            - $ref: '#/components/schemas/LibraryItemDto'
           nullable: true
         Conflict:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedConflictProvenanceDto'
+            - $ref: '#/components/schemas/LibraryConflictProvenanceDto'
           nullable: true
         ReasonCode:
           type: string
           nullable: true
-        CurrentRootConfiguration:
+        CurrentLibraryCatalog:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+            - $ref: '#/components/schemas/LibraryCatalogDto'
           nullable: true
         Rebaseline:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedRebaselineDto'
+            - $ref: '#/components/schemas/LibraryRebaselineDto'
           nullable: true
       required:
         - OperationId
         - RequestHash
         - Outcome
-        - RootConfigurationVersion
+        - LibraryCatalogVersion
         - RecordedAt
         - PrincipalId
-        - Mutation
+        - Change
         - Cursor
         - Item
         - Conflict
         - ReasonCode
-        - CurrentRootConfiguration
+        - CurrentLibraryCatalog
         - Rebaseline
-    SynchronizedRootMutationResultDto:
+    LibraryCatalogChangeResultDto:
       type: object
       properties:
         OperationId:
-          $ref: '#/components/schemas/SynchronizedOperationId'
+          $ref: '#/components/schemas/LibraryOperationId'
         Outcome:
-          $ref: '#/components/schemas/SynchronizedOutcomeKind'
-        RootConfiguration:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+          $ref: '#/components/schemas/LibraryOutcomeKind'
+        LibraryCatalog:
+          $ref: '#/components/schemas/LibraryCatalogDto'
         ReasonCode:
           type: string
           nullable: true
@@ -6010,71 +6010,71 @@ components:
       required:
         - OperationId
         - Outcome
-        - RootConfiguration
+        - LibraryCatalog
         - ReasonCode
         - RecordedAt
-    SynchronizedBootstrapPageDto:
+    LibraryBootstrapPageDto:
       type: object
       properties:
         BootstrapId:
-          $ref: '#/components/schemas/SynchronizedBootstrapId'
+          $ref: '#/components/schemas/LibraryBootstrapId'
         BoundaryCursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
+          $ref: '#/components/schemas/LibraryCursor'
         CursorEpoch:
-          $ref: '#/components/schemas/SynchronizedCursorEpoch'
-        RootConfiguration:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
+          $ref: '#/components/schemas/LibraryCursorEpoch'
+        LibraryCatalog:
+          $ref: '#/components/schemas/LibraryCatalogDto'
         Items:
           type: array
           items:
-            $ref: '#/components/schemas/SynchronizedItemDto'
+            $ref: '#/components/schemas/LibraryItemDto'
         NextPageToken:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedPageToken'
+            - $ref: '#/components/schemas/LibraryPageToken'
           nullable: true
       required:
         - BootstrapId
         - BoundaryCursor
         - CursorEpoch
-        - RootConfiguration
+        - LibraryCatalog
         - Items
         - NextPageToken
-    SynchronizedDeltaResultDto:
+    LibraryChangePageDto:
       type: object
       properties:
         Outcome:
-          $ref: '#/components/schemas/SynchronizedOutcomeKind'
+          $ref: '#/components/schemas/LibraryOutcomeKind'
         CursorEpoch:
-          $ref: '#/components/schemas/SynchronizedCursorEpoch'
-        Mutations:
+          $ref: '#/components/schemas/LibraryCursorEpoch'
+        Changes:
           type: array
           items:
-            $ref: '#/components/schemas/SynchronizedMutationDto'
+            $ref: '#/components/schemas/LibraryChangeDto'
         LastCursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
+          $ref: '#/components/schemas/LibraryCursor'
         HasMore:
           type: boolean
         NextPageToken:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedPageToken'
+            - $ref: '#/components/schemas/LibraryPageToken'
           nullable: true
         Rebaseline:
           allOf:
-            - $ref: '#/components/schemas/SynchronizedRebaselineDto'
+            - $ref: '#/components/schemas/LibraryRebaselineDto'
           nullable: true
       required:
         - Outcome
         - CursorEpoch
-        - Mutations
+        - Changes
         - LastCursor
         - HasMore
         - NextPageToken
         - Rebaseline
-    SynchronizedPreparedContentDto:
+    LibraryPreparedContentDto:
       type: object
       properties:
         PreparedContentId:
-          $ref: '#/components/schemas/SynchronizedPreparedContentId'
+          $ref: '#/components/schemas/LibraryPreparedContentId'
         Blake3Hash:
           $ref: '#/components/schemas/Blake3Hash'
         Sha256Hash:
@@ -6098,7 +6098,7 @@ components:
         - UploadRequired
         - UploadInstructions
         - ExpiresAt
-    SynchronizedContentReadGrantDto:
+    LibraryContentReadGrantDto:
       type: object
       properties:
         GrantId:
@@ -6106,7 +6106,7 @@ components:
         DownloadPath:
           type: string
         Content:
-          $ref: '#/components/schemas/SynchronizedContentVersionDto'
+          $ref: '#/components/schemas/LibraryContentVersionDto'
         ExpiresAt:
           $ref: '#/components/schemas/Instant'
       required:
@@ -6114,15 +6114,15 @@ components:
         - DownloadPath
         - Content
         - ExpiresAt
-    SynchronizedRepositoryStatusDto:
+    LibraryRepositoryStatusDto:
       type: object
       properties:
         State:
           type: string
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
-        RootConfigurationVersion:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
         IsCaughtUp:
           type: boolean
         RebaselineRequired:
@@ -6149,7 +6149,7 @@ components:
       required:
         - State
         - RepositoryId
-        - RootConfigurationVersion
+        - LibraryCatalogVersion
         - IsCaughtUp
         - RebaselineRequired
         - IsBlocked
@@ -6157,21 +6157,21 @@ components:
         - OldestPendingAgeMilliseconds
         - ProjectionLagCount
         - LastCompletedAt
-    SynchronizedContentAvailable:
+    LibraryContentAvailable:
       type: object
-      description: Content-free best-effort wake. Authorized clients pull durable deltas after receipt.
+      description: Content-free best-effort wake. Authorized clients pull durable changes after receipt.
       properties:
         EventName:
           type: string
-          const: SynchronizedContentAvailable.v1
+          const: LibraryContentAvailable.v1
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
         CursorEpoch:
-          $ref: '#/components/schemas/SynchronizedCursorEpoch'
+          $ref: '#/components/schemas/LibraryCursorEpoch'
         AvailableAfterCursor:
-          $ref: '#/components/schemas/SynchronizedCursor'
-        RootConfigurationVersion:
-          $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
+          $ref: '#/components/schemas/LibraryCursor'
+        LibraryCatalogVersion:
+          $ref: '#/components/schemas/LibraryCatalogVersion'
         OccurredAt:
           $ref: '#/components/schemas/Instant'
         CorrelationId:
@@ -6181,52 +6181,52 @@ components:
         - RepositoryId
         - CursorEpoch
         - AvailableAfterCursor
-        - RootConfigurationVersion
+        - LibraryCatalogVersion
         - OccurredAt
         - CorrelationId
-    SynchronizedContentParameters:
-      description: Repository locator shared by every remote synchronized-content request.
+    LibraryParameters:
+      description: Repository locator shared by every remote library request.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-    GetSynchronizedRootConfigurationParameters:
+    GetLibraryCatalogParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
-    ListSynchronizedRootsParameters:
+        - $ref: '#/components/schemas/LibraryParameters'
+    ListLibrariesParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
-    AddSynchronizedRootParameters:
+        - $ref: '#/components/schemas/LibraryParameters'
+    AddLibraryParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             ExpectedVersion:
-              $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
-            RootPath:
+              $ref: '#/components/schemas/LibraryCatalogVersion'
+            LibraryPath:
               type: string
             OperationId:
-              $ref: '#/components/schemas/SynchronizedOperationId'
+              $ref: '#/components/schemas/LibraryOperationId'
           required:
             - ExpectedVersion
-            - RootPath
+            - LibraryPath
             - OperationId
-    RemoveSynchronizedRootParameters:
+    RemoveLibraryParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             ExpectedVersion:
-              $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
-            RootPath:
+              $ref: '#/components/schemas/LibraryCatalogVersion'
+            LibraryPath:
               type: string
             OperationId:
-              $ref: '#/components/schemas/SynchronizedOperationId'
+              $ref: '#/components/schemas/LibraryOperationId'
           required:
             - ExpectedVersion
-            - RootPath
+            - LibraryPath
             - OperationId
-    StartSynchronizedBootstrapParameters:
+    StartLibraryBootstrapParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             PageSize:
@@ -6236,15 +6236,15 @@ components:
               maximum: 2000
           required:
             - PageSize
-    ContinueSynchronizedBootstrapParameters:
+    ContinueLibraryBootstrapParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             BootstrapId:
-              $ref: '#/components/schemas/SynchronizedBootstrapId'
+              $ref: '#/components/schemas/LibraryBootstrapId'
             PageToken:
-              $ref: '#/components/schemas/SynchronizedPageToken'
+              $ref: '#/components/schemas/LibraryPageToken'
             PageSize:
               type: integer
               format: int32
@@ -6254,16 +6254,16 @@ components:
             - BootstrapId
             - PageToken
             - PageSize
-    GetSynchronizedDeltasParameters:
+    GetLibraryChangesParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             AfterCursor:
-              $ref: '#/components/schemas/SynchronizedCursor'
+              $ref: '#/components/schemas/LibraryCursor'
             PageToken:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedPageToken'
+                - $ref: '#/components/schemas/LibraryPageToken'
               nullable: true
             PageSize:
               type: integer
@@ -6274,67 +6274,67 @@ components:
             - AfterCursor
             - PageToken
             - PageSize
-    SubmitSynchronizedMutationParameters:
+    SubmitLibraryChangeParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             OperationId:
-              $ref: '#/components/schemas/SynchronizedOperationId'
-            RootConfigurationVersion:
-              $ref: '#/components/schemas/SynchronizedRootConfigurationVersion'
-            MutationKind:
-              $ref: '#/components/schemas/SynchronizedMutationKind'
+              $ref: '#/components/schemas/LibraryOperationId'
+            LibraryCatalogVersion:
+              $ref: '#/components/schemas/LibraryCatalogVersion'
+            ChangeKind:
+              $ref: '#/components/schemas/LibraryChangeKind'
             ItemKind:
-              $ref: '#/components/schemas/SynchronizedItemKind'
+              $ref: '#/components/schemas/LibraryItemKind'
             ItemId:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedItemId'
+                - $ref: '#/components/schemas/LibraryItemId'
               nullable: true
             NamespacePrecondition:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedNamespacePreconditionDto'
+                - $ref: '#/components/schemas/LibraryNamespacePreconditionDto'
               nullable: true
             ContentPrecondition:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedContentPreconditionDto'
+                - $ref: '#/components/schemas/LibraryContentPreconditionDto'
               nullable: true
             CreationSlotExpectation:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedCreationSlotExpectationDto'
+                - $ref: '#/components/schemas/LibraryCreationSlotExpectationDto'
               nullable: true
             DestinationParent:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedParentDto'
+                - $ref: '#/components/schemas/LibraryParentDto'
               nullable: true
             DestinationName:
               type: string
               nullable: true
             PreparedContentId:
               allOf:
-                - $ref: '#/components/schemas/SynchronizedPreparedContentId'
+                - $ref: '#/components/schemas/LibraryPreparedContentId'
               nullable: true
           required:
             - OperationId
-            - RootConfigurationVersion
-            - MutationKind
+            - LibraryCatalogVersion
+            - ChangeKind
             - ItemKind
-    GetSynchronizedOperationParameters:
+    GetLibraryOperationParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             OperationId:
-              $ref: '#/components/schemas/SynchronizedOperationId'
+              $ref: '#/components/schemas/LibraryOperationId'
           required:
             - OperationId
-    PrepareSynchronizedContentParameters:
+    PrepareLibraryContentParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             OperationId:
-              $ref: '#/components/schemas/SynchronizedOperationId'
+              $ref: '#/components/schemas/LibraryOperationId'
             Blake3Hash:
               $ref: '#/components/schemas/Blake3Hash'
             Sha256Hash:
@@ -6348,43 +6348,43 @@ components:
             - Blake3Hash
             - Sha256Hash
             - Size
-    PrepareSynchronizedContentReadParameters:
+    PrepareLibraryContentReadParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             ItemId:
-              $ref: '#/components/schemas/SynchronizedItemId'
+              $ref: '#/components/schemas/LibraryItemId'
             ContentVersionId:
-              $ref: '#/components/schemas/SynchronizedContentVersionId'
+              $ref: '#/components/schemas/LibraryContentVersionId'
           required:
             - ItemId
             - ContentVersionId
-    GetSynchronizedItemParameters:
+    GetLibraryItemParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             ItemId:
-              $ref: '#/components/schemas/SynchronizedItemId'
+              $ref: '#/components/schemas/LibraryItemId'
           required:
             - ItemId
-    GetSynchronizedNamespaceSlotParameters:
+    GetLibraryNamespaceSlotParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
+        - $ref: '#/components/schemas/LibraryParameters'
         - type: object
           properties:
             Parent:
-              $ref: '#/components/schemas/SynchronizedParentDto'
+              $ref: '#/components/schemas/LibraryParentDto'
             Name:
               type: string
           required:
             - Parent
             - Name
-    GetSynchronizedStatusParameters:
+    GetLibraryStatusParameters:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedContentParameters'
-    SynchronizedReturnValueBase:
+        - $ref: '#/components/schemas/LibraryParameters'
+    LibraryReturnValueBase:
       type: object
       properties:
         EventTime:
@@ -6400,76 +6400,76 @@ components:
         - EventTime
         - CorrelationId
         - Properties
-    SynchronizedRootConfigurationReturnValue:
+    LibraryCatalogReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedRootConfigurationDto'
-    SynchronizedRootMutationReturnValue:
+              $ref: '#/components/schemas/LibraryCatalogDto'
+    LibraryCatalogChangeReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedRootMutationResultDto'
-    SynchronizedBootstrapPageReturnValue:
+              $ref: '#/components/schemas/LibraryCatalogChangeResultDto'
+    LibraryBootstrapPageReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedBootstrapPageDto'
-    SynchronizedDeltaReturnValue:
+              $ref: '#/components/schemas/LibraryBootstrapPageDto'
+    LibraryChangePageReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedDeltaResultDto'
-    SynchronizedOperationReceiptReturnValue:
+              $ref: '#/components/schemas/LibraryChangePageDto'
+    LibraryOperationReceiptReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedOperationReceiptDto'
-    SynchronizedPreparedContentReturnValue:
+              $ref: '#/components/schemas/LibraryOperationReceiptDto'
+    LibraryPreparedContentReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedPreparedContentDto'
-    SynchronizedContentReadGrantReturnValue:
+              $ref: '#/components/schemas/LibraryPreparedContentDto'
+    LibraryContentReadGrantReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedContentReadGrantDto'
-    SynchronizedItemReturnValue:
+              $ref: '#/components/schemas/LibraryContentReadGrantDto'
+    LibraryItemReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedItemDto'
-    SynchronizedNamespaceSlotReturnValue:
+              $ref: '#/components/schemas/LibraryItemDto'
+    LibraryNamespaceSlotReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedNamespaceSlotDto'
-    SynchronizedStatusReturnValue:
+              $ref: '#/components/schemas/LibraryNamespaceSlotDto'
+    LibraryStatusReturnValue:
       allOf:
-        - $ref: '#/components/schemas/SynchronizedReturnValueBase'
+        - $ref: '#/components/schemas/LibraryReturnValueBase'
         - type: object
           properties:
             ReturnValue:
-              $ref: '#/components/schemas/SynchronizedRepositoryStatusDto'
+              $ref: '#/components/schemas/LibraryRepositoryStatusDto'
     Instant:
       type: string
       format: date-time
@@ -9884,63 +9884,63 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RepositoryReferencesReturnValue'
-    SynchronizedRootConfigurationResponse:
-      description: Current persisted synchronized-root configuration.
+    LibraryCatalogResponse:
+      description: Current persisted Library configuration.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedRootConfigurationReturnValue'
-    SynchronizedRootMutationResponse:
-      description: Exact-version synchronized-root mutation result.
+            $ref: '#/components/schemas/LibraryCatalogReturnValue'
+    LibraryCatalogChangeResponse:
+      description: Exact-version Library change result.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedRootMutationReturnValue'
-    SynchronizedBootstrapPageResponse:
+            $ref: '#/components/schemas/LibraryCatalogChangeReturnValue'
+    LibraryBootstrapPageResponse:
       description: One immutable bootstrap baseline page.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedBootstrapPageReturnValue'
-    SynchronizedDeltaResponse:
-      description: Ordered accepted mutations or a rebaseline instruction.
+            $ref: '#/components/schemas/LibraryBootstrapPageReturnValue'
+    LibraryChangePageResponse:
+      description: Ordered accepted changes or a rebaseline instruction.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedDeltaReturnValue'
-    SynchronizedOperationReceiptResponse:
-      description: Stable synchronized operation receipt.
+            $ref: '#/components/schemas/LibraryChangePageReturnValue'
+    LibraryOperationReceiptResponse:
+      description: Stable Library operation receipt.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedOperationReceiptReturnValue'
-    SynchronizedPreparedContentResponse:
+            $ref: '#/components/schemas/LibraryOperationReceiptReturnValue'
+    LibraryPreparedContentResponse:
       description: Authorized immutable-content preparation.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedPreparedContentReturnValue'
-    SynchronizedContentReadGrantResponse:
+            $ref: '#/components/schemas/LibraryPreparedContentReturnValue'
+    LibraryContentReadGrantResponse:
       description: One-use authorized immutable-content read grant.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedContentReadGrantReturnValue'
-    SynchronizedItemResponse:
-      description: Current synchronized item state.
+            $ref: '#/components/schemas/LibraryContentReadGrantReturnValue'
+    LibraryItemResponse:
+      description: Current Library item state.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedItemReturnValue'
-    SynchronizedNamespaceSlotResponse:
+            $ref: '#/components/schemas/LibraryItemReturnValue'
+    LibraryNamespaceSlotResponse:
       description: Current occupied or remembered-vacant namespace slot.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedNamespaceSlotReturnValue'
-    SynchronizedStatusResponse:
-      description: Content-free synchronized repository status.
+            $ref: '#/components/schemas/LibraryNamespaceSlotReturnValue'
+    LibraryStatusResponse:
+      description: Content-free Library repository status.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/SynchronizedStatusReturnValue'
+            $ref: '#/components/schemas/LibraryStatusReturnValue'

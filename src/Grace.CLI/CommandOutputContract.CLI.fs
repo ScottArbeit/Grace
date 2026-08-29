@@ -758,10 +758,10 @@ module CommandOutputContract =
         | "repository.get" -> typeof<Grace.Types.Repository.RepositoryDto>
         | "repository.get-branches" -> typeof<IEnumerable<Grace.Types.Branch.BranchDto>>
         | "repository.init" -> typeof<Grace.CLI.Common.LocalOutputDto.RepositoryInitDto>
-        | "sync.roots.get"
-        | "sync.roots.list" -> typeof<Grace.Types.SynchronizedContent.SynchronizedRootConfigurationDto>
-        | "sync.roots.add"
-        | "sync.roots.remove" -> typeof<Grace.Types.SynchronizedContent.SynchronizedRootMutationResultDto>
+        | "library.get"
+        | "library.list" -> typeof<Grace.Types.Library.LibraryCatalogDto>
+        | "library.add"
+        | "library.remove" -> typeof<Grace.Types.Library.LibraryCatalogChangeResultDto>
         | "review.checkpoint"
         | "review.deepen"
         | "review.resolve" -> typeof<string>
@@ -1371,10 +1371,10 @@ module CommandOutputContract =
             row [ "repository" ] "set-status" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "repository" ] "set-visibility" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "repository" ] "undelete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "sync"; "roots" ] "add" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "sync"; "roots" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "sync"; "roots" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "sync"; "roots" ] "remove" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "library" ] "add" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "library" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "library" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "library" ] "remove" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "review" ] "checkpoint" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
             row [ "review" ] "deepen" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
             row [ "review" ] "inbox" true false common_renderOutput_envelope read_list_search verify ReuseExistingApiOrSdkDto

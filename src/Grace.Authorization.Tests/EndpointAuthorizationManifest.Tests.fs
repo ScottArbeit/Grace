@@ -214,36 +214,36 @@ type EndpointAuthorizationManifestTests() =
 
             Assert.Fail($"EndpointAuthorizationManifest contains duplicate entries:{Environment.NewLine}{message}")
 
-    /// Verifies synchronized roots remain repository-admin policy while ordinary synchronized operations use the specialized roles.
+    /// Verifies Library catalog changes remain repository-admin policy while ordinary Library operations use the specialized roles.
     [<Test>]
-    member _.SynchronizedContentRoutesUseAcceptedRepositoryPolicies() =
+    member _.LibraryContentRoutesUseAcceptedRepositoryPolicies() =
         [
-            "POST", "/sync/roots/get"
-            "POST", "/sync/roots/list"
-            "POST", "/sync/bootstrap/start"
-            "POST", "/sync/bootstrap/continue"
-            "POST", "/sync/deltas/get"
-            "POST", "/sync/operations/get"
-            "POST", "/sync/content/read"
-            "POST", "/sync/items/get"
-            "POST", "/sync/namespace/get-slot"
-            "POST", "/sync/status/get"
+            "POST", "/libraries/catalog/get"
+            "POST", "/libraries/list"
+            "POST", "/libraries/bootstrap/start"
+            "POST", "/libraries/bootstrap/continue"
+            "POST", "/libraries/changes/get"
+            "POST", "/libraries/operations/get"
+            "POST", "/libraries/content/read"
+            "POST", "/libraries/items/get"
+            "POST", "/libraries/namespace/get-slot"
+            "POST", "/libraries/status/get"
         ]
-        |> assertRoutesUseSecurity (Authorized(Operation.SynchronizedContentRead, ResourceKind.Repository))
+        |> assertRoutesUseSecurity (Authorized(Operation.LibraryRead, ResourceKind.Repository))
 
         [
-            "POST", "/sync/mutations/submit"
-            "POST", "/sync/content/prepare"
+            "POST", "/libraries/changes/submit"
+            "POST", "/libraries/content/prepare"
         ]
-        |> assertRoutesUseSecurity (Authorized(Operation.SynchronizedContentWrite, ResourceKind.Repository))
+        |> assertRoutesUseSecurity (Authorized(Operation.LibraryWrite, ResourceKind.Repository))
 
         [
-            "POST", "/sync/roots/add"
-            "POST", "/sync/roots/remove"
+            "POST", "/libraries/add"
+            "POST", "/libraries/remove"
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.RepositoryAdmin, ResourceKind.Repository))
 
-        assertRouteSecurity "GET" "/sync/content/%s" AllowAnonymous
+        assertRouteSecurity "GET" "/libraries/content/%s" AllowAnonymous
 
     /// Verifies that approval policy routes require repository policy manage.
     [<Test>]

@@ -94,8 +94,8 @@ type AuthorizationSemanticsTests() =
                 "RepositoryAdmin"
                 "RepositoryContributor"
                 "RepositoryReader"
-                "SynchronizedContentReader"
-                "SynchronizedContentWriter"
+                "LibraryReader"
+                "LibraryWriter"
                 "BranchAdmin"
                 "BranchWriter"
                 "BranchReader"
@@ -188,20 +188,20 @@ type AuthorizationSemanticsTests() =
 
         Assert.That(repositoryAdmin.AllowedOperations.Contains BranchAdmin, Is.True)
 
-    /// Verifies synchronized roles are repository-scoped and repository write alone does not imply synchronized write.
+    /// Verifies Library roles are repository-scoped and repository write alone does not imply Library write.
     [<Test>]
-    member _.SynchronizedContentRolesHaveIndependentReadAndWriteAuthority() =
+    member _.LibraryContentRolesHaveIndependentReadAndWriteAuthority() =
         let repositoryScope = Scope.Repository(ownerId, organizationId, repositoryId)
         let repositoryResource = Resource.Repository(ownerId, organizationId, repositoryId)
 
-        assertOperationAllowed "SynchronizedContentReader" repositoryScope RepositoryRead repositoryResource
-        assertOperationAllowed "SynchronizedContentReader" repositoryScope SynchronizedContentRead repositoryResource
-        assertOperationDenied "SynchronizedContentReader" repositoryScope SynchronizedContentWrite repositoryResource
-        assertOperationAllowed "SynchronizedContentWriter" repositoryScope SynchronizedContentRead repositoryResource
-        assertOperationAllowed "SynchronizedContentWriter" repositoryScope SynchronizedContentWrite repositoryResource
-        assertOperationDenied "RepositoryContributor" repositoryScope SynchronizedContentWrite repositoryResource
-        assertOperationAllowed "RepositoryAdmin" repositoryScope SynchronizedContentRead repositoryResource
-        assertOperationAllowed "RepositoryAdmin" repositoryScope SynchronizedContentWrite repositoryResource
+        assertOperationAllowed "LibraryReader" repositoryScope RepositoryRead repositoryResource
+        assertOperationAllowed "LibraryReader" repositoryScope LibraryRead repositoryResource
+        assertOperationDenied "LibraryReader" repositoryScope LibraryWrite repositoryResource
+        assertOperationAllowed "LibraryWriter" repositoryScope LibraryRead repositoryResource
+        assertOperationAllowed "LibraryWriter" repositoryScope LibraryWrite repositoryResource
+        assertOperationDenied "RepositoryContributor" repositoryScope LibraryWrite repositoryResource
+        assertOperationAllowed "RepositoryAdmin" repositoryScope LibraryRead repositoryResource
+        assertOperationAllowed "RepositoryAdmin" repositoryScope LibraryWrite repositoryResource
 
     /// Verifies that every role maps to exactly one assignment scope.
     [<Test>]

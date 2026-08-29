@@ -26,8 +26,8 @@ grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 grace --output Json watch --check
 grace watch --check --select Mode
-grace --output Json sync roots get --repository-id $repositoryId
-grace --output Json sync roots list --repository-id $repositoryId
+grace --output Json library get shared --repository-id $repositoryId
+grace --output Json library list --repository-id $repositoryId
 ```
 
 bash / zsh:
@@ -40,8 +40,8 @@ grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 grace --output Json watch --check
 grace watch --check --select Mode
-grace --output Json sync roots get --repository-id "$repository_id"
-grace --output Json sync roots list --repository-id "$repository_id"
+grace --output Json library get shared --repository-id "$repository_id"
+grace --output Json library list --repository-id "$repository_id"
 ```
 
 ## Output Envelopes
@@ -195,16 +195,16 @@ envelope.
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
 
-## Synchronized Root Command Outcomes
+## Library command outcomes
 
-The remote-only `sync roots` command group uses the same result envelope as other JSON-ready commands:
+The remote-only `library` command group uses the same result envelope as other JSON-ready commands:
 
-- `sync roots get` and `sync roots list` return the persisted `SynchronizedRootConfigurationDto`.
-- `sync roots add` and `sync roots remove` return `SynchronizedRootMutationResultDto`.
+- `library get <path>` and `library list` return the persisted `LibraryCatalogDto`.
+- `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
 
-Root changes require `--root`, `--expected-version`, and `--operation-id`. Automation must inspect
+Catalog changes require a positional Library path, `--expected-version`, and `--operation-id`. Automation must inspect
 `ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process
-exit code as evidence that a repository mutation was accepted. These commands configure the server-owned remote
+exit code as evidence that a repository change was accepted. These commands configure the server-owned remote
 namespace. They do not activate local synchronization, Watch participation, or filesystem publication.
 
 ## Agent Recipes

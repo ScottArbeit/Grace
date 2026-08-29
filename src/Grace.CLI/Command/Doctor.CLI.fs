@@ -326,7 +326,7 @@ module Doctor =
                 Id = StateDbForeignKeyCheckId
                 Category = "Local state"
                 Title = "SQLite foreign-key check"
-                Description = "Runs SQLite foreign_key_check read-only and reports violations without mutation."
+                Description = "Runs SQLite foreign_key_check read-only and reports violations without change."
                 DefaultEnabled = true
                 SupportsOffline = true
             }
@@ -860,7 +860,7 @@ module Doctor =
                                     |> Array.map (fun entry -> $"*{entry}")
                                     |> Array.distinct
                                 FileIgnoreEntries = inspection.Ignore.FileEntries
-                                SynchronizedRoots = Array.empty
+                                Libraries = Array.empty
                             }
 
                         let scanResult =
@@ -1119,7 +1119,7 @@ module Doctor =
                 skipped check (localStateUnavailableSummary ObjectCacheIndexReadableCheckId inspection)
             else
                 match inspection.ObjectCacheReadable with
-                | Some true -> ok "Object-cache metadata tables are readable from the local state database without mutation."
+                | Some true -> ok "Object-cache metadata tables are readable from the local state database without change."
                 | Some false ->
                     let objectCacheError =
                         inspection.ObjectCacheError

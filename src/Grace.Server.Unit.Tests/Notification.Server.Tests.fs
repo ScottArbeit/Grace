@@ -6,7 +6,7 @@ open Grace.Server.Security
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.Reference
-open Grace.Types.SynchronizedContent
+open Grace.Types.Library
 open Microsoft.AspNetCore.SignalR
 open Microsoft.AspNetCore.Http
 open NUnit.Framework
@@ -40,9 +40,9 @@ type NotificationServerTests() =
                 member _.RegisterRepository _ = Task.CompletedTask
                 member _.RegisterParentBranch _ _ = Task.CompletedTask
                 member _.RegisterCurrentBranch _ _ = Task.CompletedTask
-                member _.RegisterSynchronizedContent _ = Task.CompletedTask
+                member _.RegisterLibraryContent _ = Task.CompletedTask
                 member _.NotifyRepository(_, _) = Task.CompletedTask
-                member _.NotifySynchronizedContentAvailable _ = Task.CompletedTask
+                member _.NotifyLibraryContentAvailable _ = Task.CompletedTask
 
                 member _.NotifyCurrentBranchReference payload =
                     observedPayloads.Add payload
@@ -86,17 +86,17 @@ type NotificationServerTests() =
             member _.Groups = groups
         }
 
-    /// Creates a fake repository-group hub that records or fails synchronized-content wake delivery.
-    let synchronizedWakeHubContext failDelivery (observedGroups: ResizeArray<string>) (observedPayloads: ResizeArray<SynchronizedContentAvailable>) =
+    /// Creates a fake repository-group hub that records or fails library wake delivery.
+    let libraryWakeHubContext failDelivery (observedGroups: ResizeArray<string>) (observedPayloads: ResizeArray<LibraryContentAvailable>) =
         let client =
             { new IGraceClientConnection with
                 member _.RegisterRepository _ = Task.CompletedTask
                 member _.RegisterParentBranch _ _ = Task.CompletedTask
                 member _.RegisterCurrentBranch _ _ = Task.CompletedTask
-                member _.RegisterSynchronizedContent _ = Task.CompletedTask
+                member _.RegisterLibraryContent _ = Task.CompletedTask
                 member _.NotifyRepository(_, _) = Task.CompletedTask
 
-                member _.NotifySynchronizedContentAvailable payload =
+                member _.NotifyLibraryContentAvailable payload =
                     if failDelivery then
                         Task.FromException(InvalidOperationException("Injected wake failure."))
                     else
@@ -171,16 +171,16 @@ type NotificationServerTests() =
                 Assert.That(groupKey, Is.Not.EqualTo($"{branchId}")))
         )
 
-    /// Verifies the coarse wake targets only the authorized synchronized-content group and preserves its content-free payload.
+    /// Verifies the coarse wake targets only the authorized library group and preserves its content-free payload.
     [<Test>]
-    member _.SynchronizedContentWakeTargetsRepositoryGroup() =
+    member _.LibraryContentWakeTargetsRepositoryGroup() =
         task {
             let repositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
             let observedGroups = ResizeArray<string>()
-            let observedPayloads = ResizeArray<SynchronizedContentAvailable>()
+            let observedPayloads = ResizeArray<LibraryContentAvailable>()
 
             let payload =
-                SynchronizedContentAvailable.Create(
+                LibraryContentAvailable.Create(
                     repositoryId,
                     "epoch-token",
                     "cursor-token",
@@ -189,21 +189,21 @@ type NotificationServerTests() =
                     "correlation-id"
                 )
 
-            let! delivered = notifySynchronizedContentAvailableClients (synchronizedWakeHubContext false observedGroups observedPayloads) payload
+            let! delivered = notifyLibraryContentAvailableClients (libraryWakeHubContext false observedGroups observedPayloads) payload
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(delivered, Is.True)
                     Assert.That(observedGroups, Has.Count.EqualTo(1))
-                    Assert.That(observedGroups[0], Is.EqualTo(synchronizedContentGroupKey repositoryId))
+                    Assert.That(observedGroups[0], Is.EqualTo(libraryGroupKey repositoryId))
                     Assert.That(observedPayloads, Has.Count.EqualTo(1))
                     Assert.That(observedPayloads[0], Is.EqualTo(payload)))
             )
         }
 
-    /// Verifies synchronized-content wake subscriptions reuse the repository-scoped synchronized-content read permission.
+    /// Verifies library wake subscriptions reuse the repository-scoped library read permission.
     [<Test>]
-    member _.SynchronizedContentSubscriptionRequiresSynchronizedContentReadAuthorization() =
+    member _.LibraryContentSubscriptionRequiresLibraryReadAuthorization() =
         task {
             let ownerId = Guid.Parse("11111111-1111-1111-1111-111111111111")
             let organizationId = Guid.Parse("22222222-2222-2222-2222-222222222222")
@@ -223,7 +223,7 @@ type NotificationServerTests() =
             let repositoryDto =
                 { Grace.Types.Repository.RepositoryDto.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId }
 
-            let! allowed = canRegisterSynchronizedContentSubscription evaluator principal repositoryId repositoryDto
+            let! allowed = canRegisterLibraryContentSubscription evaluator principal repositoryId repositoryDto
 
             Assert.Multiple(
                 Action (fun () ->
@@ -231,14 +231,14 @@ type NotificationServerTests() =
                     Assert.That(observed, Has.Count.EqualTo(1))
 
                     let operation, resource = observed[0]
-                    Assert.That(operation, Is.EqualTo(Operation.SynchronizedContentRead))
+                    Assert.That(operation, Is.EqualTo(Operation.LibraryRead))
                     Assert.That(resource, Is.EqualTo(Resource.Repository(ownerId, organizationId, repositoryId))))
             )
         }
 
-    /// Verifies denied synchronized-content read permission blocks wake subscriptions without changing group state.
+    /// Verifies denied library read permission blocks wake subscriptions without changing group state.
     [<Test>]
-    member _.SynchronizedContentSubscriptionRejectsDeniedReadAuthorization() =
+    member _.LibraryContentSubscriptionRejectsDeniedReadAuthorization() =
         task {
             let repositoryId = Guid.NewGuid()
             let observed = ResizeArray<Operation * Resource>()
@@ -247,20 +247,20 @@ type NotificationServerTests() =
             let repositoryDto =
                 { Grace.Types.Repository.RepositoryDto.Default with OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = repositoryId }
 
-            let! allowed = canRegisterSynchronizedContentSubscription evaluator (System.Security.Claims.ClaimsPrincipal()) repositoryId repositoryDto
+            let! allowed = canRegisterLibraryContentSubscription evaluator (System.Security.Claims.ClaimsPrincipal()) repositoryId repositoryDto
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(allowed, Is.False)
                     Assert.That(observed, Has.Count.EqualTo(1))
                     let operation, _ = observed[0]
-                    Assert.That(operation, Is.EqualTo(Operation.SynchronizedContentRead)))
+                    Assert.That(operation, Is.EqualTo(Operation.LibraryRead)))
             )
         }
 
     /// Verifies caller-supplied repository ids cannot authorize another stored repository identity.
     [<Test>]
-    member _.SynchronizedContentSubscriptionRejectsMismatchedStoredRepositoryIdentity() =
+    member _.LibraryContentSubscriptionRejectsMismatchedStoredRepositoryIdentity() =
         task {
             let repositoryId = Guid.NewGuid()
             let observed = ResizeArray<Operation * Resource>()
@@ -269,7 +269,7 @@ type NotificationServerTests() =
             let repositoryDto =
                 { Grace.Types.Repository.RepositoryDto.Default with OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
 
-            let! allowed = canRegisterSynchronizedContentSubscription evaluator (System.Security.Claims.ClaimsPrincipal()) repositoryId repositoryDto
+            let! allowed = canRegisterLibraryContentSubscription evaluator (System.Security.Claims.ClaimsPrincipal()) repositoryId repositoryDto
 
             Assert.Multiple(
                 Action (fun () ->
@@ -280,12 +280,12 @@ type NotificationServerTests() =
 
     /// Verifies live delivery failure remains a best-effort false result instead of escaping to the durable caller.
     [<Test>]
-    member _.SynchronizedContentWakeFailureDoesNotEscape() =
+    member _.LibraryContentWakeFailureDoesNotEscape() =
         task {
             let repositoryId = Guid.Parse("33333333-3333-3333-3333-333333333333")
 
             let payload =
-                SynchronizedContentAvailable.Create(
+                LibraryContentAvailable.Create(
                     repositoryId,
                     "epoch-token",
                     "cursor-token",
@@ -294,7 +294,7 @@ type NotificationServerTests() =
                     "correlation-id"
                 )
 
-            let! delivered = notifySynchronizedContentAvailableClients (synchronizedWakeHubContext true (ResizeArray()) (ResizeArray())) payload
+            let! delivered = notifyLibraryContentAvailableClients (libraryWakeHubContext true (ResizeArray()) (ResizeArray())) payload
             Assert.That(delivered, Is.False)
         }
 
@@ -763,7 +763,7 @@ type NotificationServerTests() =
                 Assert.That(tryGetWatchProcessId absentContext, Is.EqualTo(None)))
         )
 
-    /// Proves failed mutations and expiry both remove suppression without advancing any replay or client cursor state.
+    /// Proves failed changes and expiry both remove suppression without advancing any replay or client cursor state.
     [<Test>]
     member _.WatchPublicationBindingsAreRemovableAndExpiring() =
         let sourceProcessId = Guid.NewGuid()

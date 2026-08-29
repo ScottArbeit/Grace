@@ -16,7 +16,7 @@ open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
-open Grace.Shared.Validation.SynchronizedContent
+open Grace.Shared.Validation.Library
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open System
@@ -52,6 +52,21 @@ module DirectoryVersion =
                     StringSplitOptions.RemoveEmptyEntries
                 )
                 .Length
+
+    /// Returns the first path owned by the Library catalog snapshot observed for each actor read.
+    let private tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
+        task {
+            let actor = ApplicationContext.grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+            let mutable ownedPath = None
+
+            for relativePath in relativePaths do
+                if ownedPath.IsNone then
+                    let! isInLibrary = actor.IsInLibrary relativePath correlationId
+
+                    if isInLibrary then ownedPath <- Some relativePath
+
+            return ownedPath
+        }
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> DirectoryVersionParameters>
@@ -507,39 +522,40 @@ module DirectoryVersion =
                         let results = ConcurrentQueue<GraceResult<string>>()
 
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
-                        let! repositoryDto = repositoryActorProxy.Get(correlationId)
+
+                        let! repositoryDto = repositoryActorProxy.Get correlationId
 
                         let orderedDirectoryVersions =
                             parameters.DirectoryVersions
                             |> Seq.sortByDescending (fun directoryVersion -> directorySaveDepth directoryVersion.RelativePath)
                             |> Seq.toArray
 
-                        let synchronizedPath =
+                        let candidatePaths =
                             orderedDirectoryVersions
-                            |> Array.tryPick (fun directoryVersion ->
-                                if configurationOwnsPath repositoryDto.SynchronizedRootConfiguration (string directoryVersion.RelativePath) then
-                                    Some(string directoryVersion.RelativePath)
-                                else
-                                    directoryVersion.Files
-                                    |> Seq.tryPick (fun file ->
-                                        if configurationOwnsPath repositoryDto.SynchronizedRootConfiguration (string file.RelativePath) then
-                                            Some(string file.RelativePath)
-                                        else
-                                            None))
+                            |> Seq.collect (fun directoryVersion ->
+                                seq {
+                                    yield string directoryVersion.RelativePath
 
-                        match synchronizedPath with
+                                    yield!
+                                        directoryVersion.Files
+                                        |> Seq.map (fun file -> string file.RelativePath)
+                                })
+
+                        let! libraryPath = tryFindLibraryPath graceIds.RepositoryId correlationId candidatePaths
+
+                        match libraryPath with
                         | Some path ->
                             results.Enqueue(
                                 Error(
                                     GraceError.Create
-                                        $"Path '{path}' belongs to the current synchronized root policy and cannot be saved as version-controlled content."
+                                        $"Path '{path}' belongs to the current Library policy and cannot be saved as version-controlled content."
                                         correlationId
                                 )
                             )
                         | None -> ()
 
                         for directoryVersion in orderedDirectoryVersions do
-                            if synchronizedPath.IsNone then
+                            if libraryPath.IsNone then
                                 try
                                     // Check if the directory version exists. If it doesn't, create it.
                                     let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId

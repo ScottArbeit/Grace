@@ -211,21 +211,21 @@ module EndpointAuthorizationManifest =
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
             endpoint "GET" "/healthz" AllowAnonymous
-            endpoint "POST" "/sync/roots/get" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/roots/list" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/roots/add" (Authorized(RepositoryAdmin, Repository))
-            endpoint "POST" "/sync/roots/remove" (Authorized(RepositoryAdmin, Repository))
-            endpoint "POST" "/sync/bootstrap/start" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/bootstrap/continue" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/deltas/get" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/mutations/submit" (Authorized(SynchronizedContentWrite, Repository))
-            endpoint "POST" "/sync/operations/get" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/content/prepare" (Authorized(SynchronizedContentWrite, Repository))
-            endpoint "POST" "/sync/content/read" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "GET" "/sync/content/%s" AllowAnonymous
-            endpoint "POST" "/sync/items/get" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/namespace/get-slot" (Authorized(SynchronizedContentRead, Repository))
-            endpoint "POST" "/sync/status/get" (Authorized(SynchronizedContentRead, Repository))
+            endpoint "POST" "/libraries/catalog/get" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/list" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/add" (Authorized(RepositoryAdmin, Repository))
+            endpoint "POST" "/libraries/remove" (Authorized(RepositoryAdmin, Repository))
+            endpoint "POST" "/libraries/bootstrap/start" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/bootstrap/continue" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/changes/get" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/changes/submit" (Authorized(LibraryWrite, Repository))
+            endpoint "POST" "/libraries/operations/get" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/content/prepare" (Authorized(LibraryWrite, Repository))
+            endpoint "POST" "/libraries/content/read" (Authorized(LibraryRead, Repository))
+            endpoint "GET" "/libraries/content/%s" AllowAnonymous
+            endpoint "POST" "/libraries/items/get" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/namespace/get-slot" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/status/get" (Authorized(LibraryRead, Repository))
             endpoint
                 "POST"
                 "/organization/create"

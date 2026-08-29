@@ -72,8 +72,8 @@ module Authorization =
         | RepositoryAdmin
         | RepositoryWrite
         | RepositoryRead
-        | SynchronizedContentRead
-        | SynchronizedContentWrite
+        | LibraryRead
+        | LibraryWrite
         | BranchAdmin
         | BranchWrite
         | BranchRead

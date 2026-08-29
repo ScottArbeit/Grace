@@ -778,7 +778,7 @@ module CurrentStateCaptureCliTests =
 
     /// Verifies that read-only current-state scans track non-ignored empty directories and skip ignored ones.
     [<Test>]
-    let ``read-only current-state scan excludes configured synchronized root`` () =
+    let ``read-only current-state scan excludes configured Library`` () =
         let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-scan-{Guid.NewGuid():N}")
         let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
 
@@ -789,7 +789,7 @@ module CurrentStateCaptureCliTests =
             Directory.CreateDirectory(Path.Combine(root, "ignored"))
             |> ignore
 
-            Directory.CreateDirectory(Path.Combine(root, "synchronized"))
+            Directory.CreateDirectory(Path.Combine(root, "library"))
             |> ignore
 
             Directory.CreateDirectory(graceDirectory)
@@ -805,7 +805,7 @@ module CurrentStateCaptureCliTests =
                     GraceStatusFile = Path.Combine(graceDirectory, Constants.GraceLocalStateDbFileName)
                     DirectoryIgnoreEntries = [| "ignored" |]
                     FileIgnoreEntries = Array.empty
-                    SynchronizedRoots = [| "synchronized" |]
+                    Libraries = [| "library" |]
                 }
 
             match (scanWorkingTreeForDifferencesReadOnly scanInput previousStatus)
@@ -2175,7 +2175,7 @@ module CurrentStateCaptureCliTests =
                     GraceStatusFile = Path.Combine(graceDirectory, Constants.GraceLocalStateDbFileName)
                     DirectoryIgnoreEntries = Array.empty
                     FileIgnoreEntries = Array.empty
-                    SynchronizedRoots = Array.empty
+                    Libraries = Array.empty
                 }
 
             match (scanWorkingTreeForDifferencesReadOnly scanInput previousStatus)
@@ -2337,7 +2337,7 @@ module CurrentStateCaptureCliTests =
                     GraceStatusFile = Path.Combine(graceDirectory, Constants.GraceLocalStateDbFileName)
                     DirectoryIgnoreEntries = Array.empty
                     FileIgnoreEntries = Array.empty
-                    SynchronizedRoots = Array.empty
+                    Libraries = Array.empty
                 }
 
             match (scanWorkingTreeForDifferencesReadOnly scanInput previousStatus)

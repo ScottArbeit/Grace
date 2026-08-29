@@ -240,9 +240,9 @@ module Constants =
         [<Literal>]
         let AzureCosmosDBDatabaseName = "grace__azurecosmosdb__database_name"
 
-        /// The environment variable that contains the base64 HMAC key protecting synchronized cursors and grants.
+        /// The environment variable that contains the base64 HMAC key protecting Library cursors and grants.
         [<Literal>]
-        let SynchronizedContentTokenSecret = "grace__synchronizedcontent__token_secret"
+        let LibrariesTokenSecret = "grace__libraries__token_secret"
 
         /// The environment variable that exposes the Cosmos DB endpoint when using managed identity.
         [<Literal>]

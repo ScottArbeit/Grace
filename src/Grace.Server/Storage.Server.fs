@@ -23,7 +23,7 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
-open Grace.Types.SynchronizedContent
+open Grace.Types.Library
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
@@ -363,30 +363,30 @@ module Storage =
             SessionForScope: UploadSessionDto
         }
 
-    /// Records synchronized upload completion while leaving every ordinary storage scope unchanged.
-    let internal recordFinalizedSynchronizedPreparationWith
-        (transferStore: ISynchronizedContentTransferStore)
+    /// Records Library upload completion while leaving every ordinary storage scope unchanged.
+    let internal recordFinalizedLibraryPreparationWith
+        (transferStore: ILibraryTransferStore)
         repositoryId
         (authorizedScope: string)
         (manifest: FileManifest)
         cancellationToken
         =
         task {
-            let prefix = "synchronized/"
+            let prefix = "library/"
 
             if authorizedScope.StartsWith(prefix, StringComparison.Ordinal) then
                 match Guid.TryParse(authorizedScope[prefix.Length ..]) with
-                | false, _ -> invalidOp "The synchronized upload-session scope contains an invalid prepared-content identifier."
+                | false, _ -> invalidOp "The Library upload-session scope contains an invalid prepared-content identifier."
                 | true, preparedContentId -> do! transferStore.FinalizePreparedAsync(repositoryId, preparedContentId, manifest, cancellationToken)
         }
 
-    /// Records a finalized synchronized preparation after the existing upload session accepts the exact manifest.
-    let private recordFinalizedSynchronizedPreparation (context: HttpContext) (requestContext: UploadSessionRequestContext) (manifest: FileManifest) =
+    /// Records a finalized Library preparation after the existing upload session accepts the exact manifest.
+    let private recordFinalizedLibraryPreparation (context: HttpContext) (requestContext: UploadSessionRequestContext) (manifest: FileManifest) =
         task {
-            let transferStore = context.RequestServices.GetRequiredService<ISynchronizedContentTransferStore>()
+            let transferStore = context.RequestServices.GetRequiredService<ILibraryTransferStore>()
 
             do!
-                recordFinalizedSynchronizedPreparationWith
+                recordFinalizedLibraryPreparationWith
                     transferStore
                     requestContext.RequestRepositoryId
                     (string requestContext.SessionForScope.AuthorizedScope)
@@ -2181,7 +2181,7 @@ module Storage =
 
                                             match result with
                                             | Ok returnValue ->
-                                                do! recordFinalizedSynchronizedPreparation context requestContext parameters.Manifest
+                                                do! recordFinalizedLibraryPreparation context requestContext parameters.Manifest
                                                 return! context |> result200Ok returnValue
                                             | Error error -> return! context |> result400BadRequest error
                         | true, None ->
@@ -2200,7 +2200,7 @@ module Storage =
 
                                 match result with
                                 | Ok returnValue ->
-                                    do! recordFinalizedSynchronizedPreparation context requestContext parameters.Manifest
+                                    do! recordFinalizedLibraryPreparation context requestContext parameters.Manifest
                                     return! context |> result200Ok returnValue
                                 | Error error -> return! context |> result400BadRequest error
                 with

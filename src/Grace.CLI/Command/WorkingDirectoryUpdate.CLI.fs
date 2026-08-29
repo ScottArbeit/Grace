@@ -140,7 +140,7 @@ module internal WorkingDirectoryUpdate =
                 GraceStatusFile = current.GraceStatusFile
                 DirectoryIgnoreEntries = current.GraceDirectoryIgnoreEntries
                 FileIgnoreEntries = current.GraceFileIgnoreEntries
-                SynchronizedRoots = Services.currentSynchronizedRoots ()
+                Libraries = Services.currentLibraries ()
             }
 
         /// Builds the supported repository classifier input from one immutable scan snapshot.
@@ -151,7 +151,7 @@ module internal WorkingDirectoryUpdate =
                 GraceStatusFile = scanInput.GraceStatusFile
                 DirectoryIgnoreEntries = scanInput.DirectoryIgnoreEntries
                 FileIgnoreEntries = scanInput.FileIgnoreEntries
-                SynchronizedRoots = scanInput.SynchronizedRoots
+                Libraries = scanInput.Libraries
                 PathComparison = StringComparison.OrdinalIgnoreCase
             }
 

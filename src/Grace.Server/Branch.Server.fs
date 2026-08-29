@@ -22,7 +22,7 @@ open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
-open Grace.Shared.Validation.SynchronizedContent
+open Grace.Shared.Validation.Library
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
@@ -103,7 +103,7 @@ module Branch =
         |> Seq.toArray
         |> Array.iter (fun key -> pendingWatchPublications.Remove key |> ignore)
 
-    /// Captures the exact active connection before the authorized Reference mutation can publish its broker event.
+    /// Captures the exact active connection before the authorized Reference change can publish its broker event.
     let internal prepareWatchPublicationSourceAt now processId repositoryId branchId referenceId =
         lock watchSourceSuppressionLock (fun () ->
             pruneExpiredWatchPublicationsLocked now
@@ -132,7 +132,7 @@ module Branch =
     let internal prepareWatchPublicationSource processId repositoryId branchId referenceId =
         prepareWatchPublicationSourceAt DateTimeOffset.UtcNow processId repositoryId branchId referenceId
 
-    /// Removes a pending binding when the corresponding Reference mutation fails or is cancelled.
+    /// Removes a pending binding when the corresponding Reference change fails or is cancelled.
     let internal removeWatchPublicationSource publication =
         lock watchSourceSuppressionLock (fun () ->
             pendingWatchPublications.Remove publication
@@ -199,12 +199,10 @@ module Branch =
         graceError.Properties.Add("Path", context.Request.Path.Value)
         context.Items[ branchHashLookupErrorItemKey ] <- graceError
 
-    /// Records a pre-mutation rejection when the selected root contains content owned by the current synchronized root policy.
-    let private setSynchronizedRootPolicyError (context: HttpContext) path correlationId =
+    /// Records a pre-change rejection when the selected root contains content owned by the current Library policy.
+    let private setLibraryPolicyError (context: HttpContext) path correlationId =
         let graceError =
-            GraceError.Create
-                $"Path '{path}' belongs to the current synchronized root policy and cannot be referenced as version-controlled content."
-                correlationId
+            GraceError.Create $"Path '{path}' belongs to the current Library policy and cannot be referenced as version-controlled content." correlationId
 
         graceError.Properties.Add("Path", context.Request.Path.Value)
         context.Items[ branchHashLookupErrorItemKey ] <- graceError
@@ -1103,6 +1101,21 @@ module Branch =
     let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
         task { return! Services.getDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
+    /// Returns the first path owned by the Library catalog snapshot observed for each actor read.
+    let private tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
+        task {
+            let actor = ApplicationContext.grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+            let mutable ownedPath = None
+
+            for relativePath in relativePaths do
+                if ownedPath.IsNone then
+                    let! isInLibrary = actor.IsInLibrary relativePath correlationId
+
+                    if isInLibrary then ownedPath <- Some relativePath
+
+            return ownedPath
+        }
+
     /// Implements reference command from root for the server request pipeline.
     let private referenceCommandFromRoot
         (context: HttpContext)
@@ -1118,33 +1131,33 @@ module Branch =
         task {
             match! resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
             | Services.UniqueMatch directoryVersion ->
-                let graceIds = getGraceIds context
-                let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId repositoryId correlationId
-                let! repository = repositoryActor.Get correlationId
                 let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
                 let! descendants = directoryVersionActor.GetRecursiveDirectoryVersions false correlationId
 
-                let synchronizedPath =
+                let candidatePaths =
                     seq {
-                        yield directoryVersion
+                        yield string directoryVersion.RelativePath
+
+                        yield!
+                            directoryVersion.Files
+                            |> Seq.map (fun file -> string file.RelativePath)
 
                         yield!
                             descendants
-                            |> Seq.map (fun descendant -> descendant.DirectoryVersion)
-                    }
-                    |> Seq.tryPick (fun candidate ->
-                        if configurationOwnsPath repository.SynchronizedRootConfiguration (string candidate.RelativePath) then
-                            Some(string candidate.RelativePath)
-                        else
-                            candidate.Files
-                            |> Seq.tryPick (fun file ->
-                                if configurationOwnsPath repository.SynchronizedRootConfiguration (string file.RelativePath) then
-                                    Some(string file.RelativePath)
-                                else
-                                    None))
+                            |> Seq.collect (fun descendant ->
+                                seq {
+                                    yield string descendant.DirectoryVersion.RelativePath
 
-                synchronizedPath
-                |> Option.iter (fun path -> setSynchronizedRootPolicyError context path correlationId)
+                                    yield!
+                                        descendant.DirectoryVersion.Files
+                                        |> Seq.map (fun file -> string file.RelativePath)
+                                })
+                    }
+
+                let! libraryPath = tryFindLibraryPath repositoryId correlationId candidatePaths
+
+                libraryPath
+                |> Option.iter (fun path -> setLibraryPolicyError context path correlationId)
 
                 return createCommand (referenceId, directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
             | Services.NoMatches -> return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
@@ -1599,7 +1612,7 @@ module Branch =
                 let graceIds = getGraceIds context
                 let mutable pendingWatchPublication: WatchPublicationKey option = None
 
-                /// Clears delivery-only source state when the durable Reference mutation does not succeed.
+                /// Clears delivery-only source state when the durable Reference change does not succeed.
                 let clearPendingWatchPublication () =
                     pendingWatchPublication
                     |> Option.iter removeWatchPublicationSource

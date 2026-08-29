@@ -4,7 +4,6 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Common
-open Grace.Types.SynchronizedContent
 open NodaTime
 open Orleans
 open System
@@ -45,7 +44,6 @@ module Repository =
         | SetName of repositoryName: RepositoryName
         | SetDescription of description: string
         | SetConflictResolutionPolicy of conflictResolutionPolicy: ConflictResolutionPolicy
-        | SetSynchronizedRootConfiguration of configuration: SynchronizedRootConfigurationDto * operationId: SynchronizedOperationId
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
         | Undelete
@@ -82,7 +80,6 @@ module Repository =
         | NameSet of repositoryName: RepositoryName
         | DescriptionSet of description: string
         | ConflictResolutionPolicySet of conflictResolutionPolicy: ConflictResolutionPolicy
-        | SynchronizedRootConfigurationSet of configuration: SynchronizedRootConfigurationDto * operationId: SynchronizedOperationId
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -126,7 +123,6 @@ module Repository =
             RecordSaves: bool
             ConflictResolutionPolicy: ConflictResolutionPolicy
             ManifestEligibilityPolicy: ManifestEligibilityPolicy
-            SynchronizedRootConfiguration: SynchronizedRootConfigurationDto
             CreatedAt: Instant
             InitializedAt: Instant option
             UpdatedAt: Instant option
@@ -161,15 +157,6 @@ module Repository =
                 RecordSaves = true
                 ConflictResolutionPolicy = ConflictResolutionPolicy.ConflictsAllowed 0.8f
                 ManifestEligibilityPolicy = ManifestEligibilityPolicy.Default
-                SynchronizedRootConfiguration =
-                    {
-                        RepositoryId = RepositoryId.Empty
-                        Version = Guid.Empty
-                        Roots = Array.empty
-                        CreatedAt = Constants.DefaultTimestamp
-                        CreatedBy = String.Empty
-                        PreviousVersion = None
-                    }
                 CreatedAt = Constants.DefaultTimestamp
                 InitializedAt = None
                 UpdatedAt = None
@@ -191,8 +178,6 @@ module Repository =
                         StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
                         StorageAccountName = DefaultObjectStorageAccount
                         StorageContainerName = $"{repositoryId}"
-                        SynchronizedRootConfiguration =
-                            SynchronizedRootConfigurationDto.CreateInitial(repositoryId, repositoryEvent.Metadata.Timestamp, repositoryEvent.Metadata.Principal)
                         CreatedAt = repositoryEvent.Metadata.Timestamp
                     }
                 | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
@@ -213,7 +198,6 @@ module Repository =
                 | NameSet repositoryName -> { currentRepositoryDto with RepositoryName = repositoryName }
                 | DescriptionSet description -> { currentRepositoryDto with Description = description }
                 | ConflictResolutionPolicySet policy -> { currentRepositoryDto with ConflictResolutionPolicy = policy }
-                | SynchronizedRootConfigurationSet (configuration, _) -> { currentRepositoryDto with SynchronizedRootConfiguration = configuration }
                 | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }

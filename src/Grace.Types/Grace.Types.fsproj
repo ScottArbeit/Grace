@@ -27,7 +27,7 @@
         <Compile Include="PersonalAccessToken.Types.fs" />
         <Compile Include="Owner.Types.fs" />
         <Compile Include="Organization.Types.fs" />
-        <Compile Include="SynchronizedContent.Types.fs" />
+        <Compile Include="Library.Types.fs" />
         <Compile Include="Repository.Types.fs" />
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Annotation.Types.fs" />

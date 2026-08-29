@@ -1396,10 +1396,10 @@ module Branch =
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<String>>
 
     /// Reads the remote repository root policy that ordinary version-control paths must exclude for one operation.
-    let private getCurrentSynchronizedRoots ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId =
+    let private getCurrentLibraries ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId =
         task {
             let parameters =
-                Grace.Shared.Parameters.Repository.RepositoryParameters(
+                Grace.Shared.Parameters.Library.GetLibraryCatalogParameters(
                     OwnerId = string ownerId,
                     OwnerName = string ownerName,
                     OrganizationId = string organizationId,
@@ -1409,9 +1409,9 @@ module Branch =
                     CorrelationId = correlationId
                 )
 
-            match! Grace.SDK.Repository.Get parameters with
-            | Ok result -> return result.ReturnValue.SynchronizedRootConfiguration.Roots
-            | Error error -> return raise (InvalidOperationException($"Error retrieving synchronized root policy: {error.Error}"))
+            match! Grace.SDK.Libraries.GetCatalog parameters with
+            | Ok result -> return result.ReturnValue.Libraries
+            | Error error -> return raise (InvalidOperationException($"Error retrieving Library policy: {error.Error}"))
         }
 
     /// Routes the create reference command from parsed options through validation, the SDK call, and result rendering.
@@ -1428,8 +1428,8 @@ module Branch =
                 | Ok _, Ok referenceMessage ->
                     let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                    let! synchronizedRoots =
-                        getCurrentSynchronizedRoots
+                    let! libraries =
+                        getCurrentLibraries
                             graceIds.OwnerIdString
                             graceIds.OwnerName
                             graceIds.OrganizationIdString
@@ -1438,7 +1438,7 @@ module Branch =
                             graceIds.RepositoryName
                             (getCorrelationId parseResult)
 
-                    use _synchronizedRootPolicy = beginSynchronizedRootPolicy synchronizedRoots
+                    use _libraryPolicy = beginLibraryPolicy libraries
 
                     //let sha256Bytes = SHA256.HashData(Encoding.ASCII.GetBytes(rnd.NextInt64().ToString("x8")))
                     //let sha256Hash = Seq.fold (fun (sb: StringBuilder) currentByte ->
@@ -3938,8 +3938,8 @@ module Branch =
                                                             (getCorrelationId parseResult)
                                                         |> Result.defaultWith invalidOp
 
-                                                    let! synchronizedRoots =
-                                                        getCurrentSynchronizedRoots
+                                                    let! libraries =
+                                                        getCurrentLibraries
                                                             configuration.OwnerId
                                                             configuration.OwnerName
                                                             configuration.OrganizationId
@@ -3948,7 +3948,7 @@ module Branch =
                                                             configuration.RepositoryName
                                                             (getCorrelationId parseResult)
 
-                                                    use _synchronizedRootPolicy = beginSynchronizedRootPolicy synchronizedRoots
+                                                    use _libraryPolicy = beginLibraryPolicy libraries
 
                                                     let! runOutcome =
                                                         WorkingDirectoryUpdate.run
@@ -4757,8 +4757,8 @@ module Branch =
                                                                     manifest
                                                                 |> Result.defaultWith invalidOp
 
-                                                            let! synchronizedRoots =
-                                                                getCurrentSynchronizedRoots
+                                                            let! libraries =
+                                                                getCurrentLibraries
                                                                     configuration.OwnerId
                                                                     configuration.OwnerName
                                                                     configuration.OrganizationId
@@ -4767,7 +4767,7 @@ module Branch =
                                                                     configuration.RepositoryName
                                                                     (getCorrelationId parseResult)
 
-                                                            use _synchronizedRootPolicy = beginSynchronizedRootPolicy synchronizedRoots
+                                                            use _libraryPolicy = beginLibraryPolicy libraries
 
                                                             let! runOutcome =
                                                                 WorkingDirectoryUpdate.run

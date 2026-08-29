@@ -1,0 +1,292 @@
+  /libraries/catalog/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get the persisted Library configuration.
+      operationId: GetLibraryCatalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryCatalogParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryCatalogResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/list:
+    post:
+      tags:
+        - Libraries
+      summary: List the sorted Libraries and their exact configuration version.
+      operationId: ListLibraries
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/ListLibrariesParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryCatalogResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/add:
+    post:
+      tags:
+        - Libraries
+      summary: Add one empty normalized Library under an exact configuration version.
+      operationId: AddLibrary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/AddLibraryParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryCatalogChangeResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/remove:
+    post:
+      tags:
+        - Libraries
+      summary: Remove one empty normalized Library under an exact configuration version.
+      operationId: RemoveLibrary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/RemoveLibraryParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryCatalogChangeResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/bootstrap/start:
+    post:
+      tags:
+        - Libraries
+      summary: Start a bounded bootstrap from the current immutable baseline.
+      operationId: StartLibraryBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/StartLibraryBootstrapParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryBootstrapPageResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/bootstrap/continue:
+    post:
+      tags:
+        - Libraries
+      summary: Continue one immutable bootstrap baseline page sequence.
+      operationId: ContinueLibraryBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/ContinueLibraryBootstrapParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryBootstrapPageResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '410': { $ref: './Responses.OpenAPI.yaml#/410' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/changes/get:
+    post:
+      tags:
+        - Libraries
+      summary: Read repository-ordered accepted Library changes after an opaque cursor.
+      operationId: GetLibraryChanges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryChangesParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryChangePageResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/changes/submit:
+    post:
+      tags:
+        - Libraries
+      summary: Submit one exact idempotent Library namespace or content change.
+      operationId: SubmitLibraryChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/SubmitLibraryChangeParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '410': { $ref: './Responses.OpenAPI.yaml#/410' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/operations/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get the stable receipt for one authorized Library operation identity.
+      operationId: GetLibraryOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryOperationParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/content/prepare:
+    post:
+      tags:
+        - Libraries
+      summary: Prepare exact immutable bytes for a later Library change.
+      operationId: PrepareLibraryContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '409': { $ref: './Responses.OpenAPI.yaml#/409' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/content/read:
+    post:
+      tags:
+        - Libraries
+      summary: Prepare a one-use read grant for an authorized retained content version.
+      operationId: PrepareLibraryContentRead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentReadParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryContentReadGrantResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/content/{grantId}:
+    get:
+      tags:
+        - Libraries
+      summary: Redeem one authorized short-lived immutable-content read grant.
+      operationId: DownloadLibraryContent
+      security: []
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        '200':
+          description: Exact immutable bytes authorized by the one-use grant.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '410': { $ref: './Responses.OpenAPI.yaml#/410' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/items/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get one current Library item.
+      operationId: GetLibraryItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryItemParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryItemResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/namespace/get-slot:
+    post:
+      tags:
+        - Libraries
+      summary: Get one current occupied or remembered-vacant Library namespace slot.
+      operationId: GetLibraryNamespaceSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryNamespaceSlotParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /libraries/status/get:
+    post:
+      tags:
+        - Libraries
+      summary: Get content-free Library repository status.
+      operationId: GetLibraryStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryStatusParameters' }
+      responses:
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryStatusResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'

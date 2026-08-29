@@ -335,17 +335,17 @@ loss-aware derived artifacts.
 Derived artifacts must never be edited by hand as a substitute for changing canonical source. Completion requires
 freshness checks for every committed or published derived artifact.
 
-Synchronized Content publishes its remote-only contract through
-`src/OpenAPI/SynchronizedContent.Components.OpenAPI.yaml` and
-`src/OpenAPI/SynchronizedContent.Paths.OpenAPI.yaml`. The aggregate document exposes 15 stable operations for root
-configuration, bootstrap, deltas, mutation submission, operation receipts, immutable-byte preparation and download,
-current item and namespace state, and status. The .NET `SynchronizedContent` facade and the generated TypeScript,
+Libraries publish their remote-only contract through
+`src/OpenAPI/Libraries.Components.OpenAPI.yaml` and
+`src/OpenAPI/Libraries.Paths.OpenAPI.yaml`. The aggregate document exposes 15 stable operations for catalog
+configuration, bootstrap, change pages, change submission, operation receipts, immutable-byte preparation and download,
+current item and namespace state, and status. The .NET `Grace.SDK.Libraries` facade and the generated TypeScript,
 Python, and Rust clients consume those same route and DTO shapes.
 
 This surface does not claim local filesystem synchronization, Watch participation, Cache participation, or portable
 manifest-protocol parity. Changes begin in the static source fragments, regenerate the aggregate and compatibility
 projections, regenerate the client matrix and facade metadata, and then pass freshness and quality checks. Existing
-repository-wide pending quality gates remain visible; a Synchronized Content change must not hide or rewrite them.
+repository-wide pending quality gates remain visible; a Libraries change must not hide or rewrite them.
 
 ### Generated and facade package layout
 

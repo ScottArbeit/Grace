@@ -24,10 +24,10 @@ __all__ = [
     "CacheApi",
     "DiffsApi",
     "DirectoriesApi",
+    "LibrariesApi",
     "OrganizationsApi",
     "OwnersApi",
     "RepositoriesApi",
-    "SynchronizedContentApi",
     "WebhooksApi",
     "WorkItemsApi",
     "DefaultApi",
@@ -40,7 +40,7 @@ __all__ = [
     "ApiKeyError",
     "ApiAttributeError",
     "ApiException",
-    "AddSynchronizedRootParameters",
+    "AddLibraryParameters",
     "AnnotateParameters",
     "AnnotationBoundary",
     "AnnotationLine",
@@ -87,7 +87,7 @@ __all__ = [
     "ContentBlockMetadataRange",
     "ContentBlockReuseRangeHint",
     "ContentBlockStoragePlacement",
-    "ContinueSynchronizedBootstrapParameters",
+    "ContinueLibraryBootstrapParameters",
     "CreateApprovalPolicyParameters",
     "CreateBranchParameters",
     "CreateOrganizationParameters",
@@ -153,6 +153,12 @@ __all__ = [
     "GetDiffsForReferenceTypeParameters",
     "GetDiffsForReferencesParameters",
     "GetDownloadUriParameters",
+    "GetLibraryCatalogParameters",
+    "GetLibraryChangesParameters",
+    "GetLibraryItemParameters",
+    "GetLibraryNamespaceSlotParameters",
+    "GetLibraryOperationParameters",
+    "GetLibraryStatusParameters",
     "GetOrganizationParameters",
     "GetOwnerParameters",
     "GetParameters",
@@ -160,12 +166,6 @@ __all__ = [
     "GetReferenceParameters",
     "GetReferencesByReferenceIdParameters",
     "GetReferencesParameters",
-    "GetSynchronizedDeltasParameters",
-    "GetSynchronizedItemParameters",
-    "GetSynchronizedNamespaceSlotParameters",
-    "GetSynchronizedOperationParameters",
-    "GetSynchronizedRootConfigurationParameters",
-    "GetSynchronizedStatusParameters",
     "GetUploadMetadataForFilesParameters",
     "GetUploadUriParameters",
     "GraceError",
@@ -185,11 +185,49 @@ __all__ = [
     "InlineObject9",
     "IsEmptyParameters",
     "IssueDedupeDiscoveryParameters",
+    "LibraryBootstrapPageDto",
+    "LibraryBootstrapPageReturnValue",
+    "LibraryCatalogChangeResultDto",
+    "LibraryCatalogChangeReturnValue",
+    "LibraryCatalogDto",
+    "LibraryCatalogRejectionReason",
+    "LibraryCatalogReturnValue",
+    "LibraryChangeDto",
+    "LibraryChangeKind",
+    "LibraryChangePageDto",
+    "LibraryChangePageReturnValue",
+    "LibraryConflictProvenanceDto",
+    "LibraryContentAvailable",
+    "LibraryContentPreconditionDto",
+    "LibraryContentReadGrantDto",
+    "LibraryContentReadGrantReturnValue",
+    "LibraryContentVersionDto",
+    "LibraryCreationSlotExpectationDto",
+    "LibraryItemDto",
+    "LibraryItemKind",
+    "LibraryItemReturnValue",
+    "LibraryNamespaceDto",
+    "LibraryNamespacePreconditionDto",
+    "LibraryNamespaceSlotDto",
+    "LibraryNamespaceSlotReturnValue",
+    "LibraryOperationReceiptDto",
+    "LibraryOperationReceiptReturnValue",
+    "LibraryOutcomeKind",
+    "LibraryParameters",
+    "LibraryParentDto",
+    "LibraryPreparedContentDto",
+    "LibraryPreparedContentReturnValue",
+    "LibraryRebaselineDto",
+    "LibraryRejectionReason",
+    "LibraryRepositoryStatusDto",
+    "LibraryReturnValueBase",
+    "LibraryStatusReturnValue",
+    "LibraryTombstoneDto",
     "ListApprovalPoliciesParameters",
     "ListApprovalRequestsParameters",
+    "ListLibrariesParameters",
     "ListOrganizationsParameters",
     "ListRepositoriesParameters",
-    "ListSynchronizedRootsParameters",
     "ListWebhookDeliveriesParameters",
     "ListWebhookRulesParameters",
     "ObjectStorageProvider",
@@ -207,8 +245,8 @@ __all__ = [
     "P256PublicJwk",
     "PopulateParameters",
     "PrepareDirectoryVersionZipParameters",
-    "PrepareSynchronizedContentParameters",
-    "PrepareSynchronizedContentReadParameters",
+    "PrepareLibraryContentParameters",
+    "PrepareLibraryContentReadParameters",
     "ProblemDetails",
     "PromotionSetApprovalState",
     "PromotionSetApprovalSummary",
@@ -228,7 +266,7 @@ __all__ = [
     "ReferenceReturnValue",
     "ReferenceType",
     "RegisterContentBlockUploadParameters",
-    "RemoveSynchronizedRootParameters",
+    "RemoveLibraryParameters",
     "ReplayReferenceEventsParameters",
     "RepositoryBooleanReturnValue",
     "RepositoryBranchesReturnValue",
@@ -260,50 +298,12 @@ __all__ = [
     "SetRepositoryVisibilityParameters",
     "SetSaveDaysParameters",
     "SetWorkItemDescriptionParameters",
+    "StartLibraryBootstrapParameters",
     "StartManifestUploadSessionParameters",
-    "StartSynchronizedBootstrapParameters",
     "StartUploadSession",
     "StorageParameters",
-    "SubmitSynchronizedMutationParameters",
+    "SubmitLibraryChangeParameters",
     "SwitchParameters",
-    "SynchronizedBootstrapPageDto",
-    "SynchronizedBootstrapPageReturnValue",
-    "SynchronizedConflictProvenanceDto",
-    "SynchronizedContentAvailable",
-    "SynchronizedContentParameters",
-    "SynchronizedContentPreconditionDto",
-    "SynchronizedContentReadGrantDto",
-    "SynchronizedContentReadGrantReturnValue",
-    "SynchronizedContentVersionDto",
-    "SynchronizedCreationSlotExpectationDto",
-    "SynchronizedDeltaResultDto",
-    "SynchronizedDeltaReturnValue",
-    "SynchronizedItemDto",
-    "SynchronizedItemKind",
-    "SynchronizedItemReturnValue",
-    "SynchronizedMutationDto",
-    "SynchronizedMutationKind",
-    "SynchronizedNamespaceDto",
-    "SynchronizedNamespacePreconditionDto",
-    "SynchronizedNamespaceSlotDto",
-    "SynchronizedNamespaceSlotReturnValue",
-    "SynchronizedOperationReceiptDto",
-    "SynchronizedOperationReceiptReturnValue",
-    "SynchronizedOutcomeKind",
-    "SynchronizedParentDto",
-    "SynchronizedPreparedContentDto",
-    "SynchronizedPreparedContentReturnValue",
-    "SynchronizedRebaselineDto",
-    "SynchronizedRejectionReason",
-    "SynchronizedRepositoryStatusDto",
-    "SynchronizedReturnValueBase",
-    "SynchronizedRootConfigurationDto",
-    "SynchronizedRootConfigurationReturnValue",
-    "SynchronizedRootMutationResultDto",
-    "SynchronizedRootMutationReturnValue",
-    "SynchronizedRootRejectionReason",
-    "SynchronizedStatusReturnValue",
-    "SynchronizedTombstoneDto",
     "TestWebhookRuleParameters",
     "TypedReferenceApiDto",
     "UndeleteOrganizationParameters",
@@ -350,10 +350,10 @@ from grace_generated_openapi_probe.api.branches_api import BranchesApi as Branch
 from grace_generated_openapi_probe.api.cache_api import CacheApi as CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi as DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi as DirectoriesApi
+from grace_generated_openapi_probe.api.libraries_api import LibrariesApi as LibrariesApi
 from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi as OrganizationsApi
 from grace_generated_openapi_probe.api.owners_api import OwnersApi as OwnersApi
 from grace_generated_openapi_probe.api.repositories_api import RepositoriesApi as RepositoriesApi
-from grace_generated_openapi_probe.api.synchronized_content_api import SynchronizedContentApi as SynchronizedContentApi
 from grace_generated_openapi_probe.api.webhooks_api import WebhooksApi as WebhooksApi
 from grace_generated_openapi_probe.api.work_items_api import WorkItemsApi as WorkItemsApi
 from grace_generated_openapi_probe.api.default_api import DefaultApi as DefaultApi
@@ -370,7 +370,7 @@ from grace_generated_openapi_probe.exceptions import ApiAttributeError as ApiAtt
 from grace_generated_openapi_probe.exceptions import ApiException as ApiException
 
 # import models into sdk package
-from grace_generated_openapi_probe.models.add_synchronized_root_parameters import AddSynchronizedRootParameters as AddSynchronizedRootParameters
+from grace_generated_openapi_probe.models.add_library_parameters import AddLibraryParameters as AddLibraryParameters
 from grace_generated_openapi_probe.models.annotate_parameters import AnnotateParameters as AnnotateParameters
 from grace_generated_openapi_probe.models.annotation_boundary import AnnotationBoundary as AnnotationBoundary
 from grace_generated_openapi_probe.models.annotation_line import AnnotationLine as AnnotationLine
@@ -417,7 +417,7 @@ from grace_generated_openapi_probe.models.content_block_discovery_policy import 
 from grace_generated_openapi_probe.models.content_block_metadata_range import ContentBlockMetadataRange as ContentBlockMetadataRange
 from grace_generated_openapi_probe.models.content_block_reuse_range_hint import ContentBlockReuseRangeHint as ContentBlockReuseRangeHint
 from grace_generated_openapi_probe.models.content_block_storage_placement import ContentBlockStoragePlacement as ContentBlockStoragePlacement
-from grace_generated_openapi_probe.models.continue_synchronized_bootstrap_parameters import ContinueSynchronizedBootstrapParameters as ContinueSynchronizedBootstrapParameters
+from grace_generated_openapi_probe.models.continue_library_bootstrap_parameters import ContinueLibraryBootstrapParameters as ContinueLibraryBootstrapParameters
 from grace_generated_openapi_probe.models.create_approval_policy_parameters import CreateApprovalPolicyParameters as CreateApprovalPolicyParameters
 from grace_generated_openapi_probe.models.create_branch_parameters import CreateBranchParameters as CreateBranchParameters
 from grace_generated_openapi_probe.models.create_organization_parameters import CreateOrganizationParameters as CreateOrganizationParameters
@@ -483,6 +483,12 @@ from grace_generated_openapi_probe.models.get_diff_parameters import GetDiffPara
 from grace_generated_openapi_probe.models.get_diffs_for_reference_type_parameters import GetDiffsForReferenceTypeParameters as GetDiffsForReferenceTypeParameters
 from grace_generated_openapi_probe.models.get_diffs_for_references_parameters import GetDiffsForReferencesParameters as GetDiffsForReferencesParameters
 from grace_generated_openapi_probe.models.get_download_uri_parameters import GetDownloadUriParameters as GetDownloadUriParameters
+from grace_generated_openapi_probe.models.get_library_catalog_parameters import GetLibraryCatalogParameters as GetLibraryCatalogParameters
+from grace_generated_openapi_probe.models.get_library_changes_parameters import GetLibraryChangesParameters as GetLibraryChangesParameters
+from grace_generated_openapi_probe.models.get_library_item_parameters import GetLibraryItemParameters as GetLibraryItemParameters
+from grace_generated_openapi_probe.models.get_library_namespace_slot_parameters import GetLibraryNamespaceSlotParameters as GetLibraryNamespaceSlotParameters
+from grace_generated_openapi_probe.models.get_library_operation_parameters import GetLibraryOperationParameters as GetLibraryOperationParameters
+from grace_generated_openapi_probe.models.get_library_status_parameters import GetLibraryStatusParameters as GetLibraryStatusParameters
 from grace_generated_openapi_probe.models.get_organization_parameters import GetOrganizationParameters as GetOrganizationParameters
 from grace_generated_openapi_probe.models.get_owner_parameters import GetOwnerParameters as GetOwnerParameters
 from grace_generated_openapi_probe.models.get_parameters import GetParameters as GetParameters
@@ -490,12 +496,6 @@ from grace_generated_openapi_probe.models.get_reference_materialization_boundary
 from grace_generated_openapi_probe.models.get_reference_parameters import GetReferenceParameters as GetReferenceParameters
 from grace_generated_openapi_probe.models.get_references_by_reference_id_parameters import GetReferencesByReferenceIdParameters as GetReferencesByReferenceIdParameters
 from grace_generated_openapi_probe.models.get_references_parameters import GetReferencesParameters as GetReferencesParameters
-from grace_generated_openapi_probe.models.get_synchronized_deltas_parameters import GetSynchronizedDeltasParameters as GetSynchronizedDeltasParameters
-from grace_generated_openapi_probe.models.get_synchronized_item_parameters import GetSynchronizedItemParameters as GetSynchronizedItemParameters
-from grace_generated_openapi_probe.models.get_synchronized_namespace_slot_parameters import GetSynchronizedNamespaceSlotParameters as GetSynchronizedNamespaceSlotParameters
-from grace_generated_openapi_probe.models.get_synchronized_operation_parameters import GetSynchronizedOperationParameters as GetSynchronizedOperationParameters
-from grace_generated_openapi_probe.models.get_synchronized_root_configuration_parameters import GetSynchronizedRootConfigurationParameters as GetSynchronizedRootConfigurationParameters
-from grace_generated_openapi_probe.models.get_synchronized_status_parameters import GetSynchronizedStatusParameters as GetSynchronizedStatusParameters
 from grace_generated_openapi_probe.models.get_upload_metadata_for_files_parameters import GetUploadMetadataForFilesParameters as GetUploadMetadataForFilesParameters
 from grace_generated_openapi_probe.models.get_upload_uri_parameters import GetUploadUriParameters as GetUploadUriParameters
 from grace_generated_openapi_probe.models.grace_error import GraceError as GraceError
@@ -515,11 +515,49 @@ from grace_generated_openapi_probe.models.inline_object8 import InlineObject8 as
 from grace_generated_openapi_probe.models.inline_object9 import InlineObject9 as InlineObject9
 from grace_generated_openapi_probe.models.is_empty_parameters import IsEmptyParameters as IsEmptyParameters
 from grace_generated_openapi_probe.models.issue_dedupe_discovery_parameters import IssueDedupeDiscoveryParameters as IssueDedupeDiscoveryParameters
+from grace_generated_openapi_probe.models.library_bootstrap_page_dto import LibraryBootstrapPageDto as LibraryBootstrapPageDto
+from grace_generated_openapi_probe.models.library_bootstrap_page_return_value import LibraryBootstrapPageReturnValue as LibraryBootstrapPageReturnValue
+from grace_generated_openapi_probe.models.library_catalog_change_result_dto import LibraryCatalogChangeResultDto as LibraryCatalogChangeResultDto
+from grace_generated_openapi_probe.models.library_catalog_change_return_value import LibraryCatalogChangeReturnValue as LibraryCatalogChangeReturnValue
+from grace_generated_openapi_probe.models.library_catalog_dto import LibraryCatalogDto as LibraryCatalogDto
+from grace_generated_openapi_probe.models.library_catalog_rejection_reason import LibraryCatalogRejectionReason as LibraryCatalogRejectionReason
+from grace_generated_openapi_probe.models.library_catalog_return_value import LibraryCatalogReturnValue as LibraryCatalogReturnValue
+from grace_generated_openapi_probe.models.library_change_dto import LibraryChangeDto as LibraryChangeDto
+from grace_generated_openapi_probe.models.library_change_kind import LibraryChangeKind as LibraryChangeKind
+from grace_generated_openapi_probe.models.library_change_page_dto import LibraryChangePageDto as LibraryChangePageDto
+from grace_generated_openapi_probe.models.library_change_page_return_value import LibraryChangePageReturnValue as LibraryChangePageReturnValue
+from grace_generated_openapi_probe.models.library_conflict_provenance_dto import LibraryConflictProvenanceDto as LibraryConflictProvenanceDto
+from grace_generated_openapi_probe.models.library_content_available import LibraryContentAvailable as LibraryContentAvailable
+from grace_generated_openapi_probe.models.library_content_precondition_dto import LibraryContentPreconditionDto as LibraryContentPreconditionDto
+from grace_generated_openapi_probe.models.library_content_read_grant_dto import LibraryContentReadGrantDto as LibraryContentReadGrantDto
+from grace_generated_openapi_probe.models.library_content_read_grant_return_value import LibraryContentReadGrantReturnValue as LibraryContentReadGrantReturnValue
+from grace_generated_openapi_probe.models.library_content_version_dto import LibraryContentVersionDto as LibraryContentVersionDto
+from grace_generated_openapi_probe.models.library_creation_slot_expectation_dto import LibraryCreationSlotExpectationDto as LibraryCreationSlotExpectationDto
+from grace_generated_openapi_probe.models.library_item_dto import LibraryItemDto as LibraryItemDto
+from grace_generated_openapi_probe.models.library_item_kind import LibraryItemKind as LibraryItemKind
+from grace_generated_openapi_probe.models.library_item_return_value import LibraryItemReturnValue as LibraryItemReturnValue
+from grace_generated_openapi_probe.models.library_namespace_dto import LibraryNamespaceDto as LibraryNamespaceDto
+from grace_generated_openapi_probe.models.library_namespace_precondition_dto import LibraryNamespacePreconditionDto as LibraryNamespacePreconditionDto
+from grace_generated_openapi_probe.models.library_namespace_slot_dto import LibraryNamespaceSlotDto as LibraryNamespaceSlotDto
+from grace_generated_openapi_probe.models.library_namespace_slot_return_value import LibraryNamespaceSlotReturnValue as LibraryNamespaceSlotReturnValue
+from grace_generated_openapi_probe.models.library_operation_receipt_dto import LibraryOperationReceiptDto as LibraryOperationReceiptDto
+from grace_generated_openapi_probe.models.library_operation_receipt_return_value import LibraryOperationReceiptReturnValue as LibraryOperationReceiptReturnValue
+from grace_generated_openapi_probe.models.library_outcome_kind import LibraryOutcomeKind as LibraryOutcomeKind
+from grace_generated_openapi_probe.models.library_parameters import LibraryParameters as LibraryParameters
+from grace_generated_openapi_probe.models.library_parent_dto import LibraryParentDto as LibraryParentDto
+from grace_generated_openapi_probe.models.library_prepared_content_dto import LibraryPreparedContentDto as LibraryPreparedContentDto
+from grace_generated_openapi_probe.models.library_prepared_content_return_value import LibraryPreparedContentReturnValue as LibraryPreparedContentReturnValue
+from grace_generated_openapi_probe.models.library_rebaseline_dto import LibraryRebaselineDto as LibraryRebaselineDto
+from grace_generated_openapi_probe.models.library_rejection_reason import LibraryRejectionReason as LibraryRejectionReason
+from grace_generated_openapi_probe.models.library_repository_status_dto import LibraryRepositoryStatusDto as LibraryRepositoryStatusDto
+from grace_generated_openapi_probe.models.library_return_value_base import LibraryReturnValueBase as LibraryReturnValueBase
+from grace_generated_openapi_probe.models.library_status_return_value import LibraryStatusReturnValue as LibraryStatusReturnValue
+from grace_generated_openapi_probe.models.library_tombstone_dto import LibraryTombstoneDto as LibraryTombstoneDto
 from grace_generated_openapi_probe.models.list_approval_policies_parameters import ListApprovalPoliciesParameters as ListApprovalPoliciesParameters
 from grace_generated_openapi_probe.models.list_approval_requests_parameters import ListApprovalRequestsParameters as ListApprovalRequestsParameters
+from grace_generated_openapi_probe.models.list_libraries_parameters import ListLibrariesParameters as ListLibrariesParameters
 from grace_generated_openapi_probe.models.list_organizations_parameters import ListOrganizationsParameters as ListOrganizationsParameters
 from grace_generated_openapi_probe.models.list_repositories_parameters import ListRepositoriesParameters as ListRepositoriesParameters
-from grace_generated_openapi_probe.models.list_synchronized_roots_parameters import ListSynchronizedRootsParameters as ListSynchronizedRootsParameters
 from grace_generated_openapi_probe.models.list_webhook_deliveries_parameters import ListWebhookDeliveriesParameters as ListWebhookDeliveriesParameters
 from grace_generated_openapi_probe.models.list_webhook_rules_parameters import ListWebhookRulesParameters as ListWebhookRulesParameters
 from grace_generated_openapi_probe.models.object_storage_provider import ObjectStorageProvider as ObjectStorageProvider
@@ -537,8 +575,8 @@ from grace_generated_openapi_probe.models.owner_type import OwnerType as OwnerTy
 from grace_generated_openapi_probe.models.p256_public_jwk import P256PublicJwk as P256PublicJwk
 from grace_generated_openapi_probe.models.populate_parameters import PopulateParameters as PopulateParameters
 from grace_generated_openapi_probe.models.prepare_directory_version_zip_parameters import PrepareDirectoryVersionZipParameters as PrepareDirectoryVersionZipParameters
-from grace_generated_openapi_probe.models.prepare_synchronized_content_parameters import PrepareSynchronizedContentParameters as PrepareSynchronizedContentParameters
-from grace_generated_openapi_probe.models.prepare_synchronized_content_read_parameters import PrepareSynchronizedContentReadParameters as PrepareSynchronizedContentReadParameters
+from grace_generated_openapi_probe.models.prepare_library_content_parameters import PrepareLibraryContentParameters as PrepareLibraryContentParameters
+from grace_generated_openapi_probe.models.prepare_library_content_read_parameters import PrepareLibraryContentReadParameters as PrepareLibraryContentReadParameters
 from grace_generated_openapi_probe.models.problem_details import ProblemDetails as ProblemDetails
 from grace_generated_openapi_probe.models.promotion_set_approval_state import PromotionSetApprovalState as PromotionSetApprovalState
 from grace_generated_openapi_probe.models.promotion_set_approval_summary import PromotionSetApprovalSummary as PromotionSetApprovalSummary
@@ -558,7 +596,7 @@ from grace_generated_openapi_probe.models.reference_replay_return_value import R
 from grace_generated_openapi_probe.models.reference_return_value import ReferenceReturnValue as ReferenceReturnValue
 from grace_generated_openapi_probe.models.reference_type import ReferenceType as ReferenceType
 from grace_generated_openapi_probe.models.register_content_block_upload_parameters import RegisterContentBlockUploadParameters as RegisterContentBlockUploadParameters
-from grace_generated_openapi_probe.models.remove_synchronized_root_parameters import RemoveSynchronizedRootParameters as RemoveSynchronizedRootParameters
+from grace_generated_openapi_probe.models.remove_library_parameters import RemoveLibraryParameters as RemoveLibraryParameters
 from grace_generated_openapi_probe.models.replay_reference_events_parameters import ReplayReferenceEventsParameters as ReplayReferenceEventsParameters
 from grace_generated_openapi_probe.models.repository_boolean_return_value import RepositoryBooleanReturnValue as RepositoryBooleanReturnValue
 from grace_generated_openapi_probe.models.repository_branches_return_value import RepositoryBranchesReturnValue as RepositoryBranchesReturnValue
@@ -590,50 +628,12 @@ from grace_generated_openapi_probe.models.set_repository_status_parameters impor
 from grace_generated_openapi_probe.models.set_repository_visibility_parameters import SetRepositoryVisibilityParameters as SetRepositoryVisibilityParameters
 from grace_generated_openapi_probe.models.set_save_days_parameters import SetSaveDaysParameters as SetSaveDaysParameters
 from grace_generated_openapi_probe.models.set_work_item_description_parameters import SetWorkItemDescriptionParameters as SetWorkItemDescriptionParameters
+from grace_generated_openapi_probe.models.start_library_bootstrap_parameters import StartLibraryBootstrapParameters as StartLibraryBootstrapParameters
 from grace_generated_openapi_probe.models.start_manifest_upload_session_parameters import StartManifestUploadSessionParameters as StartManifestUploadSessionParameters
-from grace_generated_openapi_probe.models.start_synchronized_bootstrap_parameters import StartSynchronizedBootstrapParameters as StartSynchronizedBootstrapParameters
 from grace_generated_openapi_probe.models.start_upload_session import StartUploadSession as StartUploadSession
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters
-from grace_generated_openapi_probe.models.submit_synchronized_mutation_parameters import SubmitSynchronizedMutationParameters as SubmitSynchronizedMutationParameters
+from grace_generated_openapi_probe.models.submit_library_change_parameters import SubmitLibraryChangeParameters as SubmitLibraryChangeParameters
 from grace_generated_openapi_probe.models.switch_parameters import SwitchParameters as SwitchParameters
-from grace_generated_openapi_probe.models.synchronized_bootstrap_page_dto import SynchronizedBootstrapPageDto as SynchronizedBootstrapPageDto
-from grace_generated_openapi_probe.models.synchronized_bootstrap_page_return_value import SynchronizedBootstrapPageReturnValue as SynchronizedBootstrapPageReturnValue
-from grace_generated_openapi_probe.models.synchronized_conflict_provenance_dto import SynchronizedConflictProvenanceDto as SynchronizedConflictProvenanceDto
-from grace_generated_openapi_probe.models.synchronized_content_available import SynchronizedContentAvailable as SynchronizedContentAvailable
-from grace_generated_openapi_probe.models.synchronized_content_parameters import SynchronizedContentParameters as SynchronizedContentParameters
-from grace_generated_openapi_probe.models.synchronized_content_precondition_dto import SynchronizedContentPreconditionDto as SynchronizedContentPreconditionDto
-from grace_generated_openapi_probe.models.synchronized_content_read_grant_dto import SynchronizedContentReadGrantDto as SynchronizedContentReadGrantDto
-from grace_generated_openapi_probe.models.synchronized_content_read_grant_return_value import SynchronizedContentReadGrantReturnValue as SynchronizedContentReadGrantReturnValue
-from grace_generated_openapi_probe.models.synchronized_content_version_dto import SynchronizedContentVersionDto as SynchronizedContentVersionDto
-from grace_generated_openapi_probe.models.synchronized_creation_slot_expectation_dto import SynchronizedCreationSlotExpectationDto as SynchronizedCreationSlotExpectationDto
-from grace_generated_openapi_probe.models.synchronized_delta_result_dto import SynchronizedDeltaResultDto as SynchronizedDeltaResultDto
-from grace_generated_openapi_probe.models.synchronized_delta_return_value import SynchronizedDeltaReturnValue as SynchronizedDeltaReturnValue
-from grace_generated_openapi_probe.models.synchronized_item_dto import SynchronizedItemDto as SynchronizedItemDto
-from grace_generated_openapi_probe.models.synchronized_item_kind import SynchronizedItemKind as SynchronizedItemKind
-from grace_generated_openapi_probe.models.synchronized_item_return_value import SynchronizedItemReturnValue as SynchronizedItemReturnValue
-from grace_generated_openapi_probe.models.synchronized_mutation_dto import SynchronizedMutationDto as SynchronizedMutationDto
-from grace_generated_openapi_probe.models.synchronized_mutation_kind import SynchronizedMutationKind as SynchronizedMutationKind
-from grace_generated_openapi_probe.models.synchronized_namespace_dto import SynchronizedNamespaceDto as SynchronizedNamespaceDto
-from grace_generated_openapi_probe.models.synchronized_namespace_precondition_dto import SynchronizedNamespacePreconditionDto as SynchronizedNamespacePreconditionDto
-from grace_generated_openapi_probe.models.synchronized_namespace_slot_dto import SynchronizedNamespaceSlotDto as SynchronizedNamespaceSlotDto
-from grace_generated_openapi_probe.models.synchronized_namespace_slot_return_value import SynchronizedNamespaceSlotReturnValue as SynchronizedNamespaceSlotReturnValue
-from grace_generated_openapi_probe.models.synchronized_operation_receipt_dto import SynchronizedOperationReceiptDto as SynchronizedOperationReceiptDto
-from grace_generated_openapi_probe.models.synchronized_operation_receipt_return_value import SynchronizedOperationReceiptReturnValue as SynchronizedOperationReceiptReturnValue
-from grace_generated_openapi_probe.models.synchronized_outcome_kind import SynchronizedOutcomeKind as SynchronizedOutcomeKind
-from grace_generated_openapi_probe.models.synchronized_parent_dto import SynchronizedParentDto as SynchronizedParentDto
-from grace_generated_openapi_probe.models.synchronized_prepared_content_dto import SynchronizedPreparedContentDto as SynchronizedPreparedContentDto
-from grace_generated_openapi_probe.models.synchronized_prepared_content_return_value import SynchronizedPreparedContentReturnValue as SynchronizedPreparedContentReturnValue
-from grace_generated_openapi_probe.models.synchronized_rebaseline_dto import SynchronizedRebaselineDto as SynchronizedRebaselineDto
-from grace_generated_openapi_probe.models.synchronized_rejection_reason import SynchronizedRejectionReason as SynchronizedRejectionReason
-from grace_generated_openapi_probe.models.synchronized_repository_status_dto import SynchronizedRepositoryStatusDto as SynchronizedRepositoryStatusDto
-from grace_generated_openapi_probe.models.synchronized_return_value_base import SynchronizedReturnValueBase as SynchronizedReturnValueBase
-from grace_generated_openapi_probe.models.synchronized_root_configuration_dto import SynchronizedRootConfigurationDto as SynchronizedRootConfigurationDto
-from grace_generated_openapi_probe.models.synchronized_root_configuration_return_value import SynchronizedRootConfigurationReturnValue as SynchronizedRootConfigurationReturnValue
-from grace_generated_openapi_probe.models.synchronized_root_mutation_result_dto import SynchronizedRootMutationResultDto as SynchronizedRootMutationResultDto
-from grace_generated_openapi_probe.models.synchronized_root_mutation_return_value import SynchronizedRootMutationReturnValue as SynchronizedRootMutationReturnValue
-from grace_generated_openapi_probe.models.synchronized_root_rejection_reason import SynchronizedRootRejectionReason as SynchronizedRootRejectionReason
-from grace_generated_openapi_probe.models.synchronized_status_return_value import SynchronizedStatusReturnValue as SynchronizedStatusReturnValue
-from grace_generated_openapi_probe.models.synchronized_tombstone_dto import SynchronizedTombstoneDto as SynchronizedTombstoneDto
 from grace_generated_openapi_probe.models.test_webhook_rule_parameters import TestWebhookRuleParameters as TestWebhookRuleParameters
 from grace_generated_openapi_probe.models.typed_reference_api_dto import TypedReferenceApiDto as TypedReferenceApiDto
 from grace_generated_openapi_probe.models.undelete_organization_parameters import UndeleteOrganizationParameters as UndeleteOrganizationParameters

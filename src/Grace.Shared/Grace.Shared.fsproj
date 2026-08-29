@@ -52,7 +52,7 @@
         <Compile Include="Parameters\Owner.Parameters.fs" />
         <Compile Include="Parameters\Organization.Parameters.fs" />
         <Compile Include="Parameters\Repository.Parameters.fs" />
-        <Compile Include="Parameters\SynchronizedContent.Parameters.fs" />
+        <Compile Include="Parameters\Library.Parameters.fs" />
         <Compile Include="Parameters\Branch.Parameters.fs" />
         <Compile Include="Parameters\Reference.Parameters.fs" />
         <Compile Include="Parameters\Directory.Parameters.fs" />
@@ -75,7 +75,7 @@
         <Compile Include="Validation\Utilities.Validation.fs" />
         <Compile Include="Validation\Connect.Validation.fs" />
         <Compile Include="Validation\Repository.Validation.fs" />
-        <Compile Include="Validation\SynchronizedContent.Validation.fs" />
+        <Compile Include="Validation\Library.Validation.fs" />
     </ItemGroup>
 
     <ItemGroup>
