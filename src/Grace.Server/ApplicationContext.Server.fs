@@ -119,7 +119,9 @@ module ApplicationContext =
 
     if not useManagedIdentity then
         let storageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
-        sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
+
+        if not (String.IsNullOrWhiteSpace storageKey) then
+            sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
 
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 

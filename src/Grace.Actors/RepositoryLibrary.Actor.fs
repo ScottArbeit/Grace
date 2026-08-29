@@ -1,6 +1,7 @@
 namespace Grace.Actors
 
 open Grace.Actors.Interfaces
+open Grace.Types.Authorization
 open Grace.Types.Common
 open Grace.Types.Library
 open Orleans
@@ -8,8 +9,21 @@ open System
 open System.Threading
 open System.Threading.Tasks
 
+/// Contains the final authorization gate shared by the Orleans actor and focused tests.
+module RepositoryLibrary =
+
+    /// Rechecks current authority before invoking any durable submission effect.
+    let submitWhenAuthorized authorize submit =
+        task {
+            match! authorize () with
+            | Allowed _ ->
+                let! receipt = submit ()
+                return LibrarySubmitResult.Submitted receipt
+            | Denied reason -> return LibrarySubmitResult.Forbidden reason
+        }
+
 /// Owns one repository's bounded Library catalog and serialized Library change lane.
-type RepositoryLibraryActor(coordinator: ILibraryCoordinator) =
+type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibraryWriteAuthorizer) =
     inherit Grain()
 
     interface IRepositoryLibraryActor with
@@ -24,13 +38,13 @@ type RepositoryLibraryActor(coordinator: ILibraryCoordinator) =
 
         member this.GetCatalog _correlationId = coordinator.GetCatalogAsync(this.GetPrimaryKey(), CancellationToken.None)
 
-        member this.SetCatalog libraryCatalog _correlationId =
+        member this.SetCatalog requestHash result _correlationId =
             let repositoryId = this.GetPrimaryKey()
 
-            if libraryCatalog.RepositoryId <> repositoryId then
-                invalidArg (nameof libraryCatalog) "The Library catalog repository does not match the actor key."
+            if result.LibraryCatalog.RepositoryId <> repositoryId then
+                invalidArg (nameof result) "The Library catalog repository does not match the actor key."
 
-            coordinator.SetCatalogAsync(repositoryId, libraryCatalog, CancellationToken.None)
+            coordinator.SetCatalogAsync(repositoryId, requestHash, result, CancellationToken.None)
 
         member this.IsInLibrary relativePath _correlationId =
             if String.IsNullOrWhiteSpace relativePath then
@@ -38,14 +52,17 @@ type RepositoryLibraryActor(coordinator: ILibraryCoordinator) =
             else
                 coordinator.IsInLibraryAsync(this.GetPrimaryKey(), relativePath, CancellationToken.None)
 
-        member this.Submit command principalId correlationId =
+        member this.Submit command principalId authorization correlationId =
             task {
                 let repositoryId = this.GetPrimaryKey()
 
                 if command.RepositoryId <> repositoryId then
                     invalidArg (nameof command) "The Library command repository does not match the repository actor key."
 
-                return! coordinator.SubmitAsync(command, principalId, correlationId, CancellationToken.None)
+                return!
+                    RepositoryLibrary.submitWhenAuthorized
+                        (fun () -> authorizer.CheckAsync(repositoryId, authorization, CancellationToken.None))
+                        (fun () -> coordinator.SubmitAsync(command, principalId, correlationId, CancellationToken.None))
             }
 
         member this.Repair correlationId =

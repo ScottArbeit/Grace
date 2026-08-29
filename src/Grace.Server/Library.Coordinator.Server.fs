@@ -763,33 +763,74 @@ module LibraryCoordinator =
                     return control.Document.LibraryCatalog
                 }
 
-            member _.SetCatalogAsync(repositoryId, libraryCatalog, cancellationToken) =
+            member _.SetCatalogAsync(repositoryId, requestHash, proposedResult, cancellationToken) =
                 task {
                     do! repair store repositoryId cancellationToken
                     let mutable finished = false
-                    let mutable currentCatalog = Unchecked.defaultof<LibraryCatalogDto>
+                    let mutable result = Unchecked.defaultof<LibraryCatalogChangeResultDto>
 
                     while not finished do
-                        let! control = store.ReadControlAsync(repositoryId, cancellationToken)
-                        currentCatalog <- control.Document.LibraryCatalog
-
-                        if currentCatalog.Version = libraryCatalog.Version then
+                        match! store.ReadCatalogOperationAsync(repositoryId, proposedResult.OperationId, cancellationToken) with
+                        | Some existing when existing.RequestHash = requestHash ->
+                            result <- existing.Result
                             finished <- true
-                        elif libraryCatalog.PreviousVersion
-                             <> Some currentCatalog.Version then
-                            finished <- true
-                        elif control.Document.Pending.IsSome then
-                            do! repair store repositoryId cancellationToken
-                        else
-                            let replacement = { control.Document with LibraryCatalog = libraryCatalog; UpdatedAt = libraryCatalog.CreatedAt }
+                        | Some _ ->
+                            let! control = store.ReadControlAsync(repositoryId, cancellationToken)
 
-                            match! store.ReplaceControlAsync(replacement, control.ETag, cancellationToken) with
-                            | Replaced _ ->
-                                currentCatalog <- libraryCatalog
+                            result <-
+                                { proposedResult with
+                                    Outcome = OutcomeKind.Rejected
+                                    LibraryCatalog = control.Document.LibraryCatalog
+                                    ReasonCode = Some RejectionReason.OperationIdentityMismatch
+                                }
+
+                            finished <- true
+                        | None ->
+                            let! control = store.ReadControlAsync(repositoryId, cancellationToken)
+                            let currentCatalog = control.Document.LibraryCatalog
+
+                            let durableResult =
+                                if proposedResult.Outcome = OutcomeKind.Accepted
+                                   && proposedResult.LibraryCatalog.PreviousVersion
+                                      <> Some currentCatalog.Version then
+                                    { proposedResult with
+                                        Outcome = OutcomeKind.StalePolicy
+                                        LibraryCatalog = currentCatalog
+                                        ReasonCode = Some OutcomeKind.StalePolicy
+                                    }
+                                else
+                                    proposedResult
+
+                            let operation =
+                                {
+                                    id = $"catalog-operation:{proposedResult.OperationId:D}"
+                                    RepositoryId = repositoryId
+                                    SchemaVersion = 1
+                                    OperationId = proposedResult.OperationId
+                                    RequestHash = requestHash
+                                    Result = durableResult
+                                }
+
+                            if durableResult.Outcome = OutcomeKind.Accepted then
+                                let replacement =
+                                    { control.Document with
+                                        LibraryCatalog = durableResult.LibraryCatalog
+                                        CurrentBaselineId = None
+                                        CurrentBaselineCursor = None
+                                        UpdatedAt = durableResult.RecordedAt
+                                    }
+
+                                match! store.ReplaceControlAndCreateCatalogOperationAsync(replacement, control.ETag, operation, cancellationToken) with
+                                | Replaced _ ->
+                                    result <- durableResult
+                                    finished <- true
+                                | PreconditionFailed -> ()
+                            else
+                                do! store.CreateCatalogOperationAsync(operation, cancellationToken)
+                                result <- durableResult
                                 finished <- true
-                            | PreconditionFailed -> ()
 
-                    return currentCatalog
+                    return result
                 }
 
             member _.IsInLibraryAsync(repositoryId, relativePath, cancellationToken) =

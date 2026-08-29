@@ -200,6 +200,7 @@ module LibraryPersistence =
                 BoundaryCursor = boundaryCursor
                 CursorEpoch = cursorEpoch
                 LibraryCatalogVersion = libraryCatalog.Version
+                LibraryCatalog = libraryCatalog
                 ShardIds = shards |> Array.map (fun shard -> shard.id)
                 ShardHashes = shards |> Array.map documentHash
                 ShardItemCounts = shards |> Array.map (fun shard -> shard.ItemCount)
@@ -419,6 +420,41 @@ module LibraryPersistence =
                     with
                     | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> return PreconditionFailed
                 }
+
+            member _.ReadCatalogOperationAsync(repositoryId, operationId, cancellationToken) =
+                task {
+                    let id = $"catalog-operation:{operationId:D}"
+
+                    let! existing = readOptional<LibraryCatalogOperationDocument> control id (controlPartitionKey repositoryId) cancellationToken
+
+                    return
+                        existing
+                        |> Option.map (fun value -> value.Document)
+                }
+
+            member _.ReplaceControlAndCreateCatalogOperationAsync(document, etag, operation, cancellationToken) =
+                task {
+                    let requestOptions = TransactionalBatchItemRequestOptions(IfMatchEtag = etag)
+
+                    let batch =
+                        control
+                            .CreateTransactionalBatch(controlPartitionKey document.RepositoryId)
+                            .ReplaceItem(document.id, document, requestOptions)
+                            .CreateItem(operation)
+
+                    let! response = batch.ExecuteAsync cancellationToken
+
+                    if response.IsSuccessStatusCode then
+                        return Replaced String.Empty
+                    elif response.StatusCode = HttpStatusCode.PreconditionFailed
+                         || response.StatusCode = HttpStatusCode.Conflict then
+                        return PreconditionFailed
+                    else
+                        return invalidOp $"The atomic Library catalog update failed with status {int response.StatusCode}: {response.ErrorMessage}"
+                }
+
+            member _.CreateCatalogOperationAsync(operation, cancellationToken) =
+                createExact control operation.id (controlPartitionKey operation.RepositoryId) operation cancellationToken
 
             member _.ReadReceiptAsync(repositoryId, operationId, cancellationToken) =
                 task {

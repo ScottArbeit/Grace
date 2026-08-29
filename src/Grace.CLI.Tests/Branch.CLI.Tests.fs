@@ -13,6 +13,7 @@ open Grace.Types.Annotation
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
+open Grace.Types.Library
 open Grace.Types.Reference
 open NodaTime
 open NUnit.Framework
@@ -467,6 +468,8 @@ module BranchCommandTests =
                             elif line.Contains("/branch/Get ") then
                                 branchGetCount <- branchGetCount + 1
                                 200, "application/json", envelope (if branchGetCount < 3 then currentBranch else selectedBranch)
+                            elif line.Contains("/libraries/catalog/get ") then
+                                200, "application/json", envelope (LibraryCatalogDto.CreateInitial(repositoryId, getCurrentInstant (), "principal"))
                             elif line.Contains("/directory/GetDirectoryVersionsRecursive ") then
                                 200, "application/json", envelope (Array.empty<DirectoryVersion>)
                             elif line.Contains("/storage/getUploadMetadataForFiles ") then
@@ -530,6 +533,7 @@ module BranchCommandTests =
             "POST /directory/GetByDirectoryIds HTTP/1.1"
             "POST /storage/getDownloadUri HTTP/1.1"
             "GET /fixture-container/target-object?sig=fake HTTP/1.1"
+            "POST /libraries/catalog/get HTTP/1.1"
         ]
 
     /// Separates supported OIDC discovery traffic while retaining source indices for operation-specific header and body assertions.
@@ -1176,10 +1180,12 @@ module BranchCommandTests =
 
                         bodies[uploadIndex] |> should equal editedBytes
 
-                        operationEntries
-                        |> Array.map snd
-                        |> Array.toList
-                        |> should equal saveSwitchOperationSequence)
+                        let actualOperations = operationEntries |> Array.map snd |> Array.toList
+
+                        if actualOperations <> saveSwitchOperationSequence then
+                            Assert.Fail(
+                                $"Expected operations:{Environment.NewLine}{String.concat Environment.NewLine saveSwitchOperationSequence}{Environment.NewLine}Actual operations:{Environment.NewLine}{String.concat Environment.NewLine actualOperations}"
+                            ))
             finally
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri))
 
@@ -1312,10 +1318,12 @@ module BranchCommandTests =
                             |> Array.find (fun (_, request) -> request = "PUT /fixture-container/save-object?sig=fake HTTP/1.1")
                             |> fst
 
-                        operationEntries
-                        |> Array.map snd
-                        |> Array.toList
-                        |> should equal saveSwitchOperationSequence
+                        let actualOperations = operationEntries |> Array.map snd |> Array.toList
+
+                        if actualOperations <> saveSwitchOperationSequence then
+                            Assert.Fail(
+                                $"Expected operations:{Environment.NewLine}{String.concat Environment.NewLine saveSwitchOperationSequence}{Environment.NewLine}Actual operations:{Environment.NewLine}{String.concat Environment.NewLine actualOperations}"
+                            )
 
                         bodies[uploadIndex] |> should equal editedBytes)
             finally

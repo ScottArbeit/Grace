@@ -2191,6 +2191,9 @@ module Application =
             services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
             |> ignore
 
+            services.AddSingleton<ILibraryWriteAuthorizer, LibraryWriteAuthorizer>()
+            |> ignore
+
             services.AddW3CLogging (fun options ->
                 options.FileName <- "Grace.Server.log-"
 

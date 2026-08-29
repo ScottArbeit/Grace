@@ -754,14 +754,20 @@ module Interfaces =
         /// Reads the current authoritative Library catalog.
         abstract member GetCatalog: correlationId: CorrelationId -> Task<LibraryCatalogDto>
 
-        /// Replaces the catalog only while the proposed exact predecessor remains current.
-        abstract member SetCatalog: libraryCatalog: LibraryCatalogDto -> correlationId: CorrelationId -> Task<LibraryCatalogDto>
+        /// Persists one catalog result, atomically applying an accepted exact-predecessor mutation.
+        abstract member SetCatalog:
+            requestHash: string -> result: LibraryCatalogChangeResultDto -> correlationId: CorrelationId -> Task<LibraryCatalogChangeResultDto>
 
         /// Classifies one normalized repository-relative path against the catalog state observed for this actor call.
         abstract member IsInLibrary: relativePath: string -> correlationId: CorrelationId -> Task<bool>
 
         /// Repairs prior accepted work, then submits one deterministic command against the actor-owned catalog policy.
-        abstract member Submit: command: LibraryChangeCommand -> principalId: PrincipalId -> correlationId: CorrelationId -> Task<LibraryOperationReceiptDto>
+        abstract member Submit:
+            command: LibraryChangeCommand ->
+            principalId: PrincipalId ->
+            authorization: LibraryWriteAuthorization ->
+            correlationId: CorrelationId ->
+                Task<LibrarySubmitResult>
 
         /// Repairs any pending accepted operation without admitting another command.
         abstract member Repair: correlationId: CorrelationId -> Task

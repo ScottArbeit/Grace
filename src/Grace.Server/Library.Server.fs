@@ -171,6 +171,20 @@ module Library =
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
+    /// Computes the stable request identity for one catalog operation independently of later catalog versions.
+    let private catalogRequestHash repositoryId addLibraryOperation expectedVersion libraryPath operationId =
+        {|
+            RepositoryId = repositoryId
+            OperationId = operationId
+            Operation = if addLibraryOperation then "add" else "remove"
+            ExpectedVersion = expectedVersion
+            LibraryPath = libraryPath
+        |}
+        |> fun value -> JsonSerializer.SerializeToUtf8Bytes(value, Constants.JsonSerializerOptions)
+        |> SHA256.HashData
+        |> Convert.ToHexString
+        |> fun value -> value.ToLowerInvariant()
+
     /// Returns a public epoch token without exposing the private epoch identifier.
     let private publicEpoch (codec: ILibraryCursorCodec) repositoryId epoch = codec.Encode(repositoryId, epoch, 0L)
 
@@ -384,108 +398,107 @@ module Library =
                 let expectedVersion, libraryPath, operationId = parameters
                 let now = SystemClock.Instance.GetCurrentInstant()
                 let newVersion = LibraryCoordinator.deterministicGuid ids.RepositoryId operationId "library-catalog"
+                let requestHash = catalogRequestHash ids.RepositoryId addLibraryOperation expectedVersion libraryPath operationId
                 let libraryActor = LibraryActor ids.RepositoryId
                 do! libraryActor.Repair correlationId
                 let! currentConfiguration = libraryActor.GetCatalog correlationId
 
-                let replayResult =
-                    if currentConfiguration.Version = newVersion then
-                        let intendedStateMatches =
-                            match normalizeRepositoryRelativePath libraryPath with
-                            | Error _ -> false
-                            | Ok normalizedRoot ->
-                                let containsRoot =
-                                    currentConfiguration.Libraries
-                                    |> Array.exists (pathsEqual normalizedRoot)
-
-                                if addLibraryOperation then containsRoot else not containsRoot
-
-                        Some
-                            {
-                                OperationId = operationId
-                                Outcome = if intendedStateMatches then OutcomeKind.Unchanged else OutcomeKind.Rejected
-                                LibraryCatalog = currentConfiguration
-                                ReasonCode =
-                                    if intendedStateMatches then
-                                        None
-                                    else
-                                        Some RejectionReason.OperationIdentityMismatch
-                                RecordedAt = now
-                            }
-                    else
-                        None
-
                 let store = service<ILibraryStore> context
-                let! currentItems = store.ReadCurrentItemsAsync(ids.RepositoryId, context.RequestAborted)
 
-                let! versionControlledRootEmpty =
-                    if addLibraryOperation then
-                        match normalizeRepositoryRelativePath libraryPath with
-                        | Ok normalizedRoot -> versionControlledRootIsEmpty repository normalizedRoot correlationId
-                        | Error _ -> task { return true }
-                    else
-                        task { return true }
+                let! replayResult =
+                    task {
+                        match! store.ReadCatalogOperationAsync(ids.RepositoryId, operationId, context.RequestAborted) with
+                        | Some existing when existing.RequestHash = requestHash -> return Some existing.Result
+                        | Some _ ->
+                            return
+                                Some
+                                    {
+                                        OperationId = operationId
+                                        Outcome = OutcomeKind.Rejected
+                                        LibraryCatalog = currentConfiguration
+                                        ReasonCode = Some RejectionReason.OperationIdentityMismatch
+                                        RecordedAt = now
+                                    }
+                        | None -> return None
+                    }
 
-                let liveUnderRoot normalizedRoot =
-                    currentItems
-                    |> Array.exists (fun document ->
-                        document.Item.State = "live"
-                        && document.Item.Namespace
-                           |> Option.exists (fun namespaceValue ->
-                               pathsEqual namespaceValue.NormalizedPath normalizedRoot
-                               || namespaceValue.NormalizedPath.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase)))
+                /// Evaluates and records a previously unseen catalog operation against the current repository state.
+                let executeNewOperation () =
+                    task {
+                        let! currentItems = store.ReadCurrentItemsAsync(ids.RepositoryId, context.RequestAborted)
 
-                let outcome =
-                    if addLibraryOperation then
-                        match versionControlledRootEmpty with
-                        | false -> Error CatalogRejectionReason.OutgoingSystemNotEmpty
-                        | true ->
-                            Grace.Shared.Validation.Library.addLibrary expectedVersion newVersion libraryPath now (principalId context) currentConfiguration
-                    else
-                        match normalizeRepositoryRelativePath libraryPath with
-                        | Error _ -> Error CatalogRejectionReason.UnsupportedPath
-                        | Ok normalized when liveUnderRoot normalized -> Error CatalogRejectionReason.SlotOccupied
-                        | Ok _ ->
-                            Grace.Shared.Validation.Library.removeLibrary expectedVersion newVersion libraryPath now (principalId context) currentConfiguration
+                        let! versionControlledRootEmpty =
+                            if addLibraryOperation then
+                                match normalizeRepositoryRelativePath libraryPath with
+                                | Ok normalizedRoot -> versionControlledRootIsEmpty repository normalizedRoot correlationId
+                                | Error _ -> task { return true }
+                            else
+                                task { return true }
 
-                match replayResult, outcome with
-                | Some result, _ -> return! ok context result
-                | None, Error reason ->
-                    let result =
-                        {
-                            OperationId = operationId
-                            Outcome =
-                                if reason = OutcomeKind.StalePolicy then
-                                    OutcomeKind.StalePolicy
-                                else
-                                    OutcomeKind.Rejected
-                            LibraryCatalog = currentConfiguration
-                            ReasonCode = Some reason
-                            RecordedAt = now
-                        }
+                        let liveUnderRoot normalizedRoot =
+                            currentItems
+                            |> Array.exists (fun document ->
+                                document.Item.State = "live"
+                                && document.Item.Namespace
+                                   |> Option.exists (fun namespaceValue ->
+                                       pathsEqual namespaceValue.NormalizedPath normalizedRoot
+                                       || namespaceValue.NormalizedPath.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase)))
 
-                    return! ok context result
-                | None, Ok configuration ->
-                    let! current = libraryActor.SetCatalog configuration correlationId
+                        let outcome =
+                            if addLibraryOperation then
+                                match versionControlledRootEmpty with
+                                | false -> Error CatalogRejectionReason.OutgoingSystemNotEmpty
+                                | true ->
+                                    Grace.Shared.Validation.Library.addLibrary
+                                        expectedVersion
+                                        newVersion
+                                        libraryPath
+                                        now
+                                        (principalId context)
+                                        currentConfiguration
+                            else
+                                match normalizeRepositoryRelativePath libraryPath with
+                                | Error _ -> Error CatalogRejectionReason.UnsupportedPath
+                                | Ok normalized when liveUnderRoot normalized -> Error CatalogRejectionReason.SlotOccupied
+                                | Ok _ ->
+                                    Grace.Shared.Validation.Library.removeLibrary
+                                        expectedVersion
+                                        newVersion
+                                        libraryPath
+                                        now
+                                        (principalId context)
+                                        currentConfiguration
 
-                    let result =
-                        {
-                            OperationId = operationId
-                            Outcome =
-                                if current.Version = configuration.Version then
-                                    OutcomeKind.Accepted
-                                else
-                                    OutcomeKind.StalePolicy
-                            LibraryCatalog = current
-                            ReasonCode =
-                                if current.Version = configuration.Version then
-                                    None
-                                else
-                                    Some OutcomeKind.StalePolicy
-                            RecordedAt = now
-                        }
+                        let proposedResult =
+                            match outcome with
+                            | Error reason ->
+                                {
+                                    OperationId = operationId
+                                    Outcome =
+                                        if reason = OutcomeKind.StalePolicy then
+                                            OutcomeKind.StalePolicy
+                                        else
+                                            OutcomeKind.Rejected
+                                    LibraryCatalog = currentConfiguration
+                                    ReasonCode = Some reason
+                                    RecordedAt = now
+                                }
+                            | Ok configuration ->
+                                {
+                                    OperationId = operationId
+                                    Outcome = OutcomeKind.Accepted
+                                    LibraryCatalog = configuration
+                                    ReasonCode = None
+                                    RecordedAt = now
+                                }
 
-                    return! ok context result
+                        let! result = libraryActor.SetCatalog requestHash proposedResult correlationId
+                        return! ok context result
+                    }
+
+                match replayResult with
+                | Some replay -> return! ok context replay
+                | None -> return! executeNewOperation ()
             }
 
     /// Adds one exact-version Library.
@@ -493,6 +506,31 @@ module Library =
 
     /// Removes one exact-version Library.
     let RemoveLibrary: HttpHandler = changeLibrary false
+
+    /// Reconstructs the byte-equivalent upload-session start command persisted by a content preparation.
+    let internal preparedUploadSessionCommand (document: LibraryPreparedContentDocument) =
+        Grace.Types.UploadSession.UploadSessionCommand.Start
+            {
+                UploadSessionId = document.UploadSessionId
+                OwnerId = document.OwnerId
+                OrganizationId = document.OrganizationId
+                RepositoryId = document.RepositoryId
+                StoragePoolId = document.StoragePoolId
+                AuthorizedScope = document.AuthorizedScope
+                FileContentHash = document.Content.Blake3Hash
+                ExpectedSize = document.Content.Size
+                ChunkingSuiteId = RabinChunking.SuiteName
+                SamplingPolicySnapshot = document.SamplingPolicySnapshot
+                OperationId = $"Library-prepare:{document.OperationId:D}"
+            }
+
+    /// Starts or verifies the exact upload session described by one durable content preparation.
+    let private startPreparedUploadSession context (document: LibraryPreparedContentDocument) =
+        let correlationId = Services.getCorrelationId context
+        let uploadActor = UploadSession.CreateActorProxy document.UploadSessionId document.RepositoryId correlationId
+        let command = preparedUploadSessionCommand document
+
+        uploadActor.Handle command (Services.createMetadata context)
 
     /// Starts an existing immutable-content upload session bound to this repository, principal, operation, and descriptor.
     let PrepareContent: HttpHandler =
@@ -524,7 +562,10 @@ module Library =
                         || existing.Document.Content.Size <> parameters.Size
                         ->
                         return! error StatusCodes.Status409Conflict context "The operation identity is already bound to another prepared descriptor."
-                    | Some existing -> return! ok context existing.Document.Content
+                    | Some existing ->
+                        match! startPreparedUploadSession context existing.Document with
+                        | Error actorError -> return! context |> Services.result400BadRequest actorError
+                        | Ok _ -> return! ok context existing.Document.Content
                     | None ->
                         let! repository = repositoryState context
 
@@ -558,45 +599,31 @@ module Library =
                                 ExpiresAt = expiresAt
                             }
 
-                        do!
-                            transferStore.CreatePreparedAsync(
-                                {
-                                    id = $"prepared:{preparedId:D}"
-                                    RepositoryId = ids.RepositoryId
-                                    RecordKind = "prepared"
-                                    RecordKey = $"prepared:{preparedId:D}"
-                                    SchemaVersion = 1
-                                    PreparedContentId = preparedId
-                                    OperationId = parameters.OperationId
-                                    PrincipalId = principalId context
-                                    Content = prepared
-                                    UploadSessionId = preparedId
-                                    AuthorizedScope = authorizedScope
-                                    StoragePoolId = repository.StoragePoolId
-                                    FinalizedManifest = None
-                                },
-                                context.RequestAborted
-                            )
+                        let samplingPolicySnapshot = JsonSerializer.Serialize(repository.ManifestEligibilityPolicy, Constants.JsonSerializerOptions)
 
-                        let uploadActor = UploadSession.CreateActorProxy preparedId ids.RepositoryId correlationId
+                        let preparedDocument =
+                            {
+                                id = $"prepared:{preparedId:D}"
+                                RepositoryId = ids.RepositoryId
+                                RecordKind = "prepared"
+                                RecordKey = $"prepared:{preparedId:D}"
+                                SchemaVersion = 1
+                                PreparedContentId = preparedId
+                                OperationId = parameters.OperationId
+                                PrincipalId = principalId context
+                                OwnerId = ids.OwnerId
+                                OrganizationId = ids.OrganizationId
+                                Content = prepared
+                                UploadSessionId = preparedId
+                                AuthorizedScope = authorizedScope
+                                StoragePoolId = repository.StoragePoolId
+                                SamplingPolicySnapshot = samplingPolicySnapshot
+                                FinalizedManifest = None
+                            }
 
-                        let command =
-                            Grace.Types.UploadSession.UploadSessionCommand.Start
-                                {
-                                    UploadSessionId = preparedId
-                                    OwnerId = ids.OwnerId
-                                    OrganizationId = ids.OrganizationId
-                                    RepositoryId = ids.RepositoryId
-                                    StoragePoolId = repository.StoragePoolId
-                                    AuthorizedScope = authorizedScope
-                                    FileContentHash = parameters.Blake3Hash
-                                    ExpectedSize = parameters.Size
-                                    ChunkingSuiteId = RabinChunking.SuiteName
-                                    SamplingPolicySnapshot = JsonSerializer.Serialize(repository.ManifestEligibilityPolicy, Constants.JsonSerializerOptions)
-                                    OperationId = $"Library-prepare:{parameters.OperationId:D}"
-                                }
+                        do! transferStore.CreatePreparedAsync(preparedDocument, context.RequestAborted)
 
-                        match! uploadActor.Handle command (Services.createMetadata context) with
+                        match! startPreparedUploadSession context preparedDocument with
                         | Error actorError -> return! context |> Services.result400BadRequest actorError
                         | Ok _ -> return! ok context prepared
             }
@@ -639,11 +666,25 @@ module Library =
 
                         let actor = LibraryActor ids.RepositoryId
 
-                        let! receipt = actor.Submit command (principalId context) (Services.getCorrelationId context)
+                        let authorization =
+                            {
+                                OwnerId = ids.OwnerId
+                                OrganizationId = ids.OrganizationId
+                                Principals =
+                                    PrincipalMapper.getPrincipals context.User
+                                    |> List.toArray
+                                EffectiveClaims =
+                                    PrincipalMapper.getEffectiveClaims context.User
+                                    |> Set.toArray
+                            }
 
-                        do! tryNotifyLibraryContentAvailable context ids.RepositoryId receipt
+                        let! submitResult = actor.Submit command (principalId context) authorization (Services.getCorrelationId context)
 
-                        return! ok context receipt
+                        match submitResult.Receipt, submitResult.ForbiddenReason with
+                        | Some receipt, None ->
+                            do! tryNotifyLibraryContentAvailable context ids.RepositoryId receipt
+                            return! ok context receipt
+                        | _ -> return! error StatusCodes.Status403Forbidden context "Forbidden."
             }
 
     /// Reads one deterministic operation receipt after repository authorization.
@@ -653,6 +694,10 @@ module Library =
                 let ids = Services.getGraceIds context
                 let! parameters = context.BindJsonAsync<GetLibraryOperationParameters>()
                 let store = service<ILibraryStore> context
+
+                do!
+                    (LibraryActor ids.RepositoryId)
+                        .Repair(Services.getCorrelationId context)
 
                 match! store.ReadReceiptAsync(ids.RepositoryId, parameters.OperationId, context.RequestAborted) with
                 | None -> return! Services.result404NotFound context
@@ -761,9 +806,24 @@ module Library =
                 match control.Document.CurrentBaselineId, control.Document.CurrentBaselineCursor with
                 | Some baselineId, Some cursor when cursor = control.Document.AppliedThrough ->
                     match! store.ReadBaselineAsync(repositoryId, baselineId, context.RequestAborted) with
-                    | Some (existing, _) ->
+                    | Some (existing, _) when
+                        existing.BoundaryCursor = control.Document.AppliedThrough
+                        && existing.CursorEpoch = control.Document.CursorEpoch
+                        && existing.LibraryCatalogVersion = control.Document.LibraryCatalog.Version
+                        ->
                         manifest <- existing
                         completed <- true
+                    | Some _ ->
+                        let replacement =
+                            { control.Document with
+                                CurrentBaselineId = None
+                                CurrentBaselineCursor = None
+                                UpdatedAt = SystemClock.Instance.GetCurrentInstant()
+                            }
+
+                        match! store.ReplaceControlAsync(replacement, control.ETag, context.RequestAborted) with
+                        | Replaced _ -> ()
+                        | PreconditionFailed -> ()
                     | None -> invalidOp "The published Library baseline manifest is missing."
                 | _ ->
                     let! current = store.ReadCurrentItemsAsync(repositoryId, context.RequestAborted)
@@ -829,15 +889,13 @@ module Library =
                     else
                         None
 
-                let! control = store.ReadControlAsync(repositoryId, context.RequestAborted)
-
                 return
                     Ok
                         {
                             BootstrapId = baselineId
                             BoundaryCursor = codec.Encode(repositoryId, manifest.CursorEpoch, manifest.BoundaryCursor)
                             CursorEpoch = publicEpoch codec repositoryId manifest.CursorEpoch
-                            LibraryCatalog = control.Document.LibraryCatalog
+                            LibraryCatalog = manifest.LibraryCatalog
                             Items = pageItems
                             NextPageToken = nextToken
                         }
@@ -1012,6 +1070,10 @@ module Library =
                 let! parameters = context.BindJsonAsync<PrepareLibraryContentReadParameters>()
                 let store = service<ILibraryStore> context
                 let transferStore = service<ILibraryTransferStore> context
+
+                do!
+                    (LibraryActor ids.RepositoryId)
+                        .Repair(Services.getCorrelationId context)
 
                 match! store.ReadItemAsync(ids.RepositoryId, parameters.ItemId, context.RequestAborted) with
                 | None -> return! Services.result404NotFound context

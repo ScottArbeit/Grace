@@ -159,11 +159,16 @@ module Repository =
                         task {
                             match repositoryEvent.Event with
                             | Created (name, repositoryId, ownerId, organizationId, objectStorageProvider) ->
-                                let libraryActor = grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+                                let actorRepositoryId = this.GetPrimaryKey()
+                                let libraryActor = grainFactory.GetGrain<IRepositoryLibraryActor>(actorRepositoryId)
 
                                 do!
                                     libraryActor.InitializeCatalog
-                                        (LibraryCatalogDto.CreateInitial(repositoryId, repositoryEvent.Metadata.Timestamp, repositoryEvent.Metadata.Principal))
+                                        (LibraryCatalogDto.CreateInitial(
+                                            actorRepositoryId,
+                                            repositoryEvent.Metadata.Timestamp,
+                                            repositoryEvent.Metadata.Principal
+                                        ))
                                         repositoryEvent.Metadata.CorrelationId
 
                                 // Create the default branch.

@@ -129,33 +129,65 @@ module Library =
 
     /// Identifies a Library item's repository-owned parent.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryParentDto = { Kind: string; LibraryPath: string option; ItemId: LibraryItemId option }
+    type LibraryParentDto =
+        {
+            [<Id(0u)>]
+            Kind: string
+            [<Id(1u)>]
+            LibraryPath: string option
+            [<Id(2u)>]
+            ItemId: LibraryItemId option
+        }
 
     /// Describes one current parent/name placement and its independent concurrency versions.
     [<CLIMutable; GenerateSerializer>]
     type LibraryNamespaceDto =
         {
+            [<Id(0u)>]
             Parent: LibraryParentDto
+            [<Id(1u)>]
             Name: string
+            [<Id(2u)>]
             NormalizedPath: string
+            [<Id(3u)>]
             NamespaceVersion: LibraryNamespaceVersion
+            [<Id(4u)>]
             SlotVersion: LibraryNamespaceSlotVersion
         }
 
     /// Identifies one immutable complete-byte value without exposing its storage placement.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryContentVersionDto = { ContentVersionId: LibraryContentVersionId; Blake3Hash: string; Sha256Hash: string; Size: int64; CreatedAt: Instant }
+    type LibraryContentVersionDto =
+        {
+            [<Id(0u)>]
+            ContentVersionId: LibraryContentVersionId
+            [<Id(1u)>]
+            Blake3Hash: string
+            [<Id(2u)>]
+            Sha256Hash: string
+            [<Id(3u)>]
+            Size: int64
+            [<Id(4u)>]
+            CreatedAt: Instant
+        }
 
     /// Records the durable deletion of one stable Library item identity.
     [<CLIMutable; GenerateSerializer>]
     type LibraryTombstoneDto =
         {
+            [<Id(0u)>]
             ItemId: LibraryItemId
+            [<Id(1u)>]
             ItemKind: string
+            [<Id(2u)>]
             DeletedAt: Instant
+            [<Id(3u)>]
             DeletedBy: PrincipalId
+            [<Id(4u)>]
             DeleteCursor: LibraryCursor
+            [<Id(5u)>]
             LastNamespaceVersion: LibraryNamespaceVersion
+            [<Id(6u)>]
             LastContentVersionId: LibraryContentVersionId option
         }
 
@@ -163,13 +195,21 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryConflictProvenanceDto =
         {
+            [<Id(0u)>]
             SourceOperationId: LibraryOperationId
+            [<Id(1u)>]
             SourceItemId: LibraryItemId
+            [<Id(2u)>]
             CanonicalItemId: LibraryItemId
+            [<Id(3u)>]
             ConflictItemId: LibraryItemId
+            [<Id(4u)>]
             ConflictPath: string
+            [<Id(5u)>]
             AcceptedAt: Instant
+            [<Id(6u)>]
             SourceContentVersionId: LibraryContentVersionId option
+            [<Id(7u)>]
             BaseContentVersionId: LibraryContentVersionId option
         }
 
@@ -177,13 +217,21 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryItemDto =
         {
+            [<Id(0u)>]
             ItemId: LibraryItemId
+            [<Id(1u)>]
             ItemKind: string
+            [<Id(2u)>]
             State: string
+            [<Id(3u)>]
             LastChangeCursor: LibraryCursor
+            [<Id(4u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(5u)>]
             Namespace: LibraryNamespaceDto option
+            [<Id(6u)>]
             Content: LibraryContentVersionDto option
+            [<Id(7u)>]
             Tombstone: LibraryTombstoneDto option
         }
 
@@ -203,11 +251,17 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryCatalogDto =
         {
+            [<Id(0u)>]
             RepositoryId: RepositoryId
+            [<Id(1u)>]
             Version: LibraryCatalogVersion
+            [<Id(2u)>]
             Libraries: string array
+            [<Id(3u)>]
             CreatedAt: Instant
+            [<Id(4u)>]
             CreatedBy: PrincipalId
+            [<Id(5u)>]
             PreviousVersion: LibraryCatalogVersion option
         }
 
@@ -230,54 +284,111 @@ module Library =
 
     /// Proves the namespace dimension observed by a rename, move, or delete caller.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryNamespacePreconditionDto = { ItemId: LibraryItemId; ExpectedNamespaceVersion: LibraryNamespaceVersion }
+    type LibraryNamespacePreconditionDto =
+        {
+            [<Id(0u)>]
+            ItemId: LibraryItemId
+            [<Id(1u)>]
+            ExpectedNamespaceVersion: LibraryNamespaceVersion
+        }
 
     /// Proves the content dimension observed by an update or file delete caller.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryContentPreconditionDto = { ItemId: LibraryItemId; ExpectedContentVersionId: LibraryContentVersionId }
+    type LibraryContentPreconditionDto =
+        {
+            [<Id(0u)>]
+            ItemId: LibraryItemId
+            [<Id(1u)>]
+            ExpectedContentVersionId: LibraryContentVersionId
+        }
 
     /// Proves that the caller observed one exact vacant destination slot.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryCreationSlotExpectationDto = { Parent: LibraryParentDto; Name: string; ExpectedSlotVersion: LibraryNamespaceSlotVersion; ExpectedState: string }
+    type LibraryCreationSlotExpectationDto =
+        {
+            [<Id(0u)>]
+            Parent: LibraryParentDto
+            [<Id(1u)>]
+            Name: string
+            [<Id(2u)>]
+            ExpectedSlotVersion: LibraryNamespaceSlotVersion
+            [<Id(3u)>]
+            ExpectedState: string
+        }
 
     /// Describes one accepted repository-ordered Library change.
     [<CLIMutable; GenerateSerializer>]
     type LibraryChangeDto =
         {
+            [<Id(0u)>]
             Cursor: LibraryCursor
+            [<Id(1u)>]
             OperationId: LibraryOperationId
+            [<Id(2u)>]
             ChangeKind: string
+            [<Id(3u)>]
             ItemId: LibraryItemId
+            [<Id(4u)>]
             ItemKind: string
+            [<Id(5u)>]
             AcceptedAt: Instant
+            [<Id(6u)>]
             AcceptedBy: PrincipalId
+            [<Id(7u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(8u)>]
             Namespace: LibraryNamespaceDto option
+            [<Id(9u)>]
             Content: LibraryContentVersionDto option
+            [<Id(10u)>]
             Tombstone: LibraryTombstoneDto option
+            [<Id(11u)>]
             Conflict: LibraryConflictProvenanceDto option
         }
 
     /// Directs a client to restart from the current published baseline.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryRebaselineDto = { Reason: string; CurrentEpoch: LibraryCursorEpoch; ServiceFloorCursor: LibraryCursor; RecommendedBootstrap: bool }
+    type LibraryRebaselineDto =
+        {
+            [<Id(0u)>]
+            Reason: string
+            [<Id(1u)>]
+            CurrentEpoch: LibraryCursorEpoch
+            [<Id(2u)>]
+            ServiceFloorCursor: LibraryCursor
+            [<Id(3u)>]
+            RecommendedBootstrap: bool
+        }
 
     /// Carries the stable result recorded for one normalized operation request.
     [<CLIMutable; GenerateSerializer>]
     type LibraryOperationReceiptDto =
         {
+            [<Id(0u)>]
             OperationId: LibraryOperationId
+            [<Id(1u)>]
             RequestHash: string
+            [<Id(2u)>]
             Outcome: string
+            [<Id(3u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(4u)>]
             RecordedAt: Instant
+            [<Id(5u)>]
             PrincipalId: PrincipalId
+            [<Id(6u)>]
             Change: LibraryChangeDto option
+            [<Id(7u)>]
             Cursor: LibraryCursor option
+            [<Id(8u)>]
             Item: LibraryItemDto option
+            [<Id(9u)>]
             Conflict: LibraryConflictProvenanceDto option
+            [<Id(10u)>]
             ReasonCode: string option
+            [<Id(11u)>]
             CurrentLibraryCatalog: LibraryCatalogDto option
+            [<Id(12u)>]
             Rebaseline: LibraryRebaselineDto option
         }
 
@@ -285,12 +396,47 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryCatalogChangeResultDto =
         {
+            [<Id(0u)>]
             OperationId: LibraryOperationId
+            [<Id(1u)>]
             Outcome: string
+            [<Id(2u)>]
             LibraryCatalog: LibraryCatalogDto
+            [<Id(3u)>]
             ReasonCode: string option
+            [<Id(4u)>]
             RecordedAt: Instant
         }
+
+    /// Carries the authenticated facts rechecked against current repository-scoped Library authority inside the serialized actor call.
+    [<GenerateSerializer>]
+    type LibraryWriteAuthorization =
+        {
+            [<Id(0u)>]
+            OwnerId: OwnerId
+            [<Id(1u)>]
+            OrganizationId: OrganizationId
+            [<Id(2u)>]
+            Principals: Principal array
+            [<Id(3u)>]
+            EffectiveClaims: string array
+        }
+
+    /// Reports whether the actor admitted a Library change after its final current-authority check.
+    [<CLIMutable; GenerateSerializer>]
+    type LibrarySubmitResult =
+        {
+            [<Id(0u)>]
+            Receipt: LibraryOperationReceiptDto option
+            [<Id(1u)>]
+            ForbiddenReason: string option
+        }
+
+        /// Builds an admitted result around its durable operation receipt.
+        static member Submitted receipt = { Receipt = Some receipt; ForbiddenReason = None }
+
+        /// Builds a denied result without a durable operation receipt.
+        static member Forbidden reason = { Receipt = None; ForbiddenReason = Some reason }
 
     /// Carries one bounded immutable current-state bootstrap page.
     [<CLIMutable; GenerateSerializer>]
@@ -338,15 +484,25 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryRepositoryStatusDto =
         {
+            [<Id(0u)>]
             State: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(3u)>]
             IsCaughtUp: bool
+            [<Id(4u)>]
             RebaselineRequired: bool
+            [<Id(5u)>]
             IsBlocked: bool
+            [<Id(6u)>]
             PendingOperationCount: int
+            [<Id(7u)>]
             OldestPendingAgeMilliseconds: int64 option
+            [<Id(8u)>]
             ProjectionLagCount: int64
+            [<Id(9u)>]
             LastCompletedAt: Instant option
         }
 
@@ -379,20 +535,35 @@ module Library =
     [<GenerateSerializer>]
     type LibraryChangeCommand =
         {
+            [<Id(0u)>]
             RepositoryId: RepositoryId
+            [<Id(1u)>]
             OperationId: LibraryOperationId
+            [<Id(2u)>]
             RequestHash: string
+            [<Id(3u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(4u)>]
             ChangeKind: string
+            [<Id(5u)>]
             ItemKind: string
+            [<Id(6u)>]
             ItemId: LibraryItemId option
+            [<Id(7u)>]
             NamespacePrecondition: LibraryNamespacePreconditionDto option
+            [<Id(8u)>]
             ContentPrecondition: LibraryContentPreconditionDto option
+            [<Id(9u)>]
             CreationSlotExpectation: LibraryCreationSlotExpectationDto option
+            [<Id(10u)>]
             DestinationParent: LibraryParentDto option
+            [<Id(11u)>]
             DestinationName: string option
+            [<Id(12u)>]
             PreparedContentId: LibraryPreparedContentId option
+            [<Id(13u)>]
             PreparedContent: LibraryContentVersionDto option
+            [<Id(14u)>]
             PreparedContentExpiresAt: Instant option
         }
 
@@ -567,6 +738,7 @@ module Library =
             BoundaryCursor: int64
             CursorEpoch: Guid
             LibraryCatalogVersion: LibraryCatalogVersion
+            LibraryCatalog: LibraryCatalogDto
             ShardIds: string array
             ShardHashes: string array
             ShardItemCounts: int array
@@ -586,11 +758,26 @@ module Library =
             PreparedContentId: LibraryPreparedContentId
             OperationId: LibraryOperationId
             PrincipalId: PrincipalId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
             Content: LibraryPreparedContentDto
             UploadSessionId: UploadSessionId
             AuthorizedScope: string
             StoragePoolId: StoragePoolId
+            SamplingPolicySnapshot: string
             FinalizedManifest: FileManifest option
+        }
+
+    /// Stores one immutable catalog-operation result in the same repository partition as its atomic catalog mutation.
+    [<CLIMutable; GenerateSerializer>]
+    type LibraryCatalogOperationDocument =
+        {
+            id: string
+            RepositoryId: RepositoryId
+            SchemaVersion: int
+            OperationId: LibraryOperationId
+            RequestHash: string
+            Result: LibraryCatalogChangeResultDto
         }
 
     /// Retains the existing immutable-content location behind one public content-version identity.
@@ -648,6 +835,18 @@ module Library =
         /// Replaces the control document only while its previously observed ETag remains current.
         abstract member ReplaceControlAsync:
             control: LibraryControlDocument * etag: string * cancellationToken: CancellationToken -> Task<LibraryControlWriteResult>
+
+        /// Reads one immutable catalog-operation result by its deterministic operation identity.
+        abstract member ReadCatalogOperationAsync:
+            repositoryId: RepositoryId * operationId: LibraryOperationId * cancellationToken: CancellationToken -> Task<LibraryCatalogOperationDocument option>
+
+        /// Atomically replaces the catalog control state and creates its immutable operation result in one repository partition.
+        abstract member ReplaceControlAndCreateCatalogOperationAsync:
+            control: LibraryControlDocument * etag: string * operation: LibraryCatalogOperationDocument * cancellationToken: CancellationToken ->
+                Task<LibraryControlWriteResult>
+
+        /// Creates an immutable non-mutating catalog-operation result or verifies its exact replay.
+        abstract member CreateCatalogOperationAsync: operation: LibraryCatalogOperationDocument * cancellationToken: CancellationToken -> Task
 
         /// Reads a deterministic receipt by operation identity.
         abstract member ReadReceiptAsync:
@@ -770,7 +969,8 @@ module Library =
 
         /// Replaces the authoritative Library catalog only when its exact predecessor remains current.
         abstract member SetCatalogAsync:
-            repositoryId: RepositoryId * libraryCatalog: LibraryCatalogDto * cancellationToken: CancellationToken -> Task<LibraryCatalogDto>
+            repositoryId: RepositoryId * requestHash: string * result: LibraryCatalogChangeResultDto * cancellationToken: CancellationToken ->
+                Task<LibraryCatalogChangeResultDto>
 
         /// Classifies one normalized repository-relative path against the catalog snapshot read for this call.
         abstract member IsInLibraryAsync: repositoryId: RepositoryId * relativePath: string * cancellationToken: CancellationToken -> Task<bool>
@@ -785,3 +985,10 @@ module Library =
 
         /// Returns truthful content-free server state after repairing any pending accepted command.
         abstract member GetStatusAsync: repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task<LibraryRepositoryStatusDto>
+
+    /// Rechecks current Library-write authority immediately before the actor can enter the durable reservation path.
+    type ILibraryWriteAuthorizer =
+
+        /// Evaluates the supplied authenticated facts against the current repository-scoped Library permission source.
+        abstract member CheckAsync:
+            repositoryId: RepositoryId * authorization: LibraryWriteAuthorization * cancellationToken: CancellationToken -> Task<PermissionCheckResult>
