@@ -2,7 +2,7 @@
 
 ## Disposition
 
-The Issue #1038 Product V1 remote-only Libraries candidate includes the frozen R1-01 through R1-07 repair ledger and is ready for R2 closure review after required GitHub `Validate`. RepositoryLibraryActor owns the Library catalog and serialized Library change lane. Existing Save, Reference, Branch, Watch, and Working Directory Update domains only consume the Library boundary and retain their existing lifecycle and publication behavior. Issue #1039 local participation remains inactive.
+The Issue #1038 Product V1 remote-only Libraries candidate includes the frozen R1-01 through R1-07 repair ledger and the narrow R2 closure correction for six-container integration readiness. It is ready for resumed R2 closure review after required GitHub `Validate`. RepositoryLibraryActor owns the Library catalog and serialized Library change lane. Existing Save, Reference, Branch, Watch, and Working Directory Update domains only consume the Library boundary and retain their existing lifecycle and publication behavior. Issue #1039 local participation remains inactive.
 
 ## Requirement evidence
 
@@ -25,13 +25,13 @@ The Issue #1038 Product V1 remote-only Libraries candidate includes the frozen R
 
 | Requirement | Evidence |
 | --- | --- |
-| R1-01: fix RepositoryLibraryActor create initialization key/catalog identity; add hosted create plus exact-retry catalog proof. | `CreateInitializesMatchingEmptyLibraryCatalog` passed 1/1 under the Aspire host, `InitialCatalogExactRetryIsIdempotent` passed, and generated Orleans codecs now carry stable field IDs for the complete Library actor argument and result graph. |
+| R1-01: fix RepositoryLibraryActor create initialization key/catalog identity; add hosted create plus exact-retry catalog proof. | `CreateInitializesMatchingEmptyLibraryCatalog` and `LibraryContainersUseAcceptedContractsAndGateTestReadiness` passed 2/2 under one Aspire setup. Integration readiness creates and verifies all six fixed Library containers from the AppHost contract before shared repository setup, `InitialCatalogExactRetryIsIdempotent` passed, and generated Orleans codecs carry stable field IDs for the complete Library actor argument and result graph. |
 | R1-02: recheck exact repository-scoped Library permission immediately before reservation; prove block/revoke/release leaves no pending/change/projection/receipt/wake. | `RevokedLibraryWritePermissionPreventsReservationAndReceipt` passed. The actor-owned gate calls the current repository permission evaluator before coordinator submission; denial leaves the submit count at zero, so no reservation or later durable/wake effect can begin. |
 | R1-03: make baseline identity, catalog, epoch, cursor, and every page one immutable snapshot, or invalidate V1 before V2 pages return; add regression. | `BaselineManifestCapturesCatalogSnapshotForEveryPage` passed. The manifest persists the catalog, reuse checks catalog version plus epoch and boundary cursor, catalog acceptance clears the published pointer, and every page reads the manifest snapshot. |
 | R1-04: projection-backed GetOperation and content-read preparation must repair through repository lane before answering; inject canonical-before-projection restart and prove receipt/content truth. | `ProjectionReadsRepairCanonicalBeforeProjectionRestart` passed and source-order assertions prove both projection-backed handlers call `Repair` before their store read. |
 | R1-05: if preparation persists then upload-session start fails, exact retry must resume/verify session before returning success. | `PreparedContentRetryResumesExactUploadSession` passed. The durable preparation retains the exact owner, organization, storage, scope, and sampling-policy inputs needed to recreate the same upload-session start command. |
 | R1-06: exact retry of catalog operation A must return its durable original result after later catalog operation B; conflicting reuse remains rejected. | `CatalogOperationRetryReturnsOriginalResultAfterLaterMutation` passed. The immutable operation result shares the repository control partition, accepted catalog mutation and result creation use one transactional batch, and replay returns before consulting later current-item or outgoing-root state. |
-| R1-07: repair exact-head Validate failures: runtime/static/generated route classification, two Branch switch fixtures, five startup-validation tests, and unrelated Doctor output unchanged. | `OpenApiRouteCoverageTests` passed 9/9, `BranchCommandTests` passed 63/63, startup validation passed 5/5, and `DoctorCliTests` passed 91/91. |
+| R1-07: repair exact-head Validate failures: runtime/static/generated route classification, two Branch switch fixtures, five startup-validation tests, and unrelated Doctor output unchanged. | `OpenApiRouteCoverageTests` passed 9/9, `BranchCommandTests` passed 63/63, startup validation passed 5/5, and `DoctorCliTests` passed 91/91. The R2 closure correction adds `LibraryContainersUseAcceptedContractsAndGateTestReadiness` and verifies repository creation no longer observes a missing Library control container. |
 
 ## Passing commands
 
@@ -55,7 +55,7 @@ dotnet test src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj -c Release --no-build --f
 dotnet build src/Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj -c Release
 
 dotnet build src/Grace.Server.Tests/Grace.Server.Tests.fsproj -c Release
-dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj -c Release --no-build --filter 'Name=CreateInitializesMatchingEmptyLibraryCatalog'
+dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj -c Release --no-build --filter 'Name=LibraryContainersUseAcceptedContractsAndGateTestReadiness|Name=CreateInitializesMatchingEmptyLibraryCatalog'
 
 dotnet build src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj -c Release
 dotnet test src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj -c Release --no-build --filter 'FullyQualifiedName~Grace.Server.Tests.LibraryCoordinatorTests'
@@ -91,9 +91,9 @@ TypeScript, Python, and Rust OpenAPI Generator output remains raw-client evidenc
 
 ## Residual validation gaps
 
-- No hosted Aspire/Cosmos Emulator proof covers the six-container route, restart, and injected publication-boundary matrix. Focused in-memory and source-contract tests cover exact keys, reservation, canonical-first persistence, repair, replay, bounds, and manifest-last planning.
+- Hosted Aspire/Cosmos Emulator proof now covers exact six-container provisioning/readiness and repository create initialization. It does not cover the complete restart and injected publication-boundary matrix; focused in-memory and source-contract tests cover exact keys, reservation, canonical-first persistence, repair, replay, bounds, and manifest-last planning.
 - No hosted HTTP/SignalR plus real immutable-storage test covers prepare, upload completion, change submission, one-use download, and best-effort wake as one external flow. Focused server-unit tests cover each owned seam and failure swallowing.
-- GitHub `Validate` has not run on the final candidate revision. It remains the required broad gate.
+- GitHub `Validate` run `33233559385` failed on repaired head `23f3450b` because the integration harness did not provision the six Library containers before repository setup. A new exact-head run remains required after this closure correction.
 
 Local `validate.ps1 -Fast` and `-Full` were not run because focused validation was sufficient and no documented escalation applied.
 

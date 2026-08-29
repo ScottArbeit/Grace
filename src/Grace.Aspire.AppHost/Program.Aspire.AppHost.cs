@@ -21,7 +21,8 @@ using static Shared::Grace.Shared.Constants;
 
 public partial class Program
 {
-    private static readonly IReadOnlyDictionary<string, string[]> LibraryContainers =
+    /// <summary>Defines the fixed Library Cosmos containers and their ordered hierarchical partition-key paths.</summary>
+    internal static readonly IReadOnlyDictionary<string, string[]> LibraryContainers =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["grace-library-control"] = ["/RepositoryId"],

@@ -1109,11 +1109,32 @@ module AspireTestHost =
                                     .CreateDatabaseIfNotExistsAsync(databaseName)
                                     .WaitAsync(perCallTimeout)
 
-                            let! _ =
-                                database
-                                    .Database
-                                    .CreateContainerIfNotExistsAsync(containerName, "/PartitionKey")
-                                    .WaitAsync(perCallTimeout)
+                            let requiredContainers =
+                                seq {
+                                    yield containerName, [| "/PartitionKey" |]
+
+                                    yield!
+                                        Program.LibraryContainers
+                                        |> Seq.map (fun (KeyValue (name, partitionKeyPaths)) -> name, partitionKeyPaths)
+                                }
+
+                            for requiredContainerName, partitionKeyPaths in requiredContainers do
+                                let properties = ContainerProperties(requiredContainerName, partitionKeyPaths :> IReadOnlyList<string>)
+
+                                let! response =
+                                    database
+                                        .Database
+                                        .CreateContainerIfNotExistsAsync(properties)
+                                        .WaitAsync(perCallTimeout)
+
+                                let actualPaths = response.Resource.PartitionKeyPaths |> Seq.toArray
+
+                                if actualPaths <> partitionKeyPaths then
+                                    let actualPathText = String.Join(", ", actualPaths)
+                                    let expectedPathText = String.Join(", ", partitionKeyPaths)
+
+                                    invalidOp
+                                        $"Cosmos container '{requiredContainerName}' has partition keys [{actualPathText}], expected [{expectedPathText}]."
 
                             ()
 
