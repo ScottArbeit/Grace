@@ -45,6 +45,9 @@ module Owner =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
@@ -216,7 +219,7 @@ module Owner =
                         )
 
                         // Deactivate the actor after the PhysicalDeletion reminder is processed.
-                        this.DeactivateOnIdle()
+                        this.DeactivateActorOnIdle()
                         return Ok()
                     | reminderType, state ->
                         return
@@ -347,7 +350,7 @@ module Owner =
                                         do! state.ClearStateAsync()
 
                                         // Deactivate the actor after the PhysicalDeletion is processed.
-                                        this.DeactivateOnIdle()
+                                        this.DeactivateActorOnIdle()
                                         return Ok(OwnerEventType.PhysicalDeleted)
                                     | OwnerCommand.Undelete -> return Ok(OwnerEventType.Undeleted)
                                 }

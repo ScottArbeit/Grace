@@ -459,6 +459,9 @@ module Branch =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
@@ -519,7 +522,8 @@ module Branch =
 
                             raise writeError
                         | FailedUnrecoverable (writeError, reloadError) as outcome ->
-                            if branchPersistenceRequiresDeactivation outcome then this.DeactivateOnIdle()
+                            if branchPersistenceRequiresDeactivation outcome then
+                                this.DeactivateActorOnIdle()
 
                             raise (AggregateException("Branch persistence failed and durable state could not be reloaded.", writeError, reloadError))
 
@@ -592,7 +596,7 @@ module Branch =
                             physicalDeletionReminderState.DeleteReason
                         )
 
-                        this.DeactivateOnIdle()
+                        this.DeactivateActorOnIdle()
                         return Ok()
                     | reminderType, state ->
                         return
@@ -1244,7 +1248,7 @@ module Branch =
                                     | DeletePhysical ->
                                         // Delete the state from storage, and deactivate the actor.
                                         do! state.ClearStateAsync()
-                                        this.DeactivateOnIdle()
+                                        this.DeactivateActorOnIdle()
                                         return Ok PhysicalDeleted
                                     | Undelete -> return Ok Undeleted
                                 }

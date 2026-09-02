@@ -513,6 +513,9 @@ module Reference =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         override this.OnActivateAsync(ct) =
             task {
                 let activateStartTime = getCurrentInstant ()
@@ -603,7 +606,7 @@ module Reference =
                             physicalDeletionReminderState.DeleteReason
                         )
 
-                        this.DeactivateOnIdle()
+                        this.DeactivateActorOnIdle()
                         return Ok()
                     | reminderType, state ->
                         return
@@ -1026,7 +1029,7 @@ module Reference =
                                                     publishGraceEvent (GraceEvent.ReferenceEvent { Event = PhysicalDeleted; Metadata = metadata }) metadata)
                                                 (fun () -> state.ClearStateAsync())
 
-                                        this.DeactivateOnIdle()
+                                        this.DeactivateActorOnIdle()
                                         return Ok PhysicalDeleted
                                     | Undelete -> return Ok Undeleted
                                 }
