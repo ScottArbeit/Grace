@@ -7,7 +7,7 @@ Other `AGENTS.md` files exist in subdirectories, refer to them for more specific
 Prerequisites:
 
 - PowerShell 7.x
-- .NET 10 SDK
+- .NET SDK 10.0.400, selected by `global.json`
 - Docker Desktop (required for `-Full`)
 
 Commands:

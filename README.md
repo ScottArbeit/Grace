@@ -97,7 +97,7 @@ The first-time steps below use **local emulators** and **test authentication** (
 > There is a detailed guide to configuring authentication at [`/docs/Authentication.md`](/docs/Authentication.md).
 
 1. **Install prerequisites** for your platform:
-   - [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download)
+   - [.NET SDK 10.0.400](https://dotnet.microsoft.com/en-us/download), selected by `global.json`
    - [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell)
    - A container runtime
      - Aspire supports [Docker Desktop](https://www.docker.com/get-started/) and [Podman](https://podman-desktop.io/).

@@ -705,6 +705,9 @@ module DirectoryVersion =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         /// Releases one direct manifest contribution before removing its exact relationship evidence.
         member private this.ReleaseManifestContribution
             (
@@ -960,7 +963,7 @@ module DirectoryVersion =
                                 reminderState.DeleteReason
                             )
 
-                            this.DeactivateOnIdle()
+                            this.DeactivateActorOnIdle()
                             return Ok()
                         | disposition -> return Error(this.PhysicalDeletionError(disposition, reminderState.CorrelationId))
                     | reminderType, state ->
@@ -1634,7 +1637,7 @@ module DirectoryVersion =
                                 let directoryVersionEvent: DirectoryVersionEvent = { Event = PhysicalDeleted; Metadata = metadata }
                                 do! publishGraceEvent (GraceEvent.DirectoryVersionEvent directoryVersionEvent) metadata
                                 do! state.ClearStateAsync()
-                                this.DeactivateOnIdle()
+                                this.DeactivateActorOnIdle()
 
                                 return
                                     Ok(

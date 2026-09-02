@@ -121,6 +121,9 @@ module WorkItem =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
@@ -161,7 +164,8 @@ module WorkItem =
                         else
                             return raise writeError
                     | FailedUnrecoverable (writeError, reloadError) as outcome ->
-                        if workItemPersistenceRequiresDeactivation outcome then this.DeactivateOnIdle()
+                        if workItemPersistenceRequiresDeactivation outcome then
+                            this.DeactivateActorOnIdle()
 
                         return raise (AggregateException("WorkItem event persistence failed and durable state could not be reloaded.", writeError, reloadError))
                 with

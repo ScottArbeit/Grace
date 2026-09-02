@@ -1479,6 +1479,9 @@ module UploadSession =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
@@ -1869,7 +1872,7 @@ module UploadSession =
                                 if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
                                 do! this.CompactPhysicalStateEvents()
-                                this.DeactivateOnIdle()
+                                this.DeactivateActorOnIdle()
                                 return Ok()
                         | Error error -> return Error error
                     | reminderType, reminderState ->
@@ -1999,7 +2002,7 @@ module UploadSession =
                                         metadata.CorrelationId
                             | UploadSessionCommand.DeletePhysicalState _ ->
                                 do! this.CompactPhysicalStateEvents()
-                                this.DeactivateOnIdle()
+                                this.DeactivateActorOnIdle()
                             | _ -> ()
 
                             let returnValue =

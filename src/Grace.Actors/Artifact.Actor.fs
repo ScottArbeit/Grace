@@ -94,6 +94,9 @@ module Artifact =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
@@ -287,7 +290,7 @@ module Artifact =
                             | None ->
                                 do! eventState.ClearStateAsync()
                                 artifact <- ArtifactMetadata.Default
-                                this.DeactivateOnIdle()
+                                this.DeactivateActorOnIdle()
                                 return Ok()
             }
 

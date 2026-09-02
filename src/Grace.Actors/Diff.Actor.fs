@@ -113,6 +113,9 @@ module Diff =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Requests deactivation without exposing the inherited protected call to a task state machine.
+        member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
         /// Builds a ServerGraceIndex from a root DirectoryId.
         member private this.buildGraceIndex (directoryId: DirectoryVersionId) repositoryId correlationId =
             task {
@@ -206,7 +209,7 @@ module Diff =
                             deleteCachedStateReminderState.DeleteReason
                         )
 
-                        this.DeactivateOnIdle()
+                        this.DeactivateActorOnIdle()
                         return Ok()
                     | reminderType, state ->
                         return
