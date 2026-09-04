@@ -28,6 +28,7 @@ grace --output Json watch --check
 grace watch --check --select Mode
 grace --output Json library get shared --repository-id $repositoryId
 grace --output Json library list --repository-id $repositoryId
+grace --output Json library sync status
 ```
 
 bash / zsh:
@@ -42,6 +43,7 @@ grace --output Json watch --check
 grace watch --check --select Mode
 grace --output Json library get shared --repository-id "$repository_id"
 grace --output Json library list --repository-id "$repository_id"
+grace --output Json library sync status
 ```
 
 ## Output Envelopes
@@ -147,8 +149,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `211`
-- JSON-ready routed commands: `190`
+- Total leaf commands: `214`
+- JSON-ready routed commands: `193`
 - Conditionally JSON-ready routed commands: `1`
 - Intentionally human-only commands: `0`
 - Deferred routed commands with explicit V2 scope: `11`
@@ -197,15 +199,18 @@ supports `--schema`, `--examples`, and `--select`.
 
 ## Library command outcomes
 
-The remote-only `library` command group uses the same result envelope as other JSON-ready commands:
+The `library` command group uses the same result envelope as other JSON-ready commands:
 
 - `library get <path>` and `library list` return the persisted `LibraryCatalogDto`.
 - `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
+- `library sync enable`, `library sync run`, and `library sync status` return the CLI-local `LibrarySynchronizationStatus` with `Enabled`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, and `AppliedCursor` fields.
 
 Catalog changes require a positional Library path, `--expected-version`, and `--operation-id`. Automation must inspect
 `ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process
-exit code as evidence that a repository change was accepted. These commands configure the server-owned remote
-namespace. They do not activate local synchronization, Watch participation, or filesystem publication.
+exit code as evidence that a repository change was accepted. Catalog commands configure the server-owned remote
+namespace. `library sync enable` explicitly activates this Windows working copy; `run` performs one durable pull and
+one bounded local publication attempt; `status` reads durable local participation without changing it. All three emit
+one success or error envelope and never mix progress text into JSON stdout.
 
 ## Agent Recipes
 

@@ -1,6 +1,6 @@
 # Libraries
 
-Libraries are Grace's repository-ordered remote namespace and immutable-byte service. Product V1 provides the complete remote contract while deliberately leaving local filesystem participation for later work.
+Libraries are Grace's repository-ordered namespace and immutable-byte service. Product V1 includes the complete remote contract and an explicit Windows 11 working-copy synchronization tracer.
 
 An authorized remote client can:
 
@@ -11,8 +11,9 @@ An authorized remote client can:
 - Recover the stable receipt for a previously submitted operation.
 - Read retained immutable content through a short-lived signed read-only download URL backed by Grace's immutable-content access path.
 - Read content-free repository synchronization status.
+- Enable one working copy, publish ordinary-file changes, pull accepted changes after a durable cursor, and report local synchronization status on Windows 11.
 
-Product V1 does not include local SQLite state, filesystem publication, `library sync enable`, `library sync disable`, `library sync run`, local synchronization status, or Watch-driven synchronization.
+Product V1 local synchronization accepts ordinary-file creation and content updates inside configured Libraries. It does not support deletion, rename, directories as items, per-Library participation, disable/re-enable, offline repair, or Linux/macOS execution.
 
 ## Library ownership
 
@@ -83,7 +84,7 @@ Service Bus publication is send-first. Grace lets the configured SDK retries fin
 
 ## Library CLI
 
-The CLI exposes catalog operations only. Use the existing repository locator options by ID or name.
+The CLI exposes remote catalog operations and the nested Windows working-copy synchronization tracer. Use the existing repository locator options by ID or name for catalog commands.
 
 PowerShell:
 
@@ -92,6 +93,9 @@ grace library list --repository-id $repositoryId
 grace library get shared --repository-id $repositoryId
 grace library add shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
 grace library remove shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
+grace library sync enable
+grace library sync run
+grace library sync status
 ```
 
 bash / zsh:
@@ -101,9 +105,30 @@ grace library list --repository-id "$repository_id"
 grace library get shared --repository-id "$repository_id"
 grace library add shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
 grace library remove shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
+grace library sync enable
+grace library sync run
+grace library sync status
 ```
 
-Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. Local synchronization commands remain deferred.
+Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. There is deliberately no `library sync disable` command in Product V1.
+
+`grace library sync enable` bootstraps the current remote catalog and cursor into the existing `.grace/grace-local.db`, assigns the working copy an identity, and enables participation in the repository configuration. Run it once in each authorized Windows working copy.
+
+`grace library sync run` first pulls repository-ordered accepted changes after the durable local cursor. It recovers any accepted receipt for the same local operation ID before it needs temporary upload state. After remote completion, it scans for the first stable local ordinary-file change, stages immutable content through the existing upload routes, and submits that exact change. Repeating the command is safe: accepted operation IDs return the same receipt, completed remote operations observe terminal bytes and SQLite state, and cursor advancement uses the exact predecessor.
+
+`grace library sync status` reports whether synchronization is enabled, the lifecycle state, catalog version, cursor epoch, and applied cursor. A current status describes local durable state; it is not a promise that a concurrent remote change cannot arrive immediately afterward.
+
+## Windows working-copy transaction
+
+Library synchronization uses the existing local SQLite database at schema version 12. The six Library tables store repository participation, catalog roots, item ancestry, namespace slots, operation evidence, and conflicts. This is separate from Working Directory Update completion rows: Library synchronization does not create a fourth WDU caller or write a WDU completion.
+
+For a remote ordinary-file change, Grace prepares and BLAKE3-verifies downloaded bytes before it acquires the shared repository-root exclusion. Under that exclusion it rereads the live catalog, exact cursor predecessor, durable ancestry, pending operation, and actual target bytes. If those facts remain current, it persists exact pending evidence, publishes through a same-directory atomic move, verifies terminal bytes, commits item, namespace, and operation state in one SQLite transaction, and then compare-and-set advances the cursor under the unchanged catalog version.
+
+If the process stops after atomic filesystem publication but before terminal SQLite state, the next run classifies the durable pending operation against actual target bytes. Exact bytes complete SQLite and the cursor without rewriting the file. Changed target bytes, stale catalog or cursor facts, and mismatched pending evidence fail before a new filesystem effect.
+
+Local publication uses a stable metadata-read, complete-byte-read, metadata-reread boundary. A file that changes during the read is rejected. Grace derives a retry-stable operation ID from the working-copy identity, normalized path, and BLAKE3 hash, so response loss after server acceptance recovers the exact receipt rather than creating a second logical change.
+
+Grace Watch subscribes to repository-scoped `LibraryContentAvailable.v1` notifications only when local synchronization is enabled. The notification is an advisory wake. Watch ignores its cursor and catalog fields as authority and runs the same durable pull after the local cursor. Lost, duplicate, delayed, or restarted delivery cannot advance the cursor or suppress a filesystem event by itself.
 
 ## HTTP, SDK, and generated clients
 
@@ -142,12 +167,13 @@ Library writes work through six named Orleans persistence purposes: control, cha
 
 Authorized immutable reads create no durable grant record. After repository, item, and content authorization, Grace returns the existing short-lived signed read-only download form; the server uses its immutable-content SAS access behind that route.
 
-## Deferred local behavior
+## Product V1 local boundaries
 
-Local synchronization arrives in a later issue. Until then:
+Local synchronization intentionally remains narrow:
 
-- Watch does not subscribe to or apply Library change pages.
-- Working Directory Update never publishes Library content into configured Libraries.
-- No local database records Library cursors, baselines, or item state.
-- No foreground or background command copies files into or out of Libraries.
+- Filesystem events are wake-ups, never publication authority. Stable bytes, accepted server order, current catalog policy, durable local ancestry, pending evidence, and reread target bytes decide effects.
+- Exact operation, path, item, and BLAKE3 evidence suppresses only Grace's own matching Watch echo. A duplicate, delayed, restarted, or merely similar event remains observable.
+- Branch, Connect, and Reference retain their existing Working Directory Update caller, target, and completion contracts. Library synchronization shares only the repository-root exclusion.
+- Save, Reference, DirectoryVersion, Attachment, and WDU completion records are not created for a Library change.
+- Product V1 has no background scheduler, reminder, generalized repair loop, second local database, or per-file actor.
 - The Library catalog remains remote repository state, not per-working-copy configuration.

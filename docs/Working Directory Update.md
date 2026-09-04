@@ -5,7 +5,7 @@
 through Issue #845, and Doctor recovery through Issue #842
 **Quality contract:** Product V1
 **Specification source:** `docs/Working Directory Update.md`
-**Evidence current through:** 2026-08-25, Issue #846 final audit and Issue #1025 on epic head `df28913`
+**Evidence current through:** 2026-09-04, Issue #1039 Library synchronization candidate
 
 ## 1. Outcome and scope
 
@@ -33,12 +33,16 @@ implementation workers one user-safety goal when lower-level details are incompl
 
 ### Library boundary
 
-Configured Libraries and their descendants are excluded from version-control planning and complete-root
-verification using exact path-segment matching. A Library named `shared` owns `shared` and `shared/design.md`, but not
-`shared-old`. The current `RepositoryLibraryActor.IsInLibrary` result can become stale after it returns, so existing WDU
-stale-authority checks remain authoritative. This boundary does not add another Working Directory Update caller,
-selection, completion, or publication path. Product V1 Libraries remain remote-only and do not write local SQLite or
-the filesystem.
+Configured Libraries and their descendants are excluded from version-control planning and complete-root verification
+using exact path-segment matching. A Library named `shared` owns `shared` and `shared/design.md`, but not `shared-old`.
+The current `RepositoryLibraryActor.IsInLibrary` result can become stale after it returns, so existing WDU stale-authority
+checks remain authoritative.
+
+The Windows Library synchronizer uses the same repository-root exclusion while it rereads catalog version, cursor
+predecessor, ancestry, pending evidence, and actual target bytes. A Branch WDU that wins the lease can therefore make
+the later Library catalog check fail before pending evidence or filesystem publication. This sharing does not add a WDU
+caller, selection, target, completion, or durable row. Library item and operation completion use the six Library tables
+in the existing local database; Branch, Watch, and Connect retain the WDU lifecycle below unchanged.
 
 ## 2. Accepted decisions
 
