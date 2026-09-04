@@ -2133,7 +2133,7 @@ type UploadSessionActorTests() =
             finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata", StringComparison.Ordinal)
 
         let replayCleanupEnsureIndex =
-            finalizeBranch.IndexOf("this.EnsureFinalizeCleanupReminder decision finalize metadata", replayGuardIndex, StringComparison.Ordinal)
+            finalizeBranch.IndexOf("this.EnsureFinalizeCleanupReminder decision finalize cleanupDeadline metadata", replayGuardIndex, StringComparison.Ordinal)
 
         let replayReturnIndex = finalizeBranch.IndexOf("return Ok returnValue", replayGuardIndex, StringComparison.Ordinal)
 
@@ -2149,7 +2149,8 @@ type UploadSessionActorTests() =
 
         let applyRetentionIndex = finalizeBranch.IndexOf("this.ApplyEvents retentionEvents", StringComparison.Ordinal)
 
-        let scheduleCleanupIndex = finalizeBranch.IndexOf("this.ScheduleFinalizeCleanupReminder decision finalize metadata", StringComparison.Ordinal)
+        let scheduleCleanupIndex =
+            finalizeBranch.IndexOf("this.ScheduleFinalizeCleanupReminder decision finalize cleanupDeadline metadata", StringComparison.Ordinal)
 
         let dedupeIndex = finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata", StringComparison.Ordinal)
 
@@ -2804,18 +2805,101 @@ type UploadSessionActorTests() =
     /// Verifies that cleanup Reminder State Carries Delete Physical State Operation Id.
     [<Test>]
     member _.CleanupReminderStateCarriesDeletePhysicalStateOperationId() =
-        let reminderState = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-abandon" "corr-abandon"
+        let deleteAt = timestamp + Duration.FromDays(30.0)
+        let reminderState = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-abandon" "corr-abandon" timestamp deleteAt
 
         Assert.That(reminderState.OperationId, Is.EqualTo("op-abandon:cleanup"))
         Assert.That(reminderState.UploadSessionId, Is.EqualTo(sessionId))
         Assert.That(reminderState.RepositoryId, Is.EqualTo(repositoryId))
         Assert.That(reminderState.CorrelationId, Is.EqualTo("corr-abandon"))
+        Assert.That(reminderState.ExpectedStartedAt, Is.EqualTo(timestamp))
+        Assert.That(reminderState.DeleteAt, Is.EqualTo(deleteAt))
 
         let state = ReminderState.UploadSessionPhysicalDeletion reminderState
 
         match state with
         | ReminderState.UploadSessionPhysicalDeletion uploadSessionState -> Assert.That(uploadSessionState.OperationId, Is.EqualTo("op-abandon:cleanup"))
         | _ -> Assert.Fail("Expected UploadSessionPhysicalDeletion reminder state.")
+
+    /// Verifies repository retention is measured from the durable session start rather than terminal completion time.
+    [<Test>]
+    member _.CleanupDeadlineUsesStartedAtAndRepositoryRetention() =
+        Assert.That(UploadSessionActor.calculateCleanupDeadline timestamp 30.0f, Is.EqualTo(timestamp + Duration.FromDays(30.0)))
+
+    /// Verifies an early cleanup reminder is rescheduled to the exact persisted deadline.
+    [<Test>]
+    member _.EarlyCleanupReminderReschedulesToExactDeadline() =
+        let deleteAt = timestamp + Duration.FromDays(30.0)
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                LifecycleState = UploadSessionLifecycleState.RetentionPending
+                StartedAt = timestamp
+                CleanupReminderScheduledAt = Some deleteAt
+                CleanupReminderOperationId = Some "op-finalize:cleanup"
+            }
+
+        let reminder = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-finalize" "corr" timestamp deleteAt
+
+        Assert.That(
+            UploadSessionActor.evaluateCleanupReminder (deleteAt - Duration.FromDays(2.0)) session reminder,
+            Is.EqualTo(UploadSessionActor.RescheduleCleanupReminder(Duration.FromDays(2.0)))
+        )
+
+    /// Verifies stale cleanup reminders cannot delete a different session generation or deadline.
+    [<Test>]
+    member _.StaleCleanupReminderIsIgnored() =
+        let deleteAt = timestamp + Duration.FromDays(30.0)
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                LifecycleState = UploadSessionLifecycleState.RetentionPending
+                StartedAt = timestamp
+                CleanupReminderScheduledAt = Some deleteAt
+                CleanupReminderOperationId = Some "op-finalize:cleanup"
+            }
+
+        let staleStart = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-finalize" "corr" (timestamp - Duration.FromDays(1.0)) deleteAt
+
+        let staleDeadline =
+            UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-finalize" "corr" timestamp (deleteAt + Duration.FromDays(1.0))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(UploadSessionActor.evaluateCleanupReminder deleteAt session staleStart, Is.EqualTo(UploadSessionActor.IgnoreCleanupReminder))
+                Assert.That(UploadSessionActor.evaluateCleanupReminder deleteAt session staleDeadline, Is.EqualTo(UploadSessionActor.IgnoreCleanupReminder)))
+        )
+
+    /// Verifies only the exact due reminder deletes and a duplicate after deletion is ignored.
+    [<Test>]
+    member _.ExactDueCleanupDeletesOnce() =
+        let deleteAt = timestamp + Duration.FromDays(30.0)
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                LifecycleState = UploadSessionLifecycleState.RetentionPending
+                StartedAt = timestamp
+                CleanupReminderScheduledAt = Some deleteAt
+                CleanupReminderOperationId = Some "op-finalize:cleanup"
+            }
+
+        let reminder = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-finalize" "corr" timestamp deleteAt
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(UploadSessionActor.evaluateCleanupReminder deleteAt session reminder, Is.EqualTo(UploadSessionActor.DeleteUploadSessionState))
+
+                Assert.That(
+                    UploadSessionActor.evaluateCleanupReminder deleteAt { session with LifecycleState = UploadSessionLifecycleState.StateDeleted } reminder,
+                    Is.EqualTo(UploadSessionActor.IgnoreCleanupReminder)
+                ))
+        )
 
     /// Verifies that delete Physical State After Finalize Preserves Manifest Evidence And Clears Upload Coordination.
     [<Test>]

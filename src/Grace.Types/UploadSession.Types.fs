@@ -366,9 +366,18 @@ module UploadSession =
     [<GenerateSerializer>]
     type PhysicalDeletionReminderState =
         {
+            [<Id(0u)>]
             UploadSessionId: UploadSessionId
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             OperationId: UploadSessionOperationId
+            [<Id(3u)>]
             DeleteReason: DeleteReason
+            [<Id(4u)>]
             CorrelationId: CorrelationId
+            [<Id(5u)>]
+            ExpectedStartedAt: Instant
+            [<Id(6u)>]
+            DeleteAt: Instant
         }
