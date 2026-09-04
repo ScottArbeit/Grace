@@ -1,10 +1,12 @@
 namespace Grace.CLI.Command
 
 open Grace.CLI.Common
+open Grace.CLI
 open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Library
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Library
@@ -17,8 +19,19 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
-/// Defines the remote-only Library command tree without activating local synchronization participation.
+/// Defines the Library catalog commands and the explicit Windows synchronization tracer.
 module LibraryCommand =
+
+    /// Reports the durable participation and cursor state of one Windows working copy.
+    [<CLIMutable>]
+    type LibrarySynchronizationStatus =
+        {
+            Enabled: bool
+            State: string
+            LibraryCatalogVersion: Guid option
+            CursorEpoch: string option
+            AppliedCursor: string option
+        }
 
     /// Defines options shared by the Library handlers.
     module private Options =
@@ -129,6 +142,124 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Starts the immutable empty-Library baseline and durably enables this Windows working copy.
+    let internal enableSynchronizationHandler (parseResult: ParseResult) : Task<GraceResult<LibrarySynchronizationStatus>> =
+        task {
+            try
+                let parameters =
+                    StartLibraryBootstrapParameters()
+                    |> fun value -> applyScope value parseResult
+
+                match! Libraries.StartBootstrap parameters with
+                | Error error -> return Error error
+                | Ok result ->
+                    let page = result.ReturnValue
+
+                    if page.Items.Length <> 0
+                       || page.NextPageToken.IsSome then
+                        return
+                            Error(GraceError.Create "The Windows two-copy tracer requires an initially empty Library baseline." (getCorrelationId parseResult))
+                    else
+                        let configuration = Current()
+                        let! priorState = LibraryLocalState.readRepositoryState configuration.GraceStatusFile page.LibraryCatalog.RepositoryId
+
+                        let workingCopyId =
+                            priorState
+                            |> Option.map (fun state -> state.WorkingCopyId)
+                            |> Option.defaultWith Guid.NewGuid
+
+                        do!
+                            LibraryLocalState.enable
+                                configuration.GraceStatusFile
+                                page.LibraryCatalog.RepositoryId
+                                workingCopyId
+                                page.LibraryCatalog.Version
+                                page.LibraryCatalog.Libraries
+                                page.CursorEpoch
+                                page.BoundaryCursor
+
+                        configuration.LibrarySynchronizationEnabled <- true
+                        updateConfiguration configuration
+
+                        return
+                            Ok(
+                                GraceReturnValue.Create
+                                    {
+                                        Enabled = true
+                                        State = "current"
+                                        LibraryCatalogVersion = Some page.LibraryCatalog.Version
+                                        CursorEpoch = Some page.CursorEpoch
+                                        AppliedCursor = Some page.BoundaryCursor
+                                    }
+                                    (getCorrelationId parseResult)
+                            )
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Reads synchronization status from configuration and the existing local SQLite database.
+    let internal synchronizationStatusHandler (parseResult: ParseResult) : Task<GraceResult<LibrarySynchronizationStatus>> =
+        task {
+            try
+                let configuration = Current()
+                let! state = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+
+                return
+                    Ok(
+                        GraceReturnValue.Create
+                            {
+                                Enabled = configuration.LibrarySynchronizationEnabled
+                                State =
+                                    state
+                                    |> Option.map (fun value -> value.LifecycleState)
+                                    |> Option.defaultValue "disabled"
+                                LibraryCatalogVersion =
+                                    state
+                                    |> Option.map (fun value -> value.LibraryCatalogVersion)
+                                CursorEpoch =
+                                    state
+                                    |> Option.bind (fun value -> value.CursorEpoch)
+                                AppliedCursor =
+                                    state
+                                    |> Option.bind (fun value -> value.AppliedCursor)
+                            }
+                            (getCorrelationId parseResult)
+                    )
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Pulls after the durable cursor and reports current only when the server has no accepted work to apply.
+    let internal runSynchronizationHandler (parseResult: ParseResult) : Task<GraceResult<LibrarySynchronizationStatus>> =
+        task {
+            try
+                let configuration = Current()
+
+                if not configuration.LibrarySynchronizationEnabled then
+                    return Error(GraceError.Create "Library synchronization is not enabled for this working copy." (getCorrelationId parseResult))
+                else
+                    let! state = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+
+                    match state with
+                    | None -> return Error(GraceError.Create "Library synchronization has no durable local baseline." (getCorrelationId parseResult))
+                    | Some localState ->
+                        let parameters =
+                            GetLibraryChangesParameters()
+                            |> fun value -> applyScope value parseResult
+
+                        parameters.AfterCursor <-
+                            localState.AppliedCursor
+                            |> Option.defaultValue String.Empty
+
+                        match! Libraries.GetChanges parameters with
+                        | Error error -> return Error error
+                        | Ok result when result.ReturnValue.Changes.Length = 0 -> return! synchronizationStatusHandler parseResult
+                        | Ok _ ->
+                            return Error(GraceError.Create "The accepted change page requires the filesystem publication stage." (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
     /// Dispatches `grace library get <path>` and renders the standard Grace result envelope.
     type GetLibrary() =
         inherit AsynchronousCommandLineAction()
@@ -173,7 +304,18 @@ module LibraryCommand =
                 return renderOutput parseResult result
             }
 
-    /// Builds the remote-only `grace library` command tree accepted by Issue #1038.
+    /// Dispatches one typed synchronization handler through the standard Grace output envelope.
+    type SynchronizationAction<'T>(handler: ParseResult -> Task<GraceResult<'T>>) =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs the selected synchronization action.
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) =
+            task {
+                let! result = handler parseResult
+                return renderOutput parseResult result
+            }
+
+    /// Builds the `grace library` catalog and nested synchronization command tree.
     let Build =
         let addScopeOptions (command: Command) =
             command
@@ -222,5 +364,26 @@ module LibraryCommand =
         removeCommand.Arguments.Add Options.libraryPath
         removeCommand.Action <- RemoveLibrary()
         libraryCommand.Subcommands.Add removeCommand
+
+        let syncCommand = Command("sync", "Synchronize configured Libraries on this Windows working copy.")
+
+        let enableCommand =
+            Command("enable", "Enable Library synchronization from an immutable empty baseline.")
+            |> addScopeOptions
+
+        enableCommand.Action <- SynchronizationAction<LibrarySynchronizationStatus>(enableSynchronizationHandler)
+        syncCommand.Subcommands.Add enableCommand
+
+        let runCommand =
+            Command("run", "Run one durable Library synchronization pass.")
+            |> addScopeOptions
+
+        runCommand.Action <- SynchronizationAction<LibrarySynchronizationStatus>(runSynchronizationHandler)
+        syncCommand.Subcommands.Add runCommand
+
+        let statusCommand = Command("status", "Report durable Library synchronization status.")
+        statusCommand.Action <- SynchronizationAction<LibrarySynchronizationStatus>(synchronizationStatusHandler)
+        syncCommand.Subcommands.Add statusCommand
+        libraryCommand.Subcommands.Add syncCommand
 
         libraryCommand

@@ -23,7 +23,7 @@ module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let SchemaVersion = "11"
+    let SchemaVersion = "12"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -270,6 +270,20 @@ module LocalStateDb =
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
             "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_sha256_hash TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, quarantined_at_unix_ticks INTEGER, quarantine_reason TEXT);"
             "CREATE TABLE IF NOT EXISTS watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_sha256_hash TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 0));"
+            "CREATE TABLE IF NOT EXISTS library_repository_state (repository_id TEXT PRIMARY KEY, working_copy_id TEXT NOT NULL, library_catalog_version TEXT NOT NULL, cursor_epoch TEXT NULL, applied_cursor TEXT NULL, predecessor_cursor TEXT NULL, service_floor_cursor TEXT NULL, participation_enabled INTEGER NOT NULL CHECK (participation_enabled IN (0,1)), lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('disabled','bootstrapping','catchingUp','current','blocked','divergent','conflict','rebaselineRequired','localIncomplete','failed')), last_completed_at TEXT NULL, updated_at TEXT NOT NULL, CHECK ((applied_cursor IS NULL AND cursor_epoch IS NULL) OR (applied_cursor IS NOT NULL AND cursor_epoch IS NOT NULL)));"
+            "CREATE TABLE IF NOT EXISTS libraries (repository_id TEXT NOT NULL REFERENCES library_repository_state(repository_id) ON DELETE CASCADE, normalized_path TEXT NOT NULL, library_catalog_version TEXT NOT NULL, PRIMARY KEY (repository_id, normalized_path));"
+            "CREATE TABLE IF NOT EXISTS library_items (repository_id TEXT NOT NULL REFERENCES library_repository_state(repository_id) ON DELETE CASCADE, item_id TEXT NOT NULL, item_kind TEXT NOT NULL CHECK (item_kind IN ('file','directory')), item_state TEXT NOT NULL CHECK (item_state IN ('live','tombstoned')), parent_kind TEXT NULL CHECK (parent_kind IN ('library','item')), library_path TEXT NULL, parent_item_id TEXT NULL, name TEXT NULL, normalized_path TEXT NULL, namespace_version TEXT NULL, slot_version TEXT NULL, content_version_id TEXT NULL, blake3_hash TEXT NULL, sha256_hash TEXT NULL, content_size INTEGER NULL CHECK (content_size >= 0), deleted_at TEXT NULL, deleted_by TEXT NULL, delete_cursor TEXT NULL, last_mutation_cursor TEXT NOT NULL, library_catalog_version TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (repository_id, item_id), CHECK ((parent_kind = 'library' AND library_path IS NOT NULL AND parent_item_id IS NULL) OR (parent_kind = 'item' AND library_path IS NULL AND parent_item_id IS NOT NULL) OR parent_kind IS NULL), CHECK ((item_state = 'live' AND parent_kind IS NOT NULL AND name IS NOT NULL AND normalized_path IS NOT NULL AND namespace_version IS NOT NULL AND slot_version IS NOT NULL AND deleted_at IS NULL AND deleted_by IS NULL AND delete_cursor IS NULL AND ((item_kind = 'file' AND content_version_id IS NOT NULL AND blake3_hash IS NOT NULL AND sha256_hash IS NOT NULL AND content_size IS NOT NULL) OR (item_kind = 'directory' AND content_version_id IS NULL AND blake3_hash IS NULL AND sha256_hash IS NULL AND content_size IS NULL))) OR (item_state = 'tombstoned' AND parent_kind IS NULL AND library_path IS NULL AND parent_item_id IS NULL AND name IS NULL AND normalized_path IS NULL AND slot_version IS NULL AND content_version_id IS NULL AND blake3_hash IS NULL AND sha256_hash IS NULL AND content_size IS NULL AND deleted_at IS NOT NULL AND deleted_by IS NOT NULL AND delete_cursor IS NOT NULL)));"
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_library_items_live_path ON library_items(repository_id, normalized_path) WHERE item_state = 'live';"
+            "CREATE TABLE IF NOT EXISTS library_namespace_slots (repository_id TEXT NOT NULL REFERENCES library_repository_state(repository_id) ON DELETE CASCADE, normalized_path TEXT NOT NULL, parent_key TEXT NOT NULL, normalized_name TEXT NOT NULL, slot_version TEXT NOT NULL, slot_state TEXT NOT NULL CHECK (slot_state IN ('vacant','occupied')), occupant_item_id TEXT NULL, last_mutation_cursor TEXT NOT NULL, library_catalog_version TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (repository_id, normalized_path), CHECK ((slot_state = 'occupied' AND occupant_item_id IS NOT NULL) OR (slot_state = 'vacant' AND occupant_item_id IS NULL)));"
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_library_namespace_slots_occupant ON library_namespace_slots(repository_id, occupant_item_id) WHERE slot_state = 'occupied';"
+            "CREATE INDEX IF NOT EXISTS ix_library_namespace_slots_parent ON library_namespace_slots(repository_id, parent_key, normalized_name);"
+            "CREATE TABLE IF NOT EXISTS library_operations (repository_id TEXT NOT NULL REFERENCES library_repository_state(repository_id) ON DELETE CASCADE, operation_id TEXT NOT NULL, direction TEXT NOT NULL CHECK (direction IN ('local','remote','bootstrap')), operation_kind TEXT NOT NULL CHECK (operation_kind IN ('createFile','createDirectory','updateContent','rename','move','delete','bootstrapPage','cursorAdvance')), operation_state TEXT NOT NULL CHECK (operation_state IN ('observed','prepared','pendingServer','serverAccepted','staged','pendingFilesystem','filesystemPublished','terminal','acknowledged','blocked','conflict','failed')), request_hash TEXT NOT NULL, library_catalog_version TEXT NOT NULL, item_id TEXT NULL, source_path TEXT NULL, target_path TEXT NULL, prepared_content_id TEXT NULL, staging_path TEXT NULL, predecessor_cursor TEXT NULL, server_cursor TEXT NULL, cursor_epoch TEXT NULL, expected_blake3 TEXT NULL, expected_sha256 TEXT NULL, expected_size INTEGER NULL CHECK (expected_size >= 0), attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0), interrupted_at TEXT NULL, terminal_at TEXT NULL, watch_echo_at TEXT NULL, watch_echo_pending INTEGER NOT NULL DEFAULT 0 CHECK (watch_echo_pending IN (0,1)), reason_code TEXT NULL, last_error_code TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (repository_id, operation_id));"
+            "CREATE INDEX IF NOT EXISTS ix_library_operations_pending ON library_operations(repository_id, operation_state, updated_at);"
+            "CREATE INDEX IF NOT EXISTS ix_library_operations_cursor ON library_operations(repository_id, server_cursor);"
+            "CREATE INDEX IF NOT EXISTS ix_library_operations_echo ON library_operations(repository_id, target_path, expected_blake3) WHERE watch_echo_pending = 1;"
+            "CREATE TABLE IF NOT EXISTS library_conflicts (repository_id TEXT NOT NULL REFERENCES library_repository_state(repository_id) ON DELETE CASCADE, conflict_item_id TEXT NOT NULL, source_operation_id TEXT NOT NULL, source_item_id TEXT NOT NULL, canonical_item_id TEXT NOT NULL, source_content_version_id TEXT NULL, base_content_version_id TEXT NULL, conflict_path TEXT NOT NULL, accepted_cursor TEXT NOT NULL, created_at TEXT NOT NULL, resolved_locally_at TEXT NULL, PRIMARY KEY (repository_id, conflict_item_id));"
+            "CREATE INDEX IF NOT EXISTS ix_library_conflicts_source ON library_conflicts(repository_id, source_operation_id);"
+            "CREATE INDEX IF NOT EXISTS ix_library_conflicts_path ON library_conflicts(repository_id, conflict_path);"
         |]
 
     let private requiredTableNames =
@@ -285,6 +299,12 @@ module LocalStateDb =
             "object_cache_directory_files"
             "watch_journal"
             "watch_lifecycle_events"
+            "library_repository_state"
+            "libraries"
+            "library_items"
+            "library_namespace_slots"
+            "library_operations"
+            "library_conflicts"
         |]
 
     let private requiredIndexNames =
@@ -299,6 +319,14 @@ module LocalStateDb =
             "ix_object_cache_files_path_hash"
             "ux_working_directory_update_completions_pending"
             "ux_working_directory_update_completions_terminal_caller"
+            "ux_library_items_live_path"
+            "ux_library_namespace_slots_occupant"
+            "ix_library_namespace_slots_parent"
+            "ix_library_operations_pending"
+            "ix_library_operations_cursor"
+            "ix_library_operations_echo"
+            "ix_library_conflicts_source"
+            "ix_library_conflicts_path"
         |]
 
     /// Models read only local state inspection values passed between the parser and local state db handlers.

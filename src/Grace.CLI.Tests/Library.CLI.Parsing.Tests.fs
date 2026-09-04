@@ -7,11 +7,11 @@ open Grace.Types.Library
 open NUnit.Framework
 open System
 
-/// Verifies the remote-only library CLI and SDK surface accepted by Issue #1038.
+/// Verifies the Library catalog and Windows synchronization tracer command surface.
 [<Parallelizable(ParallelScope.All)>]
 module LibraryCliParsingTests =
 
-    /// Verifies `grace library` exposes exactly the four accepted remote catalog operations.
+    /// Verifies `grace library` exposes the remote catalog operations and nested synchronization tracer.
     [<Test>]
     let ``library exposes only remote catalog operations`` () =
         GraceCommand
@@ -50,6 +50,20 @@ module LibraryCliParsingTests =
                 .Count
             |> should equal 0
 
+        for synchronizationOperation in [| "enable"; "run"; "status" |] do
+            GraceCommand
+                .rootCommand
+                .Parse(
+                    [|
+                        "library"
+                        "sync"
+                        synchronizationOperation
+                    |]
+                )
+                .Errors
+                .Count
+            |> should equal 0
+
         for unsupported in
             [|
                 "enable"
@@ -65,6 +79,15 @@ module LibraryCliParsingTests =
                 .Errors
                 .Count
             |> should be (greaterThan 0)
+
+        GraceCommand
+            .rootCommand
+            .Parse(
+                [| "library"; "sync"; "disable" |]
+            )
+            .Errors
+            .Count
+        |> should be (greaterThan 0)
 
         for staleAlias in [| "sync"; "synchronize"; "libraries" |] do
             GraceCommand
