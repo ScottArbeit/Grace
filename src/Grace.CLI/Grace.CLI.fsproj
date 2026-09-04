@@ -35,6 +35,7 @@
 		<Compile Include="Command\Common.CLI.fs" />
 		<Compile Include="Command\WorkingDirectoryUpdate.Coordination.CLI.fs" />
 		<Compile Include="Command\LibraryFilesystem.Windows.CLI.fs" />
+		<Compile Include="Command\LibraryManifestUpload.CLI.fs" />
 		<Compile Include="Command\WorkingDirectoryUpdate.CLI.fs" />
 		<Compile Include="Command\Auth.CLI.fs" />
 		<Compile Include="Command\Config.CLI.fs" />

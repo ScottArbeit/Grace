@@ -35,6 +35,7 @@
     <Compile Include="LocalStateDb.Tests.fs" />
 		<Compile Include="LibraryLocalState.Tests.fs" />
 		<Compile Include="LibraryFilesystem.Windows.Tests.fs" />
+		<Compile Include="LibrarySynchronization.Coordination.Tests.fs" />
     <Compile Include="History.CLI.Tests.fs" />
     <Compile Include="WorkItem.CLI.Parsing.Tests.fs" />
     <Compile Include="WorkItem.CLI.Tests.fs" />

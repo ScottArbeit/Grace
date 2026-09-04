@@ -17,6 +17,8 @@ open System.CommandLine
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 
@@ -357,7 +359,7 @@ module LibraryCommand =
             | Some operation when operation.OperationState = "filesystemPublished" -> ()
             | _ -> invalidOp "Remote Library operation lost its durable pending evidence."
 
-            do! LibraryLocalState.completeRemoteFile configuration.GraceStatusFile configuration.RepositoryId change
+            do! LibraryLocalState.completeAcceptedFile configuration.GraceStatusFile configuration.RepositoryId change
 
             let! advanced =
                 LibraryLocalState.tryAdvanceCursor
@@ -373,6 +375,259 @@ module LibraryCommand =
 
             if not advanced then
                 invalidOp "Terminal Library state could not CAS-advance its exact accepted cursor."
+        }
+
+    /// Derives a retry-stable operation identity from working-copy, path, and complete-byte identity.
+    let private localOperationId workingCopyId normalizedPath blake3 =
+        let bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"Grace.Library.local.v1:{workingCopyId:D}:{normalizedPath}:{blake3}"))
+        Guid(bytes[0..15])
+
+    /// Commits one accepted local receipt to terminal SQLite state and then advances its exact cursor predecessor.
+    let private completeLocalReceipt
+        (configuration: GraceConfiguration)
+        (state: LibraryLocalState.RepositoryState)
+        (operationState: string)
+        (change: LibraryChangeDto)
+        =
+        task {
+            if operationState <> "terminal" then
+                do!
+                    LibraryLocalState.markServerAccepted
+                        configuration.GraceStatusFile
+                        configuration.RepositoryId
+                        change.OperationId
+                        state.LibraryCatalogVersion
+                        change.Cursor
+
+                do! LibraryLocalState.completeAcceptedFile configuration.GraceStatusFile configuration.RepositoryId change
+
+            let! advanced =
+                LibraryLocalState.tryAdvanceCursor
+                    configuration.GraceStatusFile
+                    configuration.RepositoryId
+                    change.OperationId
+                    state.LibraryCatalogVersion
+                    (state.CursorEpoch
+                     |> Option.defaultValue String.Empty)
+                    (state.AppliedCursor
+                     |> Option.defaultValue String.Empty)
+                    change.Cursor
+
+            if not advanced then
+                invalidOp "Accepted local publication could not CAS-advance its exact cursor."
+        }
+
+    /// Replays an accepted operation receipt before temporary upload state or changed namespace state is needed.
+    let private tryRecoverLocalPublication
+        (parseResult: ParseResult)
+        (configuration: GraceConfiguration)
+        (state: LibraryLocalState.RepositoryState)
+        operationId
+        =
+        task {
+            let! recovery = LibraryLocalState.readRecoverableLocalOperation configuration.GraceStatusFile configuration.RepositoryId operationId
+
+            match recovery with
+            | None -> return false
+            | Some operation when operation.OperationState = "terminal" ->
+                let cursor =
+                    operation.ServerCursor
+                    |> Option.defaultWith (fun () -> invalidOp "Terminal local publication has no accepted cursor evidence.")
+
+                let! advanced =
+                    LibraryLocalState.tryAdvanceCursor
+                        configuration.GraceStatusFile
+                        configuration.RepositoryId
+                        operationId
+                        state.LibraryCatalogVersion
+                        (state.CursorEpoch
+                         |> Option.defaultValue String.Empty)
+                        (state.AppliedCursor
+                         |> Option.defaultValue String.Empty)
+                        cursor
+
+                if not advanced then
+                    invalidOp "Terminal local publication could not resume its exact cursor CAS."
+
+                return true
+            | Some operation ->
+                let parameters = GetLibraryOperationParameters()
+                applyScope parameters parseResult |> ignore
+                parameters.OperationId <- operationId
+
+                match! Libraries.GetOperation parameters with
+                | Error _ when operation.OperationState = "pendingServer" -> return false
+                | Error error -> return invalidOp error.Error
+                | Ok receipt ->
+                    let change =
+                        receipt.ReturnValue.Change
+                        |> Option.defaultWith (fun () -> invalidOp "Accepted local operation receipt returned no change.")
+
+                    do! completeLocalReceipt configuration state operation.OperationState change
+                    return true
+        }
+
+    /// Publishes the first stable local file delta through the unchanged prepared-content and change routes.
+    let private publishFirstLocalChange (parseResult: ParseResult) (configuration: GraceConfiguration) (state: LibraryLocalState.RepositoryState) =
+        task {
+            let catalogParameters =
+                GetLibraryCatalogParameters()
+                |> fun value -> applyScope value parseResult
+
+            let! catalogResult = Libraries.GetCatalog catalogParameters
+
+            let catalog =
+                catalogResult
+                |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+            if catalog.ReturnValue.Version
+               <> state.LibraryCatalogVersion then
+                invalidOp "Library catalog changed before local publication."
+
+            let! ancestry = LibraryLocalState.readLiveFileAncestry configuration.GraceStatusFile configuration.RepositoryId
+
+            let ancestryByPath =
+                ancestry
+                |> Array.map (fun item -> item.NormalizedPath, item)
+                |> Map.ofArray
+
+            let candidate =
+                catalog.ReturnValue.Libraries
+                |> Array.collect (fun library ->
+                    let directory = Path.Combine(configuration.RootDirectory, library.Replace('/', Path.DirectorySeparatorChar))
+
+                    if Directory.Exists(directory) then
+                        Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
+                    else
+                        Array.empty)
+                |> Array.sort
+                |> Array.tryPick (fun path ->
+                    let normalized =
+                        Path
+                            .GetRelativePath(configuration.RootDirectory, path)
+                            .Replace(Path.DirectorySeparatorChar, '/')
+
+                    let content = LibraryFilesystem.stableRead path
+
+                    match ancestryByPath |> Map.tryFind normalized with
+                    | Some prior when prior.Blake3Hash = content.Blake3Hash -> None
+                    | prior -> Some(path, normalized, content, prior))
+
+            match candidate with
+            | None -> return false
+            | Some (path, normalizedPath, content, prior) ->
+                let operationId = localOperationId state.WorkingCopyId normalizedPath content.Blake3Hash
+                let! recovered = tryRecoverLocalPublication parseResult configuration state operationId
+
+                if recovered then
+                    return true
+                else
+
+                    let changeKind = if prior.IsSome then ChangeKind.UpdateContent else ChangeKind.CreateFile
+                    let fileName = Path.GetFileName(path)
+
+                    let libraryPath =
+                        catalog.ReturnValue.Libraries
+                        |> Array.find (fun library -> normalizedPath.StartsWith(library + "/", StringComparison.OrdinalIgnoreCase))
+
+                    let parent = { Kind = "root"; LibraryPath = Some libraryPath; ItemId = None }
+                    let slotParameters = GetLibraryNamespaceSlotParameters()
+                    applyScope slotParameters parseResult |> ignore
+                    slotParameters.Parent <- Some parent
+                    slotParameters.Name <- fileName
+                    let! slotResult = Libraries.GetNamespaceSlot slotParameters
+
+                    let slot =
+                        slotResult
+                        |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+                    do!
+                        LibraryLocalState.recordPending
+                            configuration.GraceStatusFile
+                            configuration.RepositoryId
+                            operationId
+                            LibraryLocalState.OperationDirection.Local
+                            changeKind
+                            (operationId.ToString("N"))
+                            state.LibraryCatalogVersion
+                            (prior |> Option.map (fun item -> item.ItemId))
+                            (Some normalizedPath)
+                            (Some normalizedPath)
+                            None
+                            None
+                            state.AppliedCursor
+                            None
+                            state.CursorEpoch
+                            (Some content.Blake3Hash)
+                            (Some content.Sha256Hash)
+                            (Some content.Size)
+
+                    let prepare = PrepareLibraryContentParameters()
+                    applyScope prepare parseResult |> ignore
+                    prepare.OperationId <- operationId
+                    prepare.Blake3Hash <- content.Blake3Hash
+                    prepare.Sha256Hash <- content.Sha256Hash
+                    prepare.Size <- content.Size
+                    let! preparedResult = Libraries.PrepareContent prepare
+
+                    let prepared =
+                        preparedResult
+                        |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+                    let stagingPath = Path.Combine(configuration.GraceDirectory, $"library-upload-{operationId:N}.tmp")
+
+                    try
+                        File.WriteAllBytes(stagingPath, content.Bytes)
+
+                        let! upload =
+                            LibraryManifestUpload.uploadPrepared
+                                configuration
+                                operationId
+                                prepared.ReturnValue
+                                normalizedPath
+                                stagingPath
+                                (getCorrelationId parseResult)
+
+                        upload
+                        |> Result.defaultWith (fun error -> invalidOp error.Error)
+                        |> ignore
+
+                        let submit = SubmitLibraryChangeParameters()
+                        applyScope submit parseResult |> ignore
+                        submit.OperationId <- operationId
+                        submit.LibraryCatalogVersion <- state.LibraryCatalogVersion
+                        submit.ChangeKind <- changeKind
+                        submit.ItemKind <- ItemKind.File
+                        submit.PreparedContentId <- Nullable prepared.ReturnValue.PreparedContentId
+
+                        match prior with
+                        | None ->
+                            submit.CreationSlotExpectation <-
+                                Some
+                                    {
+                                        Parent = parent
+                                        Name = fileName
+                                        ExpectedSlotVersion = slot.ReturnValue.SlotVersion
+                                        ExpectedState = slot.ReturnValue.State
+                                    }
+                        | Some item ->
+                            submit.ItemId <- Nullable item.ItemId
+                            submit.ContentPrecondition <- Some { ItemId = item.ItemId; ExpectedContentVersionId = item.ContentVersionId }
+
+                        let! receiptResult = Libraries.SubmitChange submit
+
+                        let receipt =
+                            receiptResult
+                            |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+                        let change =
+                            receipt.ReturnValue.Change
+                            |> Option.defaultWith (fun () -> invalidOp "Accepted local publication returned no change.")
+
+                        do! completeLocalReceipt configuration state "pendingServer" change
+                        return true
+                    finally
+                        if File.Exists(stagingPath) then File.Delete(stagingPath)
         }
 
     /// Pulls after the durable cursor and applies accepted ordinary-file changes in repository order.
@@ -407,6 +662,10 @@ module LibraryCommand =
                                     invalidOp "The Windows two-copy tracer accepts ordinary file create and content-update changes only."
 
                                 do! applyRemoteFileChange parseResult configuration localState change
+
+                            let! refreshed = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+                            let! _ = publishFirstLocalChange parseResult configuration (refreshed |> Option.defaultValue localState)
+                            ()
 
                             return! synchronizationStatusHandler parseResult
             with

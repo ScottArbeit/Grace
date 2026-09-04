@@ -43,6 +43,9 @@ module LibraryLocalState =
             LibraryCatalogVersion: Guid
         }
 
+    /// Carries one local publication that can resume from server receipt or terminal SQLite evidence.
+    type RecoverableLocalOperation = { OperationId: Guid; OperationState: string; ServerCursor: string option; LibraryCatalogVersion: Guid }
+
     /// Carries the durable local ancestry used to reject an unobserved target edit.
     type ItemAncestry = { ItemId: Guid; NormalizedPath: string; Blake3Hash: string; NamespaceVersion: Guid; ContentVersionId: Guid }
 
@@ -243,6 +246,37 @@ module LibraryLocalState =
                             ExpectedSha256 = reader.GetString(6)
                             ExpectedSize = reader.GetInt64(7)
                             LibraryCatalogVersion = Guid.Parse(reader.GetString(8))
+                        }
+            else
+                return None
+        }
+
+    /// Reads retryable local publication evidence without treating a filesystem observation as server authority.
+    let readRecoverableLocalOperation (dbPath: string) (repositoryId: Guid) (operationId: Guid) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT operation_id, operation_state, server_cursor, library_catalog_version FROM library_operations WHERE repository_id = $repository_id AND operation_id = $operation_id AND direction = 'local' AND operation_state IN ('pendingServer','serverAccepted','terminal');"
+
+            command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+            |> ignore
+
+            command.Parameters.AddWithValue("$operation_id", operationId.ToString("D"))
+            |> ignore
+
+            use reader = command.ExecuteReader()
+
+            if reader.Read() then
+                return
+                    Some
+                        {
+                            OperationId = Guid.Parse(reader.GetString(0))
+                            OperationState = reader.GetString(1)
+                            ServerCursor = optionalText reader 2
+                            LibraryCatalogVersion = Guid.Parse(reader.GetString(3))
                         }
             else
                 return None
@@ -512,7 +546,7 @@ module LibraryLocalState =
         }
 
     /// Atomically projects one accepted live file and marks its exact operation terminal with Watch-echo evidence.
-    let completeRemoteFile (dbPath: string) (repositoryId: Guid) (change: LibraryChangeDto) =
+    let completeAcceptedFile (dbPath: string) (repositoryId: Guid) (change: LibraryChangeDto) =
         task {
             let namespaceValue =
                 change.Namespace
@@ -620,7 +654,7 @@ module LibraryLocalState =
 
                 let parentKey =
                     match parent.Kind, parent.LibraryPath, parent.ItemId with
-                    | "library", Some path, _ -> $"library:{path}"
+                    | "root", Some path, _ -> $"root:{path}"
                     | "item", _, Some itemId -> $"item:{itemId:D}"
                     | _ -> invalidOp "Library namespace parent evidence is incomplete."
 

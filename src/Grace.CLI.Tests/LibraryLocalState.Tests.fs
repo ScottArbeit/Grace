@@ -192,7 +192,7 @@ module LibraryLocalStateTests =
                     Namespace =
                         Some
                             {
-                                Parent = { Kind = "library"; LibraryPath = Some "shared"; ItemId = None }
+                                Parent = { Kind = "root"; LibraryPath = Some "shared"; ItemId = None }
                                 Name = "file.txt"
                                 NormalizedPath = "shared/file.txt"
                                 NamespaceVersion = Guid.NewGuid()
@@ -217,7 +217,7 @@ module LibraryLocalStateTests =
             LibraryLocalState.markFilesystemPublished dbPath repositoryId operationId catalogVersion
             |> fun operation -> operation.GetAwaiter().GetResult()
 
-            LibraryLocalState.completeRemoteFile dbPath repositoryId change
+            LibraryLocalState.completeAcceptedFile dbPath repositoryId change
             |> fun operation -> operation.GetAwaiter().GetResult()
 
             LibraryLocalState.tryAdvanceCursor dbPath repositoryId operationId catalogVersion "epoch-1" "cursor-0" "cursor-1"
