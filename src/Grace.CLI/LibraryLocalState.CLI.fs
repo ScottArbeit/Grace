@@ -343,6 +343,28 @@ module LibraryLocalState =
             return items.ToArray()
         }
 
+    /// Reads the immutable Library roots copied into one enabled Watch lifetime snapshot.
+    let readEnabledLibraryRoots (dbPath: string) (repositoryId: Guid) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT l.normalized_path FROM libraries l JOIN library_repository_state r ON r.repository_id = l.repository_id WHERE l.repository_id = $repository_id AND r.participation_enabled = 1 ORDER BY l.normalized_path;"
+
+            command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+            |> ignore
+
+            use reader = command.ExecuteReader()
+            let roots = ResizeArray<string>()
+
+            while reader.Read() do
+                roots.Add(reader.GetString(0))
+
+            return roots.ToArray()
+        }
+
     /// Persists deterministic operation evidence before a server or filesystem effect can begin.
     let recordPending
         (dbPath: string)
@@ -393,7 +415,7 @@ module LibraryLocalState =
                 use operation = connection.CreateCommand()
 
                 operation.CommandText <-
-                    "INSERT INTO library_operations (repository_id, operation_id, direction, operation_kind, operation_state, request_hash, library_catalog_version, item_id, source_path, target_path, prepared_content_id, staging_path, predecessor_cursor, server_cursor, cursor_epoch, expected_blake3, expected_sha256, expected_size, created_at, updated_at) VALUES ($repository_id, $operation_id, $direction, $operation_kind, $operation_state, $request_hash, $catalog_version, $item_id, $source_path, $target_path, $prepared_content_id, $staging_path, $predecessor_cursor, $server_cursor, $cursor_epoch, $expected_blake3, $expected_sha256, $expected_size, $created_at, $updated_at) ON CONFLICT(repository_id, operation_id) DO NOTHING;"
+                    "INSERT INTO library_operations (repository_id, operation_id, direction, operation_kind, operation_state, request_hash, library_catalog_version, item_id, source_path, target_path, prepared_content_id, staging_path, predecessor_cursor, server_cursor, cursor_epoch, expected_blake3, expected_sha256, expected_size, created_at, updated_at) VALUES ($repository_id, $operation_id, $direction, $operation_kind, $operation_state, $request_hash, $catalog_version, $item_id, $source_path, $target_path, $prepared_content_id, $staging_path, $predecessor_cursor, $server_cursor, $cursor_epoch, $expected_blake3, $expected_sha256, $expected_size, $created_at, $updated_at) ON CONFLICT(repository_id, operation_id) DO UPDATE SET updated_at = library_operations.updated_at WHERE library_operations.direction = excluded.direction AND library_operations.operation_kind = excluded.operation_kind AND library_operations.request_hash = excluded.request_hash AND library_operations.library_catalog_version = excluded.library_catalog_version AND library_operations.item_id IS excluded.item_id AND library_operations.source_path IS excluded.source_path AND library_operations.target_path IS excluded.target_path AND library_operations.prepared_content_id IS excluded.prepared_content_id AND library_operations.staging_path IS excluded.staging_path AND library_operations.predecessor_cursor IS excluded.predecessor_cursor AND library_operations.server_cursor IS excluded.server_cursor AND library_operations.cursor_epoch IS excluded.cursor_epoch AND library_operations.expected_blake3 IS excluded.expected_blake3 AND library_operations.expected_sha256 IS excluded.expected_sha256 AND library_operations.expected_size IS excluded.expected_size;"
 
                 let addOptional (name: string) (value: string option) =
                     operation.Parameters.AddWithValue(name, parameterValue value)
@@ -455,7 +477,8 @@ module LibraryLocalState =
                 operation.Parameters.AddWithValue("$updated_at", now)
                 |> ignore
 
-                operation.ExecuteNonQuery() |> ignore)
+                if operation.ExecuteNonQuery() <> 1 then
+                    invalidOp "Library operation identity collided with different immutable pending evidence.")
         }
 
     /// Marks one exact operation terminal without item projection, used by cursor-only and focused boundary flows.
@@ -801,4 +824,52 @@ module LibraryLocalState =
                     |> ignore
 
                     command.ExecuteNonQuery() = 1)
+        }
+
+    /// Resolves and consumes one unambiguous exact remote Watch echo from durable operation, item, path, and BLAKE3 evidence.
+    let tryConsumeWatchEchoForFile (dbPath: string) (repositoryId: Guid) (normalizedPath: string) (blake3Hash: string) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+
+            return
+                inTransaction connection (fun () ->
+                    use select = connection.CreateCommand()
+
+                    select.CommandText <-
+                        "SELECT operation_id, item_id FROM library_operations WHERE repository_id = $repository_id AND target_path = $target_path AND expected_blake3 = $blake3 AND direction = 'remote' AND operation_state IN ('terminal','acknowledged') AND watch_echo_pending = 1 ORDER BY created_at DESC LIMIT 2;"
+
+                    select.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+                    |> ignore
+
+                    select.Parameters.AddWithValue("$target_path", normalizedPath)
+                    |> ignore
+
+                    select.Parameters.AddWithValue("$blake3", blake3Hash)
+                    |> ignore
+
+                    use reader = select.ExecuteReader()
+                    let matches = ResizeArray<Guid * Guid>()
+
+                    while reader.Read() do
+                        matches.Add(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)))
+
+                    reader.Close()
+
+                    if matches.Count <> 1 then
+                        false
+                    else
+                        let operationId, itemId = matches[0]
+                        use consume = connection.CreateCommand()
+
+                        consume.CommandText <-
+                            "UPDATE library_operations SET watch_echo_pending = 0, watch_echo_at = $observed_at, updated_at = $observed_at WHERE repository_id = $repository_id AND operation_id = $operation_id AND item_id = $item_id AND target_path = $target_path AND expected_blake3 = $blake3 AND direction = 'remote' AND operation_state IN ('terminal','acknowledged') AND watch_echo_pending = 1;"
+
+                        consume.Parameters.AddWithValue("$observed_at", timestamp ()) |> ignore
+                        consume.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D")) |> ignore
+                        consume.Parameters.AddWithValue("$operation_id", operationId.ToString("D")) |> ignore
+                        consume.Parameters.AddWithValue("$item_id", itemId.ToString("D")) |> ignore
+                        consume.Parameters.AddWithValue("$target_path", normalizedPath) |> ignore
+                        consume.Parameters.AddWithValue("$blake3", blake3Hash) |> ignore
+                        consume.ExecuteNonQuery() = 1)
         }

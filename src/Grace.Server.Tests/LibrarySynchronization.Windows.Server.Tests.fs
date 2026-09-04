@@ -34,6 +34,10 @@ module LibrarySynchronizationWindowsServerTests =
         let cancellation = new CancellationTokenSource()
         let mutable dropNextAcceptedSubmit = 0
         let mutable droppedAcceptedSubmitCount = 0
+        let mutable submitRequestCount = 0
+        let mutable manifestUploadCount = 0
+        let manifestCallbackLock = obj ()
+        let mutable afterNextManifestUpload: (unit -> unit) option = None
 
         /// Maps short HttpListener-safe aliases back to the unchanged signed Library read grants.
         let readGrantTokens = ConcurrentDictionary<string, string>(StringComparer.Ordinal)
@@ -95,8 +99,26 @@ module LibrarySynchronizationWindowsServerTests =
                         forward.Content <- new ByteArrayContent(buffer.ToArray())
 
                     copyRequestHeaders context.Request forward
+
+                    if context.Request.Url.AbsolutePath.Equals("/libraries/changes/submit", StringComparison.OrdinalIgnoreCase) then
+                        Interlocked.Increment(&submitRequestCount) |> ignore
+
                     use! response = client.SendAsync(forward, HttpCompletionOption.ResponseContentRead, cancellation.Token)
                     let! originalResponseBytes = response.Content.ReadAsByteArrayAsync(cancellation.Token)
+
+                    if
+                        response.IsSuccessStatusCode
+                        && context.Request.Url.AbsolutePath.Equals("/storage/finalizeManifestUpload", StringComparison.OrdinalIgnoreCase)
+                    then
+                        Interlocked.Increment(&manifestUploadCount) |> ignore
+
+                        let callback =
+                            lock manifestCallbackLock (fun () ->
+                                let callback = afterNextManifestUpload
+                                afterNextManifestUpload <- None
+                                callback)
+
+                        callback |> Option.iter (fun action -> action ())
 
                     let responseBytes =
                         if
@@ -198,6 +220,15 @@ module LibrarySynchronizationWindowsServerTests =
 
         /// Reports accepted submit responses deliberately hidden from the publishing CLI process.
         member _.DroppedAcceptedSubmitCount = Volatile.Read(&droppedAcceptedSubmitCount)
+
+        /// Mutates local test state after the next successful manifest upload but before the CLI receives that response.
+        member _.AfterNextManifestUpload(action) = lock manifestCallbackLock (fun () -> afterNextManifestUpload <- Some action)
+
+        /// Reports Library submit requests forwarded to the accepted server route.
+        member _.SubmitRequestCount = Volatile.Read(&submitRequestCount)
+
+        /// Reports successful manifest uploads observed at the post-upload pre-submit boundary.
+        member _.ManifestUploadCount = Volatile.Read(&manifestUploadCount)
 
         interface IDisposable with
             member _.Dispose() =
@@ -406,6 +437,24 @@ module LibrarySynchronizationWindowsServerTests =
         command.CommandText <- "SELECT operation_state FROM library_operations WHERE direction = 'remote';"
         command.ExecuteScalar() :?> string
 
+    /// Reads causal local operation identities for one complete-byte BLAKE3 identity.
+    let private readLocalOperationIdsForBlake3 root blake3 =
+        let path = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+        use connection = new SqliteConnection($"Data Source={path};Mode=ReadOnly")
+        connection.Open()
+        use command = connection.CreateCommand()
+        command.CommandText <-
+            "SELECT operation_id FROM library_operations WHERE direction = 'local' AND expected_blake3 = $blake3 ORDER BY created_at, operation_id;"
+
+        command.Parameters.AddWithValue("$blake3", blake3) |> ignore
+        use reader = command.ExecuteReader()
+        let operationIds = ResizeArray<Guid>()
+
+        while reader.Read() do
+            operationIds.Add(Guid.Parse(reader.GetString(0)))
+
+        operationIds.ToArray()
+
     /// Proves accepted response replay, bidirectional exact bytes, and restart-current behavior for two Windows copies.
     [<Test>]
     let ``two Windows copies converge exact Library bytes and restart current`` () =
@@ -441,7 +490,7 @@ module LibrarySynchronizationWindowsServerTests =
                 let pathA = Path.Combine(copyA, "Library", "ordinary.txt")
                 let pathB = Path.Combine(copyB, "Library", "ordinary.txt")
 
-                let firstBytes =
+                let preparedBytes =
                     [|
                         0uy
                         1uy
@@ -453,7 +502,35 @@ module LibrarySynchronizationWindowsServerTests =
                         255uy
                     |]
 
-                File.WriteAllBytes(pathA, firstBytes)
+                let firstBytes =
+                    [|
+                        8uy
+                        13uy
+                        21uy
+                        34uy
+                        55uy
+                        89uy
+                        144uy
+                        233uy
+                    |]
+
+                File.WriteAllBytes(pathA, preparedBytes)
+                let submitCountBeforeMutation = proxy.SubmitRequestCount
+                let manifestCountBeforeMutation = proxy.ManifestUploadCount
+                proxy.AfterNextManifestUpload(fun () -> File.WriteAllBytes(pathA, firstBytes))
+                let! rejectedMutation = runGraceAsync copyA proxy.BaseAddress (command "run")
+
+                Assert.That(
+                    rejectedMutation.ExitCode,
+                    Is.Not.EqualTo(0),
+                    rejectedMutation.StandardOutput
+                    + rejectedMutation.StandardError
+                )
+
+                Assert.That(proxy.ManifestUploadCount, Is.EqualTo(manifestCountBeforeMutation + 1))
+                Assert.That(proxy.SubmitRequestCount, Is.EqualTo(submitCountBeforeMutation))
+                Assert.That(File.ReadAllBytes(pathA).AsSpan().SequenceEqual(firstBytes), Is.True)
+
                 proxy.DropNextAcceptedSubmitResponse()
                 let! lostResponse = runGraceAsync copyA proxy.BaseAddress (command "run")
 
@@ -525,6 +602,19 @@ module LibrarySynchronizationWindowsServerTests =
                         .SequenceEqual(secondBytes),
                     Is.True
                 )
+
+                let firstBlake3 = ContentAddress.computeBlake3Hex firstBytes
+                let firstOperationIds = readLocalOperationIdsForBlake3 copyA firstBlake3
+                Assert.That(firstOperationIds, Has.Length.EqualTo(1))
+                let submitCountBeforeReturnToFirstBytes = proxy.SubmitRequestCount
+                File.WriteAllBytes(pathA, firstBytes)
+                let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "run")
+                let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (command "run")
+                let returnedOperationIds = readLocalOperationIdsForBlake3 copyA firstBlake3
+                Assert.That(returnedOperationIds, Has.Length.EqualTo(2))
+                Assert.That(returnedOperationIds[0], Is.Not.EqualTo(returnedOperationIds[1]))
+                Assert.That(proxy.SubmitRequestCount, Is.EqualTo(submitCountBeforeReturnToFirstBytes + 1))
+                Assert.That(File.ReadAllBytes(pathB).AsSpan().SequenceEqual(firstBytes), Is.True)
 
                 let writeA = File.GetLastWriteTimeUtc(pathA)
                 let writeB = File.GetLastWriteTimeUtc(pathB)

@@ -440,10 +440,44 @@ module LibraryCommand =
                 invalidOp "Terminal Library state could not CAS-advance its exact accepted cursor."
         }
 
-    /// Derives a retry-stable operation identity from working-copy, path, and complete-byte identity.
-    let private localOperationId workingCopyId normalizedPath blake3 =
-        let bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"Grace.Library.local.v1:{workingCopyId:D}:{normalizedPath}:{blake3}"))
+    /// Derives a retry-stable operation identity from working copy, causal ancestry, path, and complete-byte identity.
+    let internal localOperationId workingCopyId normalizedPath changeKind prior blake3 sha256 size =
+        let causalPrior =
+            match prior with
+            | None -> "none"
+            | Some (item: LibraryLocalState.ItemAncestry) -> $"{item.ItemId:N}:{item.NamespaceVersion:N}:{item.ContentVersionId:N}"
+
+        let bytes =
+            SHA256.HashData(
+                Encoding.UTF8.GetBytes($"Grace.Library.local.v2:{workingCopyId:D}:{normalizedPath}:{changeKind}:{causalPrior}:{blake3}:{sha256}:{size}")
+            )
+
         Guid(bytes[0..15])
+
+    /// Rejects local publication when lease-held catalog, cursor, ancestry, or complete bytes differ from preparation.
+    let internal validateLocalPublication
+        (expectedState: LibraryLocalState.RepositoryState)
+        observedCatalogVersion
+        (observedState: LibraryLocalState.RepositoryState)
+        expectedPrior
+        observedPrior
+        (expectedContent: LibraryFilesystem.StableContent)
+        (observedContent: LibraryFilesystem.StableContent)
+        =
+        if observedCatalogVersion <> expectedState.LibraryCatalogVersion
+           || observedState.LibraryCatalogVersion <> expectedState.LibraryCatalogVersion
+           || observedState.AppliedCursor <> expectedState.AppliedCursor
+           || observedState.CursorEpoch <> expectedState.CursorEpoch
+           || observedState.WorkingCopyId <> expectedState.WorkingCopyId then
+            invalidOp "Library catalog or cursor predecessor changed before local publication."
+
+        if observedPrior <> expectedPrior then
+            invalidOp "Library item ancestry changed before local publication."
+
+        if observedContent.Blake3Hash <> expectedContent.Blake3Hash
+           || observedContent.Sha256Hash <> expectedContent.Sha256Hash
+           || observedContent.Size <> expectedContent.Size then
+            invalidOp "Local Library target changed after upload preparation."
 
     /// Commits one accepted local receipt to terminal SQLite state and then advances its exact cursor predecessor.
     let private completeLocalReceipt
@@ -579,14 +613,53 @@ module LibraryCommand =
             match candidate with
             | None -> return false
             | Some (path, normalizedPath, content, prior) ->
-                let operationId = localOperationId state.WorkingCopyId normalizedPath content.Blake3Hash
-                let! recovered = tryRecoverLocalPublication parseResult configuration state operationId
+                let changeKind = if prior.IsSome then ChangeKind.UpdateContent else ChangeKind.CreateFile
+
+                let operationId =
+                    localOperationId
+                        state.WorkingCopyId
+                        normalizedPath
+                        changeKind
+                        prior
+                        content.Blake3Hash
+                        content.Sha256Hash
+                        content.Size
+
+                let scope =
+                    WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                    |> Result.defaultWith invalidOp
+
+                let! recovered =
+                    task {
+                        use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                        let! observedState = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+
+                        let observedState =
+                            observedState
+                            |> Option.defaultWith (fun () -> invalidOp "Library local state disappeared before receipt recovery.")
+
+                        let! observedCatalogResult = Libraries.GetCatalog catalogParameters
+
+                        let observedCatalog =
+                            observedCatalogResult
+                            |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+                        let! observedAncestry = LibraryLocalState.readLiveFileAncestry configuration.GraceStatusFile configuration.RepositoryId
+
+                        let observedPrior =
+                            observedAncestry
+                            |> Array.tryFind (fun item -> item.NormalizedPath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))
+
+                        let observedContent = LibraryFilesystem.stableRead path
+
+                        validateLocalPublication state observedCatalog.ReturnValue.Version observedState prior observedPrior content observedContent
+                        return! tryRecoverLocalPublication parseResult configuration observedState operationId
+                    }
 
                 if recovered then
                     return true
                 else
 
-                    let changeKind = if prior.IsSome then ChangeKind.UpdateContent else ChangeKind.CreateFile
                     let fileName = Path.GetFileName(path)
 
                     let libraryPath =
@@ -655,6 +728,60 @@ module LibraryCommand =
                         |> Result.defaultWith (fun error -> invalidOp error.Error)
                         |> ignore
 
+                        use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                        let! observedState = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+
+                        let observedState =
+                            observedState
+                            |> Option.defaultWith (fun () -> invalidOp "Library local state disappeared before local submit.")
+
+                        let! observedCatalogResult = Libraries.GetCatalog catalogParameters
+
+                        let observedCatalog =
+                            observedCatalogResult
+                            |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+                        let! observedAncestry = LibraryLocalState.readLiveFileAncestry configuration.GraceStatusFile configuration.RepositoryId
+
+                        let observedPrior =
+                            observedAncestry
+                            |> Array.tryFind (fun item -> item.NormalizedPath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))
+
+                        let observedContent = LibraryFilesystem.stableRead path
+
+                        validateLocalPublication state observedCatalog.ReturnValue.Version observedState prior observedPrior content observedContent
+
+                        let! observedSlotResult = Libraries.GetNamespaceSlot slotParameters
+
+                        let observedSlot =
+                            observedSlotResult
+                            |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+                        if observedSlot.ReturnValue.SlotVersion <> slot.ReturnValue.SlotVersion
+                           || observedSlot.ReturnValue.State <> slot.ReturnValue.State then
+                            invalidOp "Library namespace slot changed before local publication."
+
+                        do!
+                            LibraryLocalState.recordPending
+                                configuration.GraceStatusFile
+                                configuration.RepositoryId
+                                operationId
+                                LibraryLocalState.OperationDirection.Local
+                                changeKind
+                                (operationId.ToString("N"))
+                                state.LibraryCatalogVersion
+                                (prior |> Option.map (fun item -> item.ItemId))
+                                (Some normalizedPath)
+                                (Some normalizedPath)
+                                None
+                                None
+                                state.AppliedCursor
+                                None
+                                state.CursorEpoch
+                                (Some content.Blake3Hash)
+                                (Some content.Sha256Hash)
+                                (Some content.Size)
+
                         let submit = SubmitLibraryChangeParameters()
                         applyScope submit parseResult |> ignore
                         submit.OperationId <- operationId
@@ -687,7 +814,7 @@ module LibraryCommand =
                             receipt.ReturnValue.Change
                             |> Option.defaultWith (fun () -> invalidOp "Accepted local publication returned no change.")
 
-                        do! completeLocalReceipt configuration state "pendingServer" change
+                        do! completeLocalReceipt configuration observedState "pendingServer" change
                         return true
                     finally
                         if File.Exists(stagingPath) then File.Delete(stagingPath)

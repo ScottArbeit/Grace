@@ -242,3 +242,81 @@ module LibraryLocalStateTests =
             LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" blake3
             |> fun operation -> operation.GetAwaiter().GetResult()
             |> should equal false)
+
+    /// Verifies returning to earlier bytes retains retry identity but not a prior causal operation identity.
+    [<Test>]
+    let ``local operation identity distinguishes X Y X while response-loss retry stays stable`` () =
+        let workingCopyId = Guid.NewGuid()
+        let itemId = Guid.NewGuid()
+        let xBlake3 = String.replicate 64 "a"
+        let xSha256 = String.replicate 64 "b"
+        let yBlake3 = String.replicate 64 "c"
+        let ySha256 = String.replicate 64 "d"
+
+        let priorX: LibraryLocalState.ItemAncestry =
+            {
+                ItemId = itemId
+                NormalizedPath = "shared/file.txt"
+                Blake3Hash = xBlake3
+                NamespaceVersion = Guid.NewGuid()
+                ContentVersionId = Guid.NewGuid()
+            }
+
+        let priorY =
+            { priorX with
+                Blake3Hash = yBlake3
+                ContentVersionId = Guid.NewGuid() }
+
+        let firstX =
+            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.CreateFile None xBlake3 xSha256 1L
+
+        let y =
+            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorX) yBlake3 ySha256 1L
+
+        let secondX =
+            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
+
+        let secondXRetry =
+            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
+
+        firstX |> should not' (equal y)
+        firstX |> should not' (equal secondX)
+        secondXRetry |> should equal secondX
+
+    /// Verifies an operation-ID conflict with different immutable evidence fails closed instead of reusing the row.
+    [<Test>]
+    let ``pending operation collision rejects different immutable evidence`` () =
+        withDatabase (fun dbPath ->
+            let repositoryId = Guid.NewGuid()
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+
+            LibraryLocalState.enable dbPath repositoryId (Guid.NewGuid()) catalogVersion [| "shared" |] "epoch" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            let record expectedBlake3 =
+                LibraryLocalState.recordPending
+                    dbPath
+                    repositoryId
+                    operationId
+                    LibraryLocalState.OperationDirection.Local
+                    ChangeKind.CreateFile
+                    "request"
+                    catalogVersion
+                    None
+                    (Some "shared/file.txt")
+                    (Some "shared/file.txt")
+                    None
+                    None
+                    (Some "cursor-0")
+                    None
+                    (Some "epoch")
+                    (Some expectedBlake3)
+                    (Some(String.replicate 64 "b"))
+                    (Some 1L)
+                |> fun operation -> operation.GetAwaiter().GetResult()
+
+            record (String.replicate 64 "a")
+
+            (fun () -> record (String.replicate 64 "c"))
+            |> should throw typeof<InvalidOperationException>)

@@ -24,6 +24,7 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Security.Cryptography
 open System.Text.Json
 open System.Text.Json.Nodes
 open System.Threading
@@ -24795,3 +24796,142 @@ module WatchTests =
             Assert.That(synchronizationCount, Is.EqualTo(2))
             Assert.That(maximumActiveCount, Is.EqualTo(1))
         }
+
+    /// Proves foreground Watch isolates enabled Library paths, consumes one exact durable echo, and wakes synchronization for later observations.
+    [<Test; Category("LibrarySynchronization")>]
+    let ``foreground Watch routes Library observations without ordinary repository work`` () =
+        withTempRepo (fun root ->
+            let configuration = Current()
+            let repositoryId = configuration.RepositoryId
+            let dbPath = configuration.GraceStatusFile
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+            let itemId = Guid.NewGuid()
+            let normalizedPath = "library/remote.bin"
+            let fullPath = Path.Combine(root, "library", "remote.bin")
+            let bytes = Text.Encoding.UTF8.GetBytes("remote library bytes")
+            let blake3 = ContentAddress.computeBlake3Hex bytes
+
+            let sha256 =
+                SHA256.HashData(bytes)
+                |> Convert.ToHexString
+                |> fun value -> value.ToLowerInvariant()
+
+            configuration.LibrarySynchronizationEnabled <- true
+            saveConfigFile (Path.Combine(configuration.GraceDirectory, Constants.GraceConfigFileName)) configuration
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)) |> ignore
+            File.WriteAllBytes(fullPath, bytes)
+
+            LibraryLocalState.enable dbPath repositoryId (Guid.NewGuid()) catalogVersion [| "library" |] "epoch-1" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.recordPending
+                dbPath
+                repositoryId
+                operationId
+                LibraryLocalState.OperationDirection.Remote
+                ChangeKind.CreateFile
+                "remote-request"
+                catalogVersion
+                (Some itemId)
+                None
+                (Some normalizedPath)
+                None
+                None
+                (Some "cursor-0")
+                (Some "cursor-1")
+                (Some "epoch-1")
+                (Some blake3)
+                (Some sha256)
+                (Some(int64 bytes.Length))
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.markFilesystemPublished dbPath repositoryId operationId catalogVersion
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            let change: LibraryChangeDto =
+                {
+                    Cursor = "cursor-1"
+                    OperationId = operationId
+                    ChangeKind = ChangeKind.CreateFile
+                    ItemId = itemId
+                    ItemKind = ItemKind.File
+                    AcceptedAt = Instant.FromUnixTimeTicks(1L)
+                    AcceptedBy = "watch-test"
+                    LibraryCatalogVersion = catalogVersion
+                    Namespace =
+                        Some
+                            {
+                                Parent = { Kind = "root"; LibraryPath = Some "library"; ItemId = None }
+                                Name = "remote.bin"
+                                NormalizedPath = normalizedPath
+                                NamespaceVersion = Guid.NewGuid()
+                                SlotVersion = Guid.NewGuid()
+                            }
+                    Content =
+                        Some
+                            {
+                                ContentVersionId = Guid.NewGuid()
+                                Blake3Hash = blake3
+                                Sha256Hash = sha256
+                                Size = int64 bytes.Length
+                                CreatedAt = Instant.FromUnixTimeTicks(1L)
+                            }
+                    Tombstone = None
+                    Conflict = None
+                }
+
+            LibraryLocalState.completeAcceptedFile dbPath repositoryId change
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            activateWatchIgnoreSnapshot ()
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            Watch.shouldIgnoreFileForWatchTests fullPath |> should equal true
+
+            let mutable synchronizationCount = 0
+
+            let synchronize () =
+                synchronizationCount <- synchronizationCount + 1
+                Task.CompletedTask
+
+            let firstDisposition = TaskCompletionSource<Watch.LibraryObservationDisposition>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            use _processor =
+                Watch.installLibraryObservationProcessorForWatchTests (fun observedPath ->
+                    (task {
+                        let! disposition = Watch.handleLibraryFileObservation dbPath repositoryId root synchronize observedPath
+                        firstDisposition.TrySetResult(disposition) |> ignore
+                    }
+                    :> Task))
+
+            Watch.OnChanged(changedEvent fullPath)
+
+            firstDisposition.Task.WaitAsync(TimeSpan.FromSeconds(5.0)).GetAwaiter().GetResult()
+            |> should equal Watch.LibraryObservationDisposition.ExactEchoConsumed
+
+            synchronizationCount |> should equal 0
+
+            Watch.handleLibraryFileObservation dbPath repositoryId root synchronize fullPath
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal Watch.LibraryObservationDisposition.SynchronizationRequested
+
+            let mutatedBytes = Text.Encoding.UTF8.GetBytes("genuine local edit")
+            File.WriteAllBytes(fullPath, mutatedBytes)
+
+            Watch.handleLibraryFileObservation dbPath repositoryId root synchronize fullPath
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal Watch.LibraryObservationDisposition.SynchronizationRequested
+
+            synchronizationCount |> should equal 2
+
+            Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create Add FileSystemEntryType.File normalizedPath)
+            let ordinaryWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+            ordinaryWork.FilesToProcess |> should be Empty
+            ordinaryWork.DirectoriesToProcess |> should be Empty
+            ordinaryWork.StatusUpdateTriggers |> should be Empty
+
+            use connection = new SqliteConnection($"Data Source={dbPath}")
+            connection.Open()
+            use command = connection.CreateCommand()
+            command.CommandText <- "SELECT COUNT(*) FROM working_directory_update_completions;"
+            command.ExecuteScalar() |> Convert.ToInt32 |> should equal 0)
