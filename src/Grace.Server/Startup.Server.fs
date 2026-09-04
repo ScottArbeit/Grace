@@ -10,6 +10,7 @@ open Azure.Storage.Blobs.Models
 open Giraffe
 open Giraffe.EndpointRouting
 open Grace.Actors
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.AzureEnvironment
 open Grace.Shared.Utilities
@@ -2194,6 +2195,9 @@ module Application =
             services.AddSingleton<ILibraryWriteAuthorizer, LibraryWriteAuthorizer>()
             |> ignore
 
+            services.AddSingleton<IGraceEventSender, ServiceBusGraceEventSender>()
+            |> ignore
+
             services.AddW3CLogging (fun options ->
                 options.FileName <- "Grace.Server.log-"
 
@@ -2212,7 +2216,6 @@ module Application =
                 .AddSingleton<Json.ISerializer>(
                     Json.Serializer(Constants.JsonSerializerOptions)
                 )
-                .AddSingleton<IPartitionKeyProvider, GracePartitionKeyProvider>()
                 .AddSingleton<IApprovalPolicySnapshotResolver, PromotionSet.ApprovalPolicySnapshotResolver>()
                 .AddRouting()
                 .AddLogging()
@@ -2260,17 +2263,15 @@ module Application =
 
             services.AddSingleton<ILibraryStore>(
                 Func<IServiceProvider, ILibraryStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createStore client databaseName)
+                    let grainFactory = serviceProvider.GetRequiredService<IGrainFactory>()
+                    LibraryPersistence.createStore grainFactory)
             )
             |> ignore
 
             services.AddSingleton<ILibraryTransferStore>(
                 Func<IServiceProvider, ILibraryTransferStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createTransferStore client databaseName)
+                    let grainFactory = serviceProvider.GetRequiredService<IGrainFactory>()
+                    LibraryPersistence.createTransferStore grainFactory)
             )
             |> ignore
 
@@ -2294,11 +2295,21 @@ module Application =
             services.AddSingleton<LibraryOpaqueTokenCodec>(LibraryOpaqueTokenCodec(libraryTokenKey))
             |> ignore
 
+            services.AddSingleton<LibraryCoordinator.ILibraryManifestContributionActivator>(
+                Func<IServiceProvider, LibraryCoordinator.ILibraryManifestContributionActivator> (fun serviceProvider ->
+                    LibraryCoordinator.ManifestContributionActivator(
+                        serviceProvider.GetRequiredService<ILibraryTransferStore>(),
+                        serviceProvider.GetRequiredService<IGrainFactory>()
+                    ))
+            )
+            |> ignore
+
             services.AddSingleton<ILibraryCoordinator>(
                 Func<IServiceProvider, ILibraryCoordinator> (fun serviceProvider ->
                     LibraryCoordinator.Coordinator(
                         serviceProvider.GetRequiredService<ILibraryStore>(),
-                        serviceProvider.GetRequiredService<ILibraryCursorCodec>()
+                        serviceProvider.GetRequiredService<ILibraryCursorCodec>(),
+                        serviceProvider.GetRequiredService<LibraryCoordinator.ILibraryManifestContributionActivator>()
                     )
                     :> ILibraryCoordinator)
             )

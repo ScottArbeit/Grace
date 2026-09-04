@@ -330,13 +330,13 @@ module Common =
     [<CLIMutable; MessagePackObject; GenerateSerializer>]
     type ContentBlock =
         {
-            [<Key(0)>]
+            [<Key(0); Id(0u)>]
             Class: string
-            [<Key(1)>]
+            [<Key(1); Id(1u)>]
             Address: ContentBlockAddress
-            [<Key(2)>]
+            [<Key(2); Id(2u)>]
             Offset: int64
-            [<Key(3)>]
+            [<Key(3); Id(3u)>]
             Size: int64
         }
 
@@ -355,19 +355,19 @@ module Common =
     [<CLIMutable; MessagePackObject; GenerateSerializer; CustomEquality; NoComparison>]
     type FileManifest =
         {
-            [<Key(0)>]
+            [<Key(0); Id(0u)>]
             Class: string
-            [<Key(1)>]
+            [<Key(1); Id(1u)>]
             ManifestAddress: ManifestAddress
-            [<Key(2)>]
+            [<Key(2); Id(2u)>]
             Size: int64
-            [<Key(3)>]
+            [<Key(3); Id(3u)>]
             Blocks: List<ContentBlock>
-            [<Key(4)>]
+            [<Key(4); Id(4u)>]
             ChunkingSuiteId: ChunkingSuiteId
-            [<Key(5)>]
+            [<Key(5); Id(5u)>]
             FileContentHash: FileContentHash
-            [<Key(6)>]
+            [<Key(6); Id(6u)>]
             StoragePoolId: StoragePoolId
         }
 

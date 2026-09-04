@@ -1,7 +1,9 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Actors.Interfaces
 open Grace.Server
+open Grace.Shared
 open Grace.Types.Authorization
 open Grace.Types.Common
 open Grace.Types.Library
@@ -9,11 +11,64 @@ open Grace.Types.UploadSession
 open Grace.Shared.Validation.Library
 open NodaTime
 open NUnit.Framework
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.IO
 open System.Threading
 open System.Threading.Tasks
+
+/// Captures the typed durable state written by one Library control record actor.
+type private LibraryControlState() =
+    let mutable state = Unchecked.defaultof<LibraryControlDocument>
+    let mutable etag: string = null
+    let mutable recordExists = false
+    let mutable writeCount = 0
+
+    /// Returns how many durable writes the actor requested.
+    member _.WriteCount = writeCount
+
+    interface IPersistentState<LibraryControlDocument> with
+        member _.State
+            with get () = state
+            and set value = state <- value
+
+        member _.Etag = etag
+        member _.RecordExists = recordExists
+        member _.ReadStateAsync() = Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+            recordExists <- true
+            etag <- string writeCount
+            Task.CompletedTask
+
+        member _.ClearStateAsync() = Task.CompletedTask
+
+/// Captures the immutable Library content-location state written by its record actor.
+type private LibraryContentLocationState() =
+    let mutable state = Unchecked.defaultof<LibraryContentLocationDocument>
+    let mutable recordExists = false
+    let mutable writeCount = 0
+
+    /// Returns how many durable writes the actor requested.
+    member _.WriteCount = writeCount
+
+    interface IPersistentState<LibraryContentLocationDocument> with
+        member _.State
+            with get () = state
+            and set value = state <- value
+
+        member _.Etag = string writeCount
+        member _.RecordExists = recordExists
+        member _.ReadStateAsync() = Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+            recordExists <- true
+            Task.CompletedTask
+
+        member _.ClearStateAsync() = Task.CompletedTask
 
 /// Stores Library coordinator test state in memory and injects one durable-boundary failure.
 type private FailingLibraryStore(initialControl: LibraryControlDocument, failurePoint: string) =
@@ -28,6 +83,21 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
     let catalogOperations = Dictionary<LibraryOperationId, LibraryCatalogOperationDocument>()
     let histories = HashSet<string>(StringComparer.Ordinal)
 
+    /// Stores only control-authorized catalog operation upgrades in the fake durable projection.
+    let storeAuthoritativeCatalogOperation (operation: LibraryCatalogOperationDocument) =
+        match catalogOperations.TryGetValue operation.OperationId with
+        | true, existing when existing = operation -> ()
+        | true, existing when
+            existing.RequestHash = operation.RequestHash
+            && existing.ControlCommitVersion.IsNone
+            && existing.Result.Outcome = OutcomeKind.Accepted
+            && (operation.ControlCommitVersion.IsSome
+                || operation.Result.Outcome <> OutcomeKind.Accepted)
+            ->
+            catalogOperations[operation.OperationId] <- operation
+        | true, _ -> invalidOp "Catalog operation identity was reused for different content."
+        | false, _ -> catalogOperations.Add(operation.OperationId, operation)
+
     /// Raises the configured failure once at its exact durable effect boundary.
     let failOnce point =
         if pendingFailure = Some point then
@@ -39,6 +109,9 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
 
     /// Returns the number of unique durable records retained by the fake store.
     member _.Counts = canonicals.Count, items.Count, slots.Count, receipts.Count, histories.Count
+
+    /// Injects the pre-control-CAS catalog operation produced by the reviewed crash interleaving.
+    member _.InjectCatalogOperation(operation: LibraryCatalogOperationDocument) = catalogOperations.Add(operation.OperationId, operation)
 
     interface ILibraryStore with
 
@@ -59,30 +132,51 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
             }
 
         member _.ReadCatalogOperationAsync(_repositoryId, operationId, _cancellationToken) =
+            control.LatestCatalogOperation
+            |> Option.iter storeAuthoritativeCatalogOperation
+
             match catalogOperations.TryGetValue operationId with
-            | true, operation -> Task.FromResult(Some operation)
+            | true, operation when operation.Result.Outcome <> OutcomeKind.Accepted -> Task.FromResult(Some operation)
+            | true, operation when operation.ControlCommitVersion = Some operation.Result.LibraryCatalog.Version -> Task.FromResult(Some operation)
+            | true, operation ->
+                match control.LatestCatalogOperation with
+                | Some committed when
+                    committed.OperationId = operation.OperationId
+                    && committed.RequestHash = operation.RequestHash
+                    ->
+                    Task.FromResult(Some committed)
+                | _ when operation.Result.LibraryCatalog.PreviousVersion = Some control.LibraryCatalog.Version -> Task.FromResult None
+                | _ ->
+                    let rejected =
+                        { operation with
+                            SchemaVersion = 2
+                            ControlCommitVersion = None
+                            Result =
+                                { operation.Result with
+                                    Outcome = OutcomeKind.StalePolicy
+                                    LibraryCatalog = control.LibraryCatalog
+                                    ReasonCode = Some OutcomeKind.StalePolicy
+                                }
+                        }
+
+                    storeAuthoritativeCatalogOperation rejected
+                    Task.FromResult(Some rejected)
             | false, _ -> Task.FromResult None
 
         member _.ReplaceControlAndCreateCatalogOperationAsync(replacement, expectedEtag, operation, _cancellationToken) =
             task {
-                if expectedEtag <> string etag
-                   || catalogOperations.ContainsKey operation.OperationId then
+                if expectedEtag <> string etag then
                     return PreconditionFailed
                 else
-                    control <- replacement
-                    catalogOperations.Add(operation.OperationId, operation)
+                    let committed = { operation with SchemaVersion = 2; ControlCommitVersion = Some operation.Result.LibraryCatalog.Version }
+
+                    control <- { replacement with LatestCatalogOperation = Some committed }
                     etag <- etag + 1
+                    storeAuthoritativeCatalogOperation committed
                     return Replaced(string etag)
             }
 
-        member _.CreateCatalogOperationAsync(operation, _cancellationToken) =
-            task {
-                match catalogOperations.TryGetValue operation.OperationId with
-                | true, existing when existing = operation -> ()
-                | true, _ -> invalidOp "Catalog operation identity was reused for different content."
-                | false, _ -> catalogOperations.Add(operation.OperationId, operation)
-            }
-            :> Task
+        member _.CreateCatalogOperationAsync(operation, _cancellationToken) = task { storeAuthoritativeCatalogOperation operation } :> Task
 
         member _.ReadReceiptAsync(_repositoryId, operationId, _cancellationToken) =
             match receipts.TryGetValue operationId with
@@ -173,9 +267,54 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
 
         member _.ReadBaselineAsync(_repositoryId, _baselineId, _cancellationToken) = Task.FromResult None
 
+/// Records one durable manifest contribution and verifies completion follows receipt persistence.
+type private RecordingLibraryManifestContributionActivator(failFirst: bool, receiptExists: unit -> bool) =
+    let contributions = HashSet<LibraryOperationId>()
+    let mutable callCount = 0
+    let mutable completionCount = 0
+
+    /// Returns how often the coordinator attempted the activation boundary.
+    member _.CallCount = callCount
+
+    /// Returns the number of unique accepted Library operations that contributed a manifest.
+    member _.ContributionCount = contributions.Count
+
+    /// Returns how often the coordinator completed a tracked contribution after writing its receipt.
+    member _.CompletionCount = completionCount
+
+    interface LibraryCoordinator.ILibraryManifestContributionActivator with
+        member _.ActivateAsync(_repositoryId, operationId, _contentVersionId, _correlationId, _cancellationToken) =
+            task {
+                callCount <- callCount + 1
+                contributions.Add operationId |> ignore
+
+                if failFirst && callCount = 1 then
+                    raise (InvalidOperationException("Injected manifest contribution activation failure."))
+            }
+            :> Task
+
+        member _.CompleteAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) =
+            if not (receiptExists ()) then
+                raise (InvalidOperationException("Manifest contribution completion preceded its Library receipt."))
+
+            completionCount <- completionCount + 1
+            Task.CompletedTask
+
+/// Supplies no manifest side effects to coordinator tests that exercise non-file behavior.
+type private NoopLibraryManifestContributionActivator() =
+
+    interface LibraryCoordinator.ILibraryManifestContributionActivator with
+        member _.ActivateAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+        member _.CompleteAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+
 /// Covers canonical-first publication and restart repair at every durable effect boundary.
 [<Parallelizable(ParallelScope.All)>]
 type LibraryCoordinatorTests() =
+
+    /// Creates a coordinator whose test does not cross the manifest contribution boundary.
+    let coordinatorWithoutContributions store secretByte =
+        LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 secretByte), NoopLibraryManifestContributionActivator())
+        :> ILibraryCoordinator
 
     /// Builds one live directory item for deterministic baseline tests.
     let baselineItem itemId rootVersion normalizedPath =
@@ -315,14 +454,64 @@ type LibraryCoordinatorTests() =
                 CurrentBaselineCursor = None
                 ProjectionWatermarks = LibraryProjectionWatermarks.Empty
                 UpdatedAt = now
+                LatestCatalogOperation = None
             }
 
         repositoryId, control
 
+    /// Converts the deterministic directory reservation into one accepted manifest-backed file reservation.
+    let filePendingFixture () =
+        let repositoryId, control = pendingFixture ()
+        let pending = control.Pending.Value
+
+        let content =
+            {
+                ContentVersionId = Guid.Parse "50872595-588c-5f30-89c2-72363a2d8a79"
+                Blake3Hash = "library-blake3"
+                Sha256Hash = "library-sha256"
+                Size = 4096L
+                CreatedAt = pending.ReservedAt
+            }
+
+        let item = { pending.Receipt.Item.Value with ItemKind = ItemKind.File; Content = Some content }
+
+        let change = { pending.CanonicalChange.Change with ChangeKind = ChangeKind.CreateFile; ItemKind = ItemKind.File; Content = Some content }
+
+        let receipt = { pending.Receipt with Change = Some change; Item = Some item }
+        let canonical = { pending.CanonicalChange with Change = change }
+        let filePending = { pending with Receipt = receipt; CanonicalChange = canonical }
+
+        repositoryId, { control with Pending = Some filePending }
+
+    /// Verifies the typed actor state retains the complete catalog across an exact write and read.
+    [<Test>]
+    member _.ControlRecordPersistsAndRehydratesCatalog() =
+        task {
+            let _, control = pendingFixture ()
+            let persistentState = LibraryControlState()
+            let actor = LibraryControlRecordActor(persistentState)
+            let controlActor = actor :> ILibraryControlRecordActor
+
+            let! written, version = controlActor.Ensure control
+            let! reread = controlActor.Read()
+
+            let persisted =
+                (persistentState :> IPersistentState<LibraryControlDocument>)
+                    .State
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+                    Assert.That(version, Is.EqualTo("1"))
+                    Assert.That(persisted, Is.EqualTo(control))
+                    Assert.That(written, Is.EqualTo(control))
+                    Assert.That(reread, Is.EqualTo(Some(control, "1"))))
+            )
+        }
+
     [<TestCase("canonical")>]
     [<TestCase("item")>]
     [<TestCase("slot")>]
-    [<TestCase("history")>]
     [<TestCase("receipt")>]
     [<TestCase("control")>]
     member _.RepairFailureDoesNotAdvanceControlAndConvergesOnRetry failurePoint =
@@ -343,12 +532,110 @@ type LibraryCoordinatorTests() =
             Assert.That(store.Control.Pending.IsNone, Is.True)
             Assert.That(store.Control.AppliedThrough, Is.EqualTo 1L)
             Assert.That(store.Control.ProjectionWatermarks.Current, Is.EqualTo 1L)
-            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 1L)
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 0L)
             Assert.That(store.Control.ProjectionWatermarks.Receipts, Is.EqualTo 1L)
             Assert.That(canonicalCount, Is.EqualTo 1)
             Assert.That(itemCount, Is.EqualTo 1)
             Assert.That(slotCount, Is.EqualTo 1)
             Assert.That(receiptCount, Is.EqualTo 1)
+            Assert.That(historyCount, Is.EqualTo 0)
+        }
+
+    /// Verifies activation residue retries under the same Library operation and receipt replay never double-counts it.
+    [<Test>]
+    member _.AcceptedFileContributionActivationFailureRetriesOnceBeforeReceiptReplay() =
+        task {
+            let repositoryId, control = filePendingFixture ()
+            let pending = control.Pending.Value
+            let store = FailingLibraryStore(control, "never")
+
+            let activator =
+                RecordingLibraryManifestContributionActivator(
+                    true,
+                    fun () ->
+                        let _, _, _, receiptCount, _ = store.Counts
+                        receiptCount > 0
+                )
+
+            let coordinator =
+                LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x43uy), activator) :> ILibraryCoordinator
+
+            let firstAttempt =
+                Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> coordinator.RepairAsync(repositoryId, CancellationToken.None)))
+
+            let _, _, _, receiptCountAfterFailure, _ = store.Counts
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(firstAttempt.Message, Does.Contain("manifest contribution activation"))
+                    Assert.That(store.Control.Pending.IsSome, Is.True)
+                    Assert.That(receiptCountAfterFailure, Is.Zero)
+                    Assert.That(activator.CallCount, Is.EqualTo(1))
+                    Assert.That(activator.ContributionCount, Is.EqualTo(1)))
+            )
+
+            do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
+
+            let replayCommand =
+                {
+                    RepositoryId = repositoryId
+                    OperationId = pending.OperationId
+                    RequestHash = pending.RequestHash
+                    LibraryCatalogVersion = pending.ExpectedLibraryCatalogVersion
+                    ChangeKind = ChangeKind.CreateFile
+                    ItemKind = ItemKind.File
+                    ItemId = None
+                    NamespacePrecondition = None
+                    ContentPrecondition = None
+                    CreationSlotExpectation = None
+                    DestinationParent = None
+                    DestinationName = None
+                    PreparedContentId = None
+                    PreparedContent = None
+                    PreparedContentExpiresAt = None
+                }
+
+            let! replayed = coordinator.SubmitAsync(replayCommand, pending.PrincipalId, pending.CorrelationId, CancellationToken.None)
+            do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
+
+            let _, _, _, receiptCount, _ = store.Counts
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(replayed, Is.EqualTo(pending.Receipt))
+                    Assert.That(store.Control.Pending.IsNone, Is.True)
+                    Assert.That(receiptCount, Is.EqualTo(1))
+                    Assert.That(activator.CallCount, Is.EqualTo(2))
+                    Assert.That(activator.ContributionCount, Is.EqualTo(1))
+                    Assert.That(activator.CompletionCount, Is.EqualTo(1)))
+            )
+        }
+
+    /// Verifies asynchronous history replay cannot delay accepted completion and converges idempotently after failure.
+    [<Test>]
+    member _.HistoryProjectionFailureLeavesAcceptedCompletionTerminalAndConvergesOnRetry() =
+        task {
+            let repositoryId, control = pendingFixture ()
+            let store = FailingLibraryStore(control, "history")
+
+            do! LibraryCoordinator.repair store repositoryId CancellationToken.None
+
+            Assert.That(store.Control.Pending.IsNone, Is.True)
+            Assert.That(store.Control.AppliedThrough, Is.EqualTo 1L)
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 0L)
+
+            let firstProjection =
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task>(fun () -> LibraryCoordinator.projectHistory store repositoryId CancellationToken.None :> Task)
+                )
+
+            Assert.That(firstProjection.Message, Does.Contain "history")
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 0L)
+
+            do! LibraryCoordinator.projectHistory store repositoryId CancellationToken.None
+
+            let _, _, _, _, historyCount = store.Counts
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 1L)
             Assert.That(historyCount, Is.EqualTo 2)
         }
 
@@ -527,7 +814,7 @@ type LibraryCoordinatorTests() =
             let initialCatalog = { pendingControl.LibraryCatalog with Libraries = [| "shared/docs" |] }
 
             let store = FailingLibraryStore({ pendingControl with Pending = None; LibraryCatalog = initialCatalog }, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x44uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x44uy
 
             let! exactRoot = coordinator.IsInLibraryAsync(repositoryId, "shared/docs", CancellationToken.None)
             let! descendant = coordinator.IsInLibraryAsync(repositoryId, "shared/docs/readme.md", CancellationToken.None)
@@ -552,7 +839,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, pendingControl = pendingFixture ()
             let emptyCatalog = { pendingControl.LibraryCatalog with Libraries = Array.empty }
             let store = FailingLibraryStore({ pendingControl with Pending = None; LibraryCatalog = emptyCatalog }, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x45uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x45uy
 
             let! before = coordinator.IsInLibraryAsync(repositoryId, "shared/docs", CancellationToken.None)
 
@@ -607,13 +894,13 @@ type LibraryCoordinatorTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(source, Does.Contain("let CurrentProjectionDocumentLimit = 100000"))
-                Assert.That(source, Does.Contain("if itemCount >= CurrentProjectionDocumentLimit"))
+                Assert.That(source, Does.Contain("if count >= CurrentProjectionDocumentLimit"))
                 Assert.That(source, Does.Contain("Library item-head projection reached its"))
-                Assert.That(source, Does.Contain("if slotCount >= CurrentProjectionDocumentLimit"))
+                Assert.That(source, Does.Contain("if count >= CurrentProjectionDocumentLimit"))
                 Assert.That(source, Does.Contain("Library namespace-slot projection reached its")))
         )
 
-    /// Verifies every Library container and persistence operation uses its accepted purpose-specific hierarchical key.
+    /// Verifies every Library container and bounded record uses the accepted Orleans hierarchical key contract.
     [<Test>]
     member _.LibraryPersistenceUsesAcceptedPurposeSpecificPartitionKeys() =
         let appHostPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs"))
@@ -623,20 +910,21 @@ type LibraryCoordinatorTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-control\"] = [\"/RepositoryId\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-changes\"] = [\"/RepositoryId\", \"/StreamSegment\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-current\"] = [\"/RepositoryId\", \"/ProjectionKind\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-receipts\"] = [\"/RepositoryId\", \"/RecordKind\", \"/RecordKey\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-history\"] = [\"/RepositoryId\", \"/HistoryKey\", \"/HistorySegment\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-baselines\"] = [\"/RepositoryId\", \"/BaselineId\", \"/ShardKey\"]"))
-                Assert.That(persistenceSource, Does.Contain("controlPartitionKey document.RepositoryId"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey2 document.RepositoryId document.StreamSegment"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey2 document.RepositoryId document.ProjectionKind"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 document.RepositoryId document.RecordKind document.RecordKey"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 repositoryId historyKey historySegment"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 repositoryId baselineKey shard.ShardKey"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 repositoryId baselineKey \"manifest\""))
-                Assert.That(persistenceSource, Does.Contain("QueryRequestOptions(PartitionKey = Nullable(partitionKey2 repositoryId projectionKind)")))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-control\"] = [\"/PartitionKey\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-changes\"] = [\"/PartitionKey\", \"/PartitionKey2\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-current\"] = [\"/PartitionKey\", \"/PartitionKey2\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-receipts\"] = [\"/PartitionKey\", \"/PartitionKey2\", \"/PartitionKey3\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-history\"] = [\"/PartitionKey\", \"/PartitionKey2\", \"/PartitionKey3\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-baselines\"] = [\"/PartitionKey\", \"/PartitionKey2\", \"/PartitionKey3\"]"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryControlRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryCanonicalChangeRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryCurrentIndexBucketActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryReceiptRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryHistorySegmentRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryBaselineShardRecordActor>"))
+                Assert.That(persistenceSource, Does.Not.Contain("Microsoft.Azure.Cosmos"))
+                Assert.That(persistenceSource, Does.Not.Contain("CreateItemAsync"))
+                Assert.That(persistenceSource, Does.Not.Contain("ReplaceItemAsync")))
         )
 
     /// Verifies capacity failure occurs before a command can reserve the control document.
@@ -649,7 +937,7 @@ type LibraryCoordinatorTests() =
             let pending = pendingControl.Pending.Value
             let namespaceValue = pending.Receipt.Item.Value.Namespace.Value
             let store = FailingLibraryStore(initialControl, "capacity")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x46uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x46uy
 
             let command =
                 {
@@ -725,7 +1013,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, control = pendingFixture ()
             let initialCatalog = LibraryCatalogDto.CreateInitial(repositoryId, control.UpdatedAt, "principal")
             let store = FailingLibraryStore({ control with Pending = None; LibraryCatalog = initialCatalog }, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x49uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x49uy
 
             do! coordinator.InitializeAsync(repositoryId, initialCatalog, CancellationToken.None)
             do! coordinator.InitializeAsync(repositoryId, initialCatalog, CancellationToken.None)
@@ -741,7 +1029,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, pendingControl = pendingFixture ()
             let initialControl = { pendingControl with Pending = None; CurrentBaselineId = None; CurrentBaselineCursor = None }
             let store = FailingLibraryStore(initialControl, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x47uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x47uy
             let now = Instant.FromUtc(2026, 8, 28, 12, 0)
             let operationA = Guid.Parse "9ec3f2d0-a8d8-47c5-9f18-d098c37ab419"
             let operationB = Guid.Parse "bd25030e-d66a-43c4-87c7-ec6535c74469"
@@ -782,6 +1070,62 @@ type LibraryCoordinatorTests() =
             )
         }
 
+    /// Verifies an Accepted operation written before a losing control CAS never becomes externally final.
+    [<Test>]
+    member _.CatalogOperationCreatedBeforeLosingControlCasCannotReplayAccepted() =
+        task {
+            let repositoryId, pendingControl = pendingFixture ()
+            let initialControl = { pendingControl with Pending = None; CurrentBaselineId = None; CurrentBaselineCursor = None }
+            let store = FailingLibraryStore(initialControl, "never")
+            let coordinator = coordinatorWithoutContributions store 0x48uy
+            let now = Instant.FromUtc(2026, 9, 4, 12, 30)
+            let losingOperationId = Guid.Parse "17e6a149-c975-4f3c-b655-d5fa13782002"
+            let winningOperationId = Guid.Parse "c50278e7-d609-45fb-af75-52a8368a08d8"
+
+            let losingCatalog =
+                { initialControl.LibraryCatalog with
+                    Version = Guid.Parse "39183969-25ab-4707-aa2b-fc8e95a606eb"
+                    Libraries = [| "shared" |]
+                    PreviousVersion = Some initialControl.LibraryCatalog.Version
+                    CreatedAt = now
+                }
+
+            let winningCatalog =
+                { initialControl.LibraryCatalog with
+                    Version = Guid.Parse "a7eb829b-01b3-4e3b-b5ef-5aa87a709760"
+                    Libraries = [| "media" |]
+                    PreviousVersion = Some initialControl.LibraryCatalog.Version
+                    CreatedAt = now + Duration.FromSeconds 1L
+                }
+
+            let result operationId catalog =
+                { OperationId = operationId; Outcome = OutcomeKind.Accepted; LibraryCatalog = catalog; ReasonCode = None; RecordedAt = catalog.CreatedAt }
+
+            store.InjectCatalogOperation(
+                {
+                    id = $"catalog-operation:{losingOperationId:D}"
+                    RepositoryId = repositoryId
+                    SchemaVersion = 1
+                    OperationId = losingOperationId
+                    RequestHash = "request-loser"
+                    Result = result losingOperationId losingCatalog
+                    ControlCommitVersion = None
+                }
+            )
+
+            let! acceptedWinner = coordinator.SetCatalogAsync(repositoryId, "request-winner", result winningOperationId winningCatalog, CancellationToken.None)
+            let! replayedLoser = coordinator.SetCatalogAsync(repositoryId, "request-loser", result losingOperationId losingCatalog, CancellationToken.None)
+            let! current = coordinator.GetCatalogAsync(repositoryId, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(acceptedWinner.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That(current, Is.EqualTo(winningCatalog))
+                    Assert.That(replayedLoser.Outcome, Is.EqualTo(OutcomeKind.StalePolicy))
+                    Assert.That(replayedLoser.LibraryCatalog, Is.EqualTo(winningCatalog)))
+            )
+        }
+
     /// Verifies baseline pages retain the exact catalog snapshot captured with their immutable manifest.
     [<Test>]
     member _.BaselineManifestCapturesCatalogSnapshotForEveryPage() =
@@ -809,7 +1153,7 @@ type LibraryCoordinatorTests() =
             Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> LibraryCoordinator.repair store repositoryId CancellationToken.None :> Task))
             |> ignore
 
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x48uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x48uy
             do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
 
             let pending = control.Pending.Value
@@ -862,42 +1206,42 @@ type LibraryCoordinatorTests() =
         let preparedId = Guid.NewGuid()
         let now = Instant.FromUtc(2026, 8, 28, 13, 0)
 
-        let document =
+        let prepared =
             {
-                id = $"prepared:{preparedId:D}"
-                RepositoryId = repositoryId
-                RecordKind = "prepared"
-                RecordKey = $"prepared:{preparedId:D}"
-                SchemaVersion = 1
                 PreparedContentId = preparedId
-                OperationId = operationId
-                PrincipalId = "principal"
-                OwnerId = Guid.NewGuid()
-                OrganizationId = Guid.NewGuid()
-                Content =
-                    {
-                        PreparedContentId = preparedId
-                        Blake3Hash = String.replicate 64 "a"
-                        Sha256Hash = String.replicate 64 "b"
-                        Size = 42L
-                        UploadRequired = true
-                        UploadInstructions = None
-                        ExpiresAt = now + Duration.FromMinutes 15L
-                    }
-                UploadSessionId = preparedId
-                AuthorizedScope = $"Library/{preparedId:D}"
-                StoragePoolId = StoragePoolId $"pool-{Guid.NewGuid():N}"
-                SamplingPolicySnapshot = "{\"minimumSampleCount\":1}"
-                FinalizedManifest = None
+                Blake3Hash = String.replicate 64 "a"
+                Sha256Hash = String.replicate 64 "b"
+                Size = 42L
+                UploadRequired = true
+                UploadInstructions = None
+                ExpiresAt = now + Duration.FromMinutes 15L
             }
 
-        let firstAttempt = Library.preparedUploadSessionCommand document
-        let exactRetry = Library.preparedUploadSessionCommand document
+        let preparation = { OperationId = operationId; PrincipalId = "principal"; Content = prepared }
+
+        let start: StartUploadSession =
+            {
+                UploadSessionId = preparedId
+                OwnerId = Guid.NewGuid()
+                OrganizationId = Guid.NewGuid()
+                RepositoryId = repositoryId
+                StoragePoolId = StoragePoolId $"pool-{Guid.NewGuid():N}"
+                AuthorizedScope = $"Library/{preparedId:D}"
+                FileContentHash = prepared.Blake3Hash
+                ExpectedSize = prepared.Size
+                ChunkingSuiteId = RabinChunking.SuiteName
+                SamplingPolicySnapshot = "{\"minimumSampleCount\":1}"
+                OperationId = $"Library-prepare:{operationId:D}"
+                LibraryPreparation = Some preparation
+            }
+
+        let firstAttempt = Library.preparedUploadSessionCommand start
+        let exactRetry = Library.preparedUploadSessionCommand start
         let sourcePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Library.Server.fs"))
         let source = File.ReadAllText sourcePath
 
         Assert.That(exactRetry, Is.EqualTo(firstAttempt))
-        Assert.That(source, Does.Contain("startPreparedUploadSession context existing.Document"))
+        Assert.That(source, Does.Contain("startPreparedUploadSession context start"))
 
         match exactRetry with
         | UploadSessionCommand.Start command ->
@@ -906,6 +1250,114 @@ type LibraryCoordinatorTests() =
                     Assert.That(command.UploadSessionId, Is.EqualTo(preparedId))
                     Assert.That(command.RepositoryId, Is.EqualTo(repositoryId))
                     Assert.That(command.OperationId, Is.EqualTo($"Library-prepare:{operationId:D}"))
-                    Assert.That(command.SamplingPolicySnapshot, Is.EqualTo(document.SamplingPolicySnapshot)))
+                    Assert.That(command.SamplingPolicySnapshot, Is.EqualTo(start.SamplingPolicySnapshot))
+                    Assert.That(command.LibraryPreparation, Is.EqualTo(Some preparation)))
             )
         | _ -> Assert.Fail("Prepared content must reconstruct an upload-session Start command.")
+
+    /// Verifies a later observation of identical immutable bytes reuses the original content-location fact.
+    [<Test>]
+    member _.ContentLocationReusesEquivalentPlacementAcrossObservationTimes() =
+        task {
+            let repositoryId = Guid.Parse "31870372-ff53-5ad2-b3f3-c0da47f83ce6"
+            let contentVersionId = Guid.Parse "5c7fa2a6-0a70-51b2-8218-1b2067c6181f"
+            let block = ContentBlock.Create(ContentBlockAddress "content-block", 0L, 4096L)
+
+            let manifest =
+                FileManifest.Create(
+                    ManifestAddress "manifest-address",
+                    ChunkingSuiteId RabinChunking.SuiteName,
+                    FileContentHash "library-blake3",
+                    4096L,
+                    StoragePoolId "pool-library",
+                    [ block ]
+                )
+
+            let original =
+                {
+                    id = $"content:{contentVersionId:D}"
+                    RepositoryId = repositoryId
+                    RecordKind = "content"
+                    RecordKey = $"content:{contentVersionId:D}"
+                    SchemaVersion = 1
+                    Content =
+                        {
+                            ContentVersionId = contentVersionId
+                            Blake3Hash = "library-blake3"
+                            Sha256Hash = "library-sha256"
+                            Size = 4096L
+                            CreatedAt = Instant.FromUtc(2026, 9, 4, 12, 0)
+                        }
+                    AuthorizedScope = "Library/prepared"
+                    Manifest = manifest
+                }
+
+            let observedLater =
+                { original with
+                    AuthorizedScope = "Library/later-prepared"
+                    Content = { original.Content with CreatedAt = original.Content.CreatedAt.Plus(Duration.FromMinutes 5L) }
+                }
+
+            let persistentState = LibraryContentLocationState()
+            let actor = LibraryContentLocationRecordActor(persistentState) :> ILibraryContentLocationRecordActor
+
+            let! created = actor.CreateExact original
+            let! reused = actor.CreateExact observedLater
+            let! retained = actor.Read()
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+                    Assert.That(created, Is.EqualTo(original))
+                    Assert.That(reused, Is.EqualTo(original))
+                    Assert.That(retained, Is.EqualTo(Some original)))
+            )
+        }
+
+    /// Verifies immutable content-location reuse still rejects a different physical manifest placement.
+    [<Test>]
+    member _.ContentLocationRejectsDifferentManifestPlacement() =
+        task {
+            let repositoryId = Guid.Parse "31870372-ff53-5ad2-b3f3-c0da47f83ce6"
+            let contentVersionId = Guid.Parse "5c7fa2a6-0a70-51b2-8218-1b2067c6181f"
+
+            let manifest =
+                FileManifest.Create(
+                    ManifestAddress "manifest-address",
+                    4096L,
+                    [
+                        ContentBlock.Create(ContentBlockAddress "content-block", 0L, 4096L)
+                    ]
+                )
+
+            let original =
+                {
+                    id = $"content:{contentVersionId:D}"
+                    RepositoryId = repositoryId
+                    RecordKind = "content"
+                    RecordKey = $"content:{contentVersionId:D}"
+                    SchemaVersion = 1
+                    Content =
+                        {
+                            ContentVersionId = contentVersionId
+                            Blake3Hash = "library-blake3"
+                            Sha256Hash = "library-sha256"
+                            Size = 4096L
+                            CreatedAt = Instant.FromUtc(2026, 9, 4, 12, 0)
+                        }
+                    AuthorizedScope = "Library/prepared"
+                    Manifest = manifest
+                }
+
+            let conflicting = { original with Manifest = { original.Manifest with StoragePoolId = StoragePoolId "different-pool" } }
+
+            let persistentState = LibraryContentLocationState()
+            let actor = LibraryContentLocationRecordActor(persistentState) :> ILibraryContentLocationRecordActor
+
+            let! _ = actor.CreateExact original
+
+            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> actor.CreateExact conflicting :> Task))
+
+            Assert.That(error.Message, Does.Contain("not byte-equivalent"))
+            Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+        }

@@ -1,11 +1,17 @@
 namespace Grace.Server
 
+open Grace.Actors
+open Grace.Actors.Interfaces
 open Grace.Shared.Validation.Library
 open Grace.Types.Authorization
 open Grace.Types.Common
 open Grace.Types.Library
+open Grace.Types.ManifestContributionWorkflow
+open Grace.Types.RepositoryContentCounter
 open NodaTime
+open Orleans
 open System
+open System.Collections.Generic
 open System.Security.Cryptography
 open System.Text
 open System.Threading
@@ -13,6 +19,152 @@ open System.Threading.Tasks
 
 /// Implements opaque cursor protection and canonical-first Library change publication.
 module LibraryCoordinator =
+
+    /// Activates the existing repository manifest contribution before a Library receipt becomes readable.
+    type ILibraryManifestContributionActivator =
+
+        /// Adds the accepted Library operation's manifest reference idempotently under its stable operation identity.
+        abstract member ActivateAsync:
+            repositoryId: RepositoryId *
+            operationId: LibraryOperationId *
+            contentVersionId: LibraryContentVersionId *
+            correlationId: CorrelationId *
+            cancellationToken: CancellationToken ->
+                Task
+
+        /// Releases the operation's tracked counter identity after its readable receipt is durable.
+        abstract member CompleteAsync:
+            repositoryId: RepositoryId *
+            operationId: LibraryOperationId *
+            contentVersionId: LibraryContentVersionId *
+            correlationId: CorrelationId *
+            cancellationToken: CancellationToken ->
+                Task
+
+    /// Leaves non-file Library coordinator tests independent from Orleans contribution actors.
+    type private NoopLibraryManifestContributionActivator() =
+
+        interface ILibraryManifestContributionActivator with
+            member _.ActivateAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+            member _.CompleteAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+
+    /// Applies Library file contributions through the repository counter and its existing range workflow.
+    type ManifestContributionActivator(transferStore: ILibraryTransferStore, grainFactory: IGrainFactory) =
+
+        /// Returns each unique ContentBlock range owned by one finalized manifest.
+        let workflowRanges (manifest: FileManifest) =
+            let seen = HashSet<ContentBlockAddress>()
+            let ranges = ResizeArray<ManifestContributionWorkflowRange>()
+            let mutable index = 0
+
+            while index < manifest.Blocks.Count do
+                let block = manifest.Blocks[index]
+
+                if seen.Add block.Address then
+                    ranges.Add({ StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address })
+
+                index <- index + 1
+
+            ranges.ToArray()
+
+        /// Builds the stable counter identity shared by activation, retry, and receipt completion.
+        let counterOperationId (operationId: LibraryOperationId) (contentVersionId: LibraryContentVersionId) =
+            RepositoryContentCounterOperationId $"library:{operationId:N}:content:{contentVersionId:N}"
+
+        /// Resolves the retained manifest and its repository counter without introducing another placement authority.
+        let resolveContribution repositoryId operationId contentVersionId correlationId cancellationToken =
+            task {
+                let! location = transferStore.ReadContentLocationAsync(repositoryId, contentVersionId, cancellationToken)
+
+                let location =
+                    location
+                    |> Option.defaultWith (fun () -> invalidOp $"Accepted Library content {contentVersionId:D} has no retained manifest location.")
+
+                if location.RepositoryId <> repositoryId
+                   || location.Content.ContentVersionId
+                      <> contentVersionId then
+                    invalidOp "The retained Library content location does not match the accepted operation."
+
+                let manifest = location.Manifest
+
+                if String.IsNullOrWhiteSpace manifest.StoragePoolId
+                   || String.IsNullOrWhiteSpace manifest.ManifestAddress then
+                    invalidOp "The retained Library content manifest is missing its contribution identity."
+
+                let operationId = counterOperationId operationId contentVersionId
+
+                let counterActor =
+                    grainFactory.GetGrain<IRepositoryContentCounterActor>(
+                        RepositoryContentCounter.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
+                    )
+
+                return manifest, operationId, counterActor, EventMetadata.New correlationId "RepositoryLibraryActor"
+            }
+
+        interface ILibraryManifestContributionActivator with
+
+            member _.ActivateAsync(repositoryId, operationId, contentVersionId, correlationId, cancellationToken) =
+                task {
+                    let! manifest, counterOperationId, counterActor, metadata =
+                        resolveContribution repositoryId operationId contentVersionId correlationId cancellationToken
+
+                    match! counterActor.AddTrackedReference counterOperationId repositoryId manifest.StoragePoolId manifest.ManifestAddress metadata with
+                    | Error error -> invalidOp $"Library manifest contribution counter failed: {error.Error}"
+                    | Ok counterResult ->
+                        let workflowStart =
+                            counterResult.ReturnValue.Intents
+                            |> List.tryPick (fun intent ->
+                                match intent with
+                                | RepositoryContentCounterIntent.IncrementManifestReferenceCount (intentRepositoryId,
+                                                                                                  storagePoolId,
+                                                                                                  manifestAddress,
+                                                                                                  counterRevision) when
+                                    intentRepositoryId = repositoryId
+                                    && storagePoolId = manifest.StoragePoolId
+                                    && manifestAddress = manifest.ManifestAddress
+                                    ->
+                                    Some(storagePoolId, manifestAddress, counterRevision)
+                                | _ -> None)
+
+                        match workflowStart with
+                        | None -> ()
+                        | Some (storagePoolId, manifestAddress, counterRevision) ->
+                            let ranges = workflowRanges manifest
+
+                            if Array.isEmpty ranges then
+                                invalidOp "Accepted Library content manifest has no contribution ranges."
+
+                            let workflowActor =
+                                grainFactory.GetGrain<IManifestContributionWorkflowActor>(
+                                    ManifestContributionWorkflow.primaryKey repositoryId storagePoolId manifestAddress
+                                )
+
+                            match!
+                                workflowActor.Start
+                                    $"{counterOperationId}:fanout"
+                                    repositoryId
+                                    storagePoolId
+                                    manifestAddress
+                                    ManifestContributionDirection.Increment
+                                    ranges
+                                    counterRevision
+                                    metadata
+                                with
+                            | Error error -> invalidOp $"Library manifest contribution workflow failed: {error.Error}"
+                            | Ok _ -> ()
+                }
+                :> Task
+
+            member _.CompleteAsync(repositoryId, operationId, contentVersionId, correlationId, cancellationToken) =
+                task {
+                    let! _, counterOperationId, counterActor, metadata =
+                        resolveContribution repositoryId operationId contentVersionId correlationId cancellationToken
+
+                    match! counterActor.CompleteTrackedReference counterOperationId metadata with
+                    | Error error -> invalidOp $"Library manifest contribution completion failed: {error.Error}"
+                    | Ok _ -> ()
+                }
+                :> Task
 
     /// Encodes and validates repository-bound cursors with HMAC-SHA256.
     type LibraryCursorCodec(secret: byte array) =
@@ -174,32 +326,61 @@ module LibraryCoordinator =
         }
 
     /// Converts one canonical change into its deterministic item and path history entry.
-    let private historyEntry (pending: LibraryPendingCommandDocument) =
-        let change = pending.CanonicalChange.Change
-        let item = resultItem pending
+    let private historyEntry (canonical: LibraryCanonicalChangeDocument) =
+        let change = canonical.Change
 
         {
-            Cursor = pending.Cursor
+            Cursor = canonical.Cursor
             PublicCursor = change.Cursor
-            OperationId = pending.OperationId
+            OperationId = canonical.OperationId
             ItemId = change.ItemId
-            PriorNamespace = pending.CanonicalChange.PriorNamespace
-            ResultingNamespace = item.Namespace
-            PriorContentVersionId = pending.CanonicalChange.PriorContentVersionId
+            PriorNamespace = canonical.PriorNamespace
+            ResultingNamespace = change.Namespace
+            PriorContentVersionId = canonical.PriorContentVersionId
             ResultingContentVersionId =
-                item.Content
+                change.Content
                 |> Option.map (fun content -> content.ContentVersionId)
-            Tombstone = item.Tombstone
+            Tombstone = change.Tombstone
             Conflict = change.Conflict
-            PrincipalId = pending.PrincipalId
+            PrincipalId = change.AcceptedBy
             AcceptedAt = change.AcceptedAt
         }
 
     /// Applies every rebuildable projection and receipt for one canonical pending change.
-    let private applyPending (store: ILibraryStore) repositoryId (pending: LibraryPendingCommandDocument) cancellationToken =
+    let private applyPending
+        (contributionActivator: ILibraryManifestContributionActivator)
+        (store: ILibraryStore)
+        repositoryId
+        (pending: LibraryPendingCommandDocument)
+        cancellationToken
+        =
         task {
             let item = resultItem pending
             let change = pending.CanonicalChange.Change
+
+            let contributionContent =
+                match change.ChangeKind, item.Content with
+                | (ChangeKind.CreateFile
+                  | ChangeKind.UpdateContent),
+                  Some content -> Some content
+                | _ -> None
+
+            match! store.ReadReceiptAsync(repositoryId, pending.OperationId, cancellationToken) with
+            | Some existing when existing.RequestHash <> pending.RequestHash ->
+                invalidOp "The pending Library operation identity already has a different receipt."
+            | Some _ -> ()
+            | None ->
+                match contributionContent with
+                | Some content ->
+                    do!
+                        contributionActivator.ActivateAsync(
+                            repositoryId,
+                            pending.OperationId,
+                            content.ContentVersionId,
+                            pending.CorrelationId,
+                            cancellationToken
+                        )
+                | _ -> ()
 
             do!
                 store.UpsertItemAsync(
@@ -228,21 +409,6 @@ module LibraryCoordinator =
             | Some _ when item.State = "live" -> do! store.UpsertSlotAsync(occupiedSlot repositoryId pending.Cursor item, cancellationToken)
             | _ -> ()
 
-            let history = historyEntry pending
-            do! store.AppendItemHistoryAsync(repositoryId, item.ItemId, history, cancellationToken)
-
-            match pending.CanonicalChange.PriorNamespace with
-            | Some prior -> do! store.AppendPathHistoryAsync(repositoryId, prior.NormalizedPath, history, cancellationToken)
-            | None -> ()
-
-            match item.Namespace with
-            | Some current when
-                pending.CanonicalChange.PriorNamespace
-                |> Option.forall (fun prior -> not (pathsEqual prior.NormalizedPath current.NormalizedPath))
-                ->
-                do! store.AppendPathHistoryAsync(repositoryId, current.NormalizedPath, history, cancellationToken)
-            | _ -> ()
-
             do!
                 store.UpsertReceiptAsync(
                     {
@@ -260,11 +426,16 @@ module LibraryCoordinator =
                     cancellationToken
                 )
 
+            match contributionContent with
+            | Some content ->
+                do! contributionActivator.CompleteAsync(repositoryId, pending.OperationId, content.ContentVersionId, pending.CorrelationId, cancellationToken)
+            | None -> ()
+
             return change
         }
 
     /// Repairs the exact pending decision and advances control only after all dependent records are durable.
-    let repair (store: ILibraryStore) repositoryId cancellationToken =
+    let private repairWithContribution (contributionActivator: ILibraryManifestContributionActivator) (store: ILibraryStore) repositoryId cancellationToken =
         task {
             let mutable completed = false
 
@@ -275,7 +446,7 @@ module LibraryCoordinator =
                 | None -> completed <- true
                 | Some pending ->
                     do! store.CreateCanonicalAsync(pending.CanonicalChange, cancellationToken)
-                    let! _ = applyPending store repositoryId pending cancellationToken
+                    let! _ = applyPending contributionActivator store repositoryId pending cancellationToken
 
                     let position = pending.Cursor
 
@@ -286,7 +457,6 @@ module LibraryCoordinator =
                             ProjectionWatermarks =
                                 { controlRead.Document.ProjectionWatermarks with
                                     Current = max controlRead.Document.ProjectionWatermarks.Current position
-                                    History = max controlRead.Document.ProjectionWatermarks.History position
                                     Receipts = max controlRead.Document.ProjectionWatermarks.Receipts position
                                 }
                             UpdatedAt = SystemClock.Instance.GetCurrentInstant()
@@ -295,6 +465,54 @@ module LibraryCoordinator =
                     match! store.ReplaceControlAsync(replacement, controlRead.ETag, cancellationToken) with
                     | Replaced _ -> completed <- true
                     | PreconditionFailed -> ()
+        }
+
+    /// Repairs one pending Library reservation without manifest activation for non-file coordinator proofs.
+    let repair (store: ILibraryStore) repositoryId cancellationToken =
+        repairWithContribution (NoopLibraryManifestContributionActivator()) store repositoryId cancellationToken
+
+    /// Replays one canonical history position and advances the history watermark only after every bounded append is durable.
+    let projectHistory (store: ILibraryStore) repositoryId cancellationToken =
+        task {
+            let mutable caughtUp = false
+
+            while not caughtUp do
+                let! controlRead = store.ReadControlAsync(repositoryId, cancellationToken)
+
+                let nextCursor =
+                    controlRead.Document.ProjectionWatermarks.History
+                    + 1L
+
+                if nextCursor > controlRead.Document.AppliedThrough then
+                    caughtUp <- true
+                else
+                    match! store.ReadCanonicalAsync(repositoryId, nextCursor, cancellationToken) with
+                    | None -> invalidOp $"Accepted Library change {nextCursor} is missing during history replay."
+                    | Some canonical ->
+                        let history = historyEntry canonical
+                        do! store.AppendItemHistoryAsync(repositoryId, canonical.Change.ItemId, history, cancellationToken)
+
+                        match canonical.PriorNamespace with
+                        | Some prior -> do! store.AppendPathHistoryAsync(repositoryId, prior.NormalizedPath, history, cancellationToken)
+                        | None -> ()
+
+                        match canonical.Change.Namespace with
+                        | Some current when
+                            canonical.PriorNamespace
+                            |> Option.forall (fun prior -> not (pathsEqual prior.NormalizedPath current.NormalizedPath))
+                            ->
+                            do! store.AppendPathHistoryAsync(repositoryId, current.NormalizedPath, history, cancellationToken)
+                        | _ -> ()
+
+                        let replacement =
+                            { controlRead.Document with
+                                ProjectionWatermarks = { controlRead.Document.ProjectionWatermarks with History = nextCursor }
+                                UpdatedAt = SystemClock.Instance.GetCurrentInstant()
+                            }
+
+                        match! store.ReplaceControlAsync(replacement, controlRead.ETag, cancellationToken) with
+                        | Replaced _ -> ()
+                        | PreconditionFailed -> ()
         }
 
     /// Resolves one root or live directory parent into its current normalized path.
@@ -747,14 +965,14 @@ module LibraryCoordinator =
         }
 
     /// Coordinates one repository's deterministic command lane over direct durable storage.
-    type Coordinator(store: ILibraryStore, codec: ILibraryCursorCodec) =
+    type Coordinator(store: ILibraryStore, codec: ILibraryCursorCodec, contributionActivator: ILibraryManifestContributionActivator) =
 
         interface ILibraryCoordinator with
 
             member _.InitializeAsync(repositoryId, libraryCatalog, cancellationToken) =
                 task {
                     let! _ = store.EnsureControlAsync(repositoryId, libraryCatalog, cancellationToken)
-                    do! repair store repositoryId cancellationToken
+                    do! repairWithContribution contributionActivator store repositoryId cancellationToken
                 }
 
             member _.GetCatalogAsync(repositoryId, cancellationToken) =
@@ -765,7 +983,7 @@ module LibraryCoordinator =
 
             member _.SetCatalogAsync(repositoryId, requestHash, proposedResult, cancellationToken) =
                 task {
-                    do! repair store repositoryId cancellationToken
+                    do! repairWithContribution contributionActivator store repositoryId cancellationToken
                     let mutable finished = false
                     let mutable result = Unchecked.defaultof<LibraryCatalogChangeResultDto>
 
@@ -805,10 +1023,11 @@ module LibraryCoordinator =
                                 {
                                     id = $"catalog-operation:{proposedResult.OperationId:D}"
                                     RepositoryId = repositoryId
-                                    SchemaVersion = 1
+                                    SchemaVersion = 2
                                     OperationId = proposedResult.OperationId
                                     RequestHash = requestHash
                                     Result = durableResult
+                                    ControlCommitVersion = None
                                 }
 
                             if durableResult.Outcome = OutcomeKind.Accepted then
@@ -839,11 +1058,13 @@ module LibraryCoordinator =
                     return configurationOwnsPath control.Document.LibraryCatalog relativePath
                 }
 
-            member _.RepairAsync(repositoryId, cancellationToken) = repair store repositoryId cancellationToken
+            member _.RepairAsync(repositoryId, cancellationToken) = repairWithContribution contributionActivator store repositoryId cancellationToken
+
+            member _.ProjectHistoryAsync(repositoryId, cancellationToken) = projectHistory store repositoryId cancellationToken
 
             member _.SubmitAsync(command, principalId, correlationId, cancellationToken) =
                 task {
-                    do! repair store command.RepositoryId cancellationToken
+                    do! repairWithContribution contributionActivator store command.RepositoryId cancellationToken
                     let! catalogControl = store.ReadControlAsync(command.RepositoryId, cancellationToken)
                     let libraryCatalog = catalogControl.Document.LibraryCatalog
 
@@ -867,7 +1088,7 @@ module LibraryCoordinator =
                             let! control = store.ReadControlAsync(command.RepositoryId, cancellationToken)
 
                             if control.Document.Pending.IsSome then
-                                do! repair store command.RepositoryId cancellationToken
+                                do! repairWithContribution contributionActivator store command.RepositoryId cancellationToken
                             else
                                 match! decide store codec control.Document command principalId correlationId cancellationToken with
                                 | Error rejection ->
@@ -895,8 +1116,8 @@ module LibraryCoordinator =
                                     | PreconditionFailed -> ()
                                     | Replaced _ ->
                                         do! store.CreateCanonicalAsync(pending.CanonicalChange, cancellationToken)
-                                        let! _ = applyPending store command.RepositoryId pending cancellationToken
-                                        do! repair store command.RepositoryId cancellationToken
+                                        let! _ = applyPending contributionActivator store command.RepositoryId pending cancellationToken
+                                        do! repairWithContribution contributionActivator store command.RepositoryId cancellationToken
                                         result <- pending.Receipt
                                         finished <- true
 
@@ -905,7 +1126,7 @@ module LibraryCoordinator =
 
             member _.GetStatusAsync(repositoryId, cancellationToken) =
                 task {
-                    do! repair store repositoryId cancellationToken
+                    do! repairWithContribution contributionActivator store repositoryId cancellationToken
                     let! control = store.ReadControlAsync(repositoryId, cancellationToken)
 
                     let lag =

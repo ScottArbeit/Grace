@@ -225,6 +225,72 @@ module RepositoryContentCounter =
     /// Validates a RepositoryContentCounter command and derives the events needed for a state transition.
     let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
+    /// Retains one exact add until its caller confirms the dependent manifest workflow and receipt are durable.
+    let decideTrackedAddForKey
+        (expectedPrimaryKey: string option)
+        (counter: RepositoryContentCounterDto)
+        (command: RepositoryContentCounterCommand)
+        (metadata: EventMetadata)
+        =
+        let operationId = operationId command
+
+        match validateCommandTarget expectedPrimaryKey counter command metadata with
+        | Some error -> Error error
+        | None ->
+            match command with
+            | RepositoryContentCounterCommand.RemoveReference _ ->
+                Error(graceError metadata.CorrelationId "RepositoryContentCounter tracked add requires an AddReference command.")
+            | RepositoryContentCounterCommand.AddReference _ ->
+                match counter.PendingTrackedAdd with
+                | Some pending when
+                    pending.OperationId = operationId
+                    && pending.Operation = RepositoryContentCounterChangeOperation.Added
+                    ->
+                    okDecision
+                        counter
+                        operationId
+                        []
+                        (intentsForCompletedChange counter.RepositoryId counter.StoragePoolId counter.ManifestAddress pending)
+                        true
+                        "Repository content counter tracked add replayed."
+                | Some _ -> Error(graceError metadata.CorrelationId "RepositoryContentCounter already has a different tracked add awaiting completion.")
+                | None ->
+                    match decideCommandForKey expectedPrimaryKey Seq.empty counter command metadata with
+                    | Error error -> Error error
+                    | Ok decision ->
+                        match decision.Counter.LastCompletedChange with
+                        | Some completed when
+                            completed.OperationId = operationId
+                            && completed.Operation = RepositoryContentCounterChangeOperation.Added
+                            ->
+                            let trackedCounter = { decision.Counter with PendingTrackedAdd = Some completed }
+
+                            Ok
+                                { decision with
+                                    Counter = trackedCounter
+                                    Intents =
+                                        intentsForCompletedChange
+                                            trackedCounter.RepositoryId
+                                            trackedCounter.StoragePoolId
+                                            trackedCounter.ManifestAddress
+                                            completed
+                                    Message = "Repository content counter tracked add retained."
+                                }
+                        | _ -> Error(graceError metadata.CorrelationId "RepositoryContentCounter tracked add completed without its exact change.")
+
+    /// Completes one exact tracked add after its dependent workflow and Library receipt are durable.
+    let completeTrackedAddForKey expectedPrimaryKey (counter: RepositoryContentCounterDto) operationId (metadata: EventMetadata) =
+        if String.IsNullOrWhiteSpace operationId then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter tracked add completion requires a non-empty operation id.")
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey counter.RepositoryId counter.StoragePoolId counter.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter tracked add completion does not match the grain key.")
+        else
+            match counter.PendingTrackedAdd with
+            | Some pending when pending.OperationId <> operationId ->
+                Error(graceError metadata.CorrelationId "RepositoryContentCounter tracked add completion does not match the pending operation.")
+            | Some _ -> okDecision { counter with PendingTrackedAdd = None } operationId [] [] false "Repository content counter tracked add completed."
+            | None -> okDecision counter operationId [] [] true "Repository content counter tracked add was already completed."
+
     /// Validates and decides one atomic positive logical count replacement without normal accounting events or intents.
     let decideRepairForKey
         (expectedPrimaryKey: string option)
@@ -400,6 +466,28 @@ module RepositoryContentCounter =
                                     return Ok localDecision
         }
 
+    /// Persists one Library-owned add together with the bounded identity needed to replay its workflow handoff.
+    let handleTrackedAdd (persistSnapshot: RepositoryContentCounterDto -> Task) expectedPrimaryKey counter command metadata =
+        task {
+            match decideTrackedAddForKey expectedPrimaryKey counter command metadata with
+            | Error error -> return Error error
+            | Ok decision when decision.Counter = counter -> return Ok decision
+            | Ok decision ->
+                do! persistSnapshot decision.Counter
+                return Ok decision
+        }
+
+    /// Clears one tracked add only after its caller has made the dependent workflow and receipt durable.
+    let completeTrackedAdd (persistSnapshot: RepositoryContentCounterDto -> Task) expectedPrimaryKey counter operationId metadata =
+        task {
+            match completeTrackedAddForKey expectedPrimaryKey counter operationId metadata with
+            | Error error -> return Error error
+            | Ok decision when decision.WasIdempotentReplay -> return Ok decision
+            | Ok decision ->
+                do! persistSnapshot decision.Counter
+                return Ok decision
+        }
+
     /// Implements the Orleans grain for repository content counter actor.
     type RepositoryContentCounterActor
         (
@@ -489,6 +577,30 @@ module RepositoryContentCounter =
                         )
 
                         return Error error
+                }
+
+            /// Persists and replays one add until its dependent manifest workflow and receipt are durable.
+            member this.AddTrackedReference operationId repositoryId storagePoolId manifestAddress metadata =
+                task {
+                    this.correlationId <- metadata.CorrelationId
+                    RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, "AddTrackedReference")
+
+                    let command = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
+
+                    match! handleTrackedAdd this.ApplySnapshot (Some(this.GetPrimaryKeyString())) counter command metadata with
+                    | Ok decision -> return Ok(GraceReturnValue.Create decision metadata.CorrelationId)
+                    | Error error -> return Error error
+                }
+
+            /// Clears one tracked add after its dependent manifest workflow and receipt have completed.
+            member this.CompleteTrackedReference operationId metadata =
+                task {
+                    this.correlationId <- metadata.CorrelationId
+                    RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, "CompleteTrackedReference")
+
+                    match! completeTrackedAdd this.ApplySnapshot (Some(this.GetPrimaryKeyString())) counter operationId metadata with
+                    | Ok decision -> return Ok(GraceReturnValue.Create decision metadata.CorrelationId)
+                    | Error error -> return Error error
                 }
 
             /// Applies one repair-only positive logical count replacement without normal contribution intents.

@@ -58,14 +58,68 @@ module UploadSession =
     let createCleanupOperationId operationId = $"{operationId}:cleanup"
 
     /// Builds cleanup reminder state data needed by the UploadSession actor.
-    let createCleanupReminderState uploadSessionId repositoryId operationId correlationId =
+    let createCleanupReminderState uploadSessionId repositoryId operationId correlationId expectedStartedAt deleteAt =
         {
             UploadSessionId = uploadSessionId
             RepositoryId = repositoryId
             OperationId = createCleanupOperationId operationId
             DeleteReason = "UploadSession coordination state retention window elapsed."
             CorrelationId = correlationId
+            ExpectedStartedAt = expectedStartedAt
+            DeleteAt = deleteAt
         }
+
+    /// Calculates the absolute retention deadline from the durable session start and repository policy.
+    let calculateCleanupDeadline (startedAt: Instant) (logicalDeleteDays: float32) =
+        startedAt
+        + Duration.FromDays(float logicalDeleteDays)
+
+    /// Selects the only safe effect for an UploadSession cleanup reminder after exact state revalidation.
+    type CleanupReminderDisposition =
+        | IgnoreCleanupReminder
+        | RescheduleCleanupReminder of delay: Duration
+        | RepairCleanupReminderStateAndReschedule of delay: Duration
+        | RepairCleanupReminderStateAndDelete
+        | DeleteUploadSessionState
+
+    /// Reconstructs the already-scheduled retention event from exact durable reminder state after a scheduling crash gap.
+    let createCleanupReminderRepairEvent (reminder: PhysicalDeletionReminderState) (metadata: EventMetadata) =
+        { Event = UploadSessionEventType.CleanupReminderScheduled(reminder.OperationId, reminder.DeleteAt); Metadata = metadata }
+
+    /// Rechecks the persisted session generation and retention deadline before temporary state deletion.
+    let evaluateCleanupReminder now (session: UploadSessionDto) (reminder: PhysicalDeletionReminderState) =
+        if session.UploadSessionId
+           <> reminder.UploadSessionId
+           || session.RepositoryId <> reminder.RepositoryId
+           || session.StartedAt <> reminder.ExpectedStartedAt then
+            IgnoreCleanupReminder
+        else
+            let exactPersistedRetention =
+                session.CleanupReminderOperationId = Some reminder.OperationId
+                && session.CleanupReminderScheduledAt = Some reminder.DeleteAt
+                && session.LifecycleState = UploadSessionLifecycleState.RetentionPending
+
+            let exactMissingRetention =
+                session.CleanupReminderOperationId.IsNone
+                && session.CleanupReminderScheduledAt.IsNone
+                && (session.LifecycleState = UploadSessionLifecycleState.Finalized
+                    || session.LifecycleState = UploadSessionLifecycleState.Abandoned
+                    || session.LifecycleState = UploadSessionLifecycleState.Expired)
+                && (session.LastOperationId
+                    |> Option.map createCleanupOperationId) = Some reminder.OperationId
+
+            if exactPersistedRetention then
+                if now < reminder.DeleteAt then
+                    RescheduleCleanupReminder(reminder.DeleteAt - now)
+                else
+                    DeleteUploadSessionState
+            elif exactMissingRetention then
+                if now < reminder.DeleteAt then
+                    RepairCleanupReminderStateAndReschedule(reminder.DeleteAt - now)
+                else
+                    RepairCleanupReminderStateAndDelete
+            else
+                IgnoreCleanupReminder
 
     /// Coordinates event operation id logic for the UploadSession actor.
     let private eventOperationId uploadSessionEvent =
@@ -124,9 +178,12 @@ module UploadSession =
     let private graceError correlationId message = GraceError.Create message correlationId
 
     /// Coordinates cleanup events logic for the UploadSession actor.
-    let private cleanupEvents (session: UploadSessionDto) operationId (metadata: EventMetadata) =
+    let private cleanupEvents cleanupDeadline (session: UploadSessionDto) operationId (metadata: EventMetadata) =
         let cleanupOperationId = createCleanupOperationId operationId
-        let reminderTime = metadata.Timestamp.Plus(DefaultPhysicalDeletionReminderDuration)
+
+        let reminderTime =
+            cleanupDeadline
+            |> Option.defaultValue (metadata.Timestamp.Plus(DefaultPhysicalDeletionReminderDuration))
 
         [
             { Event = UploadSessionEventType.CleanupReminderScheduled(cleanupOperationId, reminderTime); Metadata = metadata }
@@ -1223,7 +1280,7 @@ module UploadSession =
             ManifestValidation.createBlockPayload payload.Address payload.Payload
 
     /// Coordinates finalize manifest logic for the UploadSession actor.
-    let private finalizeManifest (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
+    let private finalizeManifest cleanupDeadline (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
         if isNull (box finalize) then
             Error(graceError metadata.CorrelationId "FinalizeManifest payload is required.")
         else
@@ -1243,9 +1300,9 @@ module UploadSession =
                 | Ok _ ->
                     let events =
                         [
-                            { Event = UploadSessionEventType.Finalized(finalize.OperationId, finalize.Manifest.ManifestAddress); Metadata = metadata }
+                            { Event = UploadSessionEventType.Finalized(finalize.OperationId, finalize.Manifest); Metadata = metadata }
                         ]
-                        @ cleanupEvents session finalize.OperationId metadata
+                        @ cleanupEvents cleanupDeadline session finalize.OperationId metadata
 
                     okDecision session finalize.OperationId events false "Upload session manifest finalized."
                 | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
@@ -1332,8 +1389,14 @@ module UploadSession =
 
                                 okDecision session confirmation.OperationId events false "ContentBlock upload confirmed."
 
-    /// Validates a UploadSession command and derives the events needed for a state transition.
-    let decideCommand (events: seq<UploadSessionEvent>) (session: UploadSessionDto) (command: UploadSessionCommand) (metadata: EventMetadata) =
+    /// Validates an UploadSession command against an optional repository-derived cleanup deadline.
+    let private decideCommandWithCleanupDeadline
+        cleanupDeadline
+        (events: seq<UploadSessionEvent>)
+        (session: UploadSessionDto)
+        (command: UploadSessionCommand)
+        (metadata: EventMetadata)
+        =
         let operationId = operationId command
 
         if String.IsNullOrWhiteSpace operationId then
@@ -1388,7 +1451,7 @@ module UploadSession =
                             [
                                 { Event = UploadSessionEventType.Abandoned operationId; Metadata = metadata }
                             ]
-                            @ cleanupEvents session operationId metadata
+                            @ cleanupEvents cleanupDeadline session operationId metadata
 
                         okDecision session operationId events false "Upload session abandoned."
                     | UploadSessionLifecycleState.NotStarted -> Error(graceError metadata.CorrelationId "UploadSession must be started before Abandon.")
@@ -1406,7 +1469,7 @@ module UploadSession =
                             [
                                 { Event = UploadSessionEventType.Expired operationId; Metadata = metadata }
                             ]
-                            @ cleanupEvents session operationId metadata
+                            @ cleanupEvents cleanupDeadline session operationId metadata
 
                         okDecision session operationId events false "Upload session expired."
                     | UploadSessionLifecycleState.NotStarted -> Error(graceError metadata.CorrelationId "UploadSession must be started before Expire.")
@@ -1465,10 +1528,14 @@ module UploadSession =
                     | UploadSessionLifecycleState.Started
                     | UploadSessionLifecycleState.Discovering
                     | UploadSessionLifecycleState.UploadingBlocks
-                    | UploadSessionLifecycleState.ClaimingRanges -> finalizeManifest session finalize metadata
+                    | UploadSessionLifecycleState.ClaimingRanges -> finalizeManifest cleanupDeadline session finalize metadata
                     | UploadSessionLifecycleState.NotStarted ->
                         Error(graceError metadata.CorrelationId "UploadSession must be started before FinalizeManifest.")
                     | _ -> Error(graceError metadata.CorrelationId $"UploadSession cannot FinalizeManifest from {session.LifecycleState}.")
+
+    /// Validates an UploadSession command and derives events with the existing default cleanup duration.
+    let decideCommand (events: seq<UploadSessionEvent>) (session: UploadSessionDto) (command: UploadSessionCommand) (metadata: EventMetadata) =
+        decideCommandWithCleanupDeadline None events session command metadata
 
     /// Implements the Orleans grain for session actor.
     type UploadSessionActor([<PersistentState(StateName.UploadSession, Constants.GraceActorStorage)>] state: IPersistentState<List<UploadSessionEvent>>) =
@@ -1805,31 +1872,91 @@ module UploadSession =
                         metadataIndex <- metadataIndex + 1
             }
 
-        /// Schedules schedule finalize cleanup reminder work for the UploadSession actor.
-        member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+        /// Resolves the stable cleanup deadline from the session start and current repository retention policy.
+        member private this.ResolveCleanupDeadline(command: UploadSessionCommand, metadata: EventMetadata) =
             task {
+                let needsCleanupDeadline =
+                    match command with
+                    | UploadSessionCommand.Abandon _
+                    | UploadSessionCommand.Expire _
+                    | UploadSessionCommand.FinalizeManifest _ -> true
+                    | _ -> false
+
+                if not needsCleanupDeadline then
+                    return None
+                else
+                    match uploadSessionDto.CleanupReminderScheduledAt with
+                    | Some existingDeadline -> return Some existingDeadline
+                    | None when uploadSessionDto.StartedAt = Constants.DefaultTimestamp -> return None
+                    | None ->
+                        let repositoryActor = Repository.CreateActorProxy uploadSessionDto.OrganizationId uploadSessionDto.RepositoryId metadata.CorrelationId
+
+                        let! repository = repositoryActor.Get metadata.CorrelationId
+                        return Some(calculateCleanupDeadline uploadSessionDto.StartedAt repository.LogicalDeleteDays)
+            }
+
+        /// Schedules cleanup at the exact repository-derived deadline retained by the session.
+        member private this.ScheduleCleanupReminder decision operationId cleanupDeadline (metadata: EventMetadata) =
+            task {
+                let deleteAt =
+                    decision.Session.CleanupReminderScheduledAt
+                    |> Option.orElse cleanupDeadline
+                    |> Option.defaultWith (fun () -> invalidOp "UploadSession cleanup requires a durable exact deadline.")
+
+                let now = getCurrentInstant ()
+                let delay = if deleteAt > now then deleteAt - now else Duration.Zero
+
                 let reminderState =
-                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId finalize.OperationId metadata.CorrelationId
+                    createCleanupReminderState
+                        decision.Session.UploadSessionId
+                        decision.Session.RepositoryId
+                        operationId
+                        metadata.CorrelationId
+                        decision.Session.StartedAt
+                        deleteAt
 
                 do!
                     (this :> IGraceReminderWithGuidKey)
                         .ScheduleReminderAsync
                         ReminderTypes.PhysicalDeletion
-                        DefaultPhysicalDeletionReminderDuration
+                        delay
                         (ReminderState.UploadSessionPhysicalDeletion reminderState)
                         metadata.CorrelationId
             }
 
+        /// Schedules finalize cleanup at the session's exact repository-derived retention deadline.
+        member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) cleanupDeadline (metadata: EventMetadata) =
+            this.ScheduleCleanupReminder decision finalize.OperationId cleanupDeadline metadata
+
         /// Validates finalize cleanup reminder before the operation continues.
-        member private this.EnsureFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+        member private this.EnsureFinalizeCleanupReminder decision (finalize: FinalizeManifest) cleanupDeadline (metadata: EventMetadata) =
             task {
                 if shouldScheduleFinalizeCleanupReminder decision.Session finalize then
-                    do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+                    do! this.ScheduleFinalizeCleanupReminder decision finalize cleanupDeadline metadata
 
                     if decision.Session.CleanupReminderOperationId.IsNone then
-                        let retentionEvents = cleanupEvents decision.Session finalize.OperationId metadata
+                        let retentionEvents = cleanupEvents cleanupDeadline decision.Session finalize.OperationId metadata
 
                         if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
+            }
+
+        /// Deletes retained upload coordination after the exact cleanup reminder has passed its durable-state recheck.
+        member private this.DeletePhysicalStateFromCleanupReminder(reminderState: PhysicalDeletionReminderState) =
+            task {
+                let metadata = EventMetadata.New reminderState.CorrelationId "system"
+                let command = UploadSessionCommand.DeletePhysicalState reminderState.OperationId
+
+                match decideCommand state.State uploadSessionDto command metadata with
+                | Error error -> return Error error
+                | Ok decision ->
+                    match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
+                    | Error error -> return Error error
+                    | Ok _ ->
+                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
+                        do! this.CompactPhysicalStateEvents()
+                        this.DeactivateActorOnIdle()
+                        return Ok()
             }
 
         interface IGraceReminderWithGuidKey with
@@ -1861,20 +1988,38 @@ module UploadSession =
                     | ReminderTypes.PhysicalDeletion, ReminderState.UploadSessionPhysicalDeletion reminderState ->
                         this.correlationId <- reminderState.CorrelationId
 
-                        let metadata = EventMetadata.New reminderState.CorrelationId "system"
-                        let command = UploadSessionCommand.DeletePhysicalState reminderState.OperationId
+                        match evaluateCleanupReminder (getCurrentInstant ()) uploadSessionDto reminderState with
+                        | IgnoreCleanupReminder -> return Ok()
+                        | RescheduleCleanupReminder delay ->
+                            do!
+                                (this :> IGraceReminderWithGuidKey)
+                                    .ScheduleReminderAsync
+                                    ReminderTypes.PhysicalDeletion
+                                    delay
+                                    reminder.State
+                                    reminderState.CorrelationId
 
-                        match decideCommand state.State uploadSessionDto command metadata with
-                        | Ok decision ->
-                            match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
-                            | Error error -> return Error error
-                            | Ok _ ->
-                                if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                            return Ok()
+                        | RepairCleanupReminderStateAndReschedule delay ->
+                            let metadata = EventMetadata.New reminderState.CorrelationId "system"
+                            let repairEvent = createCleanupReminderRepairEvent reminderState metadata
+                            do! this.ApplyEvents [ repairEvent ]
 
-                                do! this.CompactPhysicalStateEvents()
-                                this.DeactivateActorOnIdle()
-                                return Ok()
-                        | Error error -> return Error error
+                            do!
+                                (this :> IGraceReminderWithGuidKey)
+                                    .ScheduleReminderAsync
+                                    ReminderTypes.PhysicalDeletion
+                                    delay
+                                    reminder.State
+                                    reminderState.CorrelationId
+
+                            return Ok()
+                        | RepairCleanupReminderStateAndDelete ->
+                            let metadata = EventMetadata.New reminderState.CorrelationId "system"
+                            let repairEvent = createCleanupReminderRepairEvent reminderState metadata
+                            do! this.ApplyEvents [ repairEvent ]
+                            return! this.DeletePhysicalStateFromCleanupReminder reminderState
+                        | DeleteUploadSessionState -> return! this.DeletePhysicalStateFromCleanupReminder reminderState
                     | reminderType, reminderState ->
                         return
                             Error(
@@ -1911,7 +2056,9 @@ module UploadSession =
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Constants.CurrentCommandProperty, commandName command)
 
-                    match decideCommand state.State uploadSessionDto command metadata with
+                    let! cleanupDeadline = this.ResolveCleanupDeadline(command, metadata)
+
+                    match decideCommandWithCleanupDeadline cleanupDeadline state.State uploadSessionDto command metadata with
                     | Ok decision ->
                         match command with
                         | UploadSessionCommand.FinalizeManifest finalize ->
@@ -1928,7 +2075,7 @@ module UploadSession =
                                     match replayMetadataResult with
                                     | Error error -> return Error error
                                     | Ok replayMetadata ->
-                                        do! this.EnsureFinalizeCleanupReminder decision finalize metadata
+                                        do! this.EnsureFinalizeCleanupReminder decision finalize cleanupDeadline metadata
                                         do! this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata
 
                                         let returnValue =
@@ -1955,7 +2102,7 @@ module UploadSession =
 
                                         if not finalizationEvents.IsEmpty then do! this.ApplyEvents finalizationEvents
 
-                                        do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+                                        do! this.ScheduleFinalizeCleanupReminder decision finalize cleanupDeadline metadata
 
                                         if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
 
@@ -1975,35 +2122,34 @@ module UploadSession =
 
                                             return Ok returnValue
                         | _ ->
-                            if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                            let operationEvents, retentionEvents = splitFinalizeEvents decision.Events
+
+                            if not operationEvents.IsEmpty then do! this.ApplyEvents operationEvents
 
                             match command with
-                            | UploadSessionCommand.Abandon operationId when not decision.WasIdempotentReplay ->
-                                let reminderState =
-                                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
+                            | UploadSessionCommand.Abandon operationId
+                            | UploadSessionCommand.Expire operationId ->
+                                let expectedCleanupOperationId = createCleanupOperationId operationId
 
-                                do!
-                                    (this :> IGraceReminderWithGuidKey)
-                                        .ScheduleReminderAsync
-                                        ReminderTypes.PhysicalDeletion
-                                        DefaultPhysicalDeletionReminderDuration
-                                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                        metadata.CorrelationId
-                            | UploadSessionCommand.Expire operationId when not decision.WasIdempotentReplay ->
-                                let reminderState =
-                                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
+                                if decision.Session.LifecycleState
+                                   <> UploadSessionLifecycleState.StateDeleted
+                                   && (decision.Session.CleanupReminderOperationId.IsNone
+                                       || decision.Session.CleanupReminderOperationId = Some expectedCleanupOperationId) then
+                                    do! this.ScheduleCleanupReminder decision operationId cleanupDeadline metadata
 
-                                do!
-                                    (this :> IGraceReminderWithGuidKey)
-                                        .ScheduleReminderAsync
-                                        ReminderTypes.PhysicalDeletion
-                                        DefaultPhysicalDeletionReminderDuration
-                                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                        metadata.CorrelationId
+                                    if decision.Session.CleanupReminderOperationId.IsNone then
+                                        let recoveredRetentionEvents = cleanupEvents cleanupDeadline decision.Session operationId metadata
+
+                                        if not recoveredRetentionEvents.IsEmpty then
+                                            do! this.ApplyEvents recoveredRetentionEvents
+
+                                if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
                             | UploadSessionCommand.DeletePhysicalState _ ->
+                                if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
+
                                 do! this.CompactPhysicalStateEvents()
                                 this.DeactivateActorOnIdle()
-                            | _ -> ()
+                            | _ -> if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
 
                             let returnValue =
                                 (GraceReturnValue.Create decision metadata.CorrelationId)

@@ -127,6 +127,30 @@ module Constants =
     [<Literal>]
     let GraceActorStorage = "actorstorage"
 
+    /// The Orleans storage purpose for one repository's Library control and catalog-operation records.
+    [<Literal>]
+    let LibraryControlStorage = "library-control"
+
+    /// The Orleans storage purpose for immutable accepted Library changes.
+    [<Literal>]
+    let LibraryChangesStorage = "library-changes"
+
+    /// The Orleans storage purpose for current Library items, namespace slots, and bounded indexes.
+    [<Literal>]
+    let LibraryCurrentStorage = "library-current"
+
+    /// The Orleans storage purpose for Library operation receipts and retained content locations.
+    [<Literal>]
+    let LibraryReceiptsStorage = "library-receipts"
+
+    /// The Orleans storage purpose for asynchronously projected Library history segments.
+    [<Literal>]
+    let LibraryHistoryStorage = "library-history"
+
+    /// The Orleans storage purpose for immutable Library baseline shards and manifests.
+    [<Literal>]
+    let LibraryBaselinesStorage = "library-baselines"
+
     /// The name of the storage service for in-memory actors.
     [<Literal>]
     let GraceInMemoryStorage = "in-memory"

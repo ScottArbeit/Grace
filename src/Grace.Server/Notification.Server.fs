@@ -5,6 +5,7 @@ open Azure.Identity
 open Azure.Messaging.ServiceBus
 open FSharp.Control
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.DerivedComputation
@@ -38,6 +39,7 @@ open System.Text.Json
 open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
+open Orleans
 
 /// Contains Grace Server notification behavior and supporting helpers.
 module Notification =
@@ -1491,6 +1493,14 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+                | LibraryContentAvailableEvent payload ->
+                    let grainFactory = serviceProvider.GetRequiredService<IGrainFactory>()
+                    let repositoryLibraryActor = grainFactory.GetGrain<IRepositoryLibraryActor>(payload.RepositoryId)
+                    do! repositoryLibraryActor.ProjectHistory payload.CorrelationId
+
+                    if not (isNull hubContext) then
+                        let! _ = notifyLibraryContentAvailableClients hubContext payload
+                        ()
 
                 match EventingPublisher.tryCreateEnvelope graceEvent with
                 | Some envelope ->

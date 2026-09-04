@@ -772,8 +772,160 @@ module Interfaces =
         /// Repairs any pending accepted operation without admitting another command.
         abstract member Repair: correlationId: CorrelationId -> Task
 
+        /// Replays asynchronous history idempotently from accepted canonical changes after notification delivery.
+        abstract member ProjectHistory: correlationId: CorrelationId -> Task
+
         /// Returns truthful content-free Library repository status after repair.
         abstract member GetStatus: correlationId: CorrelationId -> Task<LibraryRepositoryStatusDto>
+
+    /// Owns the point-addressed control record for one repository Library.
+    [<Interface>]
+    type ILibraryControlRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Creates the control record when absent and returns the current value and storage version.
+        abstract member Ensure: candidate: LibraryControlDocument -> Task<LibraryControlDocument * string>
+
+        /// Returns the current control value and storage version when the record exists.
+        abstract member Read: unit -> Task<(LibraryControlDocument * string) option>
+
+        /// Replaces the control record only when the caller still owns the observed storage version.
+        abstract member Replace: candidate: LibraryControlDocument -> expectedVersion: string -> Task<bool>
+
+    /// Owns one immutable catalog-operation result under the Library control storage purpose.
+    [<Interface>]
+    type ILibraryCatalogOperationRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the immutable catalog-operation result when it exists.
+        abstract member Read: unit -> Task<LibraryCatalogOperationDocument option>
+
+        /// Creates an authoritative result or promotes the same provisional identity after control decides its outcome.
+        abstract member StoreAuthoritative: candidate: LibraryCatalogOperationDocument -> Task
+
+    /// Owns one immutable accepted Library change at its deterministic cursor identity.
+    [<Interface>]
+    type ILibraryCanonicalChangeRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the accepted change when it exists.
+        abstract member Read: unit -> Task<LibraryCanonicalChangeDocument option>
+
+        /// Creates the accepted change or confirms an exact deterministic retry.
+        abstract member CreateExact: candidate: LibraryCanonicalChangeDocument -> Task
+
+    /// Owns one cursor-ordered current Library item projection.
+    [<Interface>]
+    type ILibraryCurrentItemRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the current item projection when it exists.
+        abstract member Read: unit -> Task<LibraryCurrentItemDocument option>
+
+        /// Applies a newer cursor or confirms an exact equal-cursor retry.
+        abstract member Upsert: candidate: LibraryCurrentItemDocument -> Task
+
+    /// Owns one cursor-ordered current Library namespace-slot projection.
+    [<Interface>]
+    type ILibraryCurrentSlotRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the current namespace-slot projection when it exists.
+        abstract member Read: unit -> Task<LibraryCurrentSlotDocument option>
+
+        /// Applies a newer cursor or confirms an exact equal-cursor retry.
+        abstract member Upsert: candidate: LibraryCurrentSlotDocument -> Task
+
+    /// Owns one bounded deterministic-identity bucket for current Library projections.
+    [<Interface>]
+    type ILibraryCurrentIndexBucketActor =
+        inherit IGrainWithStringKey
+
+        /// Adds one identity idempotently and returns the complete bounded bucket.
+        abstract member Add: identity: string -> Task<string array>
+
+        /// Returns the current bounded bucket.
+        abstract member Read: unit -> Task<string array>
+
+    /// Owns the fixed 256-entry occupancy directory for one current-index hash prefix.
+    [<Interface>]
+    type ILibraryCurrentIndexDirectoryActor =
+        inherit IGrainWithStringKey
+
+        /// Records one bucket's exact occupancy idempotently.
+        abstract member SetCount: lowByte: int -> count: int -> Task
+
+        /// Returns the fixed-width bucket occupancy directory.
+        abstract member Read: unit -> Task<int array>
+
+    /// Owns one deterministic Library operation receipt.
+    [<Interface>]
+    type ILibraryReceiptRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the receipt when it exists.
+        abstract member Read: unit -> Task<LibraryReceiptDocument option>
+
+        /// Applies a newer completion cursor or confirms an exact equal-cursor retry.
+        abstract member Upsert: candidate: LibraryReceiptDocument -> Task
+
+    /// Owns one bounded, cursor-ordered Library history segment.
+    [<Interface>]
+    type ILibraryHistorySegmentRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the history segment when it exists.
+        abstract member Read: unit -> Task<LibraryHistorySegmentDocument option>
+
+        /// Appends one entry idempotently while preserving the segment's entry and byte bounds.
+        abstract member Append: emptySegment: LibraryHistorySegmentDocument -> entry: LibraryHistoryEntry -> Task
+
+    /// Owns one immutable Library baseline shard.
+    [<Interface>]
+    type ILibraryBaselineShardRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the baseline shard when it exists.
+        abstract member Read: unit -> Task<LibraryBaselineShardDocument option>
+
+        /// Creates the shard or confirms an exact deterministic retry.
+        abstract member CreateExact: candidate: LibraryBaselineShardDocument -> Task
+
+    /// Owns one immutable Library baseline manifest.
+    [<Interface>]
+    type ILibraryBaselineManifestRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the published baseline manifest when it exists.
+        abstract member Read: unit -> Task<LibraryBaselineManifestDocument option>
+
+        /// Creates the manifest or confirms an exact deterministic retry.
+        abstract member CreateExact: candidate: LibraryBaselineManifestDocument -> Task
+
+    /// Owns one retained immutable-content location behind a public Library content identity.
+    [<Interface>]
+    type ILibraryContentLocationRecordActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the retained content location when it exists.
+        abstract member Read: unit -> Task<LibraryContentLocationDocument option>
+
+        /// Creates the location or returns the retained canonical value when preparation-specific metadata differs.
+        abstract member CreateExact: candidate: LibraryContentLocationDocument -> Task<LibraryContentLocationDocument>
+
+    /// Owns one point-addressed failed Library GraceEvent envelope until a retry succeeds.
+    [<Interface>]
+    type ILibraryGraceEventFallbackActor =
+        inherit IGrainWithStringKey
+
+        /// Sends the stable envelope first, persisting it only when the configured transport reports terminal failure.
+        abstract member Publish: envelope: FailedGraceEventEnvelope -> Task
+
+        /// Retries retained state after activation and reports whether no fallback remains.
+        abstract member Retry: unit -> Task<bool>
+
+        /// Returns the exact retained envelope when terminal delivery failure remains unresolved.
+        abstract member Read: unit -> Task<FailedGraceEventEnvelope option>
 
     /// Defines the operations for the AccessControl actor.
     [<Interface>]
@@ -813,6 +965,19 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Adds one reference whose exact transition must remain replayable through a dependent manifest workflow and receipt.
+        abstract member AddTrackedReference:
+            operationId: RepositoryContentCounterOperationId ->
+            repositoryId: RepositoryId ->
+            storagePoolId: StoragePoolId ->
+            manifestAddress: ManifestAddress ->
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Releases the bounded tracked-add identity after its dependent workflow and receipt are durable.
+        abstract member CompleteTrackedReference:
+            operationId: RepositoryContentCounterOperationId -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
         /// Atomically replaces a proven positive logical count without emitting physical contribution intents.
         abstract member ReconcilePositiveCount:

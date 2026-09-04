@@ -4,6 +4,8 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
+open Grace.Types.Library
+open Grace.Types.Authorization
 open NodaTime
 open Orleans
 open System
@@ -30,6 +32,10 @@ module UploadSession =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<UploadSessionLifecycleState>()
 
+    /// Retains Library-only operation and descriptor facts inside the existing upload-session lifecycle.
+    [<GenerateSerializer>]
+    type LibraryUploadPreparation = { OperationId: LibraryOperationId; PrincipalId: PrincipalId; Content: LibraryPreparedContentDto }
+
     /// Represents start upload session.
     [<GenerateSerializer>]
     type StartUploadSession =
@@ -45,6 +51,7 @@ module UploadSession =
             ChunkingSuiteId: ChunkingSuiteId
             SamplingPolicySnapshot: string
             OperationId: UploadSessionOperationId
+            LibraryPreparation: LibraryUploadPreparation option
         }
 
     /// Represents register block upload intent.
@@ -179,7 +186,7 @@ module UploadSession =
         | Started of start: StartUploadSession
         | Abandoned of operationId: UploadSessionOperationId
         | Expired of operationId: UploadSessionOperationId
-        | Finalized of operationId: UploadSessionOperationId * manifestAddress: ManifestAddress
+        | Finalized of operationId: UploadSessionOperationId * manifest: FileManifest
         | CleanupReminderScheduled of operationId: UploadSessionOperationId * reminderTime: Instant
         | PhysicalStateDeleted of operationId: UploadSessionOperationId
         | BlockUploadIntentRegistered of operationId: UploadSessionOperationId * intent: BlockUploadIntent
@@ -212,6 +219,8 @@ module UploadSession =
             StartedAt: Instant
             CompletedAt: Instant option
             FinalizedManifestAddress: ManifestAddress option
+            FinalizedManifest: FileManifest option
+            LibraryPreparation: LibraryUploadPreparation option
             BlockUploadIntents: BlockUploadIntent array
             ConfirmedBlockUploads: ConfirmedBlockUpload array
             DedupeDiscovery: DedupeDiscoverySnapshot option
@@ -239,6 +248,8 @@ module UploadSession =
                 StartedAt = Constants.DefaultTimestamp
                 CompletedAt = None
                 FinalizedManifestAddress = None
+                FinalizedManifest = None
+                LibraryPreparation = None
                 BlockUploadIntents = Array.empty
                 ConfirmedBlockUploads = Array.empty
                 DedupeDiscovery = None
@@ -263,6 +274,7 @@ module UploadSession =
                     ExpectedSize = start.ExpectedSize
                     ChunkingSuiteId = start.ChunkingSuiteId
                     SamplingPolicySnapshot = start.SamplingPolicySnapshot
+                    LibraryPreparation = start.LibraryPreparation
                     LifecycleState = UploadSessionLifecycleState.Started
                     StartedAt = uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some start.OperationId
@@ -279,10 +291,11 @@ module UploadSession =
                     CompletedAt = Some uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some operationId
                 }
-            | UploadSessionEventType.Finalized (operationId, manifestAddress) ->
+            | UploadSessionEventType.Finalized (operationId, manifest) ->
                 { current with
                     LifecycleState = UploadSessionLifecycleState.Finalized
-                    FinalizedManifestAddress = Some manifestAddress
+                    FinalizedManifestAddress = Some manifest.ManifestAddress
+                    FinalizedManifest = Some manifest
                     CompletedAt = Some uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some operationId
                 }
@@ -302,6 +315,8 @@ module UploadSession =
                     ClaimedReuseRanges = Array.empty
                     CleanupReminderScheduledAt = None
                     CleanupReminderOperationId = None
+                    FinalizedManifest = None
+                    LibraryPreparation = None
                     LastOperationId = Some operationId
                 }
             | UploadSessionEventType.BlockUploadIntentRegistered (operationId, intent) ->
@@ -351,9 +366,18 @@ module UploadSession =
     [<GenerateSerializer>]
     type PhysicalDeletionReminderState =
         {
+            [<Id(0u)>]
             UploadSessionId: UploadSessionId
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             OperationId: UploadSessionOperationId
+            [<Id(3u)>]
             DeleteReason: DeleteReason
+            [<Id(4u)>]
             CorrelationId: CorrelationId
+            [<Id(5u)>]
+            ExpectedStartedAt: Instant
+            [<Id(6u)>]
+            DeleteAt: Instant
         }

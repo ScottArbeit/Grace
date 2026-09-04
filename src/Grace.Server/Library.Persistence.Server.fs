@@ -1,21 +1,42 @@
 namespace Grace.Server
 
+open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Library
-open Microsoft.Azure.Cosmos
+open Microsoft.Extensions.Options
 open NodaTime
+open Orleans
+open Orleans.Configuration
+open Orleans.Persistence.Cosmos
+open Orleans.Runtime
 open System
 open System.Collections.Generic
-open System.Net
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
-open System.Threading
 open System.Threading.Tasks
 
-/// Implements the six purpose-specific direct-Cosmos stores for remote Libraries.
+/// Implements provider-neutral Orleans persistence for bounded remote Library records.
 module LibraryPersistence =
+
+    [<Literal>]
+    let ControlStorageName = Constants.LibraryControlStorage
+
+    [<Literal>]
+    let ChangesStorageName = Constants.LibraryChangesStorage
+
+    [<Literal>]
+    let CurrentStorageName = Constants.LibraryCurrentStorage
+
+    [<Literal>]
+    let ReceiptsStorageName = Constants.LibraryReceiptsStorage
+
+    [<Literal>]
+    let HistoryStorageName = Constants.LibraryHistoryStorage
+
+    [<Literal>]
+    let BaselinesStorageName = Constants.LibraryBaselinesStorage
 
     [<Literal>]
     let ControlContainerName = "grace-library-control"
@@ -42,15 +63,60 @@ module LibraryPersistence =
     let HistorySegmentEntryLimit = 512
 
     [<Literal>]
-    let HistorySegmentByteLimit = 921600
-
-    [<Literal>]
     let BaselineShardByteLimit = 1000000
 
     [<Literal>]
     let CurrentProjectionDocumentLimit = 100000
 
-    /// Formats one non-negative internal segment value for stable Cosmos keys.
+    /// Derives an Orleans Cosmos document identity and its ordered partition-key prefix from one bounded Library actor key.
+    type GraceDocumentIdProvider(options: IOptions<ClusterOptions>, partitionKeyLevelCount: int) =
+        let defaultProvider = DefaultDocumentIdProvider(options)
+
+        do
+            if partitionKeyLevelCount < 1
+               || partitionKeyLevelCount > 3 then
+                invalidArg (nameof partitionKeyLevelCount) "Library Cosmos document keys support one to three partition-key values."
+
+        /// Reads the stable actor-key components that define the Library container partition.
+        member private _.GetPartitionKeyValues(grainType: string, grainId: GrainId) =
+            let values =
+                grainId
+                    .Key
+                    .ToString()
+                    .Split('|', StringSplitOptions.None)
+
+            if values.Length < partitionKeyLevelCount
+               || values
+                  |> Array.take partitionKeyLevelCount
+                  |> Array.exists String.IsNullOrWhiteSpace then
+                invalidArg
+                    (nameof grainId)
+                    $"Library grain type '{grainType}' requires {partitionKeyLevelCount} non-empty ordered key component(s), but '{grainId.Key}' does not provide them."
+
+            values |> Array.take partitionKeyLevelCount
+
+        interface IDocumentIdProvider with
+            member this.GetDocumentIdentifiers(grainType: string, grainId: GrainId) =
+                let values = this.GetPartitionKeyValues(grainType, grainId)
+                ValueTask<struct (string * string)>(struct (defaultProvider.GetId(grainType, grainId), values[0]))
+
+            member this.GetDocumentKey(grainType: string, grainId: GrainId) =
+                let values = this.GetPartitionKeyValues(grainType, grainId)
+                ValueTask<CosmosDocumentKey>(CosmosDocumentKey(defaultProvider.GetId(grainType, grainId), values :> IReadOnlyList<string>))
+
+    /// Maps repository control actors to their one-component repository partition.
+    type LibraryControlDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 1)
+
+    /// Maps accepted-change and current-record actors to repository plus record-kind partitions.
+    type LibraryTwoLevelDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 2)
+
+    /// Maps receipt, history, and baseline actors to repository, record-kind, and bounded-record partitions.
+    type LibraryThreeLevelDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 3)
+
+    /// Formats one non-negative internal segment value for stable actor keys.
     let segmentKey (value: int64) = value.ToString("D20", Globalization.CultureInfo.InvariantCulture)
 
     /// Returns the exact stream segment containing one positive internal cursor.
@@ -64,65 +130,36 @@ module LibraryPersistence =
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
-    /// Creates the complete control-container partition key.
-    let controlPartitionKey (repositoryId: RepositoryId) = PartitionKey(repositoryId.ToString("D"))
-
-    /// Creates one exact two-component hierarchical partition key.
-    let partitionKey2 (repositoryId: RepositoryId) (keyComponent: string) =
-        PartitionKeyBuilder()
-            .Add(repositoryId.ToString("D"))
-            .Add(keyComponent)
-            .Build()
-
-    /// Creates one exact three-component hierarchical partition key.
-    let partitionKey3 (repositoryId: RepositoryId) (middle: string) (leaf: string) =
-        PartitionKeyBuilder()
-            .Add(repositoryId.ToString("D"))
-            .Add(middle)
-            .Add(leaf)
-            .Build()
-
-    /// Serializes an internal document with the same stable options used by Grace HTTP and Cosmos clients.
+    /// Serializes an internal document with the stable Grace serializer.
     let private serialize value = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)
-
-    /// Confirms an equal-position retry carries byte-equivalent deterministic state.
-    let private equivalent left right = String.Equals(serialize left, serialize right, StringComparison.Ordinal)
 
     /// Derives one stable baseline identity from its immutable repository boundary.
     let private baselineId repositoryId boundaryCursor cursorEpoch libraryCatalogVersion =
-        let seed = Encoding.UTF8.GetBytes($"{repositoryId:D}:{boundaryCursor}:{cursorEpoch:D}:{libraryCatalogVersion:D}")
-        let hash = SHA256.HashData seed
+        let hash =
+            Encoding.UTF8.GetBytes($"{repositoryId:D}:{boundaryCursor}:{cursorEpoch:D}:{libraryCatalogVersion:D}")
+            |> SHA256.HashData
+
         let bytes = hash[0..15]
         bytes[6] <- (bytes[6] &&& 0x0Fuy) ||| 0x50uy
         bytes[8] <- (bytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid bytes
 
-    /// Computes the lowercase SHA-256 digest of one stable internal JSON document.
+    /// Computes the lowercase BLAKE3 digest of one stable internal JSON document.
     let internal documentHash value =
         value
         |> serialize
         |> Encoding.UTF8.GetBytes
-        |> SHA256.HashData
-        |> Convert.ToHexString
-        |> fun hash -> hash.ToLowerInvariant()
+        |> ContentAddress.computeBlake3Hex
 
     /// Builds deterministic bounded baseline shards and their manifest without publishing either representation.
-    let internal buildBaselineDocuments
-        (repositoryId: RepositoryId)
-        (boundaryCursor: int64)
-        (cursorEpoch: Guid)
-        (libraryCatalog: LibraryCatalogDto)
-        (items: LibraryItemDto array)
-        (createdAt: Instant)
-        =
+    let internal buildBaselineDocuments repositoryId boundaryCursor cursorEpoch (libraryCatalog: LibraryCatalogDto) (items: LibraryItemDto array) createdAt =
         let baselineId = baselineId repositoryId boundaryCursor cursorEpoch libraryCatalog.Version
-        let baselineKey = baselineId.ToString("D")
 
         let orderedItems =
             items
             |> Array.sortBy (fun item ->
                 item.Namespace
-                |> Option.map (fun namespaceValue -> namespaceValue.NormalizedPath.ToUpperInvariant())
+                |> Option.map (fun value -> value.NormalizedPath.ToUpperInvariant())
                 |> Option.defaultValue "",
                 item.ItemId)
 
@@ -136,25 +173,21 @@ module LibraryPersistence =
 
             while nextItem < orderedItems.Length && fits do
                 let candidateItems = Array.append (shardItems.ToArray()) [| orderedItems[nextItem] |]
-                let shardKey = $"shard:{shardIndex:D8}"
-                let shardId = $"shard:{baselineId:D}:{shardIndex:D8}"
 
                 let candidate =
                     {
-                        id = shardId
+                        id = $"shard:{baselineId:D}:{shardIndex:D8}"
                         RepositoryId = repositoryId
                         SchemaVersion = 1
                         BaselineId = baselineId
-                        ShardKey = shardKey
+                        ShardKey = $"shard:{shardIndex:D8}"
                         BoundaryCursor = boundaryCursor
                         Items = candidateItems
                         ItemCount = candidateItems.Length
                         SerializedBytes = 0
                     }
 
-                let serializedBytes = Encoding.UTF8.GetByteCount(serialize candidate)
-
-                if serializedBytes > BaselineShardByteLimit then
+                if Encoding.UTF8.GetByteCount(serialize candidate) > BaselineShardByteLimit then
                     if shardItems.Count = 0 then
                         invalidOp $"One Library baseline item exceeds the {BaselineShardByteLimit}-byte shard bound."
 
@@ -163,16 +196,13 @@ module LibraryPersistence =
                     shardItems.Add orderedItems[nextItem]
                     nextItem <- nextItem + 1
 
-            let shardKey = $"shard:{shardIndex:D8}"
-            let shardId = $"shard:{baselineId:D}:{shardIndex:D8}"
-
             let initialShard =
                 {
-                    id = shardId
+                    id = $"shard:{baselineId:D}:{shardIndex:D8}"
                     RepositoryId = repositoryId
                     SchemaVersion = 1
                     BaselineId = baselineId
-                    ShardKey = shardKey
+                    ShardKey = $"shard:{shardIndex:D8}"
                     BoundaryCursor = boundaryCursor
                     Items = shardItems.ToArray()
                     ItemCount = shardItems.Count
@@ -180,19 +210,14 @@ module LibraryPersistence =
                 }
 
             let shard = { initialShard with SerializedBytes = Encoding.UTF8.GetByteCount(serialize initialShard) }
-
-            if shard.SerializedBytes > BaselineShardByteLimit then
-                invalidOp $"Library baseline shard {shardIndex} exceeds the {BaselineShardByteLimit}-byte bound."
-
             shardDocuments.Add shard
             shardIndex <- shardIndex + 1
 
         let shards = shardDocuments.ToArray()
-        let manifestId = $"manifest:{baselineId:D}"
 
         let manifest =
             {
-                id = manifestId
+                id = $"manifest:{baselineId:D}"
                 RepositoryId = repositoryId
                 SchemaVersion = 1
                 BaselineId = baselineId
@@ -210,609 +235,480 @@ module LibraryPersistence =
 
         manifest, shards
 
-    /// Returns a missing document as None while preserving all other Cosmos failures.
-    let private readOptional<'T> (container: Container) id key cancellationToken =
+    /// Creates one complete bounded grain key for the approved document-key provider.
+    let private recordKey repositoryId recordKind identity = $"{repositoryId:D}|{recordKind}|{identity}"
+
+    /// Creates the one-partition-key control record key.
+    let private controlKey repositoryId identity = $"{repositoryId:D}|{identity}"
+
+    /// Resolves the two-byte deterministic index bucket for one record identity.
+    let private indexBucket (identity: string) =
+        let hash =
+            identity
+            |> Encoding.UTF8.GetBytes
+            |> SHA256.HashData
+
+        int hash[0], int hash[1]
+
+    /// Returns one current-index bucket actor and its fixed-width directory actor.
+    let private indexActors (grainFactory: IGrainFactory) repositoryId indexKind identity =
+        let highByte, lowByte = indexBucket identity
+
+        grainFactory.GetGrain<ILibraryCurrentIndexBucketActor>(recordKey repositoryId $"{indexKind}-bucket" $"{highByte:X2}{lowByte:X2}"),
+        grainFactory.GetGrain<ILibraryCurrentIndexDirectoryActor>(recordKey repositoryId $"{indexKind}-directory" $"{highByte:X2}"),
+        lowByte
+
+    /// Adds one identity and repairs its exact bucket occupancy after restart.
+    let private addIndexIdentity grainFactory repositoryId indexKind identity =
         task {
-            try
-                let! response = container.ReadItemAsync<'T>(id, key, cancellationToken = cancellationToken)
-                return Some { Document = response.Resource; ETag = response.ETag }
-            with
-            | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> return None
+            let bucket, directory, lowByte = indexActors grainFactory repositoryId indexKind identity
+            let! identities = bucket.Add identity
+            do! directory.SetCount lowByte identities.Length
         }
 
-    /// Applies a cursor-ordered projection without allowing an older or different equal-position value to win.
-    let private upsertProjection<'T> (container: Container) id key lastCursor existingLastCursor (candidate: 'T) cancellationToken =
+    /// Returns every active bounded bucket for one current-projection index.
+    let private readIndexBuckets (grainFactory: IGrainFactory) repositoryId indexKind =
         task {
-            let mutable completed = false
-
-            while not completed do
-                match! readOptional<'T> container id key cancellationToken with
-                | None ->
-                    try
-                        let! _ = container.CreateItemAsync(candidate, key, cancellationToken = cancellationToken)
-                        completed <- true
-                    with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict -> ()
-                | Some current ->
-                    let currentCursor = existingLastCursor current.Document
-
-                    if currentCursor > lastCursor then
-                        completed <- true
-                    elif currentCursor = lastCursor then
-                        if not (equivalent current.Document candidate) then
-                            invalidOp $"A Library projection at cursor {lastCursor} is not byte-equivalent to its deterministic retry."
-
-                        completed <- true
-                    else
-                        let options = ItemRequestOptions(IfMatchEtag = current.ETag)
-
-                        try
-                            let! _ = container.ReplaceItemAsync(candidate, id, key, options, cancellationToken)
-                            completed <- true
-                        with
-                        | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> ()
-        }
-
-    /// Creates one immutable document or verifies that a concurrent retry created the exact same value.
-    let private createExact<'T> (container: Container) (id: string) (key: PartitionKey) (candidate: 'T) (cancellationToken: CancellationToken) =
-        task {
-            try
-                let! _ = container.CreateItemAsync(candidate, key, cancellationToken = cancellationToken)
-                return ()
-            with
-            | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict ->
-                let! existing = container.ReadItemAsync<'T>(id, key, cancellationToken = cancellationToken)
-
-                if not (equivalent existing.Resource candidate) then
-                    invalidOp $"Immutable Library document {id} is not byte-equivalent to its deterministic retry."
-        }
-
-    /// Counts one exact current-projection kind without crossing a Cosmos partition.
-    let private countCurrentProjectionKind (current: Container) repositoryId projectionKind cancellationToken =
-        task {
-            let options = QueryRequestOptions(PartitionKey = Nullable(partitionKey2 repositoryId projectionKind), MaxItemCount = Nullable 1)
-            use iterator = current.GetItemQueryIterator<int>("SELECT VALUE COUNT(1) FROM c", requestOptions = options)
-            let! page = iterator.ReadNextAsync(cancellationToken)
+            let! directories =
+                [| 0..255 |]
+                |> Array.map (fun highByte ->
+                    grainFactory
+                        .GetGrain<ILibraryCurrentIndexDirectoryActor>(recordKey repositoryId $"{indexKind}-directory" $"{highByte:X2}")
+                        .Read())
+                |> Task.WhenAll
 
             return
-                page.Resource
-                |> Seq.tryHead
-                |> Option.defaultValue 0
+                directories
+                |> Array.mapi (fun highByte counts ->
+                    counts
+                    |> Array.mapi (fun lowByte count -> highByte, lowByte, count)
+                    |> Array.filter (fun (_, _, count) -> count > 0))
+                |> Array.concat
         }
 
-    /// Owns direct access to the six fixed application Cosmos containers.
-    type CosmosLibraryStore(control: Container, changes: Container, current: Container, receipts: Container, history: Container, baselines: Container) as this =
+    /// Counts indexed projections without depending on provider-specific queries.
+    let private countIndex grainFactory repositoryId indexKind =
+        task {
+            let! buckets = readIndexBuckets grainFactory repositoryId indexKind
 
-        /// Reads one history segment under its full hierarchical key.
-        let readHistory repositoryId historyKey historySegment id cancellationToken =
-            readOptional<LibraryHistorySegmentDocument> history id (partitionKey3 repositoryId historyKey historySegment) cancellationToken
+            return
+                buckets
+                |> Array.sumBy (fun (_, _, count) -> count)
+        }
 
-        /// Appends one history entry with ETag retry and exact entry/byte bounds.
-        let appendHistory repositoryId historyKey (entry: LibraryHistoryEntry) cancellationToken =
-            task {
-                let segment =
-                    (entry.Cursor - 1L)
-                    / int64 HistorySegmentEntryLimit
+    /// Implements every Library metadata mutation through Orleans actor persistence.
+    type OrleansLibraryStore(grainFactory: IGrainFactory) =
+        let control repositoryId = grainFactory.GetGrain<ILibraryControlRecordActor>(controlKey repositoryId "control")
 
-                let id = $"segment:{segmentKey segment}"
-                let historySegment = segmentKey segment
-                let key = partitionKey3 repositoryId historyKey historySegment
-                let mutable completed = false
+        let catalogOperation repositoryId operationId =
+            grainFactory.GetGrain<ILibraryCatalogOperationRecordActor>(controlKey repositoryId $"catalog-operation:{operationId:D}")
 
-                while not completed do
-                    match! readHistory repositoryId historyKey historySegment id cancellationToken with
-                    | None ->
-                        let candidate =
-                            {
-                                id = id
-                                RepositoryId = repositoryId
-                                HistoryKey = historyKey
-                                SchemaVersion = 1
-                                HistorySegment = historySegment
-                                FirstCursor = entry.Cursor
-                                LastCursor = entry.Cursor
-                                EntryCount = 1
-                                Entries = [| entry |]
-                            }
+        let canonical repositoryId cursor =
+            grainFactory.GetGrain<ILibraryCanonicalChangeRecordActor>(recordKey repositoryId (segmentKey (changeSegment cursor)) $"cursor:{segmentKey cursor}")
 
-                        if Encoding.UTF8.GetByteCount(serialize candidate) > HistorySegmentByteLimit then
-                            invalidOp "One Library history entry exceeds the 900 KiB segment bound."
+        let item repositoryId itemId = grainFactory.GetGrain<ILibraryCurrentItemRecordActor>(recordKey repositoryId "item" $"item:{itemId:D}")
 
-                        try
-                            let! _ = history.CreateItemAsync(candidate, key, cancellationToken = cancellationToken)
-                            completed <- true
-                        with
-                        | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict -> ()
-                    | Some existing ->
-                        match existing.Document.Entries
-                              |> Array.tryFind (fun current -> current.Cursor = entry.Cursor)
-                            with
-                        | Some currentEntry ->
-                            if not (equivalent currentEntry entry) then
-                                invalidOp $"History cursor {entry.Cursor} is not byte-equivalent to its deterministic retry."
+        let slot repositoryId normalizedPath =
+            grainFactory.GetGrain<ILibraryCurrentSlotRecordActor>(recordKey repositoryId "slot" $"slot:{pathHash normalizedPath}")
 
-                            completed <- true
-                        | None ->
-                            if existing.Document.EntryCount
-                               >= HistorySegmentEntryLimit then
-                                invalidOp $"History segment {segment} exceeded its {HistorySegmentEntryLimit}-entry bound."
+        let receipt repositoryId operationId = grainFactory.GetGrain<ILibraryReceiptRecordActor>(recordKey repositoryId "receipt" $"operation:{operationId:D}")
 
-                            let entries =
-                                Array.append existing.Document.Entries [| entry |]
-                                |> Array.sortBy (fun historyEntry -> historyEntry.Cursor)
+        let history repositoryId historyKey historySegment =
+            grainFactory.GetGrain<ILibraryHistorySegmentRecordActor>(recordKey repositoryId historyKey $"segment:{segmentKey historySegment}")
 
-                            let replacement =
-                                { existing.Document with
-                                    FirstCursor = entries[0].Cursor
-                                    LastCursor = entries[entries.Length - 1].Cursor
-                                    EntryCount = entries.Length
-                                    Entries = entries
-                                }
+        let appendHistory repositoryId historyKey (entry: LibraryHistoryEntry) =
+            let historySegment =
+                (entry.Cursor - 1L)
+                / int64 HistorySegmentEntryLimit
 
-                            if Encoding.UTF8.GetByteCount(serialize replacement) > HistorySegmentByteLimit then
-                                invalidOp $"History segment {segment} exceeded its 900 KiB serialized bound."
+            let emptySegment =
+                {
+                    id = $"history:{historyKey}:{segmentKey historySegment}"
+                    RepositoryId = repositoryId
+                    HistoryKey = historyKey
+                    SchemaVersion = 1
+                    HistorySegment = segmentKey historySegment
+                    FirstCursor = entry.Cursor
+                    LastCursor = entry.Cursor
+                    EntryCount = 0
+                    Entries = Array.empty
+                }
 
-                            let options = ItemRequestOptions(IfMatchEtag = existing.ETag)
+            (history repositoryId historyKey historySegment)
+                .Append
+                emptySegment
+                entry
 
-                            try
-                                let! _ = history.ReplaceItemAsync(replacement, id, key, options, cancellationToken)
-                                completed <- true
-                            with
-                            | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> ()
-            }
+        let baselineShard repositoryId (baselineId: Guid) shardKey =
+            grainFactory.GetGrain<ILibraryBaselineShardRecordActor>(recordKey repositoryId (baselineId.ToString("D")) shardKey)
+
+        let baselineManifest repositoryId (baselineId: Guid) =
+            grainFactory.GetGrain<ILibraryBaselineManifestRecordActor>(recordKey repositoryId (baselineId.ToString("D")) "manifest")
 
         interface ILibraryStore with
-
             member _.EnsureControlAsync(repositoryId, libraryCatalog, cancellationToken) =
                 task {
-                    let id = "control"
-                    let key = controlPartitionKey repositoryId
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    match! readOptional<LibraryControlDocument> control id key cancellationToken with
-                    | Some existing -> return existing
-                    | None ->
-                        let now = SystemClock.Instance.GetCurrentInstant()
+                    let candidate =
+                        {
+                            id = "control"
+                            RepositoryId = repositoryId
+                            SchemaVersion = 1
+                            CursorEpoch = Guid.NewGuid()
+                            NextCursor = 1L
+                            AppliedThrough = 0L
+                            ReplayFloor = 1L
+                            LibraryCatalog = libraryCatalog
+                            Pending = None
+                            CurrentBaselineId = None
+                            CurrentBaselineCursor = None
+                            ProjectionWatermarks = LibraryProjectionWatermarks.Empty
+                            UpdatedAt = SystemClock.Instance.GetCurrentInstant()
+                            LatestCatalogOperation = None
+                        }
 
-                        let candidate =
-                            {
-                                id = id
-                                RepositoryId = repositoryId
-                                SchemaVersion = 1
-                                CursorEpoch = Guid.NewGuid()
-                                NextCursor = 1L
-                                AppliedThrough = 0L
-                                ReplayFloor = 1L
-                                LibraryCatalog = libraryCatalog
-                                Pending = None
-                                CurrentBaselineId = None
-                                CurrentBaselineCursor = None
-                                ProjectionWatermarks = LibraryProjectionWatermarks.Empty
-                                UpdatedAt = now
-                            }
+                    let! document, version =
+                        control repositoryId
+                        |> fun actor -> actor.Ensure candidate
 
-                        try
-                            let! response = control.CreateItemAsync(candidate, key, cancellationToken = cancellationToken)
-                            return { Document = response.Resource; ETag = response.ETag }
-                        with
-                        | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict ->
-                            return!
-                                (this :> ILibraryStore)
-                                    .ReadControlAsync(repositoryId, cancellationToken)
+                    return { Document = document; ETag = version }
                 }
 
             member _.ReadControlAsync(repositoryId, cancellationToken) =
                 task {
-                    let id = "control"
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    let! response = control.ReadItemAsync<LibraryControlDocument>(id, controlPartitionKey repositoryId, cancellationToken = cancellationToken)
-
-                    return { Document = response.Resource; ETag = response.ETag }
+                    match! control repositoryId |> fun actor -> actor.Read() with
+                    | Some (document, version) -> return { Document = document; ETag = version }
+                    | None -> return invalidOp $"Library control for repository {repositoryId:D} does not exist."
                 }
 
             member _.ReplaceControlAsync(document, etag, cancellationToken) =
                 task {
-                    let options = ItemRequestOptions(IfMatchEtag = etag)
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    try
-                        let! response = control.ReplaceItemAsync(document, document.id, controlPartitionKey document.RepositoryId, options, cancellationToken)
+                    let! replaced =
+                        control document.RepositoryId
+                        |> fun actor -> actor.Replace document etag
 
-                        return Replaced response.ETag
-                    with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> return PreconditionFailed
+                    return if replaced then Replaced String.Empty else PreconditionFailed
                 }
 
             member _.ReadCatalogOperationAsync(repositoryId, operationId, cancellationToken) =
                 task {
-                    let id = $"catalog-operation:{operationId:D}"
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existing = readOptional<LibraryCatalogOperationDocument> control id (controlPartitionKey repositoryId) cancellationToken
+                    let! controlRead = control repositoryId |> fun actor -> actor.Read()
 
-                    return
-                        existing
-                        |> Option.map (fun value -> value.Document)
+                    let controlDocument =
+                        match controlRead with
+                        | Some (document, _) -> document
+                        | None -> invalidOp $"Library control for repository {repositoryId:D} does not exist."
+
+                    match controlDocument.LatestCatalogOperation with
+                    | Some latest ->
+                        do!
+                            catalogOperation repositoryId latest.OperationId
+                            |> fun actor -> actor.StoreAuthoritative latest
+                    | None -> ()
+
+                    match! catalogOperation repositoryId operationId
+                           |> fun actor -> actor.Read()
+                        with
+                    | None -> return None
+                    | Some operation when operation.Result.Outcome <> OutcomeKind.Accepted -> return Some operation
+                    | Some operation when operation.ControlCommitVersion = Some operation.Result.LibraryCatalog.Version -> return Some operation
+                    | Some operation ->
+                        match controlDocument.LatestCatalogOperation with
+                        | Some committed when
+                            committed.OperationId = operation.OperationId
+                            && committed.RequestHash = operation.RequestHash
+                            ->
+                            return Some committed
+                        | _ when operation.Result.LibraryCatalog.PreviousVersion = Some controlDocument.LibraryCatalog.Version -> return None
+                        | _ ->
+                            let rejected =
+                                { operation with
+                                    SchemaVersion = 2
+                                    ControlCommitVersion = None
+                                    Result =
+                                        { operation.Result with
+                                            Outcome = OutcomeKind.StalePolicy
+                                            LibraryCatalog = controlDocument.LibraryCatalog
+                                            ReasonCode = Some OutcomeKind.StalePolicy
+                                        }
+                                }
+
+                            do!
+                                catalogOperation repositoryId operationId
+                                |> fun actor -> actor.StoreAuthoritative rejected
+
+                            return Some rejected
                 }
 
             member _.ReplaceControlAndCreateCatalogOperationAsync(document, etag, operation, cancellationToken) =
                 task {
-                    let requestOptions = TransactionalBatchItemRequestOptions(IfMatchEtag = etag)
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    let batch =
-                        control
-                            .CreateTransactionalBatch(controlPartitionKey document.RepositoryId)
-                            .ReplaceItem(document.id, document, requestOptions)
-                            .CreateItem(operation)
+                    let committed = { operation with SchemaVersion = 2; ControlCommitVersion = Some operation.Result.LibraryCatalog.Version }
 
-                    let! response = batch.ExecuteAsync cancellationToken
+                    let replacement = { document with LatestCatalogOperation = Some committed }
 
-                    if response.IsSuccessStatusCode then
+                    let! replaced =
+                        control document.RepositoryId
+                        |> fun actor -> actor.Replace replacement etag
+
+                    if replaced then
+                        do!
+                            catalogOperation document.RepositoryId operation.OperationId
+                            |> fun actor -> actor.StoreAuthoritative committed
+
                         return Replaced String.Empty
-                    elif response.StatusCode = HttpStatusCode.PreconditionFailed
-                         || response.StatusCode = HttpStatusCode.Conflict then
-                        return PreconditionFailed
                     else
-                        return invalidOp $"The atomic Library catalog update failed with status {int response.StatusCode}: {response.ErrorMessage}"
+                        return PreconditionFailed
                 }
 
             member _.CreateCatalogOperationAsync(operation, cancellationToken) =
-                createExact control operation.id (controlPartitionKey operation.RepositoryId) operation cancellationToken
+                cancellationToken.ThrowIfCancellationRequested()
+
+                catalogOperation operation.RepositoryId operation.OperationId
+                |> fun actor -> actor.StoreAuthoritative operation
 
             member _.ReadReceiptAsync(repositoryId, operationId, cancellationToken) =
-                task {
-                    let id = $"operation:{operationId:D}"
+                cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existing = readOptional<LibraryReceiptDocument> receipts id (partitionKey3 repositoryId "receipt" id) cancellationToken
-
-                    return
-                        existing
-                        |> Option.map (fun value -> value.Document)
-                }
+                receipt repositoryId operationId
+                |> fun actor -> actor.Read()
 
             member _.ReadCanonicalAsync(repositoryId, cursor, cancellationToken) =
-                task {
-                    let streamSegment = segmentKey (changeSegment cursor)
-                    let id = $"cursor:{segmentKey cursor}"
+                cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existing = readOptional<LibraryCanonicalChangeDocument> changes id (partitionKey2 repositoryId streamSegment) cancellationToken
-
-                    return
-                        existing
-                        |> Option.map (fun value -> value.Document)
-                }
+                canonical repositoryId cursor
+                |> fun actor -> actor.Read()
 
             member _.CreateCanonicalAsync(document, cancellationToken) =
-                task {
-                    let key = partitionKey2 document.RepositoryId document.StreamSegment
+                cancellationToken.ThrowIfCancellationRequested()
 
-                    try
-                        let! _ = changes.CreateItemAsync(document, key, cancellationToken = cancellationToken)
-                        return ()
-                    with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict ->
-                        let! existing = changes.ReadItemAsync<LibraryCanonicalChangeDocument>(document.id, key, null, cancellationToken)
-
-                        if not (equivalent existing.Resource document) then
-                            invalidOp $"Canonical cursor {document.Cursor} is not byte-equivalent to its deterministic retry."
-                }
+                canonical document.RepositoryId document.Cursor
+                |> fun actor -> actor.CreateExact document
 
             member _.ReadItemAsync(repositoryId, itemId, cancellationToken) =
-                task {
-                    let id = $"item:{itemId:D}"
+                cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existing = readOptional<LibraryCurrentItemDocument> current id (partitionKey2 repositoryId "item") cancellationToken
-
-                    return
-                        existing
-                        |> Option.map (fun value -> value.Document)
-                }
+                item repositoryId itemId
+                |> fun actor -> actor.Read()
 
             member _.ReadSlotAsync(repositoryId, normalizedPath, cancellationToken) =
-                task {
-                    let id = $"slot:{pathHash normalizedPath}"
+                cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existing = readOptional<LibraryCurrentSlotDocument> current id (partitionKey2 repositoryId "slot") cancellationToken
-
-                    return
-                        existing
-                        |> Option.map (fun value -> value.Document)
-                }
+                slot repositoryId normalizedPath
+                |> fun actor -> actor.Read()
 
             member _.EnsureCurrentProjectionCapacityAsync(repositoryId, itemId, normalizedPath, cancellationToken) =
                 task {
-                    let itemDocumentId = $"item:{itemId:D}"
-                    let slotDocumentId = $"slot:{pathHash normalizedPath}"
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existingItem = readOptional<LibraryCurrentItemDocument> current itemDocumentId (partitionKey2 repositoryId "item") cancellationToken
+                    let! currentItem =
+                        item repositoryId itemId
+                        |> fun actor -> actor.Read()
 
-                    if existingItem.IsNone then
-                        let! itemCount = countCurrentProjectionKind current repositoryId "item" cancellationToken
+                    if currentItem.IsNone then
+                        let! count = countIndex grainFactory repositoryId "item-index"
 
-                        if itemCount >= CurrentProjectionDocumentLimit then
+                        if count >= CurrentProjectionDocumentLimit then
                             invalidOp $"The Library item-head projection reached its {CurrentProjectionDocumentLimit}-document Product V1 bound."
 
-                    let! existingSlot = readOptional<LibraryCurrentSlotDocument> current slotDocumentId (partitionKey2 repositoryId "slot") cancellationToken
+                    let! currentSlot =
+                        slot repositoryId normalizedPath
+                        |> fun actor -> actor.Read()
 
-                    if existingSlot.IsNone then
-                        let! slotCount = countCurrentProjectionKind current repositoryId "slot" cancellationToken
+                    if currentSlot.IsNone then
+                        let! count = countIndex grainFactory repositoryId "slot-index"
 
-                        if slotCount >= CurrentProjectionDocumentLimit then
+                        if count >= CurrentProjectionDocumentLimit then
                             invalidOp $"The Library namespace-slot projection reached its {CurrentProjectionDocumentLimit}-document Product V1 bound."
                 }
 
             member _.UpsertItemAsync(document, cancellationToken) =
-                upsertProjection
-                    current
-                    document.id
-                    (partitionKey2 document.RepositoryId document.ProjectionKind)
-                    document.LastCursor
-                    (fun (value: LibraryCurrentItemDocument) -> value.LastCursor)
-                    document
-                    cancellationToken
+                task {
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    do!
+                        item document.RepositoryId document.Item.ItemId
+                        |> fun actor -> actor.Upsert document
+
+                    do! addIndexIdentity grainFactory document.RepositoryId "item-index" document.id
+                }
 
             member _.UpsertSlotAsync(document, cancellationToken) =
-                upsertProjection
-                    current
-                    document.id
-                    (partitionKey2 document.RepositoryId document.ProjectionKind)
-                    document.LastCursor
-                    (fun (value: LibraryCurrentSlotDocument) -> value.LastCursor)
-                    document
-                    cancellationToken
+                task {
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    do!
+                        slot document.RepositoryId document.Slot.NormalizedPath
+                        |> fun actor -> actor.Upsert document
+
+                    do! addIndexIdentity grainFactory document.RepositoryId "slot-index" document.id
+                }
 
             member _.UpsertReceiptAsync(document, cancellationToken) =
-                upsertProjection
-                    receipts
-                    document.id
-                    (partitionKey3 document.RepositoryId document.RecordKind document.RecordKey)
-                    document.AppliedThrough
-                    (fun (value: LibraryReceiptDocument) -> value.AppliedThrough)
-                    document
-                    cancellationToken
+                cancellationToken.ThrowIfCancellationRequested()
+
+                receipt document.RepositoryId document.OperationId
+                |> fun actor -> actor.Upsert document
 
             member _.AppendItemHistoryAsync(repositoryId, itemId, entry, cancellationToken) =
-                appendHistory repositoryId $"item:{itemId:D}" entry cancellationToken
+                cancellationToken.ThrowIfCancellationRequested()
+                appendHistory repositoryId $"item:{itemId:D}" entry
 
             member _.AppendPathHistoryAsync(repositoryId, normalizedPath, entry, cancellationToken) =
-                appendHistory repositoryId $"path:{pathHash normalizedPath}" entry cancellationToken
+                cancellationToken.ThrowIfCancellationRequested()
+                appendHistory repositoryId $"path:{pathHash normalizedPath}" entry
 
             member _.ReadChangesAsync(repositoryId, afterCursor, maximumCount, cancellationToken) =
                 task {
-                    let results = ResizeArray<LibraryCanonicalChangeDocument>()
-                    let mutable cursor = afterCursor + 1L
-                    let mutable exhausted = false
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    while results.Count < maximumCount && not exhausted do
-                        let streamSegment = segmentKey (changeSegment cursor)
+                    match! control repositoryId |> fun actor -> actor.Read() with
+                    | None -> return Array.empty
+                    | Some (controlDocument, _) ->
+                        let lastCursor = min controlDocument.AppliedThrough (afterCursor + int64 maximumCount)
 
-                        let options =
-                            QueryRequestOptions(
-                                PartitionKey = Nullable(partitionKey2 repositoryId streamSegment),
-                                MaxItemCount = Nullable(maximumCount - results.Count)
-                            )
+                        if lastCursor <= afterCursor then
+                            return Array.empty
+                        else
+                            let! values =
+                                [| afterCursor + 1L .. lastCursor |]
+                                |> Array.map (fun cursor ->
+                                    canonical repositoryId cursor
+                                    |> fun actor -> actor.Read())
+                                |> Task.WhenAll
 
-                        let query =
-                            QueryDefinition("SELECT * FROM c WHERE c.Cursor >= @cursor ORDER BY c.Cursor")
-                                .WithParameter("@cursor", cursor)
-
-                        use iterator = changes.GetItemQueryIterator<LibraryCanonicalChangeDocument>(query, requestOptions = options)
-                        let mutable readAny = false
-
-                        if iterator.HasMoreResults then
-                            let! page = iterator.ReadNextAsync(cancellationToken)
-
-                            for document in page do
-                                if results.Count < maximumCount then
-                                    results.Add document
-                                    cursor <- document.Cursor + 1L
-                                    readAny <- true
-
-                        if not readAny then exhausted <- true
-
-                    return results.ToArray()
+                            return values |> Array.choose id
                 }
 
             member _.ReadCurrentItemsAsync(repositoryId, cancellationToken) =
                 task {
-                    let options = QueryRequestOptions(PartitionKey = Nullable(partitionKey2 repositoryId "item"), MaxItemCount = Nullable 2000)
-                    use iterator = current.GetItemQueryIterator<LibraryCurrentItemDocument>("SELECT * FROM c", requestOptions = options)
-                    let results = ResizeArray<LibraryCurrentItemDocument>()
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let! buckets = readIndexBuckets grainFactory repositoryId "item-index"
 
-                    while iterator.HasMoreResults do
-                        let! page = iterator.ReadNextAsync(cancellationToken)
-                        results.AddRange page
+                    let! identityGroups =
+                        buckets
+                        |> Array.map (fun (highByte, lowByte, _) ->
+                            grainFactory
+                                .GetGrain<ILibraryCurrentIndexBucketActor>(recordKey repositoryId "item-index-bucket" $"{highByte:X2}{lowByte:X2}")
+                                .Read())
+                        |> Task.WhenAll
 
-                    return results.ToArray()
+                    let! documents =
+                        identityGroups
+                        |> Array.concat
+                        |> Array.map (fun identity ->
+                            let itemId = Guid.Parse(identity.Substring("item:".Length))
+
+                            item repositoryId itemId
+                            |> fun actor -> actor.Read())
+                        |> Task.WhenAll
+
+                    return documents |> Array.choose id
                 }
 
-            member _.HasLiveDescendantsAsync(repositoryId, normalizedDirectoryPath, cancellationToken) =
+            member this.HasLiveDescendantsAsync(repositoryId, normalizedDirectoryPath, cancellationToken) =
                 task {
+                    let! items =
+                        (this :> ILibraryStore)
+                            .ReadCurrentItemsAsync(repositoryId, cancellationToken)
+
                     let prefix = normalizedDirectoryPath + "/"
 
-                    let options = QueryRequestOptions(PartitionKey = Nullable(partitionKey2 repositoryId "item"), MaxItemCount = Nullable 1)
-
-                    let query =
-                        QueryDefinition(
-                            "SELECT TOP 1 VALUE true FROM c WHERE c.Item.State = 'live' AND STARTSWITH(c.Item.Namespace.NormalizedPath, @prefix, true)"
-                        )
-                            .WithParameter("@prefix", prefix)
-
-                    use iterator = current.GetItemQueryIterator<bool>(query, requestOptions = options)
-
-                    if iterator.HasMoreResults then
-                        let! page = iterator.ReadNextAsync(cancellationToken)
-                        return page.Count > 0
-                    else
-                        return false
+                    return
+                        items
+                        |> Array.exists (fun document ->
+                            String.Equals(document.Item.State, "live", StringComparison.OrdinalIgnoreCase)
+                            && (document.Item.Namespace
+                                |> Option.exists (fun value -> value.NormalizedPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))))
                 }
 
             member _.EnsureBaselineAsync(repositoryId, boundaryCursor, cursorEpoch, libraryCatalog, items, cancellationToken) =
                 task {
-                    let baselineId = baselineId repositoryId boundaryCursor cursorEpoch libraryCatalog.Version
-                    let baselineKey = baselineId.ToString("D")
-                    let manifestId = $"manifest:{baselineId:D}"
-                    let manifestKey = partitionKey3 repositoryId baselineKey "manifest"
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    match! readOptional<LibraryBaselineManifestDocument> baselines manifestId manifestKey cancellationToken with
-                    | Some existing -> return existing.Document
+                    let manifest, shards =
+                        buildBaselineDocuments repositoryId boundaryCursor cursorEpoch libraryCatalog items (SystemClock.Instance.GetCurrentInstant())
+
+                    match! baselineManifest repositoryId manifest.BaselineId
+                           |> fun actor -> actor.Read()
+                        with
+                    | Some existing -> return existing
                     | None ->
-                        let manifest, shardDocuments =
-                            buildBaselineDocuments repositoryId boundaryCursor cursorEpoch libraryCatalog items (SystemClock.Instance.GetCurrentInstant())
+                        for shard in shards do
+                            do!
+                                baselineShard repositoryId shard.BaselineId shard.ShardKey
+                                |> fun actor -> actor.CreateExact shard
 
-                        for shard in shardDocuments do
-                            do! createExact baselines shard.id (partitionKey3 repositoryId baselineKey shard.ShardKey) shard cancellationToken
+                        do!
+                            baselineManifest repositoryId manifest.BaselineId
+                            |> fun actor -> actor.CreateExact manifest
 
-                        do! createExact baselines manifest.id manifestKey manifest cancellationToken
                         return manifest
                 }
 
             member _.ReadBaselineAsync(repositoryId, baselineId, cancellationToken) =
                 task {
-                    let baselineKey = baselineId.ToString("D")
-                    let manifestId = $"manifest:{baselineId:D}"
+                    cancellationToken.ThrowIfCancellationRequested()
 
-                    match! readOptional<LibraryBaselineManifestDocument>
-                               baselines
-                               manifestId
-                               (partitionKey3 repositoryId baselineKey "manifest")
-                               cancellationToken
+                    match! baselineManifest repositoryId baselineId
+                           |> fun actor -> actor.Read()
                         with
                     | None -> return None
-                    | Some manifestRead ->
+                    | Some manifest ->
+                        let! shards =
+                            manifest.ShardIds
+                            |> Array.map (fun shardId ->
+                                let shardKey = shardId.Replace($"shard:{baselineId:D}:", "shard:")
+
+                                baselineShard repositoryId baselineId shardKey
+                                |> fun actor -> actor.Read())
+                            |> Task.WhenAll
+
                         let items = ResizeArray<LibraryItemDto>()
 
-                        for index = 0 to manifestRead.Document.ShardIds.Length - 1 do
-                            let shardId = manifestRead.Document.ShardIds[index]
-                            let shardKey = shardId.Replace($"shard:{baselineId:D}:", "shard:")
+                        for index = 0 to shards.Length - 1 do
+                            match shards[index] with
+                            | None -> invalidOp $"Library baseline shard {manifest.ShardIds[index]} is missing."
+                            | Some shard ->
+                                if documentHash shard <> manifest.ShardHashes[index] then
+                                    invalidOp $"Library baseline shard {shard.id} failed its published BLAKE3 hash."
 
-                            let! shard =
-                                baselines.ReadItemAsync<LibraryBaselineShardDocument>(
-                                    shardId,
-                                    partitionKey3 repositoryId baselineKey shardKey,
-                                    cancellationToken = cancellationToken
-                                )
+                                if shard.ItemCount <> manifest.ShardItemCounts[index] then
+                                    invalidOp $"Library baseline shard {shard.id} failed its published item count."
 
-                            if documentHash shard.Resource
-                               <> manifestRead.Document.ShardHashes[index] then
-                                invalidOp $"Library baseline shard {shardId} failed its published hash."
+                                items.AddRange shard.Items
 
-                            if shard.Resource.ItemCount
-                               <> manifestRead.Document.ShardItemCounts[index] then
-                                invalidOp $"Library baseline shard {shardId} failed its published item count."
-
-                            items.AddRange shard.Resource.Items
-
-                        if items.Count
-                           <> manifestRead.Document.TotalItemCount then
+                        if items.Count <> manifest.TotalItemCount then
                             invalidOp $"Library baseline {baselineId:D} failed its published total item count."
 
-                        return Some(manifestRead.Document, items.ToArray())
+                        return Some(manifest, items.ToArray())
                 }
 
         interface ILibraryTransferStore with
-
-            member _.CreatePreparedAsync(document, cancellationToken) =
-                createExact receipts document.id (partitionKey3 document.RepositoryId document.RecordKind document.RecordKey) document cancellationToken
-
-            member _.ReadPreparedAsync(repositoryId, preparedContentId, cancellationToken) =
-                let id = $"prepared:{preparedContentId:D}"
-                readOptional<LibraryPreparedContentDocument> receipts id (partitionKey3 repositoryId "prepared" id) cancellationToken
-
-            member _.FinalizePreparedAsync(repositoryId, preparedContentId, manifest, cancellationToken) =
-                task {
-                    let id = $"prepared:{preparedContentId:D}"
-                    let key = partitionKey3 repositoryId "prepared" id
-                    let mutable completed = false
-
-                    while not completed do
-                        match! readOptional<LibraryPreparedContentDocument> receipts id key cancellationToken with
-                        | None -> invalidOp "The Library content preparation does not exist."
-                        | Some current ->
-                            if manifest.ManifestAddress
-                               <> ContentAddress.computeManifestAddressForManifest manifest then
-                                invalidOp "The finalized Library content manifest address is invalid."
-
-                            if manifest.FileContentHash
-                               <> current.Document.Content.Blake3Hash
-                               || manifest.Size <> current.Document.Content.Size then
-                                invalidOp "The finalized Library content manifest does not match its prepared descriptor."
-
-                            match current.Document.FinalizedManifest with
-                            | Some existing when equivalent existing manifest -> completed <- true
-                            | Some _ -> invalidOp "The Library content preparation was already finalized with a different manifest."
-                            | None ->
-                                let replacement = { current.Document with FinalizedManifest = Some manifest }
-                                let options = ItemRequestOptions(IfMatchEtag = current.ETag)
-
-                                try
-                                    let! _ = receipts.ReplaceItemAsync(replacement, id, key, options, cancellationToken)
-                                    completed <- true
-                                with
-                                | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> ()
-                }
-
             member _.UpsertContentLocationAsync(document, cancellationToken) =
-                createExact receipts document.id (partitionKey3 document.RepositoryId document.RecordKind document.RecordKey) document cancellationToken
+                cancellationToken.ThrowIfCancellationRequested()
+
+                grainFactory
+                    .GetGrain<ILibraryContentLocationRecordActor>(recordKey document.RepositoryId document.RecordKind document.RecordKey)
+                    .CreateExact(document)
 
             member _.ReadContentLocationAsync(repositoryId, contentVersionId, cancellationToken) =
-                task {
-                    let id = $"content:{contentVersionId:D}"
+                cancellationToken.ThrowIfCancellationRequested()
 
-                    let! existing = readOptional<LibraryContentLocationDocument> receipts id (partitionKey3 repositoryId "content" id) cancellationToken
+                grainFactory
+                    .GetGrain<ILibraryContentLocationRecordActor>(recordKey repositoryId "content" $"content:{contentVersionId:D}")
+                    .Read()
 
-                    return
-                        existing
-                        |> Option.map (fun value -> value.Document)
-                }
+    /// Creates the provider-neutral Library store over Orleans actor persistence.
+    let createStore grainFactory = OrleansLibraryStore(grainFactory) :> ILibraryStore
 
-            member _.CreateReadGrantAsync(document, cancellationToken) =
-                createExact receipts document.id (partitionKey3 document.RepositoryId document.RecordKind document.RecordKey) document cancellationToken
-
-            member _.ReadReadGrantAsync(repositoryId, grantId, cancellationToken) =
-                let id = $"grant:{grantId:D}"
-                readOptional<LibraryContentReadGrantDocument> receipts id (partitionKey3 repositoryId "grant" id) cancellationToken
-
-            member _.ConsumeReadGrantAsync(document, etag, cancellationToken) =
-                task {
-                    let options = ItemRequestOptions(IfMatchEtag = etag)
-
-                    try
-                        let! response =
-                            receipts.ReplaceItemAsync(
-                                document,
-                                document.id,
-                                partitionKey3 document.RepositoryId document.RecordKind document.RecordKey,
-                                options,
-                                cancellationToken
-                            )
-
-                        return Replaced response.ETag
-                    with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.PreconditionFailed -> return PreconditionFailed
-                }
-
-    /// Creates the six-container store from the configured Cosmos client and database name.
-    let createStore (client: CosmosClient) databaseName =
-        let database = client.GetDatabase databaseName
-
-        CosmosLibraryStore(
-            database.GetContainer ControlContainerName,
-            database.GetContainer ChangesContainerName,
-            database.GetContainer CurrentContainerName,
-            database.GetContainer ReceiptsContainerName,
-            database.GetContainer HistoryContainerName,
-            database.GetContainer BaselinesContainerName
-        )
-        :> ILibraryStore
-
-    /// Creates the preparation and read-grant store over the fixed receipt container.
-    let createTransferStore (client: CosmosClient) databaseName =
-        let database = client.GetDatabase databaseName
-
-        CosmosLibraryStore(
-            database.GetContainer ControlContainerName,
-            database.GetContainer ChangesContainerName,
-            database.GetContainer CurrentContainerName,
-            database.GetContainer ReceiptsContainerName,
-            database.GetContainer HistoryContainerName,
-            database.GetContainer BaselinesContainerName
-        )
-        :> ILibraryTransferStore
+    /// Creates the provider-neutral retained-content store over Orleans actor persistence.
+    let createTransferStore grainFactory = OrleansLibraryStore(grainFactory) :> ILibraryTransferStore

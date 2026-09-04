@@ -5,11 +5,11 @@ Libraries are Grace's repository-ordered remote namespace and immutable-byte ser
 An authorized remote client can:
 
 - Read, add, and remove repository-owned Libraries.
-- Prepare immutable bytes and submit idempotent namespace or content changes.
+- Stage immutable bytes through an upload session and submit idempotent namespace or content changes.
 - Read current items and namespace slots.
 - Bootstrap current state and then pull ordered change pages.
 - Recover the stable receipt for a previously submitted operation.
-- Read retained immutable content through a short-lived, one-use grant.
+- Read retained immutable content through a short-lived signed read-only download URL backed by Grace's immutable-content access path.
 - Read content-free repository synchronization status.
 
 Product V1 does not include local SQLite state, filesystem publication, `library sync enable`, `library sync disable`, `library sync run`, local synchronization status, or Watch-driven synchronization.
@@ -33,7 +33,7 @@ Libraries add two repository-scoped operations and roles:
 | Role | Operations | Intended use |
 | --- | --- | --- |
 | `LibraryReader` | `RepositoryRead`, `LibraryRead` | Read the catalog, status, items, slots, bootstrap pages, change pages, receipts, bytes, and wake hints. |
-| `LibraryWriter` | Reader operations plus `LibraryWrite` | Prepare bytes and submit Library changes. |
+| `LibraryWriter` | Reader operations plus `LibraryWrite` | Stage bytes and submit Library changes. |
 
 `RepositoryAdmin` manages the Library catalog and also carries Library read/write access. Broader administrator roles inherit the same operations through the existing scope hierarchy.
 
@@ -47,22 +47,27 @@ Each change request provides:
 - The exact current Library catalog version.
 - The change and item kinds.
 - The exact namespace, content, or destination-slot preconditions required by that change kind.
-- A prepared-content ID when complete bytes are required.
+- An UploadSession-backed prepared-content ID when complete bytes are required.
 
 The accepted order is:
 
 1. Validate and authorize the request against current repository state.
+1. Return the existing exact receipt before consulting temporary upload state when the operation was already accepted.
 1. Check the Product V1 item-head and namespace-slot bounds before reservation.
 1. Reserve the complete deterministic command.
-1. Create the immutable repository change.
-1. Repair current-state, history, and receipt projections from that change.
-1. Advance the applied-through position and clear pending work.
-1. Complete the stable durable receipt.
-1. Attempt a best-effort content-free wake.
+1. Create the immutable canonical repository change.
+1. Idempotently persist current item and slot state, retained content location, and the stable receipt.
+1. Advance the applied-through position and clear the matching pending operation.
+1. Publish one stable content-available envelope, retaining an Orleans fallback record only after terminal Service Bus failure.
+1. Return the stable durable receipt.
 
 Only a caught-up authorized command with exact catalog, item, namespace, content, and slot preconditions can create one accepted repository change. Each repository is limited to 100,000 current item-head documents and 100,000 current namespace-slot documents. A command that would exceed either bound is rejected before it reserves the control document.
 
-Retrying the same operation ID with the same request returns the same receipt. Reusing that ID for a different request returns `operationIdentityMismatch`.
+Retrying the same operation ID with the same request returns the same receipt. A persisted receipt is terminal only after the matching pending operation is gone; activation repair completes that cleanup before returning it. Reusing the operation ID for a different request returns `operationIdentityMismatch`.
+
+`RepositoryLibraryActor` is the only authority that orders and accepts repository Library changes. Every Grace-owned Library metadata write uses Orleans persistence. Accepted changes, current projections, receipts, content locations, history segments, and baseline shards use point-addressed or bounded records rather than unbounded repository arrays.
+
+History is not on the submit hot path. A `LibraryContentAvailable.v1` notification causes the repository actor to replay accepted canonical changes after its durable history position. Reprocessing the same cursor is idempotent. Baseline shard integrity hashes use BLAKE3 and bootstrap fails closed when shard bytes do not match the manifest.
 
 ## Bootstrap, changes, and status
 
@@ -72,7 +77,9 @@ After bootstrap, clients call `/libraries/changes/get` with their opaque cursor.
 
 `LibraryRepositoryStatusDto` is content-free. It reports whether projections are caught up, whether rebaseline is required, whether work is blocked, pending-operation count and age, projection lag, and the last completion time. It does not expose container keys, ETags, grants, local paths, content names, or internal cursor numbers.
 
-`LibraryContentAvailable.v1` is a best-effort SignalR hint for authorized readers. It says only that the client should pull after a durable cursor. The wake can be lost or duplicated, and delivery failure does not change change acceptance or the durable result.
+`LibraryContentAvailable.v1` is a content-free pull hint for authorized readers. It says only that the client should pull after a durable cursor. SignalR delivery can be lost or duplicated, and Service Bus delivery can be duplicated after ambiguous broker acceptance. The stable accepted cursor and `MessageId` make included server consumers idempotent.
+
+Service Bus publication is send-first. Grace lets the configured SDK retries finish before treating an exception as terminal. A successful first send creates no fallback state. A terminal failure persists the exact serialized envelope under its stable `MessageId`; actor activation resends those same bytes and clears fallback state only after send success. Notification delay or duplication does not change acceptance or the durable receipt.
 
 ## Library CLI
 
@@ -105,14 +112,14 @@ The remote contract has 15 HTTP operations under `/libraries`:
 - Catalog: get, list, add, and remove.
 - Bootstrap: start and continue.
 - Ordered state: get changes, operation receipts, current items, namespace slots, and status.
-- Changes: prepare content and submit a change.
-- Immutable reads: prepare a one-use read grant and redeem it.
+- Changes: create an UploadSession-backed prepared-content descriptor and submit a change.
+- Immutable reads: authorize a content read and follow the returned short-lived signed read-only download response.
 
 `Grace.SDK.Libraries` is the handwritten .NET facade. The static OpenAPI sources are `src/OpenAPI/Libraries.Components.OpenAPI.yaml` and `src/OpenAPI/Libraries.Paths.OpenAPI.yaml`. The standard generator produces TypeScript, Python, and Rust raw clients behind their existing facade boundary.
 
 ## Server configuration
 
-Grace Server requires `grace__libraries__token_secret`. The value is a base64-encoded key containing at least 32 bytes. It protects opaque cursor, page, and read-grant tokens and must be stable across server instances that serve the same deployment.
+Grace Server requires `grace__libraries__token_secret`. The value is a base64-encoded key containing at least 32 bytes. It protects opaque cursor, page, and stateless content-read tokens and must be stable across server instances that serve the same deployment.
 
 PowerShell:
 
@@ -127,7 +134,13 @@ bash / zsh:
 export grace__libraries__token_secret="$(openssl rand -base64 32)"
 ```
 
-The Aspire local topology generates this value for the development run and provisions the six Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
+The Aspire local topology generates this value for the development run. Azure and externally configured modes require the operator-supplied secret.
+
+Library writes work through six named Orleans persistence purposes: control, changes, current, receipts, history, and baselines. Deployments may bind those purposes to any configured Orleans storage provider. The Aspire Cosmos topology provisions six Session-consistent containers with one-level control keys, two-level changes/current keys, and three-level receipts/history/baselines keys. Cosmos SQL remains available only to storage-type-gated read adapters; it is never a Library mutation path or competing authority.
+
+`UploadSessionActor` alone owns temporary upload coordination. Prepared-content and finalized-manifest evidence live in that actor rather than a separate preparation actor. Terminal upload coordination expires at `StartedAt + Repository.LogicalDeleteDays`; the reminder rechecks the exact session generation and deadline before deleting temporary state. Accepted immutable content is not deleted by this cleanup.
+
+Authorized immutable reads create no durable grant record. After repository, item, and content authorization, Grace returns the existing short-lived signed read-only download form; the server uses its immutable-content SAS access behind that route.
 
 ## Deferred local behavior
 

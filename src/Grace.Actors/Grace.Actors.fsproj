@@ -61,6 +61,7 @@
         <Compile Include="ManifestContributionWorkflow.Actor.fs" />
         <Compile Include="PromotionQueue.Actor.fs" />
         <Compile Include="Repository.Actor.fs" />
+        <Compile Include="LibraryRecord.Actor.fs" />
         <Compile Include="RepositoryLibrary.Actor.fs" />
         <Compile Include="RepositoryName.Actor.fs" />
         <Compile Include="RepositoryPermission.Actor.fs" />
