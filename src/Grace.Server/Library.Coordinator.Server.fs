@@ -32,11 +32,21 @@ module LibraryCoordinator =
             cancellationToken: CancellationToken ->
                 Task
 
+        /// Releases the operation's tracked counter identity after its readable receipt is durable.
+        abstract member CompleteAsync:
+            repositoryId: RepositoryId *
+            operationId: LibraryOperationId *
+            contentVersionId: LibraryContentVersionId *
+            correlationId: CorrelationId *
+            cancellationToken: CancellationToken ->
+                Task
+
     /// Leaves non-file Library coordinator tests independent from Orleans contribution actors.
     type private NoopLibraryManifestContributionActivator() =
 
         interface ILibraryManifestContributionActivator with
             member _.ActivateAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+            member _.CompleteAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
 
     /// Applies Library file contributions through the repository counter and its existing range workflow.
     type ManifestContributionActivator(transferStore: ILibraryTransferStore, grainFactory: IGrainFactory) =
@@ -57,41 +67,48 @@ module LibraryCoordinator =
 
             ranges.ToArray()
 
+        /// Builds the stable counter identity shared by activation, retry, and receipt completion.
+        let counterOperationId (operationId: LibraryOperationId) (contentVersionId: LibraryContentVersionId) =
+            RepositoryContentCounterOperationId $"library:{operationId:N}:content:{contentVersionId:N}"
+
+        /// Resolves the retained manifest and its repository counter without introducing another placement authority.
+        let resolveContribution repositoryId operationId contentVersionId correlationId cancellationToken =
+            task {
+                let! location = transferStore.ReadContentLocationAsync(repositoryId, contentVersionId, cancellationToken)
+
+                let location =
+                    location
+                    |> Option.defaultWith (fun () -> invalidOp $"Accepted Library content {contentVersionId:D} has no retained manifest location.")
+
+                if location.RepositoryId <> repositoryId
+                   || location.Content.ContentVersionId
+                      <> contentVersionId then
+                    invalidOp "The retained Library content location does not match the accepted operation."
+
+                let manifest = location.Manifest
+
+                if String.IsNullOrWhiteSpace manifest.StoragePoolId
+                   || String.IsNullOrWhiteSpace manifest.ManifestAddress then
+                    invalidOp "The retained Library content manifest is missing its contribution identity."
+
+                let operationId = counterOperationId operationId contentVersionId
+
+                let counterActor =
+                    grainFactory.GetGrain<IRepositoryContentCounterActor>(
+                        RepositoryContentCounter.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
+                    )
+
+                return manifest, operationId, counterActor, EventMetadata.New correlationId "RepositoryLibraryActor"
+            }
+
         interface ILibraryManifestContributionActivator with
 
             member _.ActivateAsync(repositoryId, operationId, contentVersionId, correlationId, cancellationToken) =
                 task {
-                    let! location = transferStore.ReadContentLocationAsync(repositoryId, contentVersionId, cancellationToken)
+                    let! manifest, counterOperationId, counterActor, metadata =
+                        resolveContribution repositoryId operationId contentVersionId correlationId cancellationToken
 
-                    let location =
-                        location
-                        |> Option.defaultWith (fun () -> invalidOp $"Accepted Library content {contentVersionId:D} has no retained manifest location.")
-
-                    if location.RepositoryId <> repositoryId
-                       || location.Content.ContentVersionId
-                          <> contentVersionId then
-                        invalidOp "The retained Library content location does not match the accepted operation."
-
-                    let manifest = location.Manifest
-
-                    if String.IsNullOrWhiteSpace manifest.StoragePoolId
-                       || String.IsNullOrWhiteSpace manifest.ManifestAddress then
-                        invalidOp "The retained Library content manifest is missing its contribution identity."
-
-                    let counterOperationId = $"library:{operationId:N}:content:{contentVersionId:N}"
-
-                    let counterActor =
-                        grainFactory.GetGrain<IRepositoryContentCounterActor>(
-                            RepositoryContentCounter.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
-                        )
-
-                    let metadata = EventMetadata.New correlationId "RepositoryLibraryActor"
-
-                    match!
-                        counterActor.Handle
-                            (RepositoryContentCounterCommand.AddReference(counterOperationId, repositoryId, manifest.StoragePoolId, manifest.ManifestAddress))
-                            metadata
-                        with
+                    match! counterActor.AddTrackedReference counterOperationId repositoryId manifest.StoragePoolId manifest.ManifestAddress metadata with
                     | Error error -> invalidOp $"Library manifest contribution counter failed: {error.Error}"
                     | Ok counterResult ->
                         let workflowStart =
@@ -135,6 +152,17 @@ module LibraryCoordinator =
                                 with
                             | Error error -> invalidOp $"Library manifest contribution workflow failed: {error.Error}"
                             | Ok _ -> ()
+                }
+                :> Task
+
+            member _.CompleteAsync(repositoryId, operationId, contentVersionId, correlationId, cancellationToken) =
+                task {
+                    let! _, counterOperationId, counterActor, metadata =
+                        resolveContribution repositoryId operationId contentVersionId correlationId cancellationToken
+
+                    match! counterActor.CompleteTrackedReference counterOperationId metadata with
+                    | Error error -> invalidOp $"Library manifest contribution completion failed: {error.Error}"
+                    | Ok _ -> ()
                 }
                 :> Task
 
@@ -330,15 +358,20 @@ module LibraryCoordinator =
             let item = resultItem pending
             let change = pending.CanonicalChange.Change
 
+            let contributionContent =
+                match change.ChangeKind, item.Content with
+                | (ChangeKind.CreateFile
+                  | ChangeKind.UpdateContent),
+                  Some content -> Some content
+                | _ -> None
+
             match! store.ReadReceiptAsync(repositoryId, pending.OperationId, cancellationToken) with
             | Some existing when existing.RequestHash <> pending.RequestHash ->
                 invalidOp "The pending Library operation identity already has a different receipt."
             | Some _ -> ()
             | None ->
-                match change.ChangeKind, item.Content with
-                | (ChangeKind.CreateFile
-                  | ChangeKind.UpdateContent),
-                  Some content ->
+                match contributionContent with
+                | Some content ->
                     do!
                         contributionActivator.ActivateAsync(
                             repositoryId,
@@ -392,6 +425,11 @@ module LibraryCoordinator =
                     },
                     cancellationToken
                 )
+
+            match contributionContent with
+            | Some content ->
+                do! contributionActivator.CompleteAsync(repositoryId, pending.OperationId, content.ContentVersionId, pending.CorrelationId, cancellationToken)
+            | None -> ()
 
             return change
         }

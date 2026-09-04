@@ -112,6 +112,8 @@ module RepositoryContentCounter =
             Count: ReferenceCount
             Revision: int64
             LastCompletedChange: RepositoryContentCounterCompletedChange option
+            /// Retains one exact add until its dependent manifest workflow and Library receipt complete.
+            PendingTrackedAdd: RepositoryContentCounterCompletedChange option
         }
 
         /// Preserves the established read name while the durable snapshot stores the contract's `Count` field.
@@ -124,7 +126,7 @@ module RepositoryContentCounter =
             else
                 RepositoryContentCounterLifecycleState.Referenced
 
-        /// Projects the latest operation identity for existing callers without persisting another field.
+        /// Projects the latest completed counter operation independently from the tracked Library handoff.
         member this.LastOperationId =
             this.LastCompletedChange
             |> Option.map (fun change -> change.OperationId)
@@ -139,6 +141,7 @@ module RepositoryContentCounter =
                 Count = 0L
                 Revision = 0L
                 LastCompletedChange = None
+                PendingTrackedAdd = None
             }
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.

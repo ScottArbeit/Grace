@@ -460,6 +460,75 @@ type RepositoryContentCounterActorTests() =
                 Assert.That(decision.Counter.Count, Is.EqualTo(0L))
         }
 
+    /// Verifies a tracked Library add survives cache loss and an intervening reference until its workflow materializes content.
+    [<Test>]
+    member _.TrackedLibraryAddSurvivesInterveningReferenceUntilWorkflowCompletion() =
+        task {
+            let libraryOperationId = RepositoryContentCounterOperationId "library-operation"
+            let libraryCommand = add libraryOperationId
+            let mutable persisted = RepositoryContentCounterDto.Default
+
+            let persist snapshot =
+                persisted <- snapshot
+                Task.CompletedTask
+
+            let! first =
+                RepositoryContentCounterActor.handleTrackedAdd persist None RepositoryContentCounterDto.Default libraryCommand (metadata "corr-library-first")
+
+            let firstDecision = expectDecision first
+            Assert.That(firstDecision.Counter.Count, Is.EqualTo(1L))
+            Assert.That(firstDecision.Counter.PendingTrackedAdd.Value.OperationId, Is.EqualTo(libraryOperationId))
+
+            let unavailableRecentResult =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult None
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult false
+                }
+
+            let! intervening =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    unavailableRecentResult
+                    persist
+                    None
+                    persisted
+                    (add "intervening-operation")
+                    (metadata "corr-intervening")
+                    CancellationToken.None
+
+            let interveningDecision = expectDecision intervening
+            Assert.That(interveningDecision.Counter.Count, Is.EqualTo(2L))
+            Assert.That(interveningDecision.Counter.PendingTrackedAdd.Value.OperationId, Is.EqualTo(libraryOperationId))
+
+            let! retried = RepositoryContentCounterActor.handleTrackedAdd persist None persisted libraryCommand (metadata "corr-library-retry")
+
+            let retryDecision = expectDecision retried
+            let workflowActivations = HashSet<RepositoryContentCounterOperationId * int64>()
+
+            retryDecision.Intents
+            |> List.iter (function
+                | RepositoryContentCounterIntent.IncrementManifestReferenceCount (_, _, _, counterRevision) ->
+                    workflowActivations.Add((libraryOperationId, counterRevision))
+                    |> ignore
+                | _ -> Assert.Fail("Expected the tracked Library retry to recover its increment workflow."))
+
+            let materialized = workflowActivations.Contains((libraryOperationId, 1L))
+
+            let! completed =
+                RepositoryContentCounterActor.completeTrackedAdd persist None retryDecision.Counter libraryOperationId (metadata "corr-library-complete")
+
+            let completedDecision = expectDecision completed
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(retryDecision.WasIdempotentReplay, Is.True)
+                    Assert.That(retryDecision.Counter.Count, Is.EqualTo(2L))
+                    Assert.That(workflowActivations, Has.Count.EqualTo(1))
+                    Assert.That(materialized, Is.True)
+                    Assert.That(completedDecision.Counter.Count, Is.EqualTo(2L))
+                    Assert.That(completedDecision.Counter.PendingTrackedAdd.IsNone, Is.True))
+            )
+        }
+
     /// Verifies one repair-only command replaces the positive logical count in one snapshot without physical intents.
     [<Test>]
     member _.RepairReconcilesPositiveCountInOneRevisionWithoutIntent() =

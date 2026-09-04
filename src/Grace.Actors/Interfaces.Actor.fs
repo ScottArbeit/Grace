@@ -966,6 +966,19 @@ module Interfaces =
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
+        /// Adds one reference whose exact transition must remain replayable through a dependent manifest workflow and receipt.
+        abstract member AddTrackedReference:
+            operationId: RepositoryContentCounterOperationId ->
+            repositoryId: RepositoryId ->
+            storagePoolId: StoragePoolId ->
+            manifestAddress: ManifestAddress ->
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Releases the bounded tracked-add identity after its dependent workflow and receipt are durable.
+        abstract member CompleteTrackedReference:
+            operationId: RepositoryContentCounterOperationId -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
         /// Atomically replaces a proven positive logical count without emitting physical contribution intents.
         abstract member ReconcilePositiveCount:
             command: RepositoryContentCounterRepairCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>

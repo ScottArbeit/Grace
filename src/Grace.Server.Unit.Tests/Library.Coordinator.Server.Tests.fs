@@ -242,16 +242,20 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
 
         member _.ReadBaselineAsync(_repositoryId, _baselineId, _cancellationToken) = Task.FromResult None
 
-/// Records one durable manifest contribution and injects a single failure after that effect.
-type private RecordingLibraryManifestContributionActivator(failFirst: bool) =
+/// Records one durable manifest contribution and verifies completion follows receipt persistence.
+type private RecordingLibraryManifestContributionActivator(failFirst: bool, receiptExists: unit -> bool) =
     let contributions = HashSet<LibraryOperationId>()
     let mutable callCount = 0
+    let mutable completionCount = 0
 
     /// Returns how often the coordinator attempted the activation boundary.
     member _.CallCount = callCount
 
     /// Returns the number of unique accepted Library operations that contributed a manifest.
     member _.ContributionCount = contributions.Count
+
+    /// Returns how often the coordinator completed a tracked contribution after writing its receipt.
+    member _.CompletionCount = completionCount
 
     interface LibraryCoordinator.ILibraryManifestContributionActivator with
         member _.ActivateAsync(_repositoryId, operationId, _contentVersionId, _correlationId, _cancellationToken) =
@@ -264,11 +268,19 @@ type private RecordingLibraryManifestContributionActivator(failFirst: bool) =
             }
             :> Task
 
+        member _.CompleteAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) =
+            if not (receiptExists ()) then
+                raise (InvalidOperationException("Manifest contribution completion preceded its Library receipt."))
+
+            completionCount <- completionCount + 1
+            Task.CompletedTask
+
 /// Supplies no manifest side effects to coordinator tests that exercise non-file behavior.
 type private NoopLibraryManifestContributionActivator() =
 
     interface LibraryCoordinator.ILibraryManifestContributionActivator with
         member _.ActivateAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+        member _.CompleteAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
 
 /// Covers canonical-first publication and restart repair at every durable effect boundary.
 [<Parallelizable(ParallelScope.All)>]
@@ -511,7 +523,14 @@ type LibraryCoordinatorTests() =
             let repositoryId, control = filePendingFixture ()
             let pending = control.Pending.Value
             let store = FailingLibraryStore(control, "never")
-            let activator = RecordingLibraryManifestContributionActivator(true)
+
+            let activator =
+                RecordingLibraryManifestContributionActivator(
+                    true,
+                    fun () ->
+                        let _, _, _, receiptCount, _ = store.Counts
+                        receiptCount > 0
+                )
 
             let coordinator =
                 LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x43uy), activator) :> ILibraryCoordinator
@@ -562,7 +581,8 @@ type LibraryCoordinatorTests() =
                     Assert.That(store.Control.Pending.IsNone, Is.True)
                     Assert.That(receiptCount, Is.EqualTo(1))
                     Assert.That(activator.CallCount, Is.EqualTo(2))
-                    Assert.That(activator.ContributionCount, Is.EqualTo(1)))
+                    Assert.That(activator.ContributionCount, Is.EqualTo(1))
+                    Assert.That(activator.CompletionCount, Is.EqualTo(1)))
             )
         }
 
