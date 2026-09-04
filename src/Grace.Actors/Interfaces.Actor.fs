@@ -910,8 +910,8 @@ module Interfaces =
         /// Returns the retained content location when it exists.
         abstract member Read: unit -> Task<LibraryContentLocationDocument option>
 
-        /// Creates the location or reuses it when only preparation-specific observation metadata differs.
-        abstract member CreateExact: candidate: LibraryContentLocationDocument -> Task
+        /// Creates the location or returns the retained canonical value when preparation-specific metadata differs.
+        abstract member CreateExact: candidate: LibraryContentLocationDocument -> Task<LibraryContentLocationDocument>
 
     /// Owns one point-addressed failed Library GraceEvent envelope until a retry succeeds.
     [<Interface>]

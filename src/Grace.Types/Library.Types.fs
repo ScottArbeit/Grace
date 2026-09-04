@@ -1069,8 +1069,9 @@ module Library =
     /// Defines the retained immutable-content locations used by Library uploads and authorized reads.
     type ILibraryTransferStore =
 
-        /// Retains or reuses the private immutable-content location behind a public content-version identity.
-        abstract member UpsertContentLocationAsync: location: LibraryContentLocationDocument * cancellationToken: CancellationToken -> Task
+        /// Retains or returns the canonical private immutable-content location behind a public content-version identity.
+        abstract member UpsertContentLocationAsync:
+            location: LibraryContentLocationDocument * cancellationToken: CancellationToken -> Task<LibraryContentLocationDocument>
 
         /// Reads the retained location for one public content-version identity.
         abstract member ReadContentLocationAsync:

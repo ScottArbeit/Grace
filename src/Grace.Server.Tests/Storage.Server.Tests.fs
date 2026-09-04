@@ -1869,6 +1869,7 @@ type StorageManifestUploadSessionRoutes() =
                     Assert.That(middleReceipt.OperationId, Is.Not.EqualTo(repeatedReceipt.OperationId))
                     Assert.That(firstContent.ContentVersionId, Is.Not.EqualTo(middleContent.ContentVersionId))
                     Assert.That(repeatedContent.ContentVersionId, Is.EqualTo(firstContent.ContentVersionId))
+                    Assert.That(repeatedContent, Is.EqualTo(firstContent))
                     Assert.That(firstItem.LastChangeCursor, Is.Not.EqualTo(middleItem.LastChangeCursor))
                     Assert.That(middleItem.LastChangeCursor, Is.Not.EqualTo(repeatedItem.LastChangeCursor))
                     Assert.That(replayedReceipt, Is.EqualTo(repeatedReceipt))

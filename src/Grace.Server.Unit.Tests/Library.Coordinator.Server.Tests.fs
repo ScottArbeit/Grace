@@ -1301,13 +1301,15 @@ type LibraryCoordinatorTests() =
             let persistentState = LibraryContentLocationState()
             let actor = LibraryContentLocationRecordActor(persistentState) :> ILibraryContentLocationRecordActor
 
-            do! actor.CreateExact original
-            do! actor.CreateExact observedLater
+            let! created = actor.CreateExact original
+            let! reused = actor.CreateExact observedLater
             let! retained = actor.Read()
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+                    Assert.That(created, Is.EqualTo(original))
+                    Assert.That(reused, Is.EqualTo(original))
                     Assert.That(retained, Is.EqualTo(Some original)))
             )
         }
@@ -1352,9 +1354,9 @@ type LibraryCoordinatorTests() =
             let persistentState = LibraryContentLocationState()
             let actor = LibraryContentLocationRecordActor(persistentState) :> ILibraryContentLocationRecordActor
 
-            do! actor.CreateExact original
+            let! _ = actor.CreateExact original
 
-            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> actor.CreateExact conflicting))
+            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> actor.CreateExact conflicting :> Task))
 
             Assert.That(error.Message, Does.Contain("not byte-equivalent"))
             Assert.That(persistentState.WriteCount, Is.EqualTo(1))

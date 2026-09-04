@@ -348,16 +348,19 @@ type LibraryContentLocationRecordActor
         member _.Read() = Task.FromResult(LibraryRecord.read state)
 
         member _.CreateExact candidate =
-            let candidate =
-                if state.RecordExists then
-                    { candidate with
-                        AuthorizedScope = state.State.AuthorizedScope
-                        Content = { candidate.Content with CreatedAt = state.State.Content.CreatedAt }
-                    }
-                else
-                    candidate
+            task {
+                let candidate =
+                    if state.RecordExists then
+                        { candidate with
+                            AuthorizedScope = state.State.AuthorizedScope
+                            Content = { candidate.Content with CreatedAt = state.State.Content.CreatedAt }
+                        }
+                    else
+                        candidate
 
-            LibraryRecord.createExact candidate.id state candidate
+                do! LibraryRecord.createExact candidate.id state candidate
+                return state.State
+            }
 
 /// Retains one exact failed Library GraceEvent envelope and retries it whenever Orleans activates the record actor.
 type LibraryGraceEventFallbackActor

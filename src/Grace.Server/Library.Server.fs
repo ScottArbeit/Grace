@@ -336,7 +336,7 @@ module Library =
                                     - Duration.FromMinutes 15L
                             }
 
-                        do!
+                        let! retainedLocation =
                             transferStore.UpsertContentLocationAsync(
                                 {
                                     id = $"content:{content.ContentVersionId:D}"
@@ -351,7 +351,7 @@ module Library =
                                 context.RequestAborted
                             )
 
-                        return Ok(Some content, Some preparation.Content.ExpiresAt)
+                        return Ok(Some retainedLocation.Content, Some preparation.Content.ExpiresAt)
         }
 
     /// Reads the exact current actor-owned Library catalog.
