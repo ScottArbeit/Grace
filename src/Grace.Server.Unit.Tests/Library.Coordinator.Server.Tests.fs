@@ -242,9 +242,42 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
 
         member _.ReadBaselineAsync(_repositoryId, _baselineId, _cancellationToken) = Task.FromResult None
 
+/// Records one durable manifest contribution and injects a single failure after that effect.
+type private RecordingLibraryManifestContributionActivator(failFirst: bool) =
+    let contributions = HashSet<LibraryOperationId>()
+    let mutable callCount = 0
+
+    /// Returns how often the coordinator attempted the activation boundary.
+    member _.CallCount = callCount
+
+    /// Returns the number of unique accepted Library operations that contributed a manifest.
+    member _.ContributionCount = contributions.Count
+
+    interface LibraryCoordinator.ILibraryManifestContributionActivator with
+        member _.ActivateAsync(_repositoryId, operationId, _contentVersionId, _correlationId, _cancellationToken) =
+            task {
+                callCount <- callCount + 1
+                contributions.Add operationId |> ignore
+
+                if failFirst && callCount = 1 then
+                    raise (InvalidOperationException("Injected manifest contribution activation failure."))
+            }
+            :> Task
+
+/// Supplies no manifest side effects to coordinator tests that exercise non-file behavior.
+type private NoopLibraryManifestContributionActivator() =
+
+    interface LibraryCoordinator.ILibraryManifestContributionActivator with
+        member _.ActivateAsync(_repositoryId, _operationId, _contentVersionId, _correlationId, _cancellationToken) = Task.CompletedTask
+
 /// Covers canonical-first publication and restart repair at every durable effect boundary.
 [<Parallelizable(ParallelScope.All)>]
 type LibraryCoordinatorTests() =
+
+    /// Creates a coordinator whose test does not cross the manifest contribution boundary.
+    let coordinatorWithoutContributions store secretByte =
+        LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 secretByte), NoopLibraryManifestContributionActivator())
+        :> ILibraryCoordinator
 
     /// Builds one live directory item for deterministic baseline tests.
     let baselineItem itemId rootVersion normalizedPath =
@@ -389,6 +422,30 @@ type LibraryCoordinatorTests() =
 
         repositoryId, control
 
+    /// Converts the deterministic directory reservation into one accepted manifest-backed file reservation.
+    let filePendingFixture () =
+        let repositoryId, control = pendingFixture ()
+        let pending = control.Pending.Value
+
+        let content =
+            {
+                ContentVersionId = Guid.Parse "50872595-588c-5f30-89c2-72363a2d8a79"
+                Blake3Hash = "library-blake3"
+                Sha256Hash = "library-sha256"
+                Size = 4096L
+                CreatedAt = pending.ReservedAt
+            }
+
+        let item = { pending.Receipt.Item.Value with ItemKind = ItemKind.File; Content = Some content }
+
+        let change = { pending.CanonicalChange.Change with ChangeKind = ChangeKind.CreateFile; ItemKind = ItemKind.File; Content = Some content }
+
+        let receipt = { pending.Receipt with Change = Some change; Item = Some item }
+        let canonical = { pending.CanonicalChange with Change = change }
+        let filePending = { pending with Receipt = receipt; CanonicalChange = canonical }
+
+        repositoryId, { control with Pending = Some filePending }
+
     /// Verifies the typed actor state retains the complete catalog across an exact write and read.
     [<Test>]
     member _.ControlRecordPersistsAndRehydratesCatalog() =
@@ -445,6 +502,68 @@ type LibraryCoordinatorTests() =
             Assert.That(slotCount, Is.EqualTo 1)
             Assert.That(receiptCount, Is.EqualTo 1)
             Assert.That(historyCount, Is.EqualTo 0)
+        }
+
+    /// Verifies activation residue retries under the same Library operation and receipt replay never double-counts it.
+    [<Test>]
+    member _.AcceptedFileContributionActivationFailureRetriesOnceBeforeReceiptReplay() =
+        task {
+            let repositoryId, control = filePendingFixture ()
+            let pending = control.Pending.Value
+            let store = FailingLibraryStore(control, "never")
+            let activator = RecordingLibraryManifestContributionActivator(true)
+
+            let coordinator =
+                LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x43uy), activator) :> ILibraryCoordinator
+
+            let firstAttempt =
+                Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> coordinator.RepairAsync(repositoryId, CancellationToken.None)))
+
+            let _, _, _, receiptCountAfterFailure, _ = store.Counts
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(firstAttempt.Message, Does.Contain("manifest contribution activation"))
+                    Assert.That(store.Control.Pending.IsSome, Is.True)
+                    Assert.That(receiptCountAfterFailure, Is.Zero)
+                    Assert.That(activator.CallCount, Is.EqualTo(1))
+                    Assert.That(activator.ContributionCount, Is.EqualTo(1)))
+            )
+
+            do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
+
+            let replayCommand =
+                {
+                    RepositoryId = repositoryId
+                    OperationId = pending.OperationId
+                    RequestHash = pending.RequestHash
+                    LibraryCatalogVersion = pending.ExpectedLibraryCatalogVersion
+                    ChangeKind = ChangeKind.CreateFile
+                    ItemKind = ItemKind.File
+                    ItemId = None
+                    NamespacePrecondition = None
+                    ContentPrecondition = None
+                    CreationSlotExpectation = None
+                    DestinationParent = None
+                    DestinationName = None
+                    PreparedContentId = None
+                    PreparedContent = None
+                    PreparedContentExpiresAt = None
+                }
+
+            let! replayed = coordinator.SubmitAsync(replayCommand, pending.PrincipalId, pending.CorrelationId, CancellationToken.None)
+            do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
+
+            let _, _, _, receiptCount, _ = store.Counts
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(replayed, Is.EqualTo(pending.Receipt))
+                    Assert.That(store.Control.Pending.IsNone, Is.True)
+                    Assert.That(receiptCount, Is.EqualTo(1))
+                    Assert.That(activator.CallCount, Is.EqualTo(2))
+                    Assert.That(activator.ContributionCount, Is.EqualTo(1)))
+            )
         }
 
     /// Verifies asynchronous history replay cannot delay accepted completion and converges idempotently after failure.
@@ -650,7 +769,7 @@ type LibraryCoordinatorTests() =
             let initialCatalog = { pendingControl.LibraryCatalog with Libraries = [| "shared/docs" |] }
 
             let store = FailingLibraryStore({ pendingControl with Pending = None; LibraryCatalog = initialCatalog }, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x44uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x44uy
 
             let! exactRoot = coordinator.IsInLibraryAsync(repositoryId, "shared/docs", CancellationToken.None)
             let! descendant = coordinator.IsInLibraryAsync(repositoryId, "shared/docs/readme.md", CancellationToken.None)
@@ -675,7 +794,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, pendingControl = pendingFixture ()
             let emptyCatalog = { pendingControl.LibraryCatalog with Libraries = Array.empty }
             let store = FailingLibraryStore({ pendingControl with Pending = None; LibraryCatalog = emptyCatalog }, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x45uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x45uy
 
             let! before = coordinator.IsInLibraryAsync(repositoryId, "shared/docs", CancellationToken.None)
 
@@ -773,7 +892,7 @@ type LibraryCoordinatorTests() =
             let pending = pendingControl.Pending.Value
             let namespaceValue = pending.Receipt.Item.Value.Namespace.Value
             let store = FailingLibraryStore(initialControl, "capacity")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x46uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x46uy
 
             let command =
                 {
@@ -849,7 +968,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, control = pendingFixture ()
             let initialCatalog = LibraryCatalogDto.CreateInitial(repositoryId, control.UpdatedAt, "principal")
             let store = FailingLibraryStore({ control with Pending = None; LibraryCatalog = initialCatalog }, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x49uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x49uy
 
             do! coordinator.InitializeAsync(repositoryId, initialCatalog, CancellationToken.None)
             do! coordinator.InitializeAsync(repositoryId, initialCatalog, CancellationToken.None)
@@ -865,7 +984,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, pendingControl = pendingFixture ()
             let initialControl = { pendingControl with Pending = None; CurrentBaselineId = None; CurrentBaselineCursor = None }
             let store = FailingLibraryStore(initialControl, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x47uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x47uy
             let now = Instant.FromUtc(2026, 8, 28, 12, 0)
             let operationA = Guid.Parse "9ec3f2d0-a8d8-47c5-9f18-d098c37ab419"
             let operationB = Guid.Parse "bd25030e-d66a-43c4-87c7-ec6535c74469"
@@ -913,7 +1032,7 @@ type LibraryCoordinatorTests() =
             let repositoryId, pendingControl = pendingFixture ()
             let initialControl = { pendingControl with Pending = None; CurrentBaselineId = None; CurrentBaselineCursor = None }
             let store = FailingLibraryStore(initialControl, "never")
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x48uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x48uy
             let now = Instant.FromUtc(2026, 9, 4, 12, 30)
             let losingOperationId = Guid.Parse "17e6a149-c975-4f3c-b655-d5fa13782002"
             let winningOperationId = Guid.Parse "c50278e7-d609-45fb-af75-52a8368a08d8"
@@ -989,7 +1108,7 @@ type LibraryCoordinatorTests() =
             Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> LibraryCoordinator.repair store repositoryId CancellationToken.None :> Task))
             |> ignore
 
-            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x48uy)) :> ILibraryCoordinator
+            let coordinator = coordinatorWithoutContributions store 0x48uy
             do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
 
             let pending = control.Pending.Value

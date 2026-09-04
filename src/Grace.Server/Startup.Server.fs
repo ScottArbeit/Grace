@@ -2295,11 +2295,21 @@ module Application =
             services.AddSingleton<LibraryOpaqueTokenCodec>(LibraryOpaqueTokenCodec(libraryTokenKey))
             |> ignore
 
+            services.AddSingleton<LibraryCoordinator.ILibraryManifestContributionActivator>(
+                Func<IServiceProvider, LibraryCoordinator.ILibraryManifestContributionActivator> (fun serviceProvider ->
+                    LibraryCoordinator.ManifestContributionActivator(
+                        serviceProvider.GetRequiredService<ILibraryTransferStore>(),
+                        serviceProvider.GetRequiredService<IGrainFactory>()
+                    ))
+            )
+            |> ignore
+
             services.AddSingleton<ILibraryCoordinator>(
                 Func<IServiceProvider, ILibraryCoordinator> (fun serviceProvider ->
                     LibraryCoordinator.Coordinator(
                         serviceProvider.GetRequiredService<ILibraryStore>(),
-                        serviceProvider.GetRequiredService<ILibraryCursorCodec>()
+                        serviceProvider.GetRequiredService<ILibraryCursorCodec>(),
+                        serviceProvider.GetRequiredService<LibraryCoordinator.ILibraryManifestContributionActivator>()
                     )
                     :> ILibraryCoordinator)
             )

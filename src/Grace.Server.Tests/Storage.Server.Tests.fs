@@ -1455,7 +1455,7 @@ type StorageManifestUploadSessionRoutes() =
             return response.Value.Content.ToArray()
         }
 
-    /// Verifies a Library-prepared upload retains its preparation identity through the generic storage routes and immediate submit.
+    /// Verifies a Library-prepared upload retains its identity and is immediately materializable after submit.
     [<Test>]
     member _.LibraryPreparedUploadCanFinalizeAndSubmitThroughStorageRoutes() =
         task {
@@ -1592,6 +1592,33 @@ type StorageManifestUploadSessionRoutes() =
 
             Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
             Assert.That(receipt.Change, Is.Not.EqualTo(None))
+
+            let item = receipt.Item.Value
+            let content = item.Content.Value
+            let prepareRead = Parameters.Library.PrepareLibraryContentReadParameters()
+            prepareRead.OwnerId <- ownerId
+            prepareRead.OrganizationId <- organizationId
+            prepareRead.RepositoryId <- repositoryId
+            prepareRead.ItemId <- item.ItemId
+            prepareRead.ContentVersionId <- content.ContentVersionId
+            prepareRead.CorrelationId <- correlationId
+            use! prepareReadResponse = Client.PostAsync("/libraries/content/read", createJsonContent prepareRead)
+            let! prepareReadBody = prepareReadResponse.Content.ReadAsStringAsync()
+            Assert.That(prepareReadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prepareReadBody)
+
+            let readGrant =
+                (deserialize<GraceReturnValue<LibraryContentReadGrantDto>> prepareReadBody)
+                    .ReturnValue
+
+            use! downloadResponse = Client.GetAsync(readGrant.DownloadPath)
+            let! downloaded = downloadResponse.Content.ReadAsByteArrayAsync()
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+                    Assert.That(readGrant.Content, Is.EqualTo(content))
+                    Assert.That(Convert.ToHexString(downloaded), Is.EqualTo(Convert.ToHexString(payload))))
+            )
         }
 
     /// Verifies the large manifest upload can upload blob confirm finalize and download content block scenario.
