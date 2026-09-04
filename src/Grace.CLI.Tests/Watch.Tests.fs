@@ -12,6 +12,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Automation
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Types.Reference
 open Microsoft.AspNetCore.SignalR
 open Microsoft.Data.Sqlite
@@ -24657,4 +24658,140 @@ module WatchTests =
             |> ignore
 
             Assert.That(acknowledgementCount, Is.EqualTo(0))
+        }
+
+    /// Proves Library notifications are advisory repository-scoped wakes and never replace the durable pull authority.
+    [<Test; Category("LibrarySynchronization")>]
+    let ``Library content availability admits only enabled matching versioned repository wakes`` () =
+        task {
+            use wakeGate = new SemaphoreSlim(1, 1)
+            let repositoryId = RepositoryId.NewGuid()
+            let mutable enabled = true
+            let mutable synchronizationCount = 0
+
+            let payload eventName payloadRepositoryId cursor catalogVersion =
+                {
+                    EventName = eventName
+                    RepositoryId = payloadRepositoryId
+                    CursorEpoch = "opaque-epoch"
+                    AvailableAfterCursor = cursor
+                    LibraryCatalogVersion = catalogVersion
+                    OccurredAt = SystemClock.Instance.GetCurrentInstant()
+                    CorrelationId = "library-wake-admission"
+                }
+
+            let synchronize () =
+                synchronizationCount <- synchronizationCount + 1
+                Task.CompletedTask
+
+            let! wrongVersion =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v2" repositoryId "untrusted-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            let! wrongRepository =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v1" (RepositoryId.NewGuid()) "untrusted-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            enabled <- false
+
+            let! disabled =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v1" repositoryId "untrusted-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            enabled <- true
+
+            let! admitted =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v1" repositoryId "ignored-advisory-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            Assert.That(wrongVersion, Is.False)
+            Assert.That(wrongRepository, Is.False)
+            Assert.That(disabled, Is.False)
+            Assert.That(admitted, Is.True)
+            Assert.That(synchronizationCount, Is.EqualTo(1))
+        }
+
+    /// Proves duplicate Library wakes serialize before each independently rereads the durable cursor.
+    [<Test; Category("LibrarySynchronization")>]
+    let ``duplicate Library content availability wakes serialize durable pulls`` () =
+        task {
+            use wakeGate = new SemaphoreSlim(1, 1)
+            let repositoryId = RepositoryId.NewGuid()
+            let firstStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let releaseFirst = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let mutable activeCount = 0
+            let mutable maximumActiveCount = 0
+            let mutable synchronizationCount = 0
+
+            let payload cursor =
+                {
+                    EventName = "LibraryContentAvailable.v1"
+                    RepositoryId = repositoryId
+                    CursorEpoch = "opaque-epoch"
+                    AvailableAfterCursor = cursor
+                    LibraryCatalogVersion = Guid.NewGuid()
+                    OccurredAt = SystemClock.Instance.GetCurrentInstant()
+                    CorrelationId = "library-wake-serialization"
+                }
+
+            let synchronize () : Task =
+                (task {
+                    let active = Interlocked.Increment(&activeCount)
+                    maximumActiveCount <- max maximumActiveCount active
+                    let invocation = Interlocked.Increment(&synchronizationCount)
+
+                    if invocation = 1 then
+                        firstStarted.TrySetResult(()) |> ignore
+                        do! releaseFirst.Task
+
+                    Interlocked.Decrement(&activeCount) |> ignore
+                }
+                :> Task)
+
+            let first =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> true)
+                    synchronize
+                    (payload "duplicate-one")
+                    CancellationToken.None
+
+            do! firstStarted.Task
+
+            let second =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> true)
+                    synchronize
+                    (payload "duplicate-two")
+                    CancellationToken.None
+
+            releaseFirst.TrySetResult(()) |> ignore
+            let! admitted = Task.WhenAll(first, second)
+
+            Assert.That(admitted.Length = 2 && (admitted |> Array.forall id), Is.True)
+            Assert.That(synchronizationCount, Is.EqualTo(2))
+            Assert.That(maximumActiveCount, Is.EqualTo(1))
         }

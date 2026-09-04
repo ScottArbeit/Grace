@@ -11,6 +11,7 @@ open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Validation.Errors
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Types.Reference
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
@@ -9669,6 +9670,33 @@ module Watch =
             isResyncPending
             requestReplay
 
+    /// Serializes advisory Library wakes while leaving the durable Library cursor as the only synchronization authority.
+    let internal handleLibraryContentAvailableWake
+        (wakeGate: SemaphoreSlim)
+        repositoryId
+        synchronizationEnabled
+        (synchronize: unit -> Task)
+        (payload: LibraryContentAvailable)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            if payload.EventName = "LibraryContentAvailable.v1"
+               && payload.RepositoryId = repositoryId
+               && synchronizationEnabled () then
+                do! wakeGate.WaitAsync(cancellationToken)
+
+                try
+                    do! synchronize ()
+                    return true
+                finally
+                    wakeGate.Release() |> ignore
+            else
+                return false
+        }
+
+    /// Prevents overlapping SignalR hints from racing the same durable Library pull in one Watch process.
+    let private librarySynchronizationWakeGate = new SemaphoreSlim(1, 1)
+
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
         inherit AsynchronousCommandLineAction()
@@ -9871,6 +9899,36 @@ module Watch =
                         signalRConnection.On<CurrentBranchReferenceNotification>(
                             "NotifyCurrentBranchReference",
                             fun _payload -> (replayCurrentBranchReferenceEvents cancellationToken) :> Task
+                        )
+
+                    use notifyLibraryContentAvailable =
+                        signalRConnection.On<LibraryContentAvailable>(
+                            "NotifyLibraryContentAvailable",
+                            fun payload ->
+                                (handleLibraryContentAvailableWake
+                                    librarySynchronizationWakeGate
+                                    operationalConfiguration.RepositoryId
+                                    (fun () -> (Current()).LibrarySynchronizationEnabled)
+                                    (fun () ->
+                                        (task {
+                                            match! LibraryCommand.runSynchronizationHandler parseResult with
+                                            | Ok status ->
+                                                let appliedCursor =
+                                                    status.ReturnValue.AppliedCursor
+                                                    |> Option.defaultValue "<initial>"
+
+                                                logToAnsiConsole
+                                                    Colors.Verbose
+                                                    $"Grace Watch handled a Library availability hint; applied cursor: {appliedCursor}."
+                                            | Error error ->
+                                                logToAnsiConsole
+                                                    Colors.Error
+                                                    $"Grace Watch could not process a Library availability hint: {Markup.Escape(error.Error)}"
+                                        }
+                                        :> Task))
+                                    payload
+                                    cancellationToken)
+                                :> Task
                         )
 
                     use notifyOnSave =
