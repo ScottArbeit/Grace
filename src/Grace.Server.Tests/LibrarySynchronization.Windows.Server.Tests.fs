@@ -111,11 +111,7 @@ module LibrarySynchronizationWindowsServerTests =
                             let alias = Guid.NewGuid().ToString("N")
                             readGrantTokens[alias] <- envelope.ReturnValue.GrantId
 
-                            {
-                                envelope.ReturnValue with
-                                    GrantId = alias
-                                    DownloadPath = $"/libraries/content/{alias}"
-                            }
+                            { envelope.ReturnValue with GrantId = alias; DownloadPath = $"/libraries/content/{alias}" }
                             |> fun grant -> GraceReturnValue.Create grant envelope.CorrelationId
                             |> serialize
                             |> Text.Encoding.UTF8.GetBytes
@@ -330,6 +326,54 @@ module LibrarySynchronizationWindowsServerTests =
             return { ExitCode = cliProcess.ExitCode; StandardOutput = output; StandardError = error }
         }
 
+    /// Starts one real CLI process with a filesystem-publication marker used to prove kill-and-restart recovery.
+    let private startGracePausedAfterFilesystemPublication workingDirectory serverUri arguments markerPath =
+        let cliAssembly =
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net10.0", "grace.dll"))
+
+        let startInfo = ProcessStartInfo("dotnet")
+        startInfo.WorkingDirectory <- workingDirectory
+        startInfo.RedirectStandardOutput <- true
+        startInfo.RedirectStandardError <- true
+        startInfo.UseShellExecute <- false
+
+        startInfo.Environment[
+            Constants.EnvironmentVariables.GraceServerUri
+        ] <- serverUri
+
+        startInfo.Environment[
+            "GRACE_TEST_LIBRARY_FILESYSTEM_PUBLISHED_MARKER"
+        ] <- markerPath
+
+        startInfo.ArgumentList.Add(cliAssembly)
+
+        for argument in arguments do
+            startInfo.ArgumentList.Add(argument)
+
+        let cliProcess = new Process(StartInfo = startInfo)
+
+        if not (cliProcess.Start()) then
+            cliProcess.Dispose()
+            invalidOp "Grace CLI process did not start."
+
+        cliProcess
+
+    /// Waits for one externally visible crash marker without hiding a prematurely exited CLI process.
+    let private waitForFilesystemPublicationMarkerAsync (cliProcess: Process) markerPath =
+        task {
+            use timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1.0))
+
+            while not (File.Exists(markerPath)) do
+                if cliProcess.HasExited then
+                    let! output = cliProcess.StandardOutput.ReadToEndAsync()
+                    let! error = cliProcess.StandardError.ReadToEndAsync()
+
+                    invalidOp
+                        $"Grace CLI exited before filesystem publication. stdout:{Environment.NewLine}{output}{Environment.NewLine}stderr:{Environment.NewLine}{error}"
+
+                do! Task.Delay(25, timeout.Token)
+        }
+
     /// Requires one successful CLI command and returns its JSON output for state assertions.
     let private requireGraceSuccessAsync workingDirectory serverUri arguments =
         task {
@@ -352,6 +396,15 @@ module LibrarySynchronizationWindowsServerTests =
         use command = connection.CreateCommand()
         command.CommandText <- "SELECT COUNT(*) FROM working_directory_update_completions;"
         Convert.ToInt32(command.ExecuteScalar())
+
+    /// Reads the sole remote Library operation state from an isolated tracer working copy.
+    let private readRemoteOperationState root =
+        let path = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+        use connection = new SqliteConnection($"Data Source={path};Mode=ReadOnly")
+        connection.Open()
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT operation_state FROM library_operations WHERE direction = 'remote';"
+        command.ExecuteScalar() :?> string
 
     /// Proves accepted response replay, bidirectional exact bytes, and restart-current behavior for two Windows copies.
     [<Test>]
@@ -419,7 +472,28 @@ module LibrarySynchronizationWindowsServerTests =
                 )
 
                 let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "run")
+
+                let crashMarker = Path.Combine(root, "copy-b-filesystem-published.marker")
+
+                use interruptedCopyB = startGracePausedAfterFilesystemPublication copyB proxy.BaseAddress (command "run") crashMarker
+
+                do! waitForFilesystemPublicationMarkerAsync interruptedCopyB crashMarker
+
+                Assert.That(
+                    File
+                        .ReadAllBytes(pathB)
+                        .AsSpan()
+                        .SequenceEqual(firstBytes),
+                    Is.True
+                )
+
+                let publishedWriteB = File.GetLastWriteTimeUtc(pathB)
+                interruptedCopyB.Kill(entireProcessTree = true)
+                do! interruptedCopyB.WaitForExitAsync()
+                Assert.That(readRemoteOperationState copyB, Is.EqualTo("pendingFilesystem"))
+
                 let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (command "run")
+                Assert.That(File.GetLastWriteTimeUtc(pathB), Is.EqualTo(publishedWriteB))
 
                 Assert.That(
                     File

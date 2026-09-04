@@ -25,6 +25,20 @@ open System.Threading.Tasks
 /// Defines the Library catalog commands and the explicit Windows synchronization tracer.
 module LibraryCommand =
 
+    /// Pauses an integration-test CLI after atomic publication so its real process can be terminated before SQLite completion.
+    let private pauseAfterFilesystemPublicationForTest () =
+        let markerPath = Environment.GetEnvironmentVariable("GRACE_TEST_LIBRARY_FILESYSTEM_PUBLISHED_MARKER")
+
+        if not (String.IsNullOrWhiteSpace(markerPath)) then
+            let markerDirectory = Path.GetDirectoryName(markerPath)
+
+            if not (String.IsNullOrWhiteSpace(markerDirectory)) then
+                Directory.CreateDirectory(markerDirectory)
+                |> ignore
+
+            File.WriteAllText(markerPath, "published")
+            Thread.Sleep(Timeout.Infinite)
+
     /// Reports the durable participation and cursor state of one Windows working copy.
     [<CLIMutable>]
     type LibrarySynchronizationStatus =
@@ -345,6 +359,7 @@ module LibraryCommand =
                     | _ -> invalidOp "Local Library target changed before remote publication."
 
                 LibraryFilesystem.publishAtomic targetPath content.Blake3Hash content.Sha256Hash content.Size bytes
+                pauseAfterFilesystemPublicationForTest ()
 
             let! durable = LibraryLocalState.readPendingRemoteFile configuration.GraceStatusFile configuration.RepositoryId change.OperationId
 
