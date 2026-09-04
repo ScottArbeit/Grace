@@ -57,6 +57,17 @@ module internal LibraryFilesystem =
     /// Reads stable local bytes without injecting a test boundary.
     let stableRead (path: string) = stableReadWith ignore path
 
+    /// Reports whether current target bytes match one exact accepted content identity.
+    let matchesContent path expectedBlake3 expectedSha256 expectedSize =
+        if not (File.Exists(path)) then
+            false
+        else
+            let content = stableRead path
+
+            content.Blake3Hash = expectedBlake3
+            && content.Sha256Hash = expectedSha256
+            && content.Size = expectedSize
+
     /// Publishes verified remote bytes by a same-directory atomic move and verifies terminal target bytes.
     let publishAtomic (targetPath: string) (expectedBlake3: string) (expectedSha256: string) (expectedSize: int64) (bytes: byte array) =
         if not (OperatingSystem.IsWindows()) then

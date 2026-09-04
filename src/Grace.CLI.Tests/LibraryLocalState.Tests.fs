@@ -2,11 +2,16 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Command
+open Grace.Shared
+open Grace.Types.Library
 open Microsoft.Data.Sqlite
 open NUnit.Framework
+open NodaTime
 open SQLitePCL
 open System
 open System.IO
+open System.Security.Cryptography
 
 /// Verifies the finite Library synchronization state stored in the existing local database.
 [<NonParallelizable>]
@@ -128,3 +133,96 @@ module LibraryLocalStateTests =
 
             state.AppliedCursor
             |> should equal (Some "cursor-1"))
+
+    /// Verifies restart classifies exact published bytes and completes SQLite without another filesystem write.
+    [<Test>]
+    let ``restart after filesystem publication completes without rewriting target`` () =
+        withDatabase (fun dbPath ->
+            let repositoryId = Guid.NewGuid()
+            let workingCopyId = Guid.NewGuid()
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+            let itemId = Guid.NewGuid()
+            let targetPath = Path.Combine(Path.GetDirectoryName(dbPath), "shared", "file.txt")
+            let bytes = Text.Encoding.UTF8.GetBytes("restart bytes")
+            let blake3 = ContentAddress.computeBlake3Hex bytes
+
+            let sha256 =
+                SHA256.HashData(bytes)
+                |> Convert.ToHexString
+                |> fun value -> value.ToLowerInvariant()
+
+            LibraryLocalState.enable dbPath repositoryId workingCopyId catalogVersion [| "shared" |] "epoch-1" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.recordPending
+                dbPath
+                repositoryId
+                operationId
+                LibraryLocalState.OperationDirection.Remote
+                "createFile"
+                "request"
+                catalogVersion
+                (Some itemId)
+                None
+                (Some "shared/file.txt")
+                None
+                None
+                (Some "cursor-0")
+                (Some "cursor-1")
+                (Some "epoch-1")
+                (Some blake3)
+                (Some sha256)
+                (Some(int64 bytes.Length))
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryFilesystem.publishAtomic targetPath blake3 sha256 (int64 bytes.Length) bytes
+            let publishedAt = File.GetLastWriteTimeUtc(targetPath)
+
+            let change =
+                {
+                    Cursor = "cursor-1"
+                    OperationId = operationId
+                    ChangeKind = ChangeKind.CreateFile
+                    ItemId = itemId
+                    ItemKind = ItemKind.File
+                    AcceptedAt = Instant.FromUnixTimeTicks(1L)
+                    AcceptedBy = "principal"
+                    LibraryCatalogVersion = catalogVersion
+                    Namespace =
+                        Some
+                            {
+                                Parent = { Kind = "library"; LibraryPath = Some "shared"; ItemId = None }
+                                Name = "file.txt"
+                                NormalizedPath = "shared/file.txt"
+                                NamespaceVersion = Guid.NewGuid()
+                                SlotVersion = Guid.NewGuid()
+                            }
+                    Content =
+                        Some
+                            {
+                                ContentVersionId = Guid.NewGuid()
+                                Blake3Hash = blake3
+                                Sha256Hash = sha256
+                                Size = int64 bytes.Length
+                                CreatedAt = Instant.FromUnixTimeTicks(1L)
+                            }
+                    Tombstone = None
+                    Conflict = None
+                }
+
+            LibraryFilesystem.matchesContent targetPath blake3 sha256 (int64 bytes.Length)
+            |> should equal true
+
+            LibraryLocalState.markFilesystemPublished dbPath repositoryId operationId catalogVersion
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.completeRemoteFile dbPath repositoryId change
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.tryAdvanceCursor dbPath repositoryId operationId catalogVersion "epoch-1" "cursor-0" "cursor-1"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal true
+
+            File.GetLastWriteTimeUtc(targetPath)
+            |> should equal publishedAt)

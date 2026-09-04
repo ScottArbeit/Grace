@@ -16,6 +16,7 @@ open System
 open System.CommandLine
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
+open System.IO
 open System.Threading
 open System.Threading.Tasks
 
@@ -229,7 +230,152 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
-    /// Pulls after the durable cursor and reports current only when the server has no accepted work to apply.
+    /// Downloads and applies one accepted remote file under the shared repository-root exclusion.
+    let private applyRemoteFileChange
+        (parseResult: ParseResult)
+        (configuration: GraceConfiguration)
+        (localState: LibraryLocalState.RepositoryState)
+        (change: LibraryChangeDto)
+        =
+        task {
+            let namespaceValue =
+                change.Namespace
+                |> Option.defaultWith (fun () -> invalidOp "Remote file change has no namespace state.")
+
+            let content =
+                change.Content
+                |> Option.defaultWith (fun () -> invalidOp "Remote file change has no content state.")
+
+            let readParameters = PrepareLibraryContentReadParameters()
+            applyScope readParameters parseResult |> ignore
+            readParameters.ItemId <- change.ItemId
+            readParameters.ContentVersionId <- content.ContentVersionId
+
+            let! grantResult = Libraries.PrepareContentRead readParameters
+
+            let grant =
+                grantResult
+                |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+            let! downloadResult = Libraries.DownloadContent(grant.ReturnValue.GrantId, getCorrelationId parseResult)
+
+            let bytes =
+                downloadResult
+                |> Result.defaultWith (fun error -> invalidOp error.Error)
+                |> fun value -> value.ReturnValue
+
+            let targetPath =
+                Path.GetFullPath(Path.Combine(configuration.RootDirectory, namespaceValue.NormalizedPath.Replace('/', Path.DirectorySeparatorChar)))
+
+            let rootPrefix =
+                Path
+                    .GetFullPath(configuration.RootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar)
+                + string Path.DirectorySeparatorChar
+
+            if not (targetPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) then
+                invalidOp "Accepted Library namespace escaped the configured working root."
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                |> Result.defaultWith invalidOp
+
+            use! _lease = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+
+            let catalogParameters =
+                GetLibraryCatalogParameters()
+                |> fun value -> applyScope value parseResult
+
+            let! catalogResult = Libraries.GetCatalog catalogParameters
+
+            let catalog =
+                catalogResult
+                |> Result.defaultWith (fun error -> invalidOp error.Error)
+
+            if catalog.ReturnValue.Version
+               <> localState.LibraryCatalogVersion then
+                invalidOp "Library catalog changed before remote filesystem publication."
+
+            let! currentState = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+
+            let currentState =
+                currentState
+                |> Option.defaultWith (fun () -> invalidOp "Library local state disappeared before remote publication.")
+
+            if currentState.LibraryCatalogVersion
+               <> change.LibraryCatalogVersion
+               || currentState.AppliedCursor
+                  <> localState.AppliedCursor then
+                invalidOp "Library catalog or cursor predecessor changed before remote publication."
+
+            let! pending = LibraryLocalState.readPendingRemoteFile configuration.GraceStatusFile configuration.RepositoryId change.OperationId
+
+            if pending.IsNone then
+                do!
+                    LibraryLocalState.recordPending
+                        configuration.GraceStatusFile
+                        configuration.RepositoryId
+                        change.OperationId
+                        LibraryLocalState.OperationDirection.Remote
+                        change.ChangeKind
+                        (change.OperationId.ToString("N"))
+                        change.LibraryCatalogVersion
+                        (Some change.ItemId)
+                        None
+                        (Some namespaceValue.NormalizedPath)
+                        None
+                        None
+                        localState.AppliedCursor
+                        (Some change.Cursor)
+                        currentState.CursorEpoch
+                        (Some content.Blake3Hash)
+                        (Some content.Sha256Hash)
+                        (Some content.Size)
+
+            if not (LibraryFilesystem.matchesContent targetPath content.Blake3Hash content.Sha256Hash content.Size) then
+                let! ancestry = LibraryLocalState.readItemAncestry configuration.GraceStatusFile configuration.RepositoryId change.ItemId
+
+                if File.Exists(targetPath) then
+                    let target = LibraryFilesystem.stableRead targetPath
+
+                    match ancestry with
+                    | Some prior when target.Blake3Hash = prior.Blake3Hash -> ()
+                    | _ -> invalidOp "Local Library target changed before remote publication."
+
+                LibraryFilesystem.publishAtomic targetPath content.Blake3Hash content.Sha256Hash content.Size bytes
+
+            let! durable = LibraryLocalState.readPendingRemoteFile configuration.GraceStatusFile configuration.RepositoryId change.OperationId
+
+            match durable with
+            | Some operation when operation.OperationState = "pendingFilesystem" ->
+                do!
+                    LibraryLocalState.markFilesystemPublished
+                        configuration.GraceStatusFile
+                        configuration.RepositoryId
+                        change.OperationId
+                        change.LibraryCatalogVersion
+            | Some operation when operation.OperationState = "filesystemPublished" -> ()
+            | _ -> invalidOp "Remote Library operation lost its durable pending evidence."
+
+            do! LibraryLocalState.completeRemoteFile configuration.GraceStatusFile configuration.RepositoryId change
+
+            let! advanced =
+                LibraryLocalState.tryAdvanceCursor
+                    configuration.GraceStatusFile
+                    configuration.RepositoryId
+                    change.OperationId
+                    change.LibraryCatalogVersion
+                    (currentState.CursorEpoch
+                     |> Option.defaultValue String.Empty)
+                    (localState.AppliedCursor
+                     |> Option.defaultValue String.Empty)
+                    change.Cursor
+
+            if not advanced then
+                invalidOp "Terminal Library state could not CAS-advance its exact accepted cursor."
+        }
+
+    /// Pulls after the durable cursor and applies accepted ordinary-file changes in repository order.
     let internal runSynchronizationHandler (parseResult: ParseResult) : Task<GraceResult<LibrarySynchronizationStatus>> =
         task {
             try
@@ -253,9 +399,16 @@ module LibraryCommand =
 
                         match! Libraries.GetChanges parameters with
                         | Error error -> return Error error
-                        | Ok result when result.ReturnValue.Changes.Length = 0 -> return! synchronizationStatusHandler parseResult
-                        | Ok _ ->
-                            return Error(GraceError.Create "The accepted change page requires the filesystem publication stage." (getCorrelationId parseResult))
+                        | Ok result ->
+                            for change in result.ReturnValue.Changes do
+                                if change.ItemKind <> ItemKind.File
+                                   || (change.ChangeKind <> ChangeKind.CreateFile
+                                       && change.ChangeKind <> ChangeKind.UpdateContent) then
+                                    invalidOp "The Windows two-copy tracer accepts ordinary file create and content-update changes only."
+
+                                do! applyRemoteFileChange parseResult configuration localState change
+
+                            return! synchronizationStatusHandler parseResult
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }

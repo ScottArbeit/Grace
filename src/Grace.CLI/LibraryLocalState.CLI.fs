@@ -29,6 +29,23 @@ module LibraryLocalState =
             LifecycleState: string
         }
 
+    /// Carries exact durable evidence needed to classify a restarted remote file operation.
+    type PendingRemoteFile =
+        {
+            OperationId: Guid
+            ItemId: Guid
+            TargetPath: string
+            OperationState: string
+            ServerCursor: string
+            ExpectedBlake3: string
+            ExpectedSha256: string
+            ExpectedSize: int64
+            LibraryCatalogVersion: Guid
+        }
+
+    /// Carries the durable local ancestry used to reject an unobserved target edit.
+    type ItemAncestry = { NormalizedPath: string; Blake3Hash: string }
+
     [<Literal>]
     let private busyTimeoutMilliseconds = 30000
 
@@ -191,6 +208,66 @@ module LibraryLocalState =
                             ParticipationEnabled = reader.GetInt32(6) = 1
                             LifecycleState = reader.GetString(7)
                         }
+            else
+                return None
+        }
+
+    /// Reads one exact nonterminal remote file operation for normal execution or restart classification.
+    let readPendingRemoteFile (dbPath: string) (repositoryId: Guid) (operationId: Guid) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT operation_id, item_id, target_path, operation_state, server_cursor, expected_blake3, expected_sha256, expected_size, library_catalog_version FROM library_operations WHERE repository_id = $repository_id AND operation_id = $operation_id AND direction = 'remote' AND operation_state IN ('pendingFilesystem','filesystemPublished');"
+
+            command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+            |> ignore
+
+            command.Parameters.AddWithValue("$operation_id", operationId.ToString("D"))
+            |> ignore
+
+            use reader = command.ExecuteReader()
+
+            if reader.Read() then
+                return
+                    Some
+                        {
+                            OperationId = Guid.Parse(reader.GetString(0))
+                            ItemId = Guid.Parse(reader.GetString(1))
+                            TargetPath = reader.GetString(2)
+                            OperationState = reader.GetString(3)
+                            ServerCursor = reader.GetString(4)
+                            ExpectedBlake3 = reader.GetString(5)
+                            ExpectedSha256 = reader.GetString(6)
+                            ExpectedSize = reader.GetInt64(7)
+                            LibraryCatalogVersion = Guid.Parse(reader.GetString(8))
+                        }
+            else
+                return None
+        }
+
+    /// Reads the current live file ancestry for one stable Library item identity.
+    let readItemAncestry (dbPath: string) (repositoryId: Guid) (itemId: Guid) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT normalized_path, blake3_hash FROM library_items WHERE repository_id = $repository_id AND item_id = $item_id AND item_kind = 'file' AND item_state = 'live';"
+
+            command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+            |> ignore
+
+            command.Parameters.AddWithValue("$item_id", itemId.ToString("D"))
+            |> ignore
+
+            use reader = command.ExecuteReader()
+
+            if reader.Read() then
+                return Some { NormalizedPath = reader.GetString(0); Blake3Hash = reader.GetString(1) }
             else
                 return None
         }
