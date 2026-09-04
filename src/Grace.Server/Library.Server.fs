@@ -296,7 +296,20 @@ module Library =
                 return Ok(None, None)
             else
                 let actor = UploadSession.CreateActorProxy preparedContentId.Value repositoryId (Services.getCorrelationId context)
-                let! session = actor.Get(Services.getCorrelationId context)
+                let correlationId = Services.getCorrelationId context
+                let! currentSession = actor.Get correlationId
+
+                let! session =
+                    task {
+                        if currentSession.UploadSessionId = UploadSessionId.Empty then
+                            let! events = actor.GetEvents correlationId
+
+                            return
+                                events
+                                |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+                        else
+                            return currentSession
+                    }
 
                 match session.LibraryPreparation with
                 | None -> return Error "The prepared content is missing or expired."

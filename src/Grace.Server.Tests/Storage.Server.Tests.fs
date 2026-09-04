@@ -7,6 +7,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.Library
 open Grace.Types.ManifestContributionAccounting
 open Grace.Types.UploadSession
 open Grace.Types.Common
@@ -1452,6 +1453,145 @@ type StorageManifestUploadSessionRoutes() =
             let blobClient = BlobClient(downloadUri)
             let! response = blobClient.DownloadContentAsync()
             return response.Value.Content.ToArray()
+        }
+
+    /// Verifies a Library-prepared upload retains its preparation identity through the generic storage routes and immediate submit.
+    [<Test>]
+    member _.LibraryPreparedUploadCanFinalizeAndSubmitThroughStorageRoutes() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let libraryPath = $"LibraryPreparedUpload{Guid.NewGuid():N}"
+            let fileName = "prepared.bin"
+            let operationId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 0uy
+            Guid.NewGuid().ToByteArray().CopyTo(payload, 1)
+            let block = encodeBlock payload
+            let blake3Hash = BranchServerTestHelpers.blake3Hex payload
+            let sha256Hash = BranchServerTestHelpers.sha256Hex payload
+
+            let getCatalog = Parameters.Library.GetLibraryCatalogParameters()
+            getCatalog.OwnerId <- ownerId
+            getCatalog.OrganizationId <- organizationId
+            getCatalog.RepositoryId <- repositoryId
+            getCatalog.CorrelationId <- correlationId
+            use! catalogResponse = Client.PostAsync("/libraries/catalog/get", createJsonContent getCatalog)
+            let! catalogBody = catalogResponse.Content.ReadAsStringAsync()
+            Assert.That(catalogResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), catalogBody)
+
+            let catalog =
+                (deserialize<GraceReturnValue<LibraryCatalogDto>> catalogBody)
+                    .ReturnValue
+
+            let addLibrary = Parameters.Library.AddLibraryParameters()
+            addLibrary.OwnerId <- ownerId
+            addLibrary.OrganizationId <- organizationId
+            addLibrary.RepositoryId <- repositoryId
+            addLibrary.ExpectedVersion <- catalog.Version
+            addLibrary.LibraryPath <- libraryPath
+            addLibrary.OperationId <- Guid.NewGuid()
+            addLibrary.CorrelationId <- correlationId
+            use! addResponse = Client.PostAsync("/libraries/add", createJsonContent addLibrary)
+            let! addBody = addResponse.Content.ReadAsStringAsync()
+            Assert.That(addResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), addBody)
+
+            let addedCatalog =
+                (deserialize<GraceReturnValue<LibraryCatalogChangeResultDto>> addBody)
+                    .ReturnValue
+                    .LibraryCatalog
+
+            let parent = { Kind = "root"; LibraryPath = Some libraryPath; ItemId = None }
+            let getSlot = Parameters.Library.GetLibraryNamespaceSlotParameters()
+            getSlot.OwnerId <- ownerId
+            getSlot.OrganizationId <- organizationId
+            getSlot.RepositoryId <- repositoryId
+            getSlot.Parent <- Some parent
+            getSlot.Name <- fileName
+            getSlot.CorrelationId <- correlationId
+            use! slotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent getSlot)
+            let! slotBody = slotResponse.Content.ReadAsStringAsync()
+            Assert.That(slotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), slotBody)
+
+            let slot =
+                (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> slotBody)
+                    .ReturnValue
+
+            let prepare = Parameters.Library.PrepareLibraryContentParameters()
+            prepare.OwnerId <- ownerId
+            prepare.OrganizationId <- organizationId
+            prepare.RepositoryId <- repositoryId
+            prepare.OperationId <- operationId
+            prepare.Blake3Hash <- blake3Hash
+            prepare.Sha256Hash <- sha256Hash
+            prepare.Size <- int64 payload.Length
+            prepare.CorrelationId <- correlationId
+            use! prepareResponse = Client.PostAsync("/libraries/content/prepare", createJsonContent prepare)
+            let! prepareBody = prepareResponse.Content.ReadAsStringAsync()
+            Assert.That(prepareResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prepareBody)
+
+            let prepared =
+                (deserialize<GraceReturnValue<LibraryPreparedContentDto>> prepareBody)
+                    .ReturnValue
+
+            let authorizedScope = RelativePath $"Library/{prepared.PreparedContentId:D}"
+
+            let storagePoolId =
+                use instructions = JsonDocument.Parse(prepared.UploadInstructions.Value)
+
+                instructions
+                    .RootElement
+                    .GetProperty(nameof StoragePoolId)
+                    .GetString()
+                |> StoragePoolId
+
+            let manifest = manifestForStoragePool storagePoolId payload block
+
+            let! _ =
+                confirmUploadedBlock
+                    repositoryId
+                    correlationId
+                    prepared.PreparedContentId
+                    authorizedScope
+                    block
+                    0L
+                    (int64 payload.Length)
+                    "library-register"
+                    "library-confirm"
+
+            let! finalized = finalizeManifestUpload repositoryId correlationId prepared.PreparedContentId authorizedScope "library-finalize" manifest
+
+            Assert.That(finalized.ReturnValue.Session.LibraryPreparation, Is.Not.EqualTo(None))
+            Assert.That(finalized.ReturnValue.Session.FinalizedManifest, Is.Not.EqualTo(None))
+
+            let finalizedPreparation = finalized.ReturnValue.Session.LibraryPreparation.Value
+            Assert.That(finalized.ReturnValue.Session.RepositoryId, Is.EqualTo(Guid.Parse repositoryId))
+            Assert.That(finalizedPreparation.OperationId, Is.EqualTo(operationId))
+            Assert.That(finalizedPreparation.PrincipalId, Is.EqualTo(testUserId))
+            Assert.That(finalizedPreparation.Content.ExpiresAt, Is.GreaterThan(NodaTime.SystemClock.Instance.GetCurrentInstant()))
+
+            let submit = Parameters.Library.SubmitLibraryChangeParameters()
+            submit.OwnerId <- ownerId
+            submit.OrganizationId <- organizationId
+            submit.RepositoryId <- repositoryId
+            submit.OperationId <- operationId
+            submit.LibraryCatalogVersion <- addedCatalog.Version
+            submit.ChangeKind <- ChangeKind.CreateFile
+            submit.ItemKind <- ItemKind.File
+            submit.PreparedContentId <- Nullable prepared.PreparedContentId
+            submit.CreationSlotExpectation <- Some { Parent = parent; Name = fileName; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = slot.State }
+
+            submit.CorrelationId <- correlationId
+            use! submitResponse = Client.PostAsync("/libraries/changes/submit", createJsonContent submit)
+            let! submitBody = submitResponse.Content.ReadAsStringAsync()
+            Assert.That(submitResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), submitBody)
+
+            let receipt =
+                (deserialize<GraceReturnValue<LibraryOperationReceiptDto>> submitBody)
+                    .ReturnValue
+
+            Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+            Assert.That(receipt.Change, Is.Not.EqualTo(None))
         }
 
     /// Verifies the large manifest upload can upload blob confirm finalize and download content block scenario.

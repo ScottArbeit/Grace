@@ -239,11 +239,17 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryNamespaceSlotDto =
         {
+            [<Id(0u)>]
             Parent: LibraryParentDto
+            [<Id(1u)>]
             Name: string
+            [<Id(2u)>]
             NormalizedPath: string
+            [<Id(3u)>]
             SlotVersion: LibraryNamespaceSlotVersion
+            [<Id(4u)>]
             State: string
+            [<Id(5u)>]
             OccupantItemId: LibraryItemId option
         }
 
