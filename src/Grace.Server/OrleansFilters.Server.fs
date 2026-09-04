@@ -21,84 +21,105 @@ open System.Threading.Tasks
 open FSharpPlus.Data
 open System.Collections.Generic
 open Grace.Shared.Parameters
+open Microsoft.Extensions.Options
+open Orleans.Configuration
+open Orleans.Persistence.Cosmos
 
 /// Contains Grace Server orleans behavior and supporting helpers.
 module Orleans =
 
     /// Provides partition keys for grains based on their type and context when Orleans is used with Cosmos DB.
-    type GracePartitionKeyProvider() =
+    type GracePartitionKeyProvider(options: IOptions<ClusterOptions>) =
         let log = loggerFactory.CreateLogger("OrleansFilters.Server")
+        let defaultProvider = DefaultDocumentIdProvider(options)
 
-        interface Cosmos.IPartitionKeyProvider with
-            /// Chooses the Orleans request-context partition key used by grain-call filters.
-            member _.GetPartitionKey(grainType: string, grainId: GrainId) =
-                ValueTask<string>(
+        /// Chooses the Orleans request-context partition key used by grain-call filters.
+        member private _.GetPartitionKey(grainType: string, grainId: GrainId) =
+            task {
+                //logToConsole $"****GracePartitionKeyProvider: grainType: {grainType}; grainId: {grainId}."
+
+                let orleansContext =
+                    match memoryCache.GetOrleansContextEntry(grainId) with
+                    | Some orleansContext -> orleansContext
+                    | None -> Dictionary<string, obj>()
+
+                //orleansContext
+                //|> Seq.iter (fun kvp -> logToConsole $"**** - {kvp.Key}: {kvp.Value}")
+
+                /// Implements organization id for the server request pipeline.
+                let organizationId () = $"{orleansContext[nameof OrganizationId]}"
+                /// Implements repository id for the server request pipeline.
+                let repositoryId () = $"{orleansContext[nameof RepositoryId]}"
+                /// Implements first grain key segment for the server request pipeline.
+                let firstGrainKeySegment () = $"{grainId.Key}".Split('|')[0]
+
+                let partitionKey =
+                    match grainType with
+                    | StateName.AccessControl -> grainId.Key.ToString()
+                    | StateName.Branch -> repositoryId ()
+                    | StateName.Diff -> repositoryId ()
+                    | StateName.DirectoryAppearance -> repositoryId ()
+                    | StateName.DirectoryVersion -> repositoryId ()
+                    | StateName.DedupeIndex -> StateName.DedupeIndex
+                    | StateName.FileAppearance -> repositoryId ()
+                    | StateName.NamedSection -> repositoryId ()
+                    | StateName.Organization -> StateName.Organization
+                    | StateName.Owner -> StateName.Owner
+                    | StateName.PersonalAccessToken -> grainId.Key.ToString()
+                    | StateName.Policy -> repositoryId ()
+                    | StateName.PromotionSet -> repositoryId ()
+                    | StateName.PromotionQueue -> repositoryId ()
+                    | StateName.RepositoryContentCounter -> firstGrainKeySegment ()
+                    | StateName.ValidationSet -> repositoryId ()
+                    | StateName.ValidationResult -> repositoryId ()
+                    | StateName.Artifact -> repositoryId ()
+                    | StateName.ApprovalRequest -> repositoryId ()
+                    | StateName.ApprovalRequestIndex -> repositoryId ()
+                    | StateName.ContentBlockMetadata -> firstGrainKeySegment ()
+                    | StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()
+                    | StateName.Reference -> repositoryId ()
+                    | StateName.Reminder -> StateName.Reminder
+                    | StateName.Repository -> organizationId ()
+                    | StateName.RepositoryPermission -> repositoryId ()
+                    | StateName.Review -> repositoryId ()
+                    | StateName.User -> StateName.User
+                    | StateName.UploadSession -> repositoryId ()
+                    | StateName.WorkItem -> repositoryId ()
+                    | StateName.WorkItemNumberCounter -> repositoryId ()
+                    | _ ->
+                        raise (
+                            ArgumentException(
+                                $"In {typeof<GracePartitionKeyProvider>.Name}.GetPartitionKey: No partition key assigned for grain type: {grainType}."
+                            )
+                        )
+
+                        String.Empty
+
+                let correlationid = getCorrelationId ()
+
+                //logToConsole
+                //    $"****GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}; grainId: {grainId}; partitionKey: {partitionKey}."
+
+                return partitionKey
+            }
+
+        interface IDocumentIdProvider with
+            /// Returns the document identifier and legacy single partition key for the configured Grace actor.
+            member this.GetDocumentIdentifiers(grainType: string, grainId: GrainId) =
+                ValueTask<struct (string * string)>(
                     task {
-                        //logToConsole $"****GracePartitionKeyProvider: grainType: {grainType}; grainId: {grainId}."
+                        let! partitionKey = this.GetPartitionKey(grainType, grainId)
+                        return struct (defaultProvider.GetId(grainType, grainId), partitionKey)
+                    }
+                )
 
-                        let orleansContext =
-                            match memoryCache.GetOrleansContextEntry(grainId) with
-                            | Some orleansContext -> orleansContext
-                            | None -> Dictionary<string, obj>()
+            /// Returns the complete one-level Cosmos document key for existing Grace actor storage.
+            member this.GetDocumentKey(grainType: string, grainId: GrainId) =
+                ValueTask<CosmosDocumentKey>(
+                    task {
+                        let! partitionKey = this.GetPartitionKey(grainType, grainId)
 
-                        //orleansContext
-                        //|> Seq.iter (fun kvp -> logToConsole $"**** - {kvp.Key}: {kvp.Value}")
-
-                        /// Implements organization id for the server request pipeline.
-                        let organizationId () = $"{orleansContext[nameof OrganizationId]}"
-                        /// Implements repository id for the server request pipeline.
-                        let repositoryId () = $"{orleansContext[nameof RepositoryId]}"
-                        /// Implements first grain key segment for the server request pipeline.
-                        let firstGrainKeySegment () = $"{grainId.Key}".Split('|')[0]
-
-                        let partitionKey =
-                            match grainType with
-                            | StateName.AccessControl -> grainId.Key.ToString()
-                            | StateName.Branch -> repositoryId ()
-                            | StateName.Diff -> repositoryId ()
-                            | StateName.DirectoryAppearance -> repositoryId ()
-                            | StateName.DirectoryVersion -> repositoryId ()
-                            | StateName.DedupeIndex -> StateName.DedupeIndex
-                            | StateName.FileAppearance -> repositoryId ()
-                            | StateName.NamedSection -> repositoryId ()
-                            | StateName.Organization -> StateName.Organization
-                            | StateName.Owner -> StateName.Owner
-                            | StateName.PersonalAccessToken -> grainId.Key.ToString()
-                            | StateName.Policy -> repositoryId ()
-                            | StateName.PromotionSet -> repositoryId ()
-                            | StateName.PromotionQueue -> repositoryId ()
-                            | StateName.RepositoryContentCounter -> firstGrainKeySegment ()
-                            | StateName.ValidationSet -> repositoryId ()
-                            | StateName.ValidationResult -> repositoryId ()
-                            | StateName.Artifact -> repositoryId ()
-                            | StateName.ApprovalRequest -> repositoryId ()
-                            | StateName.ApprovalRequestIndex -> repositoryId ()
-                            | StateName.ContentBlockMetadata -> firstGrainKeySegment ()
-                            | StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()
-                            | StateName.Reference -> repositoryId ()
-                            | StateName.Reminder -> StateName.Reminder
-                            | StateName.Repository -> organizationId ()
-                            | StateName.RepositoryPermission -> repositoryId ()
-                            | StateName.Review -> repositoryId ()
-                            | StateName.User -> StateName.User
-                            | StateName.UploadSession -> repositoryId ()
-                            | StateName.WorkItem -> repositoryId ()
-                            | StateName.WorkItemNumberCounter -> repositoryId ()
-                            | _ ->
-                                raise (
-                                    ArgumentException(
-                                        $"In {typeof<GracePartitionKeyProvider>.Name}.GetPartitionKey: No partition key assigned for grain type: {grainType}."
-                                    )
-                                )
-
-                                String.Empty
-
-                        let correlationid = getCorrelationId ()
-
-                        //logToConsole
-                        //    $"****GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}; grainId: {grainId}; partitionKey: {partitionKey}."
-
-                        return partitionKey
+                        return CosmosDocumentKey(defaultProvider.GetId(grainType, grainId), [| partitionKey |] :> IReadOnlyList<string>)
                     }
                 )
 

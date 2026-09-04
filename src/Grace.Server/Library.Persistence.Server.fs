@@ -4,7 +4,11 @@ open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Library
 open Microsoft.Azure.Cosmos
+open Microsoft.Extensions.Options
 open NodaTime
+open Orleans.Configuration
+open Orleans.Persistence.Cosmos
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Net
@@ -16,6 +20,24 @@ open System.Threading.Tasks
 
 /// Implements the six purpose-specific direct-Cosmos stores for remote Libraries.
 module LibraryPersistence =
+
+    [<Literal>]
+    let ControlStorageName = "library-control"
+
+    [<Literal>]
+    let ChangesStorageName = "library-changes"
+
+    [<Literal>]
+    let CurrentStorageName = "library-current"
+
+    [<Literal>]
+    let ReceiptsStorageName = "library-receipts"
+
+    [<Literal>]
+    let HistoryStorageName = "library-history"
+
+    [<Literal>]
+    let BaselinesStorageName = "library-baselines"
 
     [<Literal>]
     let ControlContainerName = "grace-library-control"
@@ -49,6 +71,57 @@ module LibraryPersistence =
 
     [<Literal>]
     let CurrentProjectionDocumentLimit = 100000
+
+    /// Derives an Orleans Cosmos document identity and its ordered partition-key prefix from one bounded Library actor key.
+    type GraceDocumentIdProvider(options: IOptions<ClusterOptions>, partitionKeyLevelCount: int) =
+        let defaultProvider = DefaultDocumentIdProvider(options)
+
+        do
+            if partitionKeyLevelCount < 1
+               || partitionKeyLevelCount > 3 then
+                invalidArg (nameof partitionKeyLevelCount) "Library Cosmos document keys support one to three partition-key values."
+
+        /// Reads the stable actor-key components that define the Library container partition.
+        member private _.GetPartitionKeyValues(grainType: string, grainId: GrainId) =
+            let values =
+                grainId
+                    .Key
+                    .ToString()
+                    .Split('|', StringSplitOptions.None)
+
+            if values.Length < partitionKeyLevelCount
+               || values
+                  |> Array.take partitionKeyLevelCount
+                  |> Array.exists String.IsNullOrWhiteSpace then
+                invalidArg
+                    (nameof grainId)
+                    $"Library grain type '{grainType}' requires {partitionKeyLevelCount} non-empty ordered key component(s), but '{grainId.Key}' does not provide them."
+
+            values |> Array.take partitionKeyLevelCount
+
+        interface IDocumentIdProvider with
+            /// Returns the legacy document and first partition identifiers for compatibility with one-key Orleans operations.
+            member this.GetDocumentIdentifiers(grainType: string, grainId: GrainId) =
+                let partitionKeyValues = this.GetPartitionKeyValues(grainType, grainId)
+                ValueTask<struct (string * string)>(struct (defaultProvider.GetId(grainType, grainId), partitionKeyValues[0]))
+
+            /// Returns the complete document identity required for one-, two-, or three-level Cosmos point operations.
+            member this.GetDocumentKey(grainType: string, grainId: GrainId) =
+                let partitionKeyValues = this.GetPartitionKeyValues(grainType, grainId)
+
+                ValueTask<CosmosDocumentKey>(CosmosDocumentKey(defaultProvider.GetId(grainType, grainId), partitionKeyValues :> IReadOnlyList<string>))
+
+    /// Maps repository control actors to their one-component repository partition.
+    type LibraryControlDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 1)
+
+    /// Maps accepted-change and current-record actors to repository plus record-kind partitions.
+    type LibraryTwoLevelDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 2)
+
+    /// Maps receipt, history, and baseline actors to repository, record-kind, and bounded-record partitions.
+    type LibraryThreeLevelDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 3)
 
     /// Formats one non-negative internal segment value for stable Cosmos keys.
     let segmentKey (value: int64) = value.ToString("D20", Globalization.CultureInfo.InvariantCulture)

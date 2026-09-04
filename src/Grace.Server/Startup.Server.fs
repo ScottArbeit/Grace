@@ -2212,7 +2212,6 @@ module Application =
                 .AddSingleton<Json.ISerializer>(
                     Json.Serializer(Constants.JsonSerializerOptions)
                 )
-                .AddSingleton<IPartitionKeyProvider, GracePartitionKeyProvider>()
                 .AddSingleton<IApprovalPolicySnapshotResolver, PromotionSet.ApprovalPolicySnapshotResolver>()
                 .AddRouting()
                 .AddLogging()
