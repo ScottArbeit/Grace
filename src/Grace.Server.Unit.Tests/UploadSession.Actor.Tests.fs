@@ -51,6 +51,7 @@ type UploadSessionActorTests() =
             ChunkingSuiteId = RabinChunking.SuiteName
             SamplingPolicySnapshot = "sparse-key-v1"
             OperationId = operationId
+            LibraryPreparation = None
         }
 
     /// Builds start For Manifest test data for the server unit upload Session Actor scenarios in this file.
@@ -2036,8 +2037,7 @@ type UploadSessionActorTests() =
         Assert.That(firstResult.Metadata.Ranges, Has.Length.EqualTo(1))
         Assert.That(firstResult.Metadata.Ranges[0].ActiveManifestCount, Is.Zero)
 
-        let finalizedSession =
-            apply { Event = UploadSessionEventType.Finalized("op-finalize", manifest.ManifestAddress); Metadata = metadata "corr-finalized" } session
+        let finalizedSession = apply { Event = UploadSessionEventType.Finalized("op-finalize", manifest); Metadata = metadata "corr-finalized" } session
 
         Assert.That(finalizedSession.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
 
@@ -2940,7 +2940,8 @@ type UploadSessionActorTests() =
     [<Test>]
     member _.PhysicalCleanupCompactsPersistedEventsToTombstoneAndDropsCoordinationPayloads() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
-        let manifestAddress = ManifestAddress "manifest-blake3-final"
+        let manifest = manifestFor (Text.Encoding.UTF8.GetBytes("hello world")) [| block |]
+        let manifestAddress = manifest.ManifestAddress
         let cleanupReminderTime = timestamp.Plus(Duration.FromMinutes(5L))
 
         let blockIntent =
@@ -2986,7 +2987,7 @@ type UploadSessionActorTests() =
                 { Event = UploadSessionEventType.BlockUploadConfirmed("op-confirm", confirmedBlock); Metadata = metadata "corr-confirm" }
                 { Event = UploadSessionEventType.DedupeDiscoveryIssued("op-discovery", discoverySnapshot); Metadata = metadata "corr-discovery" }
                 { Event = UploadSessionEventType.ReuseRangesClaimed("op-claim", [| claimedRange |]); Metadata = metadata "corr-claim" }
-                { Event = UploadSessionEventType.Finalized("op-finalize", manifestAddress); Metadata = metadata "corr-finalize" }
+                { Event = UploadSessionEventType.Finalized("op-finalize", manifest); Metadata = metadata "corr-finalize" }
                 { Event = UploadSessionEventType.CleanupReminderScheduled("op-finalize:cleanup", cleanupReminderTime); Metadata = metadata "corr-retention" }
                 { Event = UploadSessionEventType.PhysicalStateDeleted "op-finalize:cleanup"; Metadata = metadata "corr-cleanup" }
             ]

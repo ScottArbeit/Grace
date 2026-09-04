@@ -1239,6 +1239,7 @@ module AspireTestHost =
 
             builder
                 .CreateResourceBuilder(graceServerResource)
+                .WithExplicitStart()
                 .WithEnvironment("GRACE_TESTING", "1")
                 .WithEnvironment(descriptionClearPreAppendTestGatePortEnvironmentVariable, string descriptionClearPreAppendTestGatePort)
             |> ignore
@@ -1362,6 +1363,18 @@ module AspireTestHost =
                 |> Option.defaultValue String.Empty
 
             do! waitForCosmosReadyAsync app cosmosResourceName cosmosConnectionString cosmosDatabaseName cosmosContainerName
+
+            let commandService = app.Services.GetRequiredService<ResourceCommandService>()
+            let! startResult = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.StartCommand, cts.Token)
+
+            if not startResult.Success then
+                let errorMessage =
+                    if String.IsNullOrWhiteSpace startResult.Message then
+                        "No error message was provided."
+                    else
+                        startResult.Message
+
+                invalidOp $"Grace.Server failed to start after Cosmos readiness: {errorMessage}"
 
             try
                 do! waitForResourceHealthyAsync notificationService app graceServerResourceName cts.Token

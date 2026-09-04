@@ -174,24 +174,23 @@ module LibraryCoordinator =
         }
 
     /// Converts one canonical change into its deterministic item and path history entry.
-    let private historyEntry (pending: LibraryPendingCommandDocument) =
-        let change = pending.CanonicalChange.Change
-        let item = resultItem pending
+    let private historyEntry (canonical: LibraryCanonicalChangeDocument) =
+        let change = canonical.Change
 
         {
-            Cursor = pending.Cursor
+            Cursor = canonical.Cursor
             PublicCursor = change.Cursor
-            OperationId = pending.OperationId
+            OperationId = canonical.OperationId
             ItemId = change.ItemId
-            PriorNamespace = pending.CanonicalChange.PriorNamespace
-            ResultingNamespace = item.Namespace
-            PriorContentVersionId = pending.CanonicalChange.PriorContentVersionId
+            PriorNamespace = canonical.PriorNamespace
+            ResultingNamespace = change.Namespace
+            PriorContentVersionId = canonical.PriorContentVersionId
             ResultingContentVersionId =
-                item.Content
+                change.Content
                 |> Option.map (fun content -> content.ContentVersionId)
-            Tombstone = item.Tombstone
+            Tombstone = change.Tombstone
             Conflict = change.Conflict
-            PrincipalId = pending.PrincipalId
+            PrincipalId = change.AcceptedBy
             AcceptedAt = change.AcceptedAt
         }
 
@@ -226,21 +225,6 @@ module LibraryCoordinator =
 
             match item.Namespace with
             | Some _ when item.State = "live" -> do! store.UpsertSlotAsync(occupiedSlot repositoryId pending.Cursor item, cancellationToken)
-            | _ -> ()
-
-            let history = historyEntry pending
-            do! store.AppendItemHistoryAsync(repositoryId, item.ItemId, history, cancellationToken)
-
-            match pending.CanonicalChange.PriorNamespace with
-            | Some prior -> do! store.AppendPathHistoryAsync(repositoryId, prior.NormalizedPath, history, cancellationToken)
-            | None -> ()
-
-            match item.Namespace with
-            | Some current when
-                pending.CanonicalChange.PriorNamespace
-                |> Option.forall (fun prior -> not (pathsEqual prior.NormalizedPath current.NormalizedPath))
-                ->
-                do! store.AppendPathHistoryAsync(repositoryId, current.NormalizedPath, history, cancellationToken)
             | _ -> ()
 
             do!
@@ -286,7 +270,6 @@ module LibraryCoordinator =
                             ProjectionWatermarks =
                                 { controlRead.Document.ProjectionWatermarks with
                                     Current = max controlRead.Document.ProjectionWatermarks.Current position
-                                    History = max controlRead.Document.ProjectionWatermarks.History position
                                     Receipts = max controlRead.Document.ProjectionWatermarks.Receipts position
                                 }
                             UpdatedAt = SystemClock.Instance.GetCurrentInstant()
@@ -295,6 +278,50 @@ module LibraryCoordinator =
                     match! store.ReplaceControlAsync(replacement, controlRead.ETag, cancellationToken) with
                     | Replaced _ -> completed <- true
                     | PreconditionFailed -> ()
+        }
+
+    /// Replays one canonical history position and advances the history watermark only after every bounded append is durable.
+    let projectHistory (store: ILibraryStore) repositoryId cancellationToken =
+        task {
+            let mutable caughtUp = false
+
+            while not caughtUp do
+                let! controlRead = store.ReadControlAsync(repositoryId, cancellationToken)
+
+                let nextCursor =
+                    controlRead.Document.ProjectionWatermarks.History
+                    + 1L
+
+                if nextCursor > controlRead.Document.AppliedThrough then
+                    caughtUp <- true
+                else
+                    match! store.ReadCanonicalAsync(repositoryId, nextCursor, cancellationToken) with
+                    | None -> invalidOp $"Accepted Library change {nextCursor} is missing during history replay."
+                    | Some canonical ->
+                        let history = historyEntry canonical
+                        do! store.AppendItemHistoryAsync(repositoryId, canonical.Change.ItemId, history, cancellationToken)
+
+                        match canonical.PriorNamespace with
+                        | Some prior -> do! store.AppendPathHistoryAsync(repositoryId, prior.NormalizedPath, history, cancellationToken)
+                        | None -> ()
+
+                        match canonical.Change.Namespace with
+                        | Some current when
+                            canonical.PriorNamespace
+                            |> Option.forall (fun prior -> not (pathsEqual prior.NormalizedPath current.NormalizedPath))
+                            ->
+                            do! store.AppendPathHistoryAsync(repositoryId, current.NormalizedPath, history, cancellationToken)
+                        | _ -> ()
+
+                        let replacement =
+                            { controlRead.Document with
+                                ProjectionWatermarks = { controlRead.Document.ProjectionWatermarks with History = nextCursor }
+                                UpdatedAt = SystemClock.Instance.GetCurrentInstant()
+                            }
+
+                        match! store.ReplaceControlAsync(replacement, controlRead.ETag, cancellationToken) with
+                        | Replaced _ -> ()
+                        | PreconditionFailed -> ()
         }
 
     /// Resolves one root or live directory parent into its current normalized path.
@@ -840,6 +867,8 @@ module LibraryCoordinator =
                 }
 
             member _.RepairAsync(repositoryId, cancellationToken) = repair store repositoryId cancellationToken
+
+            member _.ProjectHistoryAsync(repositoryId, cancellationToken) = projectHistory store repositoryId cancellationToken
 
             member _.SubmitAsync(command, principalId, correlationId, cancellationToken) =
                 task {

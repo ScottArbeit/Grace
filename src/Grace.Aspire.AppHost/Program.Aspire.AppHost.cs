@@ -25,12 +25,12 @@ public partial class Program
     internal static readonly IReadOnlyDictionary<string, string[]> LibraryContainers =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["grace-library-control"] = ["/RepositoryId"],
-            ["grace-library-changes"] = ["/RepositoryId", "/StreamSegment"],
-            ["grace-library-current"] = ["/RepositoryId", "/ProjectionKind"],
-            ["grace-library-receipts"] = ["/RepositoryId", "/RecordKind", "/RecordKey"],
-            ["grace-library-history"] = ["/RepositoryId", "/HistoryKey", "/HistorySegment"],
-            ["grace-library-baselines"] = ["/RepositoryId", "/BaselineId", "/ShardKey"]
+            ["grace-library-control"] = ["/PartitionKey"],
+            ["grace-library-changes"] = ["/PartitionKey", "/PartitionKey2"],
+            ["grace-library-current"] = ["/PartitionKey", "/PartitionKey2"],
+            ["grace-library-receipts"] = ["/PartitionKey", "/PartitionKey2", "/PartitionKey3"],
+            ["grace-library-history"] = ["/PartitionKey", "/PartitionKey2", "/PartitionKey3"],
+            ["grace-library-baselines"] = ["/PartitionKey", "/PartitionKey2", "/PartitionKey3"]
         };
     private const string AspireResourceModeEnvVar = "ASPIRE_RESOURCE_MODE";
     private const string AspireResourceModeLocal = "Local";

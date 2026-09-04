@@ -1,7 +1,9 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Actors.Interfaces
 open Grace.Server
+open Grace.Shared
 open Grace.Types.Authorization
 open Grace.Types.Common
 open Grace.Types.Library
@@ -9,11 +11,39 @@ open Grace.Types.UploadSession
 open Grace.Shared.Validation.Library
 open NodaTime
 open NUnit.Framework
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.IO
 open System.Threading
 open System.Threading.Tasks
+
+/// Captures the typed durable state written by one Library control record actor.
+type private LibraryControlState() =
+    let mutable state = Unchecked.defaultof<LibraryControlDocument>
+    let mutable etag: string = null
+    let mutable recordExists = false
+    let mutable writeCount = 0
+
+    /// Returns how many durable writes the actor requested.
+    member _.WriteCount = writeCount
+
+    interface IPersistentState<LibraryControlDocument> with
+        member _.State
+            with get () = state
+            and set value = state <- value
+
+        member _.Etag = etag
+        member _.RecordExists = recordExists
+        member _.ReadStateAsync() = Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+            recordExists <- true
+            etag <- string writeCount
+            Task.CompletedTask
+
+        member _.ClearStateAsync() = Task.CompletedTask
 
 /// Stores Library coordinator test state in memory and injects one durable-boundary failure.
 type private FailingLibraryStore(initialControl: LibraryControlDocument, failurePoint: string) =
@@ -319,10 +349,35 @@ type LibraryCoordinatorTests() =
 
         repositoryId, control
 
+    /// Verifies the typed actor state retains the complete catalog across an exact write and read.
+    [<Test>]
+    member _.ControlRecordPersistsAndRehydratesCatalog() =
+        task {
+            let _, control = pendingFixture ()
+            let persistentState = LibraryControlState()
+            let actor = LibraryControlRecordActor(persistentState)
+            let controlActor = actor :> ILibraryControlRecordActor
+
+            let! written, version = controlActor.Ensure control
+            let! reread = controlActor.Read()
+
+            let persisted =
+                (persistentState :> IPersistentState<LibraryControlDocument>)
+                    .State
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+                    Assert.That(version, Is.EqualTo("1"))
+                    Assert.That(persisted, Is.EqualTo(control))
+                    Assert.That(written, Is.EqualTo(control))
+                    Assert.That(reread, Is.EqualTo(Some(control, "1"))))
+            )
+        }
+
     [<TestCase("canonical")>]
     [<TestCase("item")>]
     [<TestCase("slot")>]
-    [<TestCase("history")>]
     [<TestCase("receipt")>]
     [<TestCase("control")>]
     member _.RepairFailureDoesNotAdvanceControlAndConvergesOnRetry failurePoint =
@@ -343,12 +398,40 @@ type LibraryCoordinatorTests() =
             Assert.That(store.Control.Pending.IsNone, Is.True)
             Assert.That(store.Control.AppliedThrough, Is.EqualTo 1L)
             Assert.That(store.Control.ProjectionWatermarks.Current, Is.EqualTo 1L)
-            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 1L)
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 0L)
             Assert.That(store.Control.ProjectionWatermarks.Receipts, Is.EqualTo 1L)
             Assert.That(canonicalCount, Is.EqualTo 1)
             Assert.That(itemCount, Is.EqualTo 1)
             Assert.That(slotCount, Is.EqualTo 1)
             Assert.That(receiptCount, Is.EqualTo 1)
+            Assert.That(historyCount, Is.EqualTo 0)
+        }
+
+    /// Verifies asynchronous history replay cannot delay accepted completion and converges idempotently after failure.
+    [<Test>]
+    member _.HistoryProjectionFailureLeavesAcceptedCompletionTerminalAndConvergesOnRetry() =
+        task {
+            let repositoryId, control = pendingFixture ()
+            let store = FailingLibraryStore(control, "history")
+
+            do! LibraryCoordinator.repair store repositoryId CancellationToken.None
+
+            Assert.That(store.Control.Pending.IsNone, Is.True)
+            Assert.That(store.Control.AppliedThrough, Is.EqualTo 1L)
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 0L)
+
+            let firstProjection =
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task>(fun () -> LibraryCoordinator.projectHistory store repositoryId CancellationToken.None :> Task)
+                )
+
+            Assert.That(firstProjection.Message, Does.Contain "history")
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 0L)
+
+            do! LibraryCoordinator.projectHistory store repositoryId CancellationToken.None
+
+            let _, _, _, _, historyCount = store.Counts
+            Assert.That(store.Control.ProjectionWatermarks.History, Is.EqualTo 1L)
             Assert.That(historyCount, Is.EqualTo 2)
         }
 
@@ -607,13 +690,13 @@ type LibraryCoordinatorTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(source, Does.Contain("let CurrentProjectionDocumentLimit = 100000"))
-                Assert.That(source, Does.Contain("if itemCount >= CurrentProjectionDocumentLimit"))
+                Assert.That(source, Does.Contain("if count >= CurrentProjectionDocumentLimit"))
                 Assert.That(source, Does.Contain("Library item-head projection reached its"))
-                Assert.That(source, Does.Contain("if slotCount >= CurrentProjectionDocumentLimit"))
+                Assert.That(source, Does.Contain("if count >= CurrentProjectionDocumentLimit"))
                 Assert.That(source, Does.Contain("Library namespace-slot projection reached its")))
         )
 
-    /// Verifies every Library container and persistence operation uses its accepted purpose-specific hierarchical key.
+    /// Verifies every Library container and bounded record uses the accepted Orleans hierarchical key contract.
     [<Test>]
     member _.LibraryPersistenceUsesAcceptedPurposeSpecificPartitionKeys() =
         let appHostPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs"))
@@ -623,20 +706,21 @@ type LibraryCoordinatorTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-control\"] = [\"/RepositoryId\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-changes\"] = [\"/RepositoryId\", \"/StreamSegment\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-current\"] = [\"/RepositoryId\", \"/ProjectionKind\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-receipts\"] = [\"/RepositoryId\", \"/RecordKind\", \"/RecordKey\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-history\"] = [\"/RepositoryId\", \"/HistoryKey\", \"/HistorySegment\"]"))
-                Assert.That(appHostSource, Does.Contain("[\"grace-library-baselines\"] = [\"/RepositoryId\", \"/BaselineId\", \"/ShardKey\"]"))
-                Assert.That(persistenceSource, Does.Contain("controlPartitionKey document.RepositoryId"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey2 document.RepositoryId document.StreamSegment"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey2 document.RepositoryId document.ProjectionKind"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 document.RepositoryId document.RecordKind document.RecordKey"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 repositoryId historyKey historySegment"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 repositoryId baselineKey shard.ShardKey"))
-                Assert.That(persistenceSource, Does.Contain("partitionKey3 repositoryId baselineKey \"manifest\""))
-                Assert.That(persistenceSource, Does.Contain("QueryRequestOptions(PartitionKey = Nullable(partitionKey2 repositoryId projectionKind)")))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-control\"] = [\"/PartitionKey\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-changes\"] = [\"/PartitionKey\", \"/PartitionKey2\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-current\"] = [\"/PartitionKey\", \"/PartitionKey2\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-receipts\"] = [\"/PartitionKey\", \"/PartitionKey2\", \"/PartitionKey3\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-history\"] = [\"/PartitionKey\", \"/PartitionKey2\", \"/PartitionKey3\"]"))
+                Assert.That(appHostSource, Does.Contain("[\"grace-library-baselines\"] = [\"/PartitionKey\", \"/PartitionKey2\", \"/PartitionKey3\"]"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryControlRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryCanonicalChangeRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryCurrentIndexBucketActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryReceiptRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryHistorySegmentRecordActor>"))
+                Assert.That(persistenceSource, Does.Contain("GetGrain<ILibraryBaselineShardRecordActor>"))
+                Assert.That(persistenceSource, Does.Not.Contain("Microsoft.Azure.Cosmos"))
+                Assert.That(persistenceSource, Does.Not.Contain("CreateItemAsync"))
+                Assert.That(persistenceSource, Does.Not.Contain("ReplaceItemAsync")))
         )
 
     /// Verifies capacity failure occurs before a command can reserve the control document.
@@ -862,42 +946,42 @@ type LibraryCoordinatorTests() =
         let preparedId = Guid.NewGuid()
         let now = Instant.FromUtc(2026, 8, 28, 13, 0)
 
-        let document =
+        let prepared =
             {
-                id = $"prepared:{preparedId:D}"
-                RepositoryId = repositoryId
-                RecordKind = "prepared"
-                RecordKey = $"prepared:{preparedId:D}"
-                SchemaVersion = 1
                 PreparedContentId = preparedId
-                OperationId = operationId
-                PrincipalId = "principal"
-                OwnerId = Guid.NewGuid()
-                OrganizationId = Guid.NewGuid()
-                Content =
-                    {
-                        PreparedContentId = preparedId
-                        Blake3Hash = String.replicate 64 "a"
-                        Sha256Hash = String.replicate 64 "b"
-                        Size = 42L
-                        UploadRequired = true
-                        UploadInstructions = None
-                        ExpiresAt = now + Duration.FromMinutes 15L
-                    }
-                UploadSessionId = preparedId
-                AuthorizedScope = $"Library/{preparedId:D}"
-                StoragePoolId = StoragePoolId $"pool-{Guid.NewGuid():N}"
-                SamplingPolicySnapshot = "{\"minimumSampleCount\":1}"
-                FinalizedManifest = None
+                Blake3Hash = String.replicate 64 "a"
+                Sha256Hash = String.replicate 64 "b"
+                Size = 42L
+                UploadRequired = true
+                UploadInstructions = None
+                ExpiresAt = now + Duration.FromMinutes 15L
             }
 
-        let firstAttempt = Library.preparedUploadSessionCommand document
-        let exactRetry = Library.preparedUploadSessionCommand document
+        let preparation = { OperationId = operationId; PrincipalId = "principal"; Content = prepared }
+
+        let start: StartUploadSession =
+            {
+                UploadSessionId = preparedId
+                OwnerId = Guid.NewGuid()
+                OrganizationId = Guid.NewGuid()
+                RepositoryId = repositoryId
+                StoragePoolId = StoragePoolId $"pool-{Guid.NewGuid():N}"
+                AuthorizedScope = $"Library/{preparedId:D}"
+                FileContentHash = prepared.Blake3Hash
+                ExpectedSize = prepared.Size
+                ChunkingSuiteId = RabinChunking.SuiteName
+                SamplingPolicySnapshot = "{\"minimumSampleCount\":1}"
+                OperationId = $"Library-prepare:{operationId:D}"
+                LibraryPreparation = Some preparation
+            }
+
+        let firstAttempt = Library.preparedUploadSessionCommand start
+        let exactRetry = Library.preparedUploadSessionCommand start
         let sourcePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Library.Server.fs"))
         let source = File.ReadAllText sourcePath
 
         Assert.That(exactRetry, Is.EqualTo(firstAttempt))
-        Assert.That(source, Does.Contain("startPreparedUploadSession context existing.Document"))
+        Assert.That(source, Does.Contain("startPreparedUploadSession context start"))
 
         match exactRetry with
         | UploadSessionCommand.Start command ->
@@ -906,6 +990,7 @@ type LibraryCoordinatorTests() =
                     Assert.That(command.UploadSessionId, Is.EqualTo(preparedId))
                     Assert.That(command.RepositoryId, Is.EqualTo(repositoryId))
                     Assert.That(command.OperationId, Is.EqualTo($"Library-prepare:{operationId:D}"))
-                    Assert.That(command.SamplingPolicySnapshot, Is.EqualTo(document.SamplingPolicySnapshot)))
+                    Assert.That(command.SamplingPolicySnapshot, Is.EqualTo(start.SamplingPolicySnapshot))
+                    Assert.That(command.LibraryPreparation, Is.EqualTo(Some preparation)))
             )
         | _ -> Assert.Fail("Prepared content must reconstruct an upload-session Start command.")

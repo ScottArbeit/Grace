@@ -1,8 +1,10 @@
 namespace Grace.Actors
 
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Types.Authorization
 open Grace.Types.Common
+open Grace.Types.Events
 open Grace.Types.Library
 open Orleans
 open System
@@ -23,7 +25,7 @@ module RepositoryLibrary =
         }
 
 /// Owns one repository's bounded Library catalog and serialized Library change lane.
-type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibraryWriteAuthorizer) =
+type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibraryWriteAuthorizer, store: ILibraryStore, codec: ILibraryCursorCodec) =
     inherit Grain()
 
     interface IRepositoryLibraryActor with
@@ -59,10 +61,29 @@ type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibra
                 if command.RepositoryId <> repositoryId then
                     invalidArg (nameof command) "The Library command repository does not match the repository actor key."
 
-                return!
+                let! result =
                     RepositoryLibrary.submitWhenAuthorized
                         (fun () -> authorizer.CheckAsync(repositoryId, authorization, CancellationToken.None))
                         (fun () -> coordinator.SubmitAsync(command, principalId, correlationId, CancellationToken.None))
+
+                match result.Receipt with
+                | Some receipt when receipt.Change.IsSome && receipt.Cursor.IsSome ->
+                    let! controlRead = store.ReadControlAsync(repositoryId, CancellationToken.None)
+
+                    let payload =
+                        LibraryContentAvailable.Create(
+                            repositoryId,
+                            codec.Encode(repositoryId, controlRead.Document.CursorEpoch, 0L),
+                            receipt.Cursor.Value,
+                            receipt.LibraryCatalogVersion,
+                            receipt.RecordedAt,
+                            correlationId
+                        )
+
+                    do! publishGraceEvent (GraceEvent.LibraryContentAvailableEvent payload) (EventMetadata.New correlationId "RepositoryLibraryActor")
+                | _ -> ()
+
+                return result
             }
 
         member this.Repair correlationId =
@@ -71,6 +92,8 @@ type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibra
                 do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
             }
             :> Task
+
+        member this.ProjectHistory correlationId = coordinator.ProjectHistoryAsync(this.GetPrimaryKey(), CancellationToken.None)
 
         member this.GetStatus correlationId =
             task {

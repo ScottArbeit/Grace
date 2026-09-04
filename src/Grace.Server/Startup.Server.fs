@@ -2259,17 +2259,15 @@ module Application =
 
             services.AddSingleton<ILibraryStore>(
                 Func<IServiceProvider, ILibraryStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createStore client databaseName)
+                    let grainFactory = serviceProvider.GetRequiredService<IGrainFactory>()
+                    LibraryPersistence.createStore grainFactory)
             )
             |> ignore
 
             services.AddSingleton<ILibraryTransferStore>(
                 Func<IServiceProvider, ILibraryTransferStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createTransferStore client databaseName)
+                    let grainFactory = serviceProvider.GetRequiredService<IGrainFactory>()
+                    LibraryPersistence.createTransferStore grainFactory)
             )
             |> ignore
 

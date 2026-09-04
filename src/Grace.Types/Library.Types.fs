@@ -571,9 +571,13 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryProjectionWatermarks =
         {
+            [<Id(0u)>]
             Current: int64
+            [<Id(1u)>]
             History: int64
+            [<Id(2u)>]
             Receipts: int64
+            [<Id(3u)>]
             Baselines: int64
         }
 
@@ -584,20 +588,35 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryCanonicalChangeDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             StreamSegment: string
+            [<Id(3u)>]
             SchemaVersion: int
+            [<Id(4u)>]
             Cursor: int64
+            [<Id(5u)>]
             PublicCursor: LibraryCursor
+            [<Id(6u)>]
             OperationId: LibraryOperationId
+            [<Id(7u)>]
             RequestHash: string
+            [<Id(8u)>]
             Change: LibraryChangeDto
+            [<Id(9u)>]
             PriorNamespace: LibraryNamespaceDto option
+            [<Id(10u)>]
             PriorContentVersionId: LibraryContentVersionId option
+            [<Id(11u)>]
             ConsumedNamespaceVersion: LibraryNamespaceVersion option
+            [<Id(12u)>]
             ConsumedContentVersionId: LibraryContentVersionId option
+            [<Id(13u)>]
             ConsumedSlotVersion: LibraryNamespaceSlotVersion option
+            [<Id(14u)>]
             CorrelationId: CorrelationId
         }
 
@@ -605,15 +624,25 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryPendingCommandDocument =
         {
+            [<Id(0u)>]
             OperationId: LibraryOperationId
+            [<Id(1u)>]
             RequestHash: string
+            [<Id(2u)>]
             Cursor: int64
+            [<Id(3u)>]
             Receipt: LibraryOperationReceiptDto
+            [<Id(4u)>]
             CanonicalChange: LibraryCanonicalChangeDocument
+            [<Id(5u)>]
             ExpectedLibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(6u)>]
             PrincipalId: PrincipalId
+            [<Id(7u)>]
             CorrelationId: CorrelationId
+            [<Id(8u)>]
             ReservedAt: Instant
+            [<Id(9u)>]
             TargetItemIds: LibraryItemId array
         }
 
@@ -621,18 +650,31 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryControlDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             SchemaVersion: int
+            [<Id(3u)>]
             CursorEpoch: Guid
+            [<Id(4u)>]
             NextCursor: int64
+            [<Id(5u)>]
             AppliedThrough: int64
+            [<Id(6u)>]
             ReplayFloor: int64
+            [<Id(7u)>]
             LibraryCatalog: LibraryCatalogDto
+            [<Id(8u)>]
             Pending: LibraryPendingCommandDocument option
+            [<Id(9u)>]
             CurrentBaselineId: LibraryBootstrapId option
+            [<Id(10u)>]
             CurrentBaselineCursor: int64 option
+            [<Id(11u)>]
             ProjectionWatermarks: LibraryProjectionWatermarks
+            [<Id(12u)>]
             UpdatedAt: Instant
         }
 
@@ -640,12 +682,19 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryCurrentItemDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             ProjectionKind: string
+            [<Id(3u)>]
             SchemaVersion: int
+            [<Id(4u)>]
             Item: LibraryItemDto
+            [<Id(5u)>]
             LastCursor: int64
+            [<Id(6u)>]
             AppliedThrough: int64
         }
 
@@ -653,12 +702,19 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryCurrentSlotDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             ProjectionKind: string
+            [<Id(3u)>]
             SchemaVersion: int
+            [<Id(4u)>]
             Slot: LibraryNamespaceSlotDto
+            [<Id(5u)>]
             LastCursor: int64
+            [<Id(6u)>]
             AppliedThrough: int64
         }
 
@@ -666,15 +722,25 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryReceiptDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             RecordKind: string
+            [<Id(3u)>]
             RecordKey: string
+            [<Id(4u)>]
             SchemaVersion: int
+            [<Id(5u)>]
             OperationId: LibraryOperationId
+            [<Id(6u)>]
             RequestHash: string
+            [<Id(7u)>]
             Receipt: LibraryOperationReceiptDto
+            [<Id(8u)>]
             Cursor: int64 option
+            [<Id(9u)>]
             AppliedThrough: int64
         }
 
@@ -682,17 +748,29 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryHistoryEntry =
         {
+            [<Id(0u)>]
             Cursor: int64
+            [<Id(1u)>]
             PublicCursor: LibraryCursor
+            [<Id(2u)>]
             OperationId: LibraryOperationId
+            [<Id(3u)>]
             ItemId: LibraryItemId
+            [<Id(4u)>]
             PriorNamespace: LibraryNamespaceDto option
+            [<Id(5u)>]
             ResultingNamespace: LibraryNamespaceDto option
+            [<Id(6u)>]
             PriorContentVersionId: LibraryContentVersionId option
+            [<Id(7u)>]
             ResultingContentVersionId: LibraryContentVersionId option
+            [<Id(8u)>]
             Tombstone: LibraryTombstoneDto option
+            [<Id(9u)>]
             Conflict: LibraryConflictProvenanceDto option
+            [<Id(10u)>]
             PrincipalId: PrincipalId
+            [<Id(11u)>]
             AcceptedAt: Instant
         }
 
@@ -700,14 +778,23 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryHistorySegmentDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             HistoryKey: string
+            [<Id(3u)>]
             SchemaVersion: int
+            [<Id(4u)>]
             HistorySegment: string
+            [<Id(5u)>]
             FirstCursor: int64
+            [<Id(6u)>]
             LastCursor: int64
+            [<Id(7u)>]
             EntryCount: int
+            [<Id(8u)>]
             Entries: LibraryHistoryEntry array
         }
 
@@ -715,14 +802,23 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryBaselineShardDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             SchemaVersion: int
+            [<Id(3u)>]
             BaselineId: LibraryBootstrapId
+            [<Id(4u)>]
             ShardKey: string
+            [<Id(5u)>]
             BoundaryCursor: int64
+            [<Id(6u)>]
             Items: LibraryItemDto array
+            [<Id(7u)>]
             ItemCount: int
+            [<Id(8u)>]
             SerializedBytes: int
         }
 
@@ -730,53 +826,73 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryBaselineManifestDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             SchemaVersion: int
+            [<Id(3u)>]
             BaselineId: LibraryBootstrapId
+            [<Id(4u)>]
             ShardKey: string
+            [<Id(5u)>]
             BoundaryCursor: int64
+            [<Id(6u)>]
             CursorEpoch: Guid
+            [<Id(7u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
+            [<Id(8u)>]
             LibraryCatalog: LibraryCatalogDto
+            [<Id(9u)>]
             ShardIds: string array
+            [<Id(10u)>]
             ShardHashes: string array
+            [<Id(11u)>]
             ShardItemCounts: int array
+            [<Id(12u)>]
             TotalItemCount: int
+            [<Id(13u)>]
             CreatedAt: Instant
         }
 
-    /// Persists one principal-bound immutable-content preparation until its existing upload session is finalized or expires.
+    /// Stores at most 512 deterministic record identities in one current-projection hash bucket.
     [<CLIMutable; GenerateSerializer>]
-    type LibraryPreparedContentDocument =
+    type LibraryCurrentIndexBucketDocument =
         {
-            id: string
-            RepositoryId: RepositoryId
-            RecordKind: string
-            RecordKey: string
-            SchemaVersion: int
-            PreparedContentId: LibraryPreparedContentId
-            OperationId: LibraryOperationId
-            PrincipalId: PrincipalId
-            OwnerId: OwnerId
-            OrganizationId: OrganizationId
-            Content: LibraryPreparedContentDto
-            UploadSessionId: UploadSessionId
-            AuthorizedScope: string
-            StoragePoolId: StoragePoolId
-            SamplingPolicySnapshot: string
-            FinalizedManifest: FileManifest option
+            [<Id(0u)>]
+            Identities: string array
         }
+
+        /// Returns an empty bounded current-projection index bucket.
+        static member Empty = { Identities = Array.empty }
+
+    /// Stores the exact occupancy of the 256 bounded buckets below one index-directory prefix.
+    [<CLIMutable; GenerateSerializer>]
+    type LibraryCurrentIndexDirectoryDocument =
+        {
+            [<Id(0u)>]
+            Counts: int array
+        }
+
+        /// Returns an empty fixed-width directory whose entries correspond to one low hash byte.
+        static member Empty = { Counts = Array.zeroCreate 256 }
 
     /// Stores one immutable catalog-operation result in the same repository partition as its atomic catalog mutation.
     [<CLIMutable; GenerateSerializer>]
     type LibraryCatalogOperationDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             SchemaVersion: int
+            [<Id(3u)>]
             OperationId: LibraryOperationId
+            [<Id(4u)>]
             RequestHash: string
+            [<Id(5u)>]
             Result: LibraryCatalogChangeResultDto
         }
 
@@ -784,33 +900,22 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryContentLocationDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             RecordKind: string
+            [<Id(3u)>]
             RecordKey: string
+            [<Id(4u)>]
             SchemaVersion: int
+            [<Id(5u)>]
             Content: LibraryContentVersionDto
+            [<Id(6u)>]
             AuthorizedScope: string
+            [<Id(7u)>]
             Manifest: FileManifest
-        }
-
-    /// Persists one principal-bound, one-use immutable-byte read grant without exposing storage placement.
-    [<CLIMutable; GenerateSerializer>]
-    type LibraryContentReadGrantDocument =
-        {
-            id: string
-            RepositoryId: RepositoryId
-            RecordKind: string
-            RecordKey: string
-            SchemaVersion: int
-            GrantId: Guid
-            PrincipalId: PrincipalId
-            ItemId: LibraryItemId
-            Content: LibraryContentVersionDto
-            AuthorizedScope: string
-            Manifest: FileManifest
-            ExpiresAt: Instant
-            ConsumedAt: Instant option
         }
 
     /// Couples one Cosmos document read with the private ETag used for exact replacement.
@@ -915,20 +1020,8 @@ module Library =
             repositoryId: RepositoryId * baselineId: LibraryBootstrapId * cancellationToken: CancellationToken ->
                 Task<(LibraryBaselineManifestDocument * LibraryItemDto array) option>
 
-    /// Defines durable preparation, retained-content, and one-use read-grant operations over existing immutable storage.
+    /// Defines the retained immutable-content locations used by Library uploads and authorized reads.
     type ILibraryTransferStore =
-
-        /// Creates one immutable principal- and operation-bound preparation or verifies its exact replay.
-        abstract member CreatePreparedAsync: preparation: LibraryPreparedContentDocument * cancellationToken: CancellationToken -> Task
-
-        /// Reads one content preparation without revealing it across repository boundaries.
-        abstract member ReadPreparedAsync:
-            repositoryId: RepositoryId * preparedContentId: LibraryPreparedContentId * cancellationToken: CancellationToken ->
-                Task<LibraryStoreRead<LibraryPreparedContentDocument> option>
-
-        /// Records the exact manifest completed by the preparation's existing upload session.
-        abstract member FinalizePreparedAsync:
-            repositoryId: RepositoryId * preparedContentId: LibraryPreparedContentId * manifest: FileManifest * cancellationToken: CancellationToken -> Task
 
         /// Retains the private immutable-content location behind a public content-version identity.
         abstract member UpsertContentLocationAsync: location: LibraryContentLocationDocument * cancellationToken: CancellationToken -> Task
@@ -937,17 +1030,6 @@ module Library =
         abstract member ReadContentLocationAsync:
             repositoryId: RepositoryId * contentVersionId: LibraryContentVersionId * cancellationToken: CancellationToken ->
                 Task<LibraryContentLocationDocument option>
-
-        /// Creates one principal-bound read grant after item and content authorization.
-        abstract member CreateReadGrantAsync: grant: LibraryContentReadGrantDocument * cancellationToken: CancellationToken -> Task
-
-        /// Reads one read grant for exact one-use redemption.
-        abstract member ReadReadGrantAsync:
-            repositoryId: RepositoryId * grantId: Guid * cancellationToken: CancellationToken -> Task<LibraryStoreRead<LibraryContentReadGrantDocument> option>
-
-        /// Marks one still-current grant consumed through exact ETag replacement.
-        abstract member ConsumeReadGrantAsync:
-            grant: LibraryContentReadGrantDocument * etag: string * cancellationToken: CancellationToken -> Task<LibraryControlWriteResult>
 
     /// Defines integrity protection for opaque repository cursor values.
     type ILibraryCursorCodec =
@@ -982,6 +1064,9 @@ module Library =
 
         /// Repairs one repository's pending publication lifecycle without accepting another command.
         abstract member RepairAsync: repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task
+
+        /// Replays asynchronous history idempotently from accepted canonical changes through the current commit boundary.
+        abstract member ProjectHistoryAsync: repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task
 
         /// Returns truthful content-free server state after repairing any pending accepted command.
         abstract member GetStatusAsync: repositoryId: RepositoryId * cancellationToken: CancellationToken -> Task<LibraryRepositoryStatusDto>

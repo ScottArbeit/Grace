@@ -236,4 +236,5 @@ module EventingPublisher =
         | BranchEvent _
         | DirectoryVersionEvent _
         | OrganizationEvent _
+        | LibraryContentAvailableEvent _
         | RepositoryEvent _ -> Option.None

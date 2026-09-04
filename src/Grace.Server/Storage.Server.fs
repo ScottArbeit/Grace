@@ -363,37 +363,6 @@ module Storage =
             SessionForScope: UploadSessionDto
         }
 
-    /// Records Library upload completion while leaving every ordinary storage scope unchanged.
-    let internal recordFinalizedLibraryPreparationWith
-        (transferStore: ILibraryTransferStore)
-        repositoryId
-        (authorizedScope: string)
-        (manifest: FileManifest)
-        cancellationToken
-        =
-        task {
-            let prefix = "library/"
-
-            if authorizedScope.StartsWith(prefix, StringComparison.Ordinal) then
-                match Guid.TryParse(authorizedScope[prefix.Length ..]) with
-                | false, _ -> invalidOp "The Library upload-session scope contains an invalid prepared-content identifier."
-                | true, preparedContentId -> do! transferStore.FinalizePreparedAsync(repositoryId, preparedContentId, manifest, cancellationToken)
-        }
-
-    /// Records a finalized Library preparation after the existing upload session accepts the exact manifest.
-    let private recordFinalizedLibraryPreparation (context: HttpContext) (requestContext: UploadSessionRequestContext) (manifest: FileManifest) =
-        task {
-            let transferStore = context.RequestServices.GetRequiredService<ILibraryTransferStore>()
-
-            do!
-                recordFinalizedLibraryPreparationWith
-                    transferStore
-                    requestContext.RequestRepositoryId
-                    (string requestContext.SessionForScope.AuthorizedScope)
-                    manifest
-                    context.RequestAborted
-        }
-
     /// Resolves the request repository and upload-session actor that storage upload-session handlers share.
     let private createUploadSessionRequestContext (context: HttpContext) (parameters: UploadSessionStorageParameters) correlationId =
         task {
@@ -1127,7 +1096,7 @@ module Storage =
                 events
                 |> Seq.tryPick (fun uploadSessionEvent ->
                     match uploadSessionEvent.Event with
-                    | UploadSessionEventType.Finalized (finalizeOperationId, manifestAddress) when finalizeOperationId = operationId -> Some manifestAddress
+                    | UploadSessionEventType.Finalized (finalizeOperationId, manifest) when finalizeOperationId = operationId -> Some manifest.ManifestAddress
                     | _ -> None)
 
             return operationAlreadyApplied, finalizedManifestAddress
@@ -1782,6 +1751,7 @@ module Storage =
                                                     ChunkingSuiteId = parameters.ChunkingSuiteId
                                                     SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
                                                     OperationId = parameters.OperationId
+                                                    LibraryPreparation = None
                                                 }
 
                                         return! handleUploadSessionCommand context parameters command correlationId
@@ -2180,9 +2150,7 @@ module Storage =
                                             let! result = requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata
 
                                             match result with
-                                            | Ok returnValue ->
-                                                do! recordFinalizedLibraryPreparation context requestContext parameters.Manifest
-                                                return! context |> result200Ok returnValue
+                                            | Ok returnValue -> return! context |> result200Ok returnValue
                                             | Error error -> return! context |> result400BadRequest error
                         | true, None ->
                             return!
@@ -2199,9 +2167,7 @@ module Storage =
                                 let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 
                                 match result with
-                                | Ok returnValue ->
-                                    do! recordFinalizedLibraryPreparation context requestContext parameters.Manifest
-                                    return! context |> result200Ok returnValue
+                                | Ok returnValue -> return! context |> result200Ok returnValue
                                 | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->
