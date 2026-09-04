@@ -12,6 +12,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Automation
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Types.Reference
 open Microsoft.AspNetCore.SignalR
 open Microsoft.Data.Sqlite
@@ -23,6 +24,7 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Security.Cryptography
 open System.Text.Json
 open System.Text.Json.Nodes
 open System.Threading
@@ -24658,3 +24660,305 @@ module WatchTests =
 
             Assert.That(acknowledgementCount, Is.EqualTo(0))
         }
+
+    /// Proves Library notifications are advisory repository-scoped wakes and never replace the durable pull authority.
+    [<Test; Category("LibrarySynchronization")>]
+    let ``Library content availability admits only enabled matching versioned repository wakes`` () =
+        task {
+            use wakeGate = new SemaphoreSlim(1, 1)
+            let repositoryId = RepositoryId.NewGuid()
+            let mutable enabled = true
+            let mutable synchronizationCount = 0
+
+            let payload eventName payloadRepositoryId cursor catalogVersion =
+                {
+                    EventName = eventName
+                    RepositoryId = payloadRepositoryId
+                    CursorEpoch = "opaque-epoch"
+                    AvailableAfterCursor = cursor
+                    LibraryCatalogVersion = catalogVersion
+                    OccurredAt = SystemClock.Instance.GetCurrentInstant()
+                    CorrelationId = "library-wake-admission"
+                }
+
+            let synchronize () =
+                synchronizationCount <- synchronizationCount + 1
+                Task.CompletedTask
+
+            let! wrongVersion =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v2" repositoryId "untrusted-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            let! wrongRepository =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v1" (RepositoryId.NewGuid()) "untrusted-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            enabled <- false
+
+            let! disabled =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v1" repositoryId "untrusted-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            enabled <- true
+
+            let! admitted =
+                Watch.handleLibraryContentAvailableWake
+                    wakeGate
+                    repositoryId
+                    (fun () -> enabled)
+                    synchronize
+                    (payload "LibraryContentAvailable.v1" repositoryId "ignored-advisory-cursor" (Guid.NewGuid()))
+                    CancellationToken.None
+
+            Assert.That(wrongVersion, Is.False)
+            Assert.That(wrongRepository, Is.False)
+            Assert.That(disabled, Is.False)
+            Assert.That(admitted, Is.True)
+            Assert.That(synchronizationCount, Is.EqualTo(1))
+        }
+
+    /// Proves duplicate Library wakes serialize before each independently rereads the durable cursor.
+    [<Test; Category("LibrarySynchronization")>]
+    let ``duplicate Library content availability wakes serialize durable pulls`` () =
+        task {
+            use wakeGate = new SemaphoreSlim(1, 1)
+            let repositoryId = RepositoryId.NewGuid()
+            let firstStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let releaseFirst = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let mutable activeCount = 0
+            let mutable maximumActiveCount = 0
+            let mutable synchronizationCount = 0
+
+            let payload cursor =
+                {
+                    EventName = "LibraryContentAvailable.v1"
+                    RepositoryId = repositoryId
+                    CursorEpoch = "opaque-epoch"
+                    AvailableAfterCursor = cursor
+                    LibraryCatalogVersion = Guid.NewGuid()
+                    OccurredAt = SystemClock.Instance.GetCurrentInstant()
+                    CorrelationId = "library-wake-serialization"
+                }
+
+            let synchronize () : Task =
+                (task {
+                    let active = Interlocked.Increment(&activeCount)
+                    maximumActiveCount <- max maximumActiveCount active
+                    let invocation = Interlocked.Increment(&synchronizationCount)
+
+                    if invocation = 1 then
+                        firstStarted.TrySetResult(()) |> ignore
+                        do! releaseFirst.Task
+
+                    Interlocked.Decrement(&activeCount) |> ignore
+                }
+                :> Task)
+
+            let first =
+                Watch.handleLibraryContentAvailableWake wakeGate repositoryId (fun () -> true) synchronize (payload "duplicate-one") CancellationToken.None
+
+            do! firstStarted.Task
+
+            let second =
+                Watch.handleLibraryContentAvailableWake wakeGate repositoryId (fun () -> true) synchronize (payload "duplicate-two") CancellationToken.None
+
+            releaseFirst.TrySetResult(()) |> ignore
+            let! admitted = Task.WhenAll(first, second)
+
+            Assert.That(
+                admitted.Length = 2
+                && (admitted |> Array.forall id),
+                Is.True
+            )
+
+            Assert.That(synchronizationCount, Is.EqualTo(2))
+            Assert.That(maximumActiveCount, Is.EqualTo(1))
+        }
+
+    /// Proves foreground Watch isolates enabled Library paths everywhere and runs Windows exact-echo and synchronization handling.
+    [<Test; Category("LibrarySynchronization")>]
+    let ``foreground Watch routes Library observations without ordinary repository work`` () =
+        withTempRepo (fun root ->
+            let configuration = Current()
+            let repositoryId = configuration.RepositoryId
+            let dbPath = configuration.GraceStatusFile
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+            let itemId = Guid.NewGuid()
+            let normalizedPath = "library/remote.bin"
+            let fullPath = Path.Combine(root, "library", "remote.bin")
+            let bytes = Text.Encoding.UTF8.GetBytes("remote library bytes")
+            let blake3 = ContentAddress.computeBlake3Hex bytes
+
+            let sha256 =
+                SHA256.HashData(bytes)
+                |> Convert.ToHexString
+                |> fun value -> value.ToLowerInvariant()
+
+            configuration.LibrarySynchronizationEnabled <- true
+            saveConfigFile (Path.Combine(configuration.GraceDirectory, Constants.GraceConfigFileName)) configuration
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath))
+            |> ignore
+
+            File.WriteAllBytes(fullPath, bytes)
+
+            LibraryLocalState.enable dbPath repositoryId (Guid.NewGuid()) catalogVersion [| "library" |] "epoch-1" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.recordPending
+                dbPath
+                repositoryId
+                operationId
+                LibraryLocalState.OperationDirection.Remote
+                ChangeKind.CreateFile
+                "remote-request"
+                catalogVersion
+                (Some itemId)
+                None
+                (Some normalizedPath)
+                None
+                None
+                (Some "cursor-0")
+                (Some "cursor-1")
+                (Some "epoch-1")
+                (Some blake3)
+                (Some sha256)
+                (Some(int64 bytes.Length))
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.markFilesystemPublished dbPath repositoryId operationId catalogVersion
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            let change: LibraryChangeDto =
+                {
+                    Cursor = "cursor-1"
+                    OperationId = operationId
+                    ChangeKind = ChangeKind.CreateFile
+                    ItemId = itemId
+                    ItemKind = ItemKind.File
+                    AcceptedAt = Instant.FromUnixTimeTicks(1L)
+                    AcceptedBy = "watch-test"
+                    LibraryCatalogVersion = catalogVersion
+                    Namespace =
+                        Some
+                            {
+                                Parent = { Kind = "root"; LibraryPath = Some "library"; ItemId = None }
+                                Name = "remote.bin"
+                                NormalizedPath = normalizedPath
+                                NamespaceVersion = Guid.NewGuid()
+                                SlotVersion = Guid.NewGuid()
+                            }
+                    Content =
+                        Some
+                            {
+                                ContentVersionId = Guid.NewGuid()
+                                Blake3Hash = blake3
+                                Sha256Hash = sha256
+                                Size = int64 bytes.Length
+                                CreatedAt = Instant.FromUnixTimeTicks(1L)
+                            }
+                    Tombstone = None
+                    Conflict = None
+                }
+
+            LibraryLocalState.completeAcceptedFile dbPath repositoryId change
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            activateWatchIgnoreSnapshot ()
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch.shouldIgnoreFileForWatchTests fullPath
+            |> should equal true
+
+            let mutable synchronizationCount = 0
+
+            let synchronize () =
+                synchronizationCount <- synchronizationCount + 1
+                Task.CompletedTask
+
+            let firstDisposition = TaskCompletionSource<Watch.LibraryObservationDisposition>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let firstObservation = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            use _processor =
+                Watch.installLibraryObservationProcessorForWatchTests (fun observedPath ->
+                    firstObservation.TrySetResult(observedPath)
+                    |> ignore
+
+                    if OperatingSystem.IsWindows() then
+                        (task {
+                            let! disposition = Watch.handleLibraryFileObservation dbPath repositoryId root synchronize observedPath
+
+                            firstDisposition.TrySetResult(disposition)
+                            |> ignore
+                        }
+                        :> Task)
+                    else
+                        Task.CompletedTask)
+
+            Watch.OnChanged(changedEvent fullPath)
+
+            firstObservation.Task.IsCompletedSuccessfully
+            |> should equal true
+
+            firstObservation.Task.Result
+            |> should equal fullPath
+
+            if OperatingSystem.IsWindows() then
+                firstDisposition
+                    .Task
+                    .WaitAsync(TimeSpan.FromSeconds(5.0))
+                    .GetAwaiter()
+                    .GetResult()
+                |> should equal Watch.LibraryObservationDisposition.ExactEchoConsumed
+
+                synchronizationCount |> should equal 0
+
+                Watch.handleLibraryFileObservation dbPath repositoryId root synchronize fullPath
+                |> fun operation -> operation.GetAwaiter().GetResult()
+                |> should equal Watch.LibraryObservationDisposition.SynchronizationRequested
+
+                let mutatedBytes = Text.Encoding.UTF8.GetBytes("genuine local edit")
+                File.WriteAllBytes(fullPath, mutatedBytes)
+
+                Watch.handleLibraryFileObservation dbPath repositoryId root synchronize fullPath
+                |> fun operation -> operation.GetAwaiter().GetResult()
+                |> should equal Watch.LibraryObservationDisposition.SynchronizationRequested
+
+                synchronizationCount |> should equal 2
+            else
+                synchronizationCount |> should equal 0
+
+            Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create Add FileSystemEntryType.File normalizedPath)
+            let ordinaryWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+            ordinaryWork.FilesToProcess |> should be Empty
+
+            ordinaryWork.DirectoriesToProcess
+            |> should be Empty
+
+            ordinaryWork.StatusUpdateTriggers
+            |> should be Empty
+
+            use connection = new SqliteConnection($"Data Source={dbPath}")
+            connection.Open()
+            use command = connection.CreateCommand()
+            command.CommandText <- "SELECT COUNT(*) FROM working_directory_update_completions;"
+
+            command.ExecuteScalar()
+            |> Convert.ToInt32
+            |> should equal 0)

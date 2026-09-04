@@ -1,0 +1,320 @@
+namespace Grace.CLI.Tests
+
+open FsUnit
+open Grace.CLI
+open Grace.CLI.Command
+open Grace.Shared
+open Grace.Types.Library
+open Microsoft.Data.Sqlite
+open NUnit.Framework
+open NodaTime
+open SQLitePCL
+open System
+open System.IO
+open System.Security.Cryptography
+
+/// Verifies the finite Library synchronization state stored in the existing local database.
+[<NonParallelizable>]
+module LibraryLocalStateTests =
+
+    /// Runs one test against a disposable local-state database.
+    let private withDatabase action =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-library-state-{Guid.NewGuid():N}")
+        Directory.CreateDirectory(root) |> ignore
+        let dbPath = Path.Combine(root, "grace-local.db")
+
+        try
+            action dbPath
+        finally
+            SqliteConnection.ClearAllPools()
+            if Directory.Exists(root) then Directory.Delete(root, true)
+
+    /// Opens the disposable SQLite database for independent shape assertions.
+    let private openConnection dbPath =
+        Batteries_V2.Init()
+        let connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+        connection
+
+    /// Reads one scalar string from SQLite.
+    let private scalarString (connection: SqliteConnection) sql =
+        use command = connection.CreateCommand()
+        command.CommandText <- sql
+        command.ExecuteScalar() :?> string
+
+    /// Reads one scalar integer from SQLite.
+    let private scalarInt (connection: SqliteConnection) sql =
+        use command = connection.CreateCommand()
+        command.CommandText <- sql
+        command.ExecuteScalar() |> Convert.ToInt32
+
+    /// Verifies schema 12 adds exactly the six accepted Library tables and leaves the WDU table intact.
+    [<Test>]
+    let ``schema 12 creates the finite Library state beside unchanged WDU state`` () =
+        withDatabase (fun dbPath ->
+            LocalStateDb.ensureDbInitialized dbPath
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            use connection = openConnection dbPath
+
+            scalarString connection "SELECT value FROM meta WHERE key='schema_version';"
+            |> should equal "12"
+
+            let tableNames =
+                [|
+                    "library_repository_state"
+                    "libraries"
+                    "library_items"
+                    "library_namespace_slots"
+                    "library_operations"
+                    "library_conflicts"
+                |]
+
+            for tableName in tableNames do
+                scalarInt connection $"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{tableName}';"
+                |> should equal 1
+
+            scalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='working_directory_update_completions';"
+            |> should equal 1
+
+            let wduSql = scalarString connection "SELECT sql FROM sqlite_master WHERE type='table' AND name='working_directory_update_completions';"
+
+            wduSql.Contains("caller_kind IN ('Watch', 'Branch', 'Connect')", StringComparison.Ordinal)
+            |> should equal true)
+
+    /// Verifies cursor progress is rejected until the exact operation is terminal under the same catalog version.
+    [<Test>]
+    let ``cursor CAS requires terminal operation exact predecessor and unchanged catalog`` () =
+        withDatabase (fun dbPath ->
+            let repositoryId = Guid.NewGuid()
+            let workingCopyId = Guid.NewGuid()
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+
+            LibraryLocalState.enable dbPath repositoryId workingCopyId catalogVersion [| "shared" |] "epoch-1" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.recordPending
+                dbPath
+                repositoryId
+                operationId
+                LibraryLocalState.OperationDirection.Remote
+                "createFile"
+                "request-hash"
+                catalogVersion
+                (Some(Guid.NewGuid()))
+                None
+                (Some "shared/file.txt")
+                None
+                None
+                (Some "cursor-0")
+                (Some "cursor-1")
+                (Some "epoch-1")
+                (Some(String.replicate 64 "a"))
+                (Some(String.replicate 64 "b"))
+                (Some 5L)
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.tryAdvanceCursor dbPath repositoryId operationId catalogVersion "epoch-1" "cursor-0" "cursor-1"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false
+
+            LibraryLocalState.markTerminalWithoutProjection dbPath repositoryId operationId catalogVersion
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.tryAdvanceCursor dbPath repositoryId operationId catalogVersion "epoch-1" "cursor-0" "cursor-1"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal true
+
+            let state =
+                LibraryLocalState.readRepositoryState dbPath repositoryId
+                |> fun operation -> operation.GetAwaiter().GetResult()
+                |> Option.get
+
+            state.AppliedCursor
+            |> should equal (Some "cursor-1"))
+
+    /// Verifies restart classifies exact published bytes and completes SQLite without another filesystem write.
+    [<Test>]
+    let ``restart after filesystem publication completes without rewriting target`` () =
+        withDatabase (fun dbPath ->
+            let repositoryId = Guid.NewGuid()
+            let workingCopyId = Guid.NewGuid()
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+            let itemId = Guid.NewGuid()
+            let targetPath = Path.Combine(Path.GetDirectoryName(dbPath), "shared", "file.txt")
+            let bytes = Text.Encoding.UTF8.GetBytes("restart bytes")
+            let blake3 = ContentAddress.computeBlake3Hex bytes
+
+            let sha256 =
+                SHA256.HashData(bytes)
+                |> Convert.ToHexString
+                |> fun value -> value.ToLowerInvariant()
+
+            LibraryLocalState.enable dbPath repositoryId workingCopyId catalogVersion [| "shared" |] "epoch-1" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.recordPending
+                dbPath
+                repositoryId
+                operationId
+                LibraryLocalState.OperationDirection.Remote
+                "createFile"
+                "request"
+                catalogVersion
+                (Some itemId)
+                None
+                (Some "shared/file.txt")
+                None
+                None
+                (Some "cursor-0")
+                (Some "cursor-1")
+                (Some "epoch-1")
+                (Some blake3)
+                (Some sha256)
+                (Some(int64 bytes.Length))
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            if OperatingSystem.IsWindows() then
+                LibraryFilesystem.publishAtomic targetPath blake3 sha256 (int64 bytes.Length) bytes
+            else
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+                |> ignore
+
+                File.WriteAllBytes(targetPath, bytes)
+
+            let publishedAt = File.GetLastWriteTimeUtc(targetPath)
+
+            let change =
+                {
+                    Cursor = "cursor-1"
+                    OperationId = operationId
+                    ChangeKind = ChangeKind.CreateFile
+                    ItemId = itemId
+                    ItemKind = ItemKind.File
+                    AcceptedAt = Instant.FromUnixTimeTicks(1L)
+                    AcceptedBy = "principal"
+                    LibraryCatalogVersion = catalogVersion
+                    Namespace =
+                        Some
+                            {
+                                Parent = { Kind = "root"; LibraryPath = Some "shared"; ItemId = None }
+                                Name = "file.txt"
+                                NormalizedPath = "shared/file.txt"
+                                NamespaceVersion = Guid.NewGuid()
+                                SlotVersion = Guid.NewGuid()
+                            }
+                    Content =
+                        Some
+                            {
+                                ContentVersionId = Guid.NewGuid()
+                                Blake3Hash = blake3
+                                Sha256Hash = sha256
+                                Size = int64 bytes.Length
+                                CreatedAt = Instant.FromUnixTimeTicks(1L)
+                            }
+                    Tombstone = None
+                    Conflict = None
+                }
+
+            if OperatingSystem.IsWindows() then
+                LibraryFilesystem.matchesContent targetPath blake3 sha256 (int64 bytes.Length)
+                |> should equal true
+            else
+                File.ReadAllBytes(targetPath)
+                |> should equal bytes
+
+            LibraryLocalState.markFilesystemPublished dbPath repositoryId operationId catalogVersion
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.completeAcceptedFile dbPath repositoryId change
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            LibraryLocalState.tryAdvanceCursor dbPath repositoryId operationId catalogVersion "epoch-1" "cursor-0" "cursor-1"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal true
+
+            File.GetLastWriteTimeUtc(targetPath)
+            |> should equal publishedAt
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/other.txt" blake3
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" (String.replicate 64 "0")
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" blake3
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal true
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" blake3
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false)
+
+    /// Verifies returning to earlier bytes retains retry identity but not a prior causal operation identity.
+    [<Test>]
+    let ``local operation identity distinguishes X Y X while response-loss retry stays stable`` () =
+        let workingCopyId = Guid.NewGuid()
+        let itemId = Guid.NewGuid()
+        let xBlake3 = String.replicate 64 "a"
+        let xSha256 = String.replicate 64 "b"
+        let yBlake3 = String.replicate 64 "c"
+        let ySha256 = String.replicate 64 "d"
+
+        let priorX: LibraryLocalState.ItemAncestry =
+            { ItemId = itemId; NormalizedPath = "shared/file.txt"; Blake3Hash = xBlake3; NamespaceVersion = Guid.NewGuid(); ContentVersionId = Guid.NewGuid() }
+
+        let priorY = { priorX with Blake3Hash = yBlake3; ContentVersionId = Guid.NewGuid() }
+
+        let firstX = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.CreateFile None xBlake3 xSha256 1L
+
+        let y = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorX) yBlake3 ySha256 1L
+
+        let secondX = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
+
+        let secondXRetry = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
+
+        firstX |> should not' (equal y)
+        firstX |> should not' (equal secondX)
+        secondXRetry |> should equal secondX
+
+    /// Verifies an operation-ID conflict with different immutable evidence fails closed instead of reusing the row.
+    [<Test>]
+    let ``pending operation collision rejects different immutable evidence`` () =
+        withDatabase (fun dbPath ->
+            let repositoryId = Guid.NewGuid()
+            let catalogVersion = Guid.NewGuid()
+            let operationId = Guid.NewGuid()
+
+            LibraryLocalState.enable dbPath repositoryId (Guid.NewGuid()) catalogVersion [| "shared" |] "epoch" "cursor-0"
+            |> fun operation -> operation.GetAwaiter().GetResult()
+
+            let record expectedBlake3 =
+                LibraryLocalState.recordPending
+                    dbPath
+                    repositoryId
+                    operationId
+                    LibraryLocalState.OperationDirection.Local
+                    ChangeKind.CreateFile
+                    "request"
+                    catalogVersion
+                    None
+                    (Some "shared/file.txt")
+                    (Some "shared/file.txt")
+                    None
+                    None
+                    (Some "cursor-0")
+                    None
+                    (Some "epoch")
+                    (Some expectedBlake3)
+                    (Some(String.replicate 64 "b"))
+                    (Some 1L)
+                |> fun operation -> operation.GetAwaiter().GetResult()
+
+            record (String.replicate 64 "a")
+
+            (fun () -> record (String.replicate 64 "c"))
+            |> should throw typeof<InvalidOperationException>)

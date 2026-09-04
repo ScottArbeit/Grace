@@ -1,6 +1,7 @@
 namespace Grace.CLI.Command
 
 open Grace.CLI.Common
+open Grace.CLI
 open Grace.CLI.Services
 open Grace.SDK
 open Grace.SDK.Common
@@ -11,6 +12,7 @@ open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Validation.Errors
 open Grace.Types.Common
+open Grace.Types.Library
 open Grace.Types.Reference
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
@@ -312,9 +314,20 @@ module Watch =
             GraceStatusFile: string
             FileEntries: string array
             DirectoryEntries: string array
+            Libraries: string array
         }
 
     let mutable private activeWatchIgnoreSnapshot: WatchIgnoreSnapshot option = None
+    let mutable private processLibraryObservation: string -> Task = fun _ -> Task.CompletedTask
+
+    /// Installs one scoped Library observation processor for deterministic foreground Watch tests.
+    let internal installLibraryObservationProcessorForWatchTests processor =
+        let previous = processLibraryObservation
+        processLibraryObservation <- processor
+
+        { new IDisposable with
+            member _.Dispose() = processLibraryObservation <- previous
+        }
 
     /// Reads a complete ignore snapshot without accepting an unreadable configured `.graceignore` as an empty set.
     let private tryReadWatchIgnoreSnapshot () =
@@ -324,6 +337,15 @@ module Watch =
             match inspection.Ignore.ErrorMessage with
             | Some ignoreError -> Error $"Grace Watch could not read {inspection.Ignore.Path}: {ignoreError}"
             | None ->
+                let libraries =
+                    if inspection.Configuration.LibrarySynchronizationEnabled then
+                        LibraryLocalState.readEnabledLibraryRoots
+                            inspection.Configuration.GraceStatusFile
+                            inspection.Configuration.RepositoryId
+                        |> fun operation -> operation.GetAwaiter().GetResult()
+                    else
+                        Array.empty
+
                 Ok
                     {
                         RootDirectory = Path.GetFullPath(inspection.Configuration.RootDirectory)
@@ -331,6 +353,7 @@ module Watch =
                         GraceStatusFile = Path.GetFullPath(inspection.Configuration.GraceStatusFile)
                         FileEntries = Array.copy inspection.Configuration.GraceFileIgnoreEntries
                         DirectoryEntries = Array.copy inspection.Configuration.GraceDirectoryIgnoreEntries
+                        Libraries = libraries
                     }
 
     /// Replaces Watch's ignore snapshot only after the repository configuration and `.graceignore` read together successfully.
@@ -376,7 +399,7 @@ module Watch =
             GraceStatusFile = snapshot.GraceStatusFile
             DirectoryIgnoreEntries = snapshot.DirectoryEntries
             FileIgnoreEntries = snapshot.FileEntries
-            Libraries = Array.empty
+            Libraries = Array.copy snapshot.Libraries
             PathComparison = watchPathComparison
         }
 
@@ -421,7 +444,7 @@ module Watch =
                 GraceStatusFile = snapshot.GraceStatusFile
                 DirectoryIgnoreEntries = snapshot.DirectoryEntries
                 FileIgnoreEntries = snapshot.FileEntries
-                Libraries = Array.empty
+                Libraries = Array.copy snapshot.Libraries
             }
 
         scanWorkingTreeForDifferencesReadOnlyWithComparison watchPathComparison scanInput previousGraceStatus
@@ -7823,8 +7846,8 @@ module Watch =
         match classifyRawLocalObservation fallbackKind fullPath with
         | LocalStateArtifact -> recordLocalStatusRevisionCheckObservation ()
         | GraceInternal
-        | Library
         | Ignored -> ()
+        | Library -> processLibraryObservation fullPath |> ignore
         | Eligible when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate fallbackKind fullPath seenAt
         | Eligible when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately fallbackKind fullPath
         | Eligible -> ()
@@ -9321,36 +9344,51 @@ module Watch =
 
     /// Coordinates queue startup difference for watch behavior for this CLI command path.
     let internal queueStartupDifferenceForWatch (difference: FileSystemDifference) =
-        addPendingStatusDifference difference
+        let snapshot = currentWatchIgnoreSnapshot ()
 
-        match difference.FileSystemEntryType, difference.DifferenceType with
-        | Directory, _ ->
-            let generation = Interlocked.Increment(&directoryWorkGeneration)
+        let fullPath =
+            if Path.IsPathRooted(difference.RelativePath) then
+                difference.RelativePath
+            else
+                Path.Combine(snapshot.RootDirectory, difference.RelativePath)
 
-            directoriesToProcess.TryAdd(
-                difference.RelativePath,
-                {
-                    FullPath = difference.RelativePath
-                    Generation = generation
-                    RepositoryId = Current().RepositoryId
-                    RepositoryName = Current().RepositoryName
-                    BranchId = Current().BranchId
-                    BranchName = Current().BranchName
-                    RootDirectory =
-                        Current().RootDirectory
-                        |> Path.GetFullPath
-                        |> Path.TrimEndingDirectorySeparator
-                }
-            )
-            |> ignore
-        | File, Delete ->
-            let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
+        let pathKind =
+            match difference.FileSystemEntryType, difference.DifferenceType with
+            | Directory, _ -> RepositoryPathKind.DirectoryPath
+            | File, Delete -> RepositoryPathKind.RemovalReconciliationPath
+            | File, _ -> RepositoryPathKind.FilePath
 
-            statusUpdateTriggers.AddOrUpdate(difference.RelativePath, generation, (fun _ _ -> generation))
-            |> ignore
-        | File, _ ->
-            enqueueFileUpload difference.RelativePath
-            |> ignore
+        if classifyRepositoryPathForWatch pathKind fullPath <> RepositoryPathClassification.Library then
+            addPendingStatusDifference difference
+
+            match difference.FileSystemEntryType, difference.DifferenceType with
+            | Directory, _ ->
+                let generation = Interlocked.Increment(&directoryWorkGeneration)
+
+                directoriesToProcess.TryAdd(
+                    difference.RelativePath,
+                    {
+                        FullPath = difference.RelativePath
+                        Generation = generation
+                        RepositoryId = Current().RepositoryId
+                        RepositoryName = Current().RepositoryName
+                        BranchId = Current().BranchId
+                        BranchName = Current().BranchName
+                        RootDirectory =
+                            Current().RootDirectory
+                            |> Path.GetFullPath
+                            |> Path.TrimEndingDirectorySeparator
+                    }
+                )
+                |> ignore
+            | File, Delete ->
+                let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
+
+                statusUpdateTriggers.AddOrUpdate(difference.RelativePath, generation, (fun _ _ -> generation))
+                |> ignore
+            | File, _ ->
+                enqueueFileUpload difference.RelativePath
+                |> ignore
 
     /// Finds the parent directory path that must exist before a replayed directory add can be materialized.
     let private tryParentRelativePathForDirectoryReplayAdd (relativePath: RelativePath) =
@@ -9669,6 +9707,76 @@ module Watch =
             isResyncPending
             requestReplay
 
+    /// Serializes one enabled Library wake while leaving the durable Library cursor as synchronization authority.
+    let internal runLibrarySynchronizationWake
+        (wakeGate: SemaphoreSlim)
+        synchronizationEnabled
+        (synchronize: unit -> Task)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            if synchronizationEnabled () then
+                do! wakeGate.WaitAsync(cancellationToken)
+
+                try
+                    do! synchronize ()
+                    return true
+                finally
+                    wakeGate.Release() |> ignore
+            else
+                return false
+        }
+
+    /// Admits only the versioned repository-scoped Library hint before running the serialized durable pull.
+    let internal handleLibraryContentAvailableWake
+        wakeGate
+        repositoryId
+        synchronizationEnabled
+        synchronize
+        (payload: LibraryContentAvailable)
+        cancellationToken
+        =
+        if payload.EventName = "LibraryContentAvailable.v1"
+           && payload.RepositoryId = repositoryId then
+            runLibrarySynchronizationWake wakeGate synchronizationEnabled synchronize cancellationToken
+        else
+            Task.FromResult(false)
+
+    /// Prevents overlapping SignalR hints from racing the same durable Library pull in one Watch process.
+    let private librarySynchronizationWakeGate = new SemaphoreSlim(1, 1)
+
+    /// Describes how foreground Watch handled one Library-owned filesystem observation.
+    type internal LibraryObservationDisposition =
+        /// The observed file no longer exists, so a later durable wake decides whether work remains.
+        | MissingFile
+        /// Exact durable remote-operation evidence consumed Grace's own filesystem echo.
+        | ExactEchoConsumed
+        /// A genuine or mismatched local observation requested serialized Library synchronization.
+        | SynchronizationRequested
+
+    /// Consumes only an exact durable remote echo and wakes durable Library synchronization for every other live file observation.
+    let internal handleLibraryFileObservation dbPath repositoryId rootDirectory (synchronize: unit -> Task) fullPath =
+        task {
+            if not (File.Exists(fullPath)) then
+                return MissingFile
+            else
+                let relativePath =
+                    Path.GetRelativePath(rootDirectory, fullPath)
+                        .Replace(Path.DirectorySeparatorChar, '/')
+                        .Trim('/')
+
+                let content = LibraryFilesystem.stableRead fullPath
+
+                let! consumed =
+                    LibraryLocalState.tryConsumeWatchEchoForFile dbPath repositoryId relativePath content.Blake3Hash
+
+                if consumed then
+                    return ExactEchoConsumed
+                else
+                    do! synchronize ()
+                    return SynchronizationRequested
+        }
+
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
         inherit AsynchronousCommandLineAction()
@@ -9708,6 +9816,58 @@ module Watch =
                         recoverInitializedLocalStateBeforeWatchRuntime cachedOperationalConfiguration operationalConfiguration cancellationToken
 
                     let initializedStatus = initializedState.Status
+
+                    let librarySynchronizationEnabled () = (Current()).LibrarySynchronizationEnabled
+
+                    let synchronizeLibrary () =
+                        (task {
+                            match! LibraryCommand.runSynchronizationHandler parseResult with
+                            | Ok status ->
+                                let appliedCursor =
+                                    status.ReturnValue.AppliedCursor
+                                    |> Option.defaultValue "<initial>"
+
+                                logToAnsiConsole Colors.Verbose $"Grace Watch completed a Library wake; applied cursor: {appliedCursor}."
+                            | Error error -> logToAnsiConsole Colors.Error $"Grace Watch could not complete a Library wake: {Markup.Escape(error.Error)}"
+                        }
+                        :> Task)
+
+                    let runLibraryWake () =
+                        runLibrarySynchronizationWake librarySynchronizationWakeGate librarySynchronizationEnabled synchronizeLibrary cancellationToken
+
+                    let handleLibraryObservation fullPath =
+                        (task {
+                            try
+                                let! disposition =
+                                    handleLibraryFileObservation
+                                        operationalConfiguration.GraceStatusFile
+                                        operationalConfiguration.RepositoryId
+                                        operationalConfiguration.RootDirectory
+                                        (fun () ->
+                                            (task {
+                                                let! _ = runLibraryWake ()
+                                                return ()
+                                            }
+                                            :> Task))
+                                        fullPath
+
+                                match disposition with
+                                | ExactEchoConsumed -> logToAnsiConsole Colors.Verbose $"Grace Watch consumed an exact Library publication echo for {fullPath}."
+                                | SynchronizationRequested -> ()
+                                | MissingFile ->
+                                    let! _ = runLibraryWake ()
+                                    ()
+                            with ex ->
+                                logToAnsiConsole Colors.Error $"Grace Watch could not handle Library observation {Markup.Escape(fullPath)}: {Markup.Escape(ex.Message)}"
+                        }
+                        :> Task)
+
+                    processLibraryObservation <- handleLibraryObservation
+
+                    use libraryObservationLifetime =
+                        { new IDisposable with
+                            member _.Dispose() = processLibraryObservation <- fun _ -> Task.CompletedTask
+                        }
 
                     ClientIdentity.configureWatchProcessId watchProcessId
 
@@ -9831,6 +9991,12 @@ module Watch =
 
                     use signalRConnection = createSignalRConnection signalRUrl
 
+                    let registerLibraryContent () =
+                        if librarySynchronizationEnabled () then
+                            signalRConnection.InvokeAsync("RegisterLibraryContent", operationalConfiguration.RepositoryId, cancellationToken)
+                        else
+                            Task.CompletedTask
+
                     use refreshSignalRSubscriptions =
                         registerSignalRSubscriptionRefresh (fun () ->
                             refreshSignalRSubscriptionsForActiveConnection (fun () -> registerCurrentSignalRParentBranch signalRConnection cancellationToken)
@@ -9871,6 +10037,20 @@ module Watch =
                         signalRConnection.On<CurrentBranchReferenceNotification>(
                             "NotifyCurrentBranchReference",
                             fun _payload -> (replayCurrentBranchReferenceEvents cancellationToken) :> Task
+                        )
+
+                    use notifyLibraryContentAvailable =
+                        signalRConnection.On<LibraryContentAvailable>(
+                            "NotifyLibraryContentAvailable",
+                            fun payload ->
+                                (handleLibraryContentAvailableWake
+                                    librarySynchronizationWakeGate
+                                    operationalConfiguration.RepositoryId
+                                    librarySynchronizationEnabled
+                                    synchronizeLibrary
+                                    payload
+                                    cancellationToken)
+                                :> Task
                         )
 
                     use notifyOnSave =
@@ -9924,12 +10104,17 @@ module Watch =
                                             registerCurrentSignalRParentBranch signalRConnection cancellationToken))
                                     (fun () -> replayCurrentBranchReferenceEvents cancellationToken)
 
+                            do! registerLibraryContent ()
+                            let! _ = runLibraryWake ()
+
                             ()
                         })
 
                     do! signalRConnection.StartAsync(cancellationToken)
                     // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.
                     do! signalRConnection.InvokeAsync("RegisterRepository", operationalConfiguration.RepositoryId, cancellationToken)
+                    do! registerLibraryContent ()
+                    let! _ = runLibraryWake ()
 
                     logToAnsiConsole
                         Colors.Highlighted

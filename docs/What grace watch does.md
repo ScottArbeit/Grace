@@ -6,17 +6,18 @@ One of the most important pieces of Grace is `grace watch`. `grace watch` is a b
 
 Most Grace users will be programmers, and we're a more technical audience. We know that background processes can be used in ways that are helpful, harmful, or just wasteful. As someone asking you to run a background process, I have a special responsibility to be transparent with you about what `grace watch` does if you allow it to run. (Which you totally should.) I want you to have complete confidence that running `grace watch` is safe and trustworthy.
 
-## Libraries are remote-only
+## Library synchronization wakes
 
-Product V1 Libraries do not add a fourth local caller to Working Directory Update. Configuring a
-Library changes repository path ownership: Save and Reference reject it, while Branch and Working Directory
-Update exclude that root and its descendants using exact path-segment matching. Watch continues to replay only the
-accepted Reference events and version-controlled paths described below; it cannot publish Library paths through
-those server boundaries.
+Product V1 Libraries do not add a fourth local caller to Working Directory Update. Configuring a Library changes
+repository path ownership: Save and Reference reject it, while Branch and Working Directory Update exclude that root
+and its descendants using exact path-segment matching. Library synchronization shares the repository-root exclusion,
+but it writes its own terminal state in the existing local SQLite database and never writes a WDU completion.
 
-The server's library wake belongs to authorized remote SDK clients. `grace watch` does not subscribe to
-it, materialize Library bytes, write Library metadata to local SQLite, or publish Library files. Those
-local behaviors remain deferred.
+When `LibrarySynchronizationEnabled` is true, `grace watch` subscribes to the repository-scoped
+`LibraryContentAvailable.v1` SignalR notification. The payload is only a wake: Watch ignores its cursor and catalog
+values as authority and invokes the same durable `library sync run` pull. Duplicate and delayed wakes serialize, then
+reread the local cursor. Exact durable operation, path, item, and BLAKE3 evidence suppresses only Grace's own matching
+filesystem echo.
 
 ## No dark patterns
 
@@ -53,6 +54,9 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   opaque cursor stored for the current repository and branch. Changed-root and same-root events both pass through
   Working Directory Update. Watch advances that cursor only after durable local completion becomes terminal, then
   publishes clean IPC from the completed root.
+- When Library synchronization is enabled, the same repository SignalR group can wake a Library pull. The accepted
+  server change order and `.grace/grace-local.db` cursor remain authoritative. A wake never writes a file or advances a
+  cursor directly, and Library completion never becomes a Watch WDU completion.
 - Watch starts with a complete status tree and a matching ordered remote-event boundary for the configured repository and
   branch. It also recovers one exact restart state before runtime admission: target status plus predecessor boundary when
   an exact retained pending or terminal Watch Working Directory Update completion explains the mismatch. Missing,

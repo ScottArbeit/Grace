@@ -70,6 +70,9 @@ module Configuration =
         /// The current format of configuration.
         member val public ConfigurationVersion = String.Empty with get, set
 
+        /// Indicates that this Windows working copy participates in Library synchronization.
+        member val public LibrarySynchronizationEnabled = false with get, set
+
         /// The current list of graceignore.json entries.
         [<JsonIgnore(Condition = JsonIgnoreCondition.Always)>]
         member val public GraceIgnoreEntries = [| String.Empty |] with get, set
