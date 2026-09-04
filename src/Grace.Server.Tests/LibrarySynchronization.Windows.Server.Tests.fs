@@ -11,6 +11,7 @@ open Grace.Types.Library
 open Microsoft.Data.Sqlite
 open NUnit.Framework
 open System
+open System.Collections.Concurrent
 open System.Diagnostics
 open System.IO
 open System.Net
@@ -33,6 +34,9 @@ module LibrarySynchronizationWindowsServerTests =
         let cancellation = new CancellationTokenSource()
         let mutable dropNextAcceptedSubmit = 0
         let mutable droppedAcceptedSubmitCount = 0
+
+        /// Maps short HttpListener-safe aliases back to the unchanged signed Library read grants.
+        let readGrantTokens = ConcurrentDictionary<string, string>(StringComparer.Ordinal)
 
         let port =
             use probe = new TcpListener(IPAddress.Loopback, 0)
@@ -66,7 +70,21 @@ module LibrarySynchronizationWindowsServerTests =
         let forwardAsync (context: HttpListenerContext) =
             task {
                 try
-                    let relative = context.Request.RawUrl.TrimStart('/')
+                    let requestedRelative = context.Request.RawUrl.TrimStart('/')
+
+                    let relative =
+                        if
+                            context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase)
+                            && context.Request.Url.AbsolutePath.StartsWith("/libraries/content/", StringComparison.OrdinalIgnoreCase)
+                        then
+                            let alias = context.Request.Url.AbsolutePath.Substring("/libraries/content/".Length)
+
+                            match readGrantTokens.TryRemove(alias) with
+                            | true, token -> $"libraries/content/{Uri.EscapeDataString token}"
+                            | false, _ -> requestedRelative
+                        else
+                            requestedRelative
+
                     let targetUri = Uri(Uri(serverBaseAddress.TrimEnd('/') + "/"), relative)
                     TestContext.Progress.WriteLine($"Library tracer proxy forwarding {context.Request.HttpMethod} /{relative}.")
                     use forward = new HttpRequestMessage(HttpMethod(context.Request.HttpMethod), targetUri)
@@ -78,7 +96,31 @@ module LibrarySynchronizationWindowsServerTests =
 
                     copyRequestHeaders context.Request forward
                     use! response = client.SendAsync(forward, HttpCompletionOption.ResponseContentRead, cancellation.Token)
-                    let! responseBytes = response.Content.ReadAsByteArrayAsync(cancellation.Token)
+                    let! originalResponseBytes = response.Content.ReadAsByteArrayAsync(cancellation.Token)
+
+                    let responseBytes =
+                        if
+                            response.IsSuccessStatusCode
+                            && context.Request.Url.AbsolutePath.Equals("/libraries/content/read", StringComparison.OrdinalIgnoreCase)
+                        then
+                            let envelope =
+                                originalResponseBytes
+                                |> Text.Encoding.UTF8.GetString
+                                |> deserialize<GraceReturnValue<LibraryContentReadGrantDto>>
+
+                            let alias = Guid.NewGuid().ToString("N")
+                            readGrantTokens[alias] <- envelope.ReturnValue.GrantId
+
+                            {
+                                envelope.ReturnValue with
+                                    GrantId = alias
+                                    DownloadPath = $"/libraries/content/{alias}"
+                            }
+                            |> fun grant -> GraceReturnValue.Create grant envelope.CorrelationId
+                            |> serialize
+                            |> Text.Encoding.UTF8.GetBytes
+                        else
+                            originalResponseBytes
 
                     let shouldDrop =
                         response.IsSuccessStatusCode
