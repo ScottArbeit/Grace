@@ -2901,6 +2901,44 @@ type UploadSessionActorTests() =
                 ))
         )
 
+    /// Verifies a crash after reminder scheduling but before retention persistence repairs the exact due reminder through StateDeleted.
+    [<Test>]
+    member _.DueCleanupReminderRepairsMissingRetentionStateAndDeletes() =
+        let deleteAt = timestamp + Duration.FromDays(30.0)
+
+        let finalized =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                LifecycleState = UploadSessionLifecycleState.Finalized
+                StartedAt = timestamp
+                LastOperationId = Some "op-finalize"
+                CleanupReminderScheduledAt = None
+                CleanupReminderOperationId = None
+            }
+
+        let reminder = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-finalize" "corr-repair" timestamp deleteAt
+
+        Assert.That(UploadSessionActor.evaluateCleanupReminder deleteAt finalized reminder, Is.EqualTo(UploadSessionActor.RepairCleanupReminderStateAndDelete))
+
+        let repairEvent = UploadSessionActor.createCleanupReminderRepairEvent reminder (metadata "corr-repair")
+        let retentionPending = UploadSessionDto.UpdateDto repairEvent finalized
+
+        let deleted =
+            UploadSessionActor.decideCommand
+                [ repairEvent ]
+                retentionPending
+                (UploadSessionCommand.DeletePhysicalState reminder.OperationId)
+                (metadata "corr-delete")
+            |> decisionOrFail "Expected repaired due reminder cleanup to succeed"
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(retentionPending.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+                Assert.That(retentionPending.CleanupReminderScheduledAt, Is.EqualTo(Some deleteAt))
+                Assert.That(deleted.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.StateDeleted)))
+        )
+
     /// Verifies that delete Physical State After Finalize Preserves Manifest Evidence And Clears Upload Coordination.
     [<Test>]
     member _.DeletePhysicalStateAfterFinalizePreservesManifestEvidenceAndClearsUploadCoordination() =

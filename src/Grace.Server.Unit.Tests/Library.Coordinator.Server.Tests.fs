@@ -58,6 +58,21 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
     let catalogOperations = Dictionary<LibraryOperationId, LibraryCatalogOperationDocument>()
     let histories = HashSet<string>(StringComparer.Ordinal)
 
+    /// Stores only control-authorized catalog operation upgrades in the fake durable projection.
+    let storeAuthoritativeCatalogOperation (operation: LibraryCatalogOperationDocument) =
+        match catalogOperations.TryGetValue operation.OperationId with
+        | true, existing when existing = operation -> ()
+        | true, existing when
+            existing.RequestHash = operation.RequestHash
+            && existing.ControlCommitVersion.IsNone
+            && existing.Result.Outcome = OutcomeKind.Accepted
+            && (operation.ControlCommitVersion.IsSome
+                || operation.Result.Outcome <> OutcomeKind.Accepted)
+            ->
+            catalogOperations[operation.OperationId] <- operation
+        | true, _ -> invalidOp "Catalog operation identity was reused for different content."
+        | false, _ -> catalogOperations.Add(operation.OperationId, operation)
+
     /// Raises the configured failure once at its exact durable effect boundary.
     let failOnce point =
         if pendingFailure = Some point then
@@ -69,6 +84,9 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
 
     /// Returns the number of unique durable records retained by the fake store.
     member _.Counts = canonicals.Count, items.Count, slots.Count, receipts.Count, histories.Count
+
+    /// Injects the pre-control-CAS catalog operation produced by the reviewed crash interleaving.
+    member _.InjectCatalogOperation(operation: LibraryCatalogOperationDocument) = catalogOperations.Add(operation.OperationId, operation)
 
     interface ILibraryStore with
 
@@ -89,30 +107,51 @@ type private FailingLibraryStore(initialControl: LibraryControlDocument, failure
             }
 
         member _.ReadCatalogOperationAsync(_repositoryId, operationId, _cancellationToken) =
+            control.LatestCatalogOperation
+            |> Option.iter storeAuthoritativeCatalogOperation
+
             match catalogOperations.TryGetValue operationId with
-            | true, operation -> Task.FromResult(Some operation)
+            | true, operation when operation.Result.Outcome <> OutcomeKind.Accepted -> Task.FromResult(Some operation)
+            | true, operation when operation.ControlCommitVersion = Some operation.Result.LibraryCatalog.Version -> Task.FromResult(Some operation)
+            | true, operation ->
+                match control.LatestCatalogOperation with
+                | Some committed when
+                    committed.OperationId = operation.OperationId
+                    && committed.RequestHash = operation.RequestHash
+                    ->
+                    Task.FromResult(Some committed)
+                | _ when operation.Result.LibraryCatalog.PreviousVersion = Some control.LibraryCatalog.Version -> Task.FromResult None
+                | _ ->
+                    let rejected =
+                        { operation with
+                            SchemaVersion = 2
+                            ControlCommitVersion = None
+                            Result =
+                                { operation.Result with
+                                    Outcome = OutcomeKind.StalePolicy
+                                    LibraryCatalog = control.LibraryCatalog
+                                    ReasonCode = Some OutcomeKind.StalePolicy
+                                }
+                        }
+
+                    storeAuthoritativeCatalogOperation rejected
+                    Task.FromResult(Some rejected)
             | false, _ -> Task.FromResult None
 
         member _.ReplaceControlAndCreateCatalogOperationAsync(replacement, expectedEtag, operation, _cancellationToken) =
             task {
-                if expectedEtag <> string etag
-                   || catalogOperations.ContainsKey operation.OperationId then
+                if expectedEtag <> string etag then
                     return PreconditionFailed
                 else
-                    control <- replacement
-                    catalogOperations.Add(operation.OperationId, operation)
+                    let committed = { operation with SchemaVersion = 2; ControlCommitVersion = Some operation.Result.LibraryCatalog.Version }
+
+                    control <- { replacement with LatestCatalogOperation = Some committed }
                     etag <- etag + 1
+                    storeAuthoritativeCatalogOperation committed
                     return Replaced(string etag)
             }
 
-        member _.CreateCatalogOperationAsync(operation, _cancellationToken) =
-            task {
-                match catalogOperations.TryGetValue operation.OperationId with
-                | true, existing when existing = operation -> ()
-                | true, _ -> invalidOp "Catalog operation identity was reused for different content."
-                | false, _ -> catalogOperations.Add(operation.OperationId, operation)
-            }
-            :> Task
+        member _.CreateCatalogOperationAsync(operation, _cancellationToken) = task { storeAuthoritativeCatalogOperation operation } :> Task
 
         member _.ReadReceiptAsync(_repositoryId, operationId, _cancellationToken) =
             match receipts.TryGetValue operationId with
@@ -345,6 +384,7 @@ type LibraryCoordinatorTests() =
                 CurrentBaselineCursor = None
                 ProjectionWatermarks = LibraryProjectionWatermarks.Empty
                 UpdatedAt = now
+                LatestCatalogOperation = None
             }
 
         repositoryId, control
@@ -863,6 +903,62 @@ type LibraryCoordinatorTests() =
                     Assert.That(current, Is.EqualTo(catalogB))
                     Assert.That(conflictingA.Outcome, Is.EqualTo(OutcomeKind.Rejected))
                     Assert.That(conflictingA.ReasonCode, Is.EqualTo(Some RejectionReason.OperationIdentityMismatch)))
+            )
+        }
+
+    /// Verifies an Accepted operation written before a losing control CAS never becomes externally final.
+    [<Test>]
+    member _.CatalogOperationCreatedBeforeLosingControlCasCannotReplayAccepted() =
+        task {
+            let repositoryId, pendingControl = pendingFixture ()
+            let initialControl = { pendingControl with Pending = None; CurrentBaselineId = None; CurrentBaselineCursor = None }
+            let store = FailingLibraryStore(initialControl, "never")
+            let coordinator = LibraryCoordinator.Coordinator(store, LibraryCoordinator.LibraryCursorCodec(Array.create 32 0x48uy)) :> ILibraryCoordinator
+            let now = Instant.FromUtc(2026, 9, 4, 12, 30)
+            let losingOperationId = Guid.Parse "17e6a149-c975-4f3c-b655-d5fa13782002"
+            let winningOperationId = Guid.Parse "c50278e7-d609-45fb-af75-52a8368a08d8"
+
+            let losingCatalog =
+                { initialControl.LibraryCatalog with
+                    Version = Guid.Parse "39183969-25ab-4707-aa2b-fc8e95a606eb"
+                    Libraries = [| "shared" |]
+                    PreviousVersion = Some initialControl.LibraryCatalog.Version
+                    CreatedAt = now
+                }
+
+            let winningCatalog =
+                { initialControl.LibraryCatalog with
+                    Version = Guid.Parse "a7eb829b-01b3-4e3b-b5ef-5aa87a709760"
+                    Libraries = [| "media" |]
+                    PreviousVersion = Some initialControl.LibraryCatalog.Version
+                    CreatedAt = now + Duration.FromSeconds 1L
+                }
+
+            let result operationId catalog =
+                { OperationId = operationId; Outcome = OutcomeKind.Accepted; LibraryCatalog = catalog; ReasonCode = None; RecordedAt = catalog.CreatedAt }
+
+            store.InjectCatalogOperation(
+                {
+                    id = $"catalog-operation:{losingOperationId:D}"
+                    RepositoryId = repositoryId
+                    SchemaVersion = 1
+                    OperationId = losingOperationId
+                    RequestHash = "request-loser"
+                    Result = result losingOperationId losingCatalog
+                    ControlCommitVersion = None
+                }
+            )
+
+            let! acceptedWinner = coordinator.SetCatalogAsync(repositoryId, "request-winner", result winningOperationId winningCatalog, CancellationToken.None)
+            let! replayedLoser = coordinator.SetCatalogAsync(repositoryId, "request-loser", result losingOperationId losingCatalog, CancellationToken.None)
+            let! current = coordinator.GetCatalogAsync(repositoryId, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(acceptedWinner.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That(current, Is.EqualTo(winningCatalog))
+                    Assert.That(replayedLoser.Outcome, Is.EqualTo(OutcomeKind.StalePolicy))
+                    Assert.That(replayedLoser.LibraryCatalog, Is.EqualTo(winningCatalog)))
             )
         }
 

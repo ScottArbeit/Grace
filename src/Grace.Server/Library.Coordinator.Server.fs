@@ -832,10 +832,11 @@ module LibraryCoordinator =
                                 {
                                     id = $"catalog-operation:{proposedResult.OperationId:D}"
                                     RepositoryId = repositoryId
-                                    SchemaVersion = 1
+                                    SchemaVersion = 2
                                     OperationId = proposedResult.OperationId
                                     RequestHash = requestHash
                                     Result = durableResult
+                                    ControlCommitVersion = None
                                 }
 
                             if durableResult.Outcome = OutcomeKind.Accepted then

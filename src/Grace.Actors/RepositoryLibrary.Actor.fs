@@ -28,6 +28,21 @@ module RepositoryLibrary =
     /// Builds the three-component actor key required by the Receipts storage purpose.
     let fallbackActorKey (repositoryId: RepositoryId) cursor = $"{repositoryId:D}|{FailedGraceEventRecordKind}|{fallbackRecordKey cursor}"
 
+    /// Retries deterministic fallback identities in repository order and stops at the first still-retained envelope.
+    let recoverFailedGraceEvents startCursor appliedThrough retry =
+        task {
+            let mutable cursor = max 1L startCursor
+            let mutable resolved = true
+
+            while resolved && cursor <= appliedThrough do
+                let! retryResolved = retry cursor
+                resolved <- retryResolved
+
+                if retryResolved then cursor <- cursor + 1L
+
+            return cursor
+        }
+
     /// Rechecks current authority before invoking any durable submission effect.
     let submitWhenAuthorized authorize submit =
         task {
@@ -41,6 +56,8 @@ module RepositoryLibrary =
 /// Owns one repository's bounded Library catalog and serialized Library change lane.
 type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibraryWriteAuthorizer, store: ILibraryStore, codec: ILibraryCursorCodec) =
     inherit Grain()
+
+    let mutable graceEventRecoveryCursor = 1L
 
     /// Resolves one bounded failed-notification actor without widening the repository actor constructor contract.
     member private this.GetGraceEventFallbackActor(repositoryId, cursor) =
@@ -136,6 +153,15 @@ type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibra
             task {
                 let repositoryId = this.GetPrimaryKey()
                 do! coordinator.RepairAsync(repositoryId, CancellationToken.None)
+
+                let! control = store.ReadControlAsync(repositoryId, CancellationToken.None)
+
+                let! nextCursor =
+                    RepositoryLibrary.recoverFailedGraceEvents graceEventRecoveryCursor control.Document.AppliedThrough (fun cursor ->
+                        let fallbackActor = this.GetGraceEventFallbackActor(repositoryId, cursor)
+                        fallbackActor.Retry())
+
+                graceEventRecoveryCursor <- nextCursor
             }
             :> Task
 

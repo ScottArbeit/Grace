@@ -365,6 +365,7 @@ module LibraryPersistence =
                             CurrentBaselineCursor = None
                             ProjectionWatermarks = LibraryProjectionWatermarks.Empty
                             UpdatedAt = SystemClock.Instance.GetCurrentInstant()
+                            LatestCatalogOperation = None
                         }
 
                     let! document, version =
@@ -398,55 +399,81 @@ module LibraryPersistence =
                 task {
                     cancellationToken.ThrowIfCancellationRequested()
 
+                    let! controlRead = control repositoryId |> fun actor -> actor.Read()
+
+                    let controlDocument =
+                        match controlRead with
+                        | Some (document, _) -> document
+                        | None -> invalidOp $"Library control for repository {repositoryId:D} does not exist."
+
+                    match controlDocument.LatestCatalogOperation with
+                    | Some latest ->
+                        do!
+                            catalogOperation repositoryId latest.OperationId
+                            |> fun actor -> actor.StoreAuthoritative latest
+                    | None -> ()
+
                     match! catalogOperation repositoryId operationId
                            |> fun actor -> actor.Read()
                         with
                     | None -> return None
+                    | Some operation when operation.Result.Outcome <> OutcomeKind.Accepted -> return Some operation
+                    | Some operation when operation.ControlCommitVersion = Some operation.Result.LibraryCatalog.Version -> return Some operation
                     | Some operation ->
-                        let mutable reconciled = false
+                        match controlDocument.LatestCatalogOperation with
+                        | Some committed when
+                            committed.OperationId = operation.OperationId
+                            && committed.RequestHash = operation.RequestHash
+                            ->
+                            return Some committed
+                        | _ when operation.Result.LibraryCatalog.PreviousVersion = Some controlDocument.LibraryCatalog.Version -> return None
+                        | _ ->
+                            let rejected =
+                                { operation with
+                                    SchemaVersion = 2
+                                    ControlCommitVersion = None
+                                    Result =
+                                        { operation.Result with
+                                            Outcome = OutcomeKind.StalePolicy
+                                            LibraryCatalog = controlDocument.LibraryCatalog
+                                            ReasonCode = Some OutcomeKind.StalePolicy
+                                        }
+                                }
 
-                        while not reconciled do
-                            match! control repositoryId |> fun actor -> actor.Read() with
-                            | None -> invalidOp $"Library control for repository {repositoryId:D} does not exist."
-                            | Some (controlDocument, _) when controlDocument.LibraryCatalog.Version = operation.Result.LibraryCatalog.Version ->
-                                reconciled <- true
-                            | Some (controlDocument, version) when operation.Result.LibraryCatalog.PreviousVersion = Some controlDocument.LibraryCatalog.Version ->
-                                let replacement =
-                                    { controlDocument with
-                                        LibraryCatalog = operation.Result.LibraryCatalog
-                                        UpdatedAt = SystemClock.Instance.GetCurrentInstant()
-                                    }
+                            do!
+                                catalogOperation repositoryId operationId
+                                |> fun actor -> actor.StoreAuthoritative rejected
 
-                                let! replaced =
-                                    control repositoryId
-                                    |> fun actor -> actor.Replace replacement version
-
-                                reconciled <- replaced
-                            | Some _ -> reconciled <- true
-
-                        return Some operation
+                            return Some rejected
                 }
 
             member _.ReplaceControlAndCreateCatalogOperationAsync(document, etag, operation, cancellationToken) =
                 task {
                     cancellationToken.ThrowIfCancellationRequested()
 
-                    do!
-                        catalogOperation document.RepositoryId operation.OperationId
-                        |> fun actor -> actor.CreateExact operation
+                    let committed = { operation with SchemaVersion = 2; ControlCommitVersion = Some operation.Result.LibraryCatalog.Version }
+
+                    let replacement = { document with LatestCatalogOperation = Some committed }
 
                     let! replaced =
                         control document.RepositoryId
-                        |> fun actor -> actor.Replace document etag
+                        |> fun actor -> actor.Replace replacement etag
 
-                    return if replaced then Replaced String.Empty else PreconditionFailed
+                    if replaced then
+                        do!
+                            catalogOperation document.RepositoryId operation.OperationId
+                            |> fun actor -> actor.StoreAuthoritative committed
+
+                        return Replaced String.Empty
+                    else
+                        return PreconditionFailed
                 }
 
             member _.CreateCatalogOperationAsync(operation, cancellationToken) =
                 cancellationToken.ThrowIfCancellationRequested()
 
                 catalogOperation operation.RepositoryId operation.OperationId
-                |> fun actor -> actor.CreateExact operation
+                |> fun actor -> actor.StoreAuthoritative operation
 
             member _.ReadReceiptAsync(repositoryId, operationId, cancellationToken) =
                 cancellationToken.ThrowIfCancellationRequested()

@@ -223,3 +223,56 @@ type LibraryGraceEventDeliveryTests() =
 
             Assert.That((effects |> Seq.toArray) = expectedEffects, Is.True)
         }
+
+    /// Verifies repository repair finds a retained cursor after restart and clears the same envelope after transport recovery.
+    [<Test>]
+    member _.RepositoryRepairAfterRestartRetriesRetainedEnvelopeAndClears() =
+        task {
+            let candidate = envelope ()
+            let mutable retained = None
+
+            let! initial =
+                GraceEventDelivery.attempt
+                    (fun _ -> Task.FromException(InvalidOperationException("terminal transport failure")))
+                    (fun failed ->
+                        retained <- Some failed
+                        Task.CompletedTask)
+                    (fun () -> Task.CompletedTask)
+                    false
+                    candidate
+
+            Assert.That(initial, Is.EqualTo GraceEventDelivery.Deferred)
+
+            let mutable resent = None
+
+            let retry retainedCursor =
+                task {
+                    match retainedCursor, retained with
+                    | value, Some failed when value = cursor ->
+                        let! result =
+                            GraceEventDelivery.attempt
+                                (fun exact ->
+                                    resent <- Some exact
+                                    Task.CompletedTask)
+                                (fun _ -> Task.CompletedTask)
+                                (fun () ->
+                                    retained <- None
+                                    Task.CompletedTask)
+                                true
+                                failed
+
+                        return result = GraceEventDelivery.Delivered
+                    | _ -> return true
+                }
+
+            let! nextCursor = RepositoryLibrary.recoverFailedGraceEvents 1L cursor retry
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(nextCursor, Is.EqualTo(cursor + 1L))
+                    Assert.That(retained, Is.EqualTo(None))
+                    Assert.That(resent, Is.EqualTo(Some candidate))
+                    Assert.That(resent.Value.MessageId, Is.EqualTo(candidate.MessageId))
+                    Assert.That(Convert.ToHexString(resent.Value.Body), Is.EqualTo(Convert.ToHexString(candidate.Body))))
+            )
+        }

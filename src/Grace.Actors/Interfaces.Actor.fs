@@ -800,8 +800,8 @@ module Interfaces =
         /// Returns the immutable catalog-operation result when it exists.
         abstract member Read: unit -> Task<LibraryCatalogOperationDocument option>
 
-        /// Creates the result or confirms an exact deterministic retry.
-        abstract member CreateExact: candidate: LibraryCatalogOperationDocument -> Task
+        /// Creates an authoritative result or promotes the same provisional identity after control decides its outcome.
+        abstract member StoreAuthoritative: candidate: LibraryCatalogOperationDocument -> Task
 
     /// Owns one immutable accepted Library change at its deterministic cursor identity.
     [<Interface>]

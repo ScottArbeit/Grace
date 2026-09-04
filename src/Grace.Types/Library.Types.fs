@@ -682,6 +682,26 @@ module Library =
             TargetItemIds: LibraryItemId array
         }
 
+    /// Stores one catalog-operation result together with the control version that made an accepted transition authoritative.
+    [<CLIMutable; GenerateSerializer>]
+    type LibraryCatalogOperationDocument =
+        {
+            [<Id(0u)>]
+            id: string
+            [<Id(1u)>]
+            RepositoryId: RepositoryId
+            [<Id(2u)>]
+            SchemaVersion: int
+            [<Id(3u)>]
+            OperationId: LibraryOperationId
+            [<Id(4u)>]
+            RequestHash: string
+            [<Id(5u)>]
+            Result: LibraryCatalogChangeResultDto
+            [<Id(6u)>]
+            ControlCommitVersion: LibraryCatalogVersion option
+        }
+
     /// Persists the bounded serialized command lane and repository synchronization configuration.
     [<CLIMutable; GenerateSerializer>]
     type LibraryControlDocument =
@@ -712,6 +732,8 @@ module Library =
             ProjectionWatermarks: LibraryProjectionWatermarks
             [<Id(12u)>]
             UpdatedAt: Instant
+            [<Id(13u)>]
+            LatestCatalogOperation: LibraryCatalogOperationDocument option
         }
 
     /// Stores one rebuildable current item projection and its canonical position.
@@ -914,24 +936,6 @@ module Library =
         /// Returns an empty fixed-width directory whose entries correspond to one low hash byte.
         static member Empty = { Counts = Array.zeroCreate 256 }
 
-    /// Stores one immutable catalog-operation result in the same repository partition as its atomic catalog mutation.
-    [<CLIMutable; GenerateSerializer>]
-    type LibraryCatalogOperationDocument =
-        {
-            [<Id(0u)>]
-            id: string
-            [<Id(1u)>]
-            RepositoryId: RepositoryId
-            [<Id(2u)>]
-            SchemaVersion: int
-            [<Id(3u)>]
-            OperationId: LibraryOperationId
-            [<Id(4u)>]
-            RequestHash: string
-            [<Id(5u)>]
-            Result: LibraryCatalogChangeResultDto
-        }
-
     /// Retains the existing immutable-content location behind one public content-version identity.
     [<CLIMutable; GenerateSerializer>]
     type LibraryContentLocationDocument =
@@ -981,7 +985,7 @@ module Library =
         abstract member ReadCatalogOperationAsync:
             repositoryId: RepositoryId * operationId: LibraryOperationId * cancellationToken: CancellationToken -> Task<LibraryCatalogOperationDocument option>
 
-        /// Atomically replaces the catalog control state and creates its immutable operation result in one repository partition.
+        /// Commits an accepted catalog operation with the control CAS, then projects that authoritative result by operation identity.
         abstract member ReplaceControlAndCreateCatalogOperationAsync:
             control: LibraryControlDocument * etag: string * operation: LibraryCatalogOperationDocument * cancellationToken: CancellationToken ->
                 Task<LibraryControlWriteResult>

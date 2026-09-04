@@ -78,25 +78,48 @@ module UploadSession =
     type CleanupReminderDisposition =
         | IgnoreCleanupReminder
         | RescheduleCleanupReminder of delay: Duration
+        | RepairCleanupReminderStateAndReschedule of delay: Duration
+        | RepairCleanupReminderStateAndDelete
         | DeleteUploadSessionState
+
+    /// Reconstructs the already-scheduled retention event from exact durable reminder state after a scheduling crash gap.
+    let createCleanupReminderRepairEvent (reminder: PhysicalDeletionReminderState) (metadata: EventMetadata) =
+        { Event = UploadSessionEventType.CleanupReminderScheduled(reminder.OperationId, reminder.DeleteAt); Metadata = metadata }
 
     /// Rechecks the persisted session generation and retention deadline before temporary state deletion.
     let evaluateCleanupReminder now (session: UploadSessionDto) (reminder: PhysicalDeletionReminderState) =
         if session.UploadSessionId
            <> reminder.UploadSessionId
            || session.RepositoryId <> reminder.RepositoryId
-           || session.StartedAt <> reminder.ExpectedStartedAt
-           || session.CleanupReminderOperationId
-              <> Some reminder.OperationId
-           || session.CleanupReminderScheduledAt
-              <> Some reminder.DeleteAt
-           || session.LifecycleState
-              <> UploadSessionLifecycleState.RetentionPending then
+           || session.StartedAt <> reminder.ExpectedStartedAt then
             IgnoreCleanupReminder
-        elif now < reminder.DeleteAt then
-            RescheduleCleanupReminder(reminder.DeleteAt - now)
         else
-            DeleteUploadSessionState
+            let exactPersistedRetention =
+                session.CleanupReminderOperationId = Some reminder.OperationId
+                && session.CleanupReminderScheduledAt = Some reminder.DeleteAt
+                && session.LifecycleState = UploadSessionLifecycleState.RetentionPending
+
+            let exactMissingRetention =
+                session.CleanupReminderOperationId.IsNone
+                && session.CleanupReminderScheduledAt.IsNone
+                && (session.LifecycleState = UploadSessionLifecycleState.Finalized
+                    || session.LifecycleState = UploadSessionLifecycleState.Abandoned
+                    || session.LifecycleState = UploadSessionLifecycleState.Expired)
+                && (session.LastOperationId
+                    |> Option.map createCleanupOperationId) = Some reminder.OperationId
+
+            if exactPersistedRetention then
+                if now < reminder.DeleteAt then
+                    RescheduleCleanupReminder(reminder.DeleteAt - now)
+                else
+                    DeleteUploadSessionState
+            elif exactMissingRetention then
+                if now < reminder.DeleteAt then
+                    RepairCleanupReminderStateAndReschedule(reminder.DeleteAt - now)
+                else
+                    RepairCleanupReminderStateAndDelete
+            else
+                IgnoreCleanupReminder
 
     /// Coordinates event operation id logic for the UploadSession actor.
     let private eventOperationId uploadSessionEvent =
@@ -1917,6 +1940,25 @@ module UploadSession =
                         if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
             }
 
+        /// Deletes retained upload coordination after the exact cleanup reminder has passed its durable-state recheck.
+        member private this.DeletePhysicalStateFromCleanupReminder(reminderState: PhysicalDeletionReminderState) =
+            task {
+                let metadata = EventMetadata.New reminderState.CorrelationId "system"
+                let command = UploadSessionCommand.DeletePhysicalState reminderState.OperationId
+
+                match decideCommand state.State uploadSessionDto command metadata with
+                | Error error -> return Error error
+                | Ok decision ->
+                    match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
+                    | Error error -> return Error error
+                    | Ok _ ->
+                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
+                        do! this.CompactPhysicalStateEvents()
+                        this.DeactivateActorOnIdle()
+                        return Ok()
+            }
+
         interface IGraceReminderWithGuidKey with
             /// Schedules schedule reminder async work for the UploadSession actor.
             member this.ScheduleReminderAsync reminderType delay reminderState correlationId =
@@ -1958,21 +2000,26 @@ module UploadSession =
                                     reminderState.CorrelationId
 
                             return Ok()
-                        | DeleteUploadSessionState ->
+                        | RepairCleanupReminderStateAndReschedule delay ->
                             let metadata = EventMetadata.New reminderState.CorrelationId "system"
-                            let command = UploadSessionCommand.DeletePhysicalState reminderState.OperationId
+                            let repairEvent = createCleanupReminderRepairEvent reminderState metadata
+                            do! this.ApplyEvents [ repairEvent ]
 
-                            match decideCommand state.State uploadSessionDto command metadata with
-                            | Ok decision ->
-                                match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
-                                | Error error -> return Error error
-                                | Ok _ ->
-                                    if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                            do!
+                                (this :> IGraceReminderWithGuidKey)
+                                    .ScheduleReminderAsync
+                                    ReminderTypes.PhysicalDeletion
+                                    delay
+                                    reminder.State
+                                    reminderState.CorrelationId
 
-                                    do! this.CompactPhysicalStateEvents()
-                                    this.DeactivateActorOnIdle()
-                                    return Ok()
-                            | Error error -> return Error error
+                            return Ok()
+                        | RepairCleanupReminderStateAndDelete ->
+                            let metadata = EventMetadata.New reminderState.CorrelationId "system"
+                            let repairEvent = createCleanupReminderRepairEvent reminderState metadata
+                            do! this.ApplyEvents [ repairEvent ]
+                            return! this.DeletePhysicalStateFromCleanupReminder reminderState
+                        | DeleteUploadSessionState -> return! this.DeletePhysicalStateFromCleanupReminder reminderState
                     | reminderType, reminderState ->
                         return
                             Error(

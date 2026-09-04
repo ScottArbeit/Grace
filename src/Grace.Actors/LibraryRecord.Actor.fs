@@ -124,7 +124,7 @@ type LibraryControlRecordActor([<PersistentState("library-control-record", Const
                     return true
             }
 
-/// Persists one immutable catalog-operation result under the control storage purpose.
+/// Persists one catalog-operation projection whose accepted result is final only after the control version is recorded.
 type LibraryCatalogOperationRecordActor
     (
         [<PersistentState("library-catalog-operation", Constants.LibraryControlStorage)>] state: IPersistentState<LibraryCatalogOperationDocument>
@@ -133,7 +133,26 @@ type LibraryCatalogOperationRecordActor
 
     interface ILibraryCatalogOperationRecordActor with
         member _.Read() = Task.FromResult(LibraryRecord.read state)
-        member _.CreateExact candidate = LibraryRecord.createExact candidate.id state candidate
+
+        member _.StoreAuthoritative candidate =
+            task {
+                match LibraryRecord.read state with
+                | None ->
+                    state.State <- candidate
+                    do! state.WriteStateAsync()
+                | Some existing when LibraryRecord.equivalent existing candidate -> ()
+                | Some existing when
+                    existing.OperationId = candidate.OperationId
+                    && String.Equals(existing.RequestHash, candidate.RequestHash, StringComparison.Ordinal)
+                    && existing.ControlCommitVersion.IsNone
+                    && existing.Result.Outcome = OutcomeKind.Accepted
+                    && (candidate.ControlCommitVersion.IsSome
+                        || candidate.Result.Outcome <> OutcomeKind.Accepted)
+                    ->
+                    state.State <- candidate
+                    do! state.WriteStateAsync()
+                | Some _ -> invalidOp $"Catalog operation {candidate.id} cannot be replaced by different authoritative content."
+            }
 
 /// Persists one immutable accepted Library change under its deterministic cursor identity.
 type LibraryCanonicalChangeRecordActor
