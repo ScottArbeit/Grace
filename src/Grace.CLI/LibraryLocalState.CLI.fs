@@ -44,7 +44,7 @@ module LibraryLocalState =
         }
 
     /// Carries the durable local ancestry used to reject an unobserved target edit.
-    type ItemAncestry = { NormalizedPath: string; Blake3Hash: string }
+    type ItemAncestry = { ItemId: Guid; NormalizedPath: string; Blake3Hash: string; NamespaceVersion: Guid; ContentVersionId: Guid }
 
     [<Literal>]
     let private busyTimeoutMilliseconds = 30000
@@ -256,7 +256,7 @@ module LibraryLocalState =
             use command = connection.CreateCommand()
 
             command.CommandText <-
-                "SELECT normalized_path, blake3_hash FROM library_items WHERE repository_id = $repository_id AND item_id = $item_id AND item_kind = 'file' AND item_state = 'live';"
+                "SELECT item_id, normalized_path, blake3_hash, namespace_version, content_version_id FROM library_items WHERE repository_id = $repository_id AND item_id = $item_id AND item_kind = 'file' AND item_state = 'live';"
 
             command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
             |> ignore
@@ -267,9 +267,46 @@ module LibraryLocalState =
             use reader = command.ExecuteReader()
 
             if reader.Read() then
-                return Some { NormalizedPath = reader.GetString(0); Blake3Hash = reader.GetString(1) }
+                return
+                    Some
+                        {
+                            ItemId = Guid.Parse(reader.GetString(0))
+                            NormalizedPath = reader.GetString(1)
+                            Blake3Hash = reader.GetString(2)
+                            NamespaceVersion = Guid.Parse(reader.GetString(3))
+                            ContentVersionId = Guid.Parse(reader.GetString(4))
+                        }
             else
                 return None
+        }
+
+    /// Lists live file ancestry for deterministic local scan comparison.
+    let readLiveFileAncestry (dbPath: string) (repositoryId: Guid) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT item_id, normalized_path, blake3_hash, namespace_version, content_version_id FROM library_items WHERE repository_id = $repository_id AND item_kind = 'file' AND item_state = 'live' ORDER BY normalized_path;"
+
+            command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+            |> ignore
+
+            use reader = command.ExecuteReader()
+            let items = ResizeArray<ItemAncestry>()
+
+            while reader.Read() do
+                items.Add
+                    {
+                        ItemId = Guid.Parse(reader.GetString(0))
+                        NormalizedPath = reader.GetString(1)
+                        Blake3Hash = reader.GetString(2)
+                        NamespaceVersion = Guid.Parse(reader.GetString(3))
+                        ContentVersionId = Guid.Parse(reader.GetString(4))
+                    }
+
+            return items.ToArray()
         }
 
     /// Persists deterministic operation evidence before a server or filesystem effect can begin.
@@ -443,6 +480,37 @@ module LibraryLocalState =
                     invalidOp "Library filesystem publication requires one exact pending operation and catalog version.")
         }
 
+    /// Records the stable accepted receipt returned for one retryable local publication.
+    let markServerAccepted (dbPath: string) (repositoryId: Guid) (operationId: Guid) (libraryCatalogVersion: Guid) (serverCursor: string) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+
+            inTransaction connection (fun () ->
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    "UPDATE library_operations SET operation_state = 'serverAccepted', server_cursor = $server_cursor, updated_at = $updated_at WHERE repository_id = $repository_id AND operation_id = $operation_id AND library_catalog_version = $catalog_version AND direction = 'local' AND operation_state IN ('pendingServer','serverAccepted') AND (server_cursor IS NULL OR server_cursor = $server_cursor);"
+
+                command.Parameters.AddWithValue("$server_cursor", serverCursor)
+                |> ignore
+
+                command.Parameters.AddWithValue("$updated_at", timestamp ())
+                |> ignore
+
+                command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+                |> ignore
+
+                command.Parameters.AddWithValue("$operation_id", operationId.ToString("D"))
+                |> ignore
+
+                command.Parameters.AddWithValue("$catalog_version", libraryCatalogVersion.ToString("D"))
+                |> ignore
+
+                if command.ExecuteNonQuery() <> 1 then
+                    invalidOp "Library server acceptance requires the same local operation, catalog, and cursor receipt.")
+        }
+
     /// Atomically projects one accepted live file and marks its exact operation terminal with Watch-echo evidence.
     let completeRemoteFile (dbPath: string) (repositoryId: Guid) (change: LibraryChangeDto) =
         task {
@@ -462,7 +530,7 @@ module LibraryLocalState =
                 use authority = connection.CreateCommand()
 
                 authority.CommandText <-
-                    "SELECT COUNT(*) FROM library_repository_state AS state JOIN library_operations AS operation ON operation.repository_id = state.repository_id WHERE state.repository_id = $repository_id AND state.library_catalog_version = $catalog_version AND state.participation_enabled = 1 AND operation.operation_id = $operation_id AND operation.operation_state = 'filesystemPublished' AND operation.library_catalog_version = state.library_catalog_version AND operation.server_cursor = $server_cursor;"
+                    "SELECT COUNT(*) FROM library_repository_state AS state JOIN library_operations AS operation ON operation.repository_id = state.repository_id WHERE state.repository_id = $repository_id AND state.library_catalog_version = $catalog_version AND state.participation_enabled = 1 AND operation.operation_id = $operation_id AND operation.operation_state IN ('serverAccepted','filesystemPublished') AND operation.library_catalog_version = state.library_catalog_version AND operation.server_cursor = $server_cursor;"
 
                 authority.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
                 |> ignore
@@ -588,7 +656,7 @@ module LibraryLocalState =
                 use terminal = connection.CreateCommand()
 
                 terminal.CommandText <-
-                    "UPDATE library_operations SET operation_state = 'terminal', terminal_at = $updated_at, watch_echo_pending = 1, updated_at = $updated_at WHERE repository_id = $repository_id AND operation_id = $operation_id AND operation_state = 'filesystemPublished';"
+                    "UPDATE library_operations SET operation_state = 'terminal', terminal_at = $updated_at, watch_echo_pending = CASE direction WHEN 'remote' THEN 1 ELSE 0 END, updated_at = $updated_at WHERE repository_id = $repository_id AND operation_id = $operation_id AND operation_state IN ('serverAccepted','filesystemPublished');"
 
                 terminal.Parameters.AddWithValue("$updated_at", now)
                 |> ignore
@@ -665,4 +733,38 @@ module LibraryLocalState =
 
                         acknowledge.ExecuteNonQuery() |> ignore
                         true)
+        }
+
+    /// Consumes only one exact remote-publication echo by operation, item, normalized path, and BLAKE3 identity.
+    let tryConsumeWatchEcho (dbPath: string) (repositoryId: Guid) (operationId: Guid) (itemId: Guid) (normalizedPath: string) (blake3Hash: string) =
+        task {
+            do! LocalStateDb.ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+
+            return
+                inTransaction connection (fun () ->
+                    use command = connection.CreateCommand()
+
+                    command.CommandText <-
+                        "UPDATE library_operations SET watch_echo_pending = 0, watch_echo_at = $observed_at, updated_at = $observed_at WHERE repository_id = $repository_id AND operation_id = $operation_id AND item_id = $item_id AND target_path = $target_path AND expected_blake3 = $blake3 AND direction = 'remote' AND operation_state IN ('terminal','acknowledged') AND watch_echo_pending = 1;"
+
+                    command.Parameters.AddWithValue("$observed_at", timestamp ())
+                    |> ignore
+
+                    command.Parameters.AddWithValue("$repository_id", repositoryId.ToString("D"))
+                    |> ignore
+
+                    command.Parameters.AddWithValue("$operation_id", operationId.ToString("D"))
+                    |> ignore
+
+                    command.Parameters.AddWithValue("$item_id", itemId.ToString("D"))
+                    |> ignore
+
+                    command.Parameters.AddWithValue("$target_path", normalizedPath)
+                    |> ignore
+
+                    command.Parameters.AddWithValue("$blake3", blake3Hash)
+                    |> ignore
+
+                    command.ExecuteNonQuery() = 1)
         }

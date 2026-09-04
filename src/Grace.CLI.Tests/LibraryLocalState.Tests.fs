@@ -225,4 +225,20 @@ module LibraryLocalStateTests =
             |> should equal true
 
             File.GetLastWriteTimeUtc(targetPath)
-            |> should equal publishedAt)
+            |> should equal publishedAt
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/other.txt" blake3
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" (String.replicate 64 "0")
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" blake3
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal true
+
+            LibraryLocalState.tryConsumeWatchEcho dbPath repositoryId operationId itemId "shared/file.txt" blake3
+            |> fun operation -> operation.GetAwaiter().GetResult()
+            |> should equal false)
