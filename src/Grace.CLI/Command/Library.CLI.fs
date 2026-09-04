@@ -246,6 +246,38 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Captures every authoritative value reread under the shared exclusion before remote filesystem publication.
+    type internal RemotePublicationRevalidation =
+        {
+            ExpectedCatalogVersion: Guid
+            AcceptedCatalogVersion: Guid
+            ObservedCatalogVersion: Guid
+            DurableCatalogVersion: Guid
+            ExpectedCursor: string option
+            DurableCursor: string option
+            TargetMatchesAccepted: bool
+            TargetExists: bool
+            TargetBlake3Hash: string option
+            AncestryBlake3Hash: string option
+        }
+
+    /// Rejects stale catalog, cursor, or target evidence before pending evidence or filesystem effects are written.
+    let internal validateRemotePublication (evidence: RemotePublicationRevalidation) =
+        if evidence.ObservedCatalogVersion
+           <> evidence.ExpectedCatalogVersion then
+            invalidOp "Library catalog changed before remote filesystem publication."
+
+        if evidence.DurableCatalogVersion
+           <> evidence.AcceptedCatalogVersion
+           || evidence.DurableCursor <> evidence.ExpectedCursor then
+            invalidOp "Library catalog or cursor predecessor changed before remote publication."
+
+        if not evidence.TargetMatchesAccepted
+           && evidence.TargetExists then
+            match evidence.TargetBlake3Hash, evidence.AncestryBlake3Hash with
+            | Some target, Some ancestry when target = ancestry -> ()
+            | _ -> invalidOp "Local Library target changed before remote publication."
+
     /// Downloads and applies one accepted remote file under the shared repository-root exclusion.
     let private applyRemoteFileChange
         (parseResult: ParseResult)
@@ -308,23 +340,48 @@ module LibraryCommand =
                 catalogResult
                 |> Result.defaultWith (fun error -> invalidOp error.Error)
 
-            if catalog.ReturnValue.Version
-               <> localState.LibraryCatalogVersion then
-                invalidOp "Library catalog changed before remote filesystem publication."
-
             let! currentState = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
 
             let currentState =
                 currentState
                 |> Option.defaultWith (fun () -> invalidOp "Library local state disappeared before remote publication.")
 
-            if currentState.LibraryCatalogVersion
-               <> change.LibraryCatalogVersion
-               || currentState.AppliedCursor
-                  <> localState.AppliedCursor then
-                invalidOp "Library catalog or cursor predecessor changed before remote publication."
-
             let! pending = LibraryLocalState.readPendingRemoteFile configuration.GraceStatusFile configuration.RepositoryId change.OperationId
+
+            let targetMatchesAccepted = LibraryFilesystem.matchesContent targetPath content.Blake3Hash content.Sha256Hash content.Size
+
+            let targetExists = File.Exists(targetPath)
+
+            let targetBlake3Hash =
+                if targetMatchesAccepted || not targetExists then
+                    None
+                else
+                    let target = LibraryFilesystem.stableRead targetPath
+                    Some target.Blake3Hash
+
+            let! ancestry =
+                if targetMatchesAccepted || not targetExists then
+                    Task.FromResult(None)
+                else
+                    LibraryLocalState.readItemAncestry configuration.GraceStatusFile configuration.RepositoryId change.ItemId
+
+            let ancestryBlake3Hash =
+                ancestry
+                |> Option.map (fun prior -> prior.Blake3Hash)
+
+            validateRemotePublication
+                {
+                    ExpectedCatalogVersion = localState.LibraryCatalogVersion
+                    AcceptedCatalogVersion = change.LibraryCatalogVersion
+                    ObservedCatalogVersion = catalog.ReturnValue.Version
+                    DurableCatalogVersion = currentState.LibraryCatalogVersion
+                    ExpectedCursor = localState.AppliedCursor
+                    DurableCursor = currentState.AppliedCursor
+                    TargetMatchesAccepted = targetMatchesAccepted
+                    TargetExists = targetExists
+                    TargetBlake3Hash = targetBlake3Hash
+                    AncestryBlake3Hash = ancestryBlake3Hash
+                }
 
             if pending.IsNone then
                 do!
@@ -348,16 +405,7 @@ module LibraryCommand =
                         (Some content.Sha256Hash)
                         (Some content.Size)
 
-            if not (LibraryFilesystem.matchesContent targetPath content.Blake3Hash content.Sha256Hash content.Size) then
-                let! ancestry = LibraryLocalState.readItemAncestry configuration.GraceStatusFile configuration.RepositoryId change.ItemId
-
-                if File.Exists(targetPath) then
-                    let target = LibraryFilesystem.stableRead targetPath
-
-                    match ancestry with
-                    | Some prior when target.Blake3Hash = prior.Blake3Hash -> ()
-                    | _ -> invalidOp "Local Library target changed before remote publication."
-
+            if not targetMatchesAccepted then
                 LibraryFilesystem.publishAtomic targetPath content.Blake3Hash content.Sha256Hash content.Size bytes
                 pauseAfterFilesystemPublicationForTest ()
 
