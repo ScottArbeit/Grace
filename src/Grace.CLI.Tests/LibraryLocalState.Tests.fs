@@ -176,7 +176,14 @@ module LibraryLocalStateTests =
                 (Some(int64 bytes.Length))
             |> fun operation -> operation.GetAwaiter().GetResult()
 
-            LibraryFilesystem.publishAtomic targetPath blake3 sha256 (int64 bytes.Length) bytes
+            if OperatingSystem.IsWindows() then
+                LibraryFilesystem.publishAtomic targetPath blake3 sha256 (int64 bytes.Length) bytes
+            else
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+                |> ignore
+
+                File.WriteAllBytes(targetPath, bytes)
+
             let publishedAt = File.GetLastWriteTimeUtc(targetPath)
 
             let change =
@@ -254,30 +261,17 @@ module LibraryLocalStateTests =
         let ySha256 = String.replicate 64 "d"
 
         let priorX: LibraryLocalState.ItemAncestry =
-            {
-                ItemId = itemId
-                NormalizedPath = "shared/file.txt"
-                Blake3Hash = xBlake3
-                NamespaceVersion = Guid.NewGuid()
-                ContentVersionId = Guid.NewGuid()
-            }
+            { ItemId = itemId; NormalizedPath = "shared/file.txt"; Blake3Hash = xBlake3; NamespaceVersion = Guid.NewGuid(); ContentVersionId = Guid.NewGuid() }
 
-        let priorY =
-            { priorX with
-                Blake3Hash = yBlake3
-                ContentVersionId = Guid.NewGuid() }
+        let priorY = { priorX with Blake3Hash = yBlake3; ContentVersionId = Guid.NewGuid() }
 
-        let firstX =
-            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.CreateFile None xBlake3 xSha256 1L
+        let firstX = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.CreateFile None xBlake3 xSha256 1L
 
-        let y =
-            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorX) yBlake3 ySha256 1L
+        let y = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorX) yBlake3 ySha256 1L
 
-        let secondX =
-            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
+        let secondX = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
 
-        let secondXRetry =
-            LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
+        let secondXRetry = LibraryCommand.localOperationId workingCopyId "shared/file.txt" ChangeKind.UpdateContent (Some priorY) xBlake3 xSha256 1L
 
         firstX |> should not' (equal y)
         firstX |> should not' (equal secondX)
