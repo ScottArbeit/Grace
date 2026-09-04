@@ -9670,19 +9670,15 @@ module Watch =
             isResyncPending
             requestReplay
 
-    /// Serializes advisory Library wakes while leaving the durable Library cursor as the only synchronization authority.
-    let internal handleLibraryContentAvailableWake
+    /// Serializes one enabled Library wake while leaving the durable Library cursor as synchronization authority.
+    let internal runLibrarySynchronizationWake
         (wakeGate: SemaphoreSlim)
-        repositoryId
         synchronizationEnabled
         (synchronize: unit -> Task)
-        (payload: LibraryContentAvailable)
         (cancellationToken: CancellationToken)
         =
         task {
-            if payload.EventName = "LibraryContentAvailable.v1"
-               && payload.RepositoryId = repositoryId
-               && synchronizationEnabled () then
+            if synchronizationEnabled () then
                 do! wakeGate.WaitAsync(cancellationToken)
 
                 try
@@ -9693,6 +9689,21 @@ module Watch =
             else
                 return false
         }
+
+    /// Admits only the versioned repository-scoped Library hint before running the serialized durable pull.
+    let internal handleLibraryContentAvailableWake
+        wakeGate
+        repositoryId
+        synchronizationEnabled
+        synchronize
+        (payload: LibraryContentAvailable)
+        cancellationToken
+        =
+        if payload.EventName = "LibraryContentAvailable.v1"
+           && payload.RepositoryId = repositoryId then
+            runLibrarySynchronizationWake wakeGate synchronizationEnabled synchronize cancellationToken
+        else
+            Task.FromResult(false)
 
     /// Prevents overlapping SignalR hints from racing the same durable Library pull in one Watch process.
     let private librarySynchronizationWakeGate = new SemaphoreSlim(1, 1)
@@ -9859,6 +9870,30 @@ module Watch =
 
                     use signalRConnection = createSignalRConnection signalRUrl
 
+                    let librarySynchronizationEnabled () = (Current()).LibrarySynchronizationEnabled
+
+                    let synchronizeLibrary () =
+                        (task {
+                            match! LibraryCommand.runSynchronizationHandler parseResult with
+                            | Ok status ->
+                                let appliedCursor =
+                                    status.ReturnValue.AppliedCursor
+                                    |> Option.defaultValue "<initial>"
+
+                                logToAnsiConsole Colors.Verbose $"Grace Watch completed a Library wake; applied cursor: {appliedCursor}."
+                            | Error error -> logToAnsiConsole Colors.Error $"Grace Watch could not complete a Library wake: {Markup.Escape(error.Error)}"
+                        }
+                        :> Task)
+
+                    let runLibraryWake () =
+                        runLibrarySynchronizationWake librarySynchronizationWakeGate librarySynchronizationEnabled synchronizeLibrary cancellationToken
+
+                    let registerLibraryContent () =
+                        if librarySynchronizationEnabled () then
+                            signalRConnection.InvokeAsync("RegisterLibraryContent", operationalConfiguration.RepositoryId, cancellationToken)
+                        else
+                            Task.CompletedTask
+
                     use refreshSignalRSubscriptions =
                         registerSignalRSubscriptionRefresh (fun () ->
                             refreshSignalRSubscriptionsForActiveConnection (fun () -> registerCurrentSignalRParentBranch signalRConnection cancellationToken)
@@ -9908,24 +9943,8 @@ module Watch =
                                 (handleLibraryContentAvailableWake
                                     librarySynchronizationWakeGate
                                     operationalConfiguration.RepositoryId
-                                    (fun () -> (Current()).LibrarySynchronizationEnabled)
-                                    (fun () ->
-                                        (task {
-                                            match! LibraryCommand.runSynchronizationHandler parseResult with
-                                            | Ok status ->
-                                                let appliedCursor =
-                                                    status.ReturnValue.AppliedCursor
-                                                    |> Option.defaultValue "<initial>"
-
-                                                logToAnsiConsole
-                                                    Colors.Verbose
-                                                    $"Grace Watch handled a Library availability hint; applied cursor: {appliedCursor}."
-                                            | Error error ->
-                                                logToAnsiConsole
-                                                    Colors.Error
-                                                    $"Grace Watch could not process a Library availability hint: {Markup.Escape(error.Error)}"
-                                        }
-                                        :> Task))
+                                    librarySynchronizationEnabled
+                                    synchronizeLibrary
                                     payload
                                     cancellationToken)
                                 :> Task
@@ -9982,12 +10001,17 @@ module Watch =
                                             registerCurrentSignalRParentBranch signalRConnection cancellationToken))
                                     (fun () -> replayCurrentBranchReferenceEvents cancellationToken)
 
+                            do! registerLibraryContent ()
+                            let! _ = runLibraryWake ()
+
                             ()
                         })
 
                     do! signalRConnection.StartAsync(cancellationToken)
                     // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.
                     do! signalRConnection.InvokeAsync("RegisterRepository", operationalConfiguration.RepositoryId, cancellationToken)
+                    do! registerLibraryContent ()
+                    let! _ = runLibraryWake ()
 
                     logToAnsiConsole
                         Colors.Highlighted
