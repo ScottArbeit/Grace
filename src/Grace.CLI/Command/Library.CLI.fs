@@ -661,7 +661,16 @@ module LibraryCommand =
                                        && change.ChangeKind <> ChangeKind.UpdateContent) then
                                     invalidOp "The Windows two-copy tracer accepts ordinary file create and content-update changes only."
 
-                                do! applyRemoteFileChange parseResult configuration localState change
+                                let! predecessor = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
+
+                                let predecessor =
+                                    predecessor
+                                    |> Option.defaultWith (fun () -> invalidOp "Library local state disappeared before ordered change processing.")
+
+                                let! recovered = tryRecoverLocalPublication parseResult configuration predecessor change.OperationId
+
+                                if not recovered then
+                                    do! applyRemoteFileChange parseResult configuration predecessor change
 
                             let! refreshed = LibraryLocalState.readRepositoryState configuration.GraceStatusFile configuration.RepositoryId
                             let! _ = publishFirstLocalChange parseResult configuration (refreshed |> Option.defaultValue localState)

@@ -463,5 +463,7 @@ module LibrarySynchronizationWindowsServerTests =
                 Assert.That(countWduCompletions copyA, Is.EqualTo(0))
                 Assert.That(countWduCompletions copyB, Is.EqualTo(0))
             finally
+                SqliteConnection.ClearAllPools()
+
                 if Directory.Exists(root) then Directory.Delete(root, recursive = true)
         }
