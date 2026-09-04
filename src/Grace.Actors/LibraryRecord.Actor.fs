@@ -337,7 +337,7 @@ type LibraryBaselineManifestRecordActor
         member _.Read() = Task.FromResult(LibraryRecord.read state)
         member _.CreateExact candidate = LibraryRecord.createExact candidate.id state candidate
 
-/// Persists one retained immutable-content location behind its public Library identity.
+/// Persists one retained immutable-content location while allowing later observations of the same bytes.
 type LibraryContentLocationRecordActor
     (
         [<PersistentState("library-content-location", Constants.LibraryReceiptsStorage)>] state: IPersistentState<LibraryContentLocationDocument>
@@ -346,7 +346,18 @@ type LibraryContentLocationRecordActor
 
     interface ILibraryContentLocationRecordActor with
         member _.Read() = Task.FromResult(LibraryRecord.read state)
-        member _.CreateExact candidate = LibraryRecord.createExact candidate.id state candidate
+
+        member _.CreateExact candidate =
+            let candidate =
+                if state.RecordExists then
+                    { candidate with
+                        AuthorizedScope = state.State.AuthorizedScope
+                        Content = { candidate.Content with CreatedAt = state.State.Content.CreatedAt }
+                    }
+                else
+                    candidate
+
+            LibraryRecord.createExact candidate.id state candidate
 
 /// Retains one exact failed Library GraceEvent envelope and retries it whenever Orleans activates the record actor.
 type LibraryGraceEventFallbackActor

@@ -45,6 +45,31 @@ type private LibraryControlState() =
 
         member _.ClearStateAsync() = Task.CompletedTask
 
+/// Captures the immutable Library content-location state written by its record actor.
+type private LibraryContentLocationState() =
+    let mutable state = Unchecked.defaultof<LibraryContentLocationDocument>
+    let mutable recordExists = false
+    let mutable writeCount = 0
+
+    /// Returns how many durable writes the actor requested.
+    member _.WriteCount = writeCount
+
+    interface IPersistentState<LibraryContentLocationDocument> with
+        member _.State
+            with get () = state
+            and set value = state <- value
+
+        member _.Etag = string writeCount
+        member _.RecordExists = recordExists
+        member _.ReadStateAsync() = Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+            recordExists <- true
+            Task.CompletedTask
+
+        member _.ClearStateAsync() = Task.CompletedTask
+
 /// Stores Library coordinator test state in memory and injects one durable-boundary failure.
 type private FailingLibraryStore(initialControl: LibraryControlDocument, failurePoint: string) =
 
@@ -1229,3 +1254,108 @@ type LibraryCoordinatorTests() =
                     Assert.That(command.LibraryPreparation, Is.EqualTo(Some preparation)))
             )
         | _ -> Assert.Fail("Prepared content must reconstruct an upload-session Start command.")
+
+    /// Verifies a later observation of identical immutable bytes reuses the original content-location fact.
+    [<Test>]
+    member _.ContentLocationReusesEquivalentPlacementAcrossObservationTimes() =
+        task {
+            let repositoryId = Guid.Parse "31870372-ff53-5ad2-b3f3-c0da47f83ce6"
+            let contentVersionId = Guid.Parse "5c7fa2a6-0a70-51b2-8218-1b2067c6181f"
+            let block = ContentBlock.Create(ContentBlockAddress "content-block", 0L, 4096L)
+
+            let manifest =
+                FileManifest.Create(
+                    ManifestAddress "manifest-address",
+                    ChunkingSuiteId RabinChunking.SuiteName,
+                    FileContentHash "library-blake3",
+                    4096L,
+                    StoragePoolId "pool-library",
+                    [ block ]
+                )
+
+            let original =
+                {
+                    id = $"content:{contentVersionId:D}"
+                    RepositoryId = repositoryId
+                    RecordKind = "content"
+                    RecordKey = $"content:{contentVersionId:D}"
+                    SchemaVersion = 1
+                    Content =
+                        {
+                            ContentVersionId = contentVersionId
+                            Blake3Hash = "library-blake3"
+                            Sha256Hash = "library-sha256"
+                            Size = 4096L
+                            CreatedAt = Instant.FromUtc(2026, 9, 4, 12, 0)
+                        }
+                    AuthorizedScope = "Library/prepared"
+                    Manifest = manifest
+                }
+
+            let observedLater =
+                { original with
+                    AuthorizedScope = "Library/later-prepared"
+                    Content = { original.Content with CreatedAt = original.Content.CreatedAt.Plus(Duration.FromMinutes 5L) }
+                }
+
+            let persistentState = LibraryContentLocationState()
+            let actor = LibraryContentLocationRecordActor(persistentState) :> ILibraryContentLocationRecordActor
+
+            do! actor.CreateExact original
+            do! actor.CreateExact observedLater
+            let! retained = actor.Read()
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+                    Assert.That(retained, Is.EqualTo(Some original)))
+            )
+        }
+
+    /// Verifies immutable content-location reuse still rejects a different physical manifest placement.
+    [<Test>]
+    member _.ContentLocationRejectsDifferentManifestPlacement() =
+        task {
+            let repositoryId = Guid.Parse "31870372-ff53-5ad2-b3f3-c0da47f83ce6"
+            let contentVersionId = Guid.Parse "5c7fa2a6-0a70-51b2-8218-1b2067c6181f"
+
+            let manifest =
+                FileManifest.Create(
+                    ManifestAddress "manifest-address",
+                    4096L,
+                    [
+                        ContentBlock.Create(ContentBlockAddress "content-block", 0L, 4096L)
+                    ]
+                )
+
+            let original =
+                {
+                    id = $"content:{contentVersionId:D}"
+                    RepositoryId = repositoryId
+                    RecordKind = "content"
+                    RecordKey = $"content:{contentVersionId:D}"
+                    SchemaVersion = 1
+                    Content =
+                        {
+                            ContentVersionId = contentVersionId
+                            Blake3Hash = "library-blake3"
+                            Sha256Hash = "library-sha256"
+                            Size = 4096L
+                            CreatedAt = Instant.FromUtc(2026, 9, 4, 12, 0)
+                        }
+                    AuthorizedScope = "Library/prepared"
+                    Manifest = manifest
+                }
+
+            let conflicting = { original with Manifest = { original.Manifest with StoragePoolId = StoragePoolId "different-pool" } }
+
+            let persistentState = LibraryContentLocationState()
+            let actor = LibraryContentLocationRecordActor(persistentState) :> ILibraryContentLocationRecordActor
+
+            do! actor.CreateExact original
+
+            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> actor.CreateExact conflicting))
+
+            Assert.That(error.Message, Does.Contain("not byte-equivalent"))
+            Assert.That(persistentState.WriteCount, Is.EqualTo(1))
+        }
