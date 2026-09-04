@@ -22,6 +22,7 @@ open Grace.Shared.Constants
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Events
+open Grace.Types.Library
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -313,6 +314,77 @@ module Services =
                 ServiceBusClient(settings.ConnectionString)
 
     let private serviceBusSender = lazy (serviceBusClient.Value.CreateSender(pubSubSettings.AzureServiceBus.Value.TopicName))
+
+    let private serviceBusSenders = ConcurrentDictionary<string, ServiceBusSender>(StringComparer.Ordinal)
+
+    /// Sends one exact retained GraceEvent envelope through the configured transport.
+    type IGraceEventSender =
+        abstract member SendAsync: envelope: FailedGraceEventEnvelope * cancellationToken: CancellationToken -> Task
+
+    /// Builds the immutable transport envelope shared by first-send and recovery paths.
+    let createGraceEventEnvelope topicName repositoryId recordKind recordKey messageId (graceEvent: GraceEvent) (metadata: EventMetadata) =
+        let properties =
+            seq {
+                yield { Key = "graceEventType"; Value = getDiscriminatedUnionFullName graceEvent }
+
+                for property in metadata.Properties do
+                    yield { Key = property.Key; Value = property.Value }
+            }
+            |> Seq.sortBy (fun property -> property.Key)
+            |> Seq.toArray
+
+        {
+            RepositoryId = repositoryId
+            RecordKind = recordKind
+            RecordKey = recordKey
+            TopicName = topicName
+            MessageId = messageId
+            Body = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
+            ContentType = "application/json"
+            Subject = "GraceEvent"
+            CorrelationId = metadata.CorrelationId
+            ApplicationProperties = properties
+        }
+
+    /// Rehydrates the exact Service Bus message retained after a terminal send failure.
+    let createServiceBusMessage (envelope: FailedGraceEventEnvelope) =
+        let message = ServiceBusMessage(BinaryData(envelope.Body))
+        message.ContentType <- envelope.ContentType
+        message.Subject <- envelope.Subject
+        message.CorrelationId <- envelope.CorrelationId
+        message.MessageId <- envelope.MessageId
+
+        for property in envelope.ApplicationProperties do
+            message.ApplicationProperties[ property.Key ] <- property.Value
+
+        message
+
+    /// Creates a Library notification envelope only when Azure Service Bus is the active configured provider.
+    let tryCreateGraceEventEnvelope repositoryId recordKind recordKey messageId graceEvent metadata =
+        match pubSubSettings.System, pubSubSettings.AzureServiceBus with
+        | GracePubSubSystem.AzureServiceBus, Some settings ->
+            Some(createGraceEventEnvelope settings.TopicName repositoryId recordKind recordKey messageId graceEvent metadata)
+        | GracePubSubSystem.AzureServiceBus, None ->
+            log.LogWarning("Azure Service Bus selected but settings were not provided; no Library GraceEvent envelope can be sent.")
+            None
+        | GracePubSubSystem.UnknownPubSubProvider, _ -> None
+        | otherSystem, _ ->
+            log.LogWarning(
+                "Grace pub-sub system {System} not yet implemented; no Library GraceEvent envelope can be sent.",
+                getDiscriminatedUnionCaseName otherSystem
+            )
+
+            None
+
+    /// Uses Azure Service Bus configured retries before surfacing one terminal send exception to fallback persistence.
+    type ServiceBusGraceEventSender() =
+        interface IGraceEventSender with
+            member _.SendAsync(envelope, cancellationToken) =
+                task {
+                    let sender = serviceBusSenders.GetOrAdd(envelope.TopicName, (fun topicName -> serviceBusClient.Value.CreateSender(topicName)))
+                    do! sender.SendMessageAsync(createServiceBusMessage envelope, cancellationToken)
+                }
+                :> Task
 
     /// Publishes a GraceEvent to the configured pub-sub system.
     let publishGraceEvent (graceEvent: GraceEvent) (metadata: EventMetadata) =

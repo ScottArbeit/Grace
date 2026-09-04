@@ -913,6 +913,20 @@ module Interfaces =
         /// Creates the location or confirms an exact deterministic retry.
         abstract member CreateExact: candidate: LibraryContentLocationDocument -> Task
 
+    /// Owns one point-addressed failed Library GraceEvent envelope until a retry succeeds.
+    [<Interface>]
+    type ILibraryGraceEventFallbackActor =
+        inherit IGrainWithStringKey
+
+        /// Sends the stable envelope first, persisting it only when the configured transport reports terminal failure.
+        abstract member Publish: envelope: FailedGraceEventEnvelope -> Task
+
+        /// Retries retained state after activation and reports whether no fallback remains.
+        abstract member Retry: unit -> Task<bool>
+
+        /// Returns the exact retained envelope when terminal delivery failure remains unresolved.
+        abstract member Read: unit -> Task<FailedGraceEventEnvelope option>
+
     /// Defines the operations for the AccessControl actor.
     [<Interface>]
     type IAccessControlActor =

@@ -10,6 +10,7 @@ open Azure.Storage.Blobs.Models
 open Giraffe
 open Giraffe.EndpointRouting
 open Grace.Actors
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.AzureEnvironment
 open Grace.Shared.Utilities
@@ -2192,6 +2193,9 @@ module Application =
             |> ignore
 
             services.AddSingleton<ILibraryWriteAuthorizer, LibraryWriteAuthorizer>()
+            |> ignore
+
+            services.AddSingleton<IGraceEventSender, ServiceBusGraceEventSender>()
             |> ignore
 
             services.AddW3CLogging (fun options ->

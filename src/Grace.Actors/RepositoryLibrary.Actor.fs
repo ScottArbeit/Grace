@@ -8,11 +8,25 @@ open Grace.Types.Events
 open Grace.Types.Library
 open Orleans
 open System
+open System.Globalization
 open System.Threading
 open System.Threading.Tasks
 
 /// Contains the final authorization gate shared by the Orleans actor and focused tests.
 module RepositoryLibrary =
+
+    /// The bounded Receipts-purpose record kind used only for failed Library GraceEvent envelopes.
+    [<Literal>]
+    let FailedGraceEventRecordKind = "grace-event-fallback"
+
+    /// Formats the accepted cursor as the bounded fallback record identity.
+    let fallbackRecordKey (cursor: int64) = cursor.ToString("D20", CultureInfo.InvariantCulture)
+
+    /// Derives the stable broker identity shared by first send and every ambiguous retry.
+    let stableMessageId (repositoryId: RepositoryId) cursor = $"LibraryContentAvailable/{repositoryId:D}/{fallbackRecordKey cursor}"
+
+    /// Builds the three-component actor key required by the Receipts storage purpose.
+    let fallbackActorKey (repositoryId: RepositoryId) cursor = $"{repositoryId:D}|{FailedGraceEventRecordKind}|{fallbackRecordKey cursor}"
 
     /// Rechecks current authority before invoking any durable submission effect.
     let submitWhenAuthorized authorize submit =
@@ -27,6 +41,10 @@ module RepositoryLibrary =
 /// Owns one repository's bounded Library catalog and serialized Library change lane.
 type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibraryWriteAuthorizer, store: ILibraryStore, codec: ILibraryCursorCodec) =
     inherit Grain()
+
+    /// Resolves one bounded failed-notification actor without widening the repository actor constructor contract.
+    member private this.GetGraceEventFallbackActor(repositoryId, cursor) =
+        this.GrainFactory.GetGrain<ILibraryGraceEventFallbackActor>(RepositoryLibrary.fallbackActorKey repositoryId cursor)
 
     interface IRepositoryLibraryActor with
 
@@ -68,19 +86,47 @@ type RepositoryLibraryActor(coordinator: ILibraryCoordinator, authorizer: ILibra
 
                 match result.Receipt with
                 | Some receipt when receipt.Change.IsSome && receipt.Cursor.IsSome ->
-                    let! controlRead = store.ReadControlAsync(repositoryId, CancellationToken.None)
+                    let cursorEpoch, cursor =
+                        match codec.TryDecode(repositoryId, receipt.Cursor.Value) with
+                        | Some acceptedPosition -> acceptedPosition
+                        | None -> invalidOp "The accepted Library receipt cursor could not be decoded for stable notification identity."
+
+                    let! canonical = store.ReadCanonicalAsync(repositoryId, cursor, CancellationToken.None)
+
+                    let acceptedCorrelationId =
+                        match canonical with
+                        | Some accepted when accepted.OperationId = receipt.OperationId -> accepted.CorrelationId
+                        | Some _ -> invalidOp "The accepted Library change does not match its stable receipt operation identity."
+                        | None -> invalidOp "The accepted Library change is unavailable for stable notification reconstruction."
 
                     let payload =
                         LibraryContentAvailable.Create(
                             repositoryId,
-                            codec.Encode(repositoryId, controlRead.Document.CursorEpoch, 0L),
+                            codec.Encode(repositoryId, cursorEpoch, 0L),
                             receipt.Cursor.Value,
                             receipt.LibraryCatalogVersion,
                             receipt.RecordedAt,
-                            correlationId
+                            acceptedCorrelationId
                         )
 
-                    do! publishGraceEvent (GraceEvent.LibraryContentAvailableEvent payload) (EventMetadata.New correlationId "RepositoryLibraryActor")
+                    let graceEvent = GraceEvent.LibraryContentAvailableEvent payload
+                    let metadata = EventMetadata.New acceptedCorrelationId "RepositoryLibraryActor"
+
+                    let messageId = RepositoryLibrary.stableMessageId repositoryId cursor
+
+                    match
+                        tryCreateGraceEventEnvelope
+                            repositoryId
+                            RepositoryLibrary.FailedGraceEventRecordKind
+                            (RepositoryLibrary.fallbackRecordKey cursor)
+                            messageId
+                            graceEvent
+                            metadata
+                        with
+                    | Some envelope ->
+                        let fallbackActor = this.GetGraceEventFallbackActor(repositoryId, cursor)
+                        do! fallbackActor.Publish envelope
+                    | None -> ()
                 | _ -> ()
 
                 return result

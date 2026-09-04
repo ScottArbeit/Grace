@@ -3,11 +3,13 @@ namespace Grace.Actors
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Types.Library
+open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime
 open System
 open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 
 /// Implements shared exact-write rules for bounded Library record actors.
@@ -58,6 +60,35 @@ module private LibraryRecord =
 
     /// Returns the current Orleans storage version without exposing a null provider value.
     let version (state: IPersistentState<'T>) = if isNull state.Etag then String.Empty else state.Etag
+
+/// Implements the proven send-first, failure-only GraceEvent fallback effect order.
+module GraceEventDelivery =
+
+    /// Reports whether the exact envelope was delivered or remains deferred after a terminal send failure.
+    type Result =
+        | Delivered
+        | Deferred
+
+    /// Sends first, persists only a new terminal failure, and clears existing fallback only after send success.
+    let attempt (send: FailedGraceEventEnvelope -> Task) (persist: FailedGraceEventEnvelope -> Task) (clear: unit -> Task) fallbackExists envelope =
+        task {
+            let! sendResult =
+                task {
+                    try
+                        do! send envelope
+                        return Ok()
+                    with
+                    | _ -> return Error()
+                }
+
+            match sendResult with
+            | Ok () ->
+                if fallbackExists then do! clear ()
+                return Delivered
+            | Error () ->
+                if not fallbackExists then do! persist envelope
+                return Deferred
+        }
 
 /// Persists one repository's authoritative Library control record.
 type LibraryControlRecordActor([<PersistentState("library-control-record", Constants.LibraryControlStorage)>] state: IPersistentState<LibraryControlDocument>) =
@@ -297,3 +328,86 @@ type LibraryContentLocationRecordActor
     interface ILibraryContentLocationRecordActor with
         member _.Read() = Task.FromResult(LibraryRecord.read state)
         member _.CreateExact candidate = LibraryRecord.createExact candidate.id state candidate
+
+/// Retains one exact failed Library GraceEvent envelope and retries it whenever Orleans activates the record actor.
+type LibraryGraceEventFallbackActor
+    (
+        [<PersistentState("library-grace-event-fallback", Constants.LibraryReceiptsStorage)>] state: IPersistentState<FailedGraceEventEnvelope>,
+        sender: Services.IGraceEventSender
+    ) =
+    inherit Grain()
+
+    let log = Context.loggerFactory.CreateLogger("LibraryGraceEventFallback.Actor")
+
+    /// Requests deactivation without exposing the inherited protected call to an F# task state machine.
+    member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
+    /// Sends one exact envelope and owns its failure-only Orleans state transition.
+    member private this.Deliver(envelope: FailedGraceEventEnvelope) =
+        task {
+            let expectedActorKey = $"{envelope.RepositoryId:D}|{envelope.RecordKind}|{envelope.RecordKey}"
+
+            if not (String.Equals(this.GetPrimaryKeyString(), expectedActorKey, StringComparison.Ordinal)) then
+                invalidArg (nameof envelope) "The failed GraceEvent envelope identity does not match the fallback actor key."
+
+            let fallbackExists = state.RecordExists
+
+            if
+                fallbackExists
+                && not (LibraryRecord.equivalent state.State envelope)
+            then
+                invalidOp $"Failed GraceEvent envelope {envelope.MessageId} is not byte-equivalent to its deterministic retry."
+
+            let! result =
+                GraceEventDelivery.attempt
+                    (fun candidate -> sender.SendAsync(candidate, CancellationToken.None))
+                    (fun candidate ->
+                        task {
+                            state.State <- candidate
+                            do! state.WriteStateAsync()
+                        }
+                        :> Task)
+                    (fun () -> state.ClearStateAsync())
+                    fallbackExists
+                    envelope
+
+            match result with
+            | GraceEventDelivery.Delivered -> log.LogInformation("Delivered Library GraceEvent {MessageId}; fallback state is clear.", envelope.MessageId)
+            | GraceEventDelivery.Deferred ->
+                log.LogWarning(
+                    "Deferred Library GraceEvent {MessageId} after terminal transport failure; exact fallback state is retained.",
+                    envelope.MessageId
+                )
+
+                this.DeactivateActorOnIdle()
+
+            return result
+        }
+
+    override this.OnActivateAsync(_cancellationToken) =
+        task {
+            if state.RecordExists then
+                let! _ = this.Deliver state.State
+                ()
+        }
+        :> Task
+
+    interface ILibraryGraceEventFallbackActor with
+
+        member this.Publish envelope =
+            task {
+                let! _ = this.Deliver envelope
+                ()
+            }
+            :> Task
+
+        member this.Retry() =
+            task {
+                if state.RecordExists then
+                    let! _ = this.Deliver state.State
+                    return not state.RecordExists
+                else
+                    return true
+            }
+
+        member _.Read() = Task.FromResult(LibraryRecord.read state)

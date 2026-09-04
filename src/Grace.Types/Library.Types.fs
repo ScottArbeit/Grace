@@ -531,6 +531,42 @@ module Library =
                 CorrelationId = correlationId
             }
 
+    /// Stores one stable Service Bus application property in an exact failed-delivery envelope.
+    [<CLIMutable; GenerateSerializer>]
+    type GraceEventEnvelopeProperty =
+        {
+            [<Id(0u)>]
+            Key: string
+            [<Id(1u)>]
+            Value: string
+        }
+
+    /// Stores the exact serialized Library notification retained only after terminal Service Bus failure.
+    [<CLIMutable; GenerateSerializer>]
+    type FailedGraceEventEnvelope =
+        {
+            [<Id(0u)>]
+            RepositoryId: RepositoryId
+            [<Id(1u)>]
+            RecordKind: string
+            [<Id(2u)>]
+            RecordKey: string
+            [<Id(3u)>]
+            TopicName: string
+            [<Id(4u)>]
+            MessageId: string
+            [<Id(5u)>]
+            Body: byte array
+            [<Id(6u)>]
+            ContentType: string
+            [<Id(7u)>]
+            Subject: string
+            [<Id(8u)>]
+            CorrelationId: CorrelationId
+            [<Id(9u)>]
+            ApplicationProperties: GraceEventEnvelopeProperty array
+        }
+
     /// Carries the internal change request after public validation and authorization are complete.
     [<GenerateSerializer>]
     type LibraryChangeCommand =
