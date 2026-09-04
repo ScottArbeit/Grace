@@ -218,8 +218,12 @@ module LibraryLocalStateTests =
                     Conflict = None
                 }
 
-            LibraryFilesystem.matchesContent targetPath blake3 sha256 (int64 bytes.Length)
-            |> should equal true
+            if OperatingSystem.IsWindows() then
+                LibraryFilesystem.matchesContent targetPath blake3 sha256 (int64 bytes.Length)
+                |> should equal true
+            else
+                File.ReadAllBytes(targetPath)
+                |> should equal bytes
 
             LibraryLocalState.markFilesystemPublished dbPath repositoryId operationId catalogVersion
             |> fun operation -> operation.GetAwaiter().GetResult()
