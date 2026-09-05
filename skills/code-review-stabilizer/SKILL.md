@@ -1,37 +1,14 @@
 ---
 name: code-review-stabilizer
-description: >-
-  Deprecated Grace compatibility router. Use the installed dev-process skill for Review Discovery Ledgers,
-  closure review, review recovery, simplification, splitting, salvage, and supersession.
+description: Compatibility entrypoint for older Grace review-recovery prompts; route to the current dev-process review protocol.
 ---
 
 # Code review stabilizer
 
-This skill is no longer an active Grace workflow authority.
+This compatibility name does not own a separate workflow. Use the installed `dev-process` entrypoint and its `references/CODE_REVIEW.md`, `references/REVIEW-AND-LANDING.md`, and relevant `references/TEMPLATES.md` section, plus Grace's repository process.
 
-Use the installed `dev-process` skill instead, especially:
+For an older recovery prompt, recover the existing finite R1 ledger and accepted dispositions. If no ledger exists, reconstruct it from current supported findings without silently launching another whole-diff review. Continue the same implementation owner for accepted repairs and use bounded R2 closure.
 
-- `dev-process/SKILL.md`, sections on bounded R1 discovery review, R2 closure review, stop signals, and supersession;
-- `dev-process/CODE_REVIEW.md` for Product V1 realistic-producer filtering and review modes;
-- `dev-process/TEMPLATES.md` for the Review Discovery Ledger, Closure Review, Decision Packet, and Supersession Salvage
-  Map;
-- repository `docs/Development process.md` for Grace-specific branch, CI, PR, and cleanup mechanics.
+Preserve owner decisions, quality contract, non-goals, current-head evidence, and the DISCOVERY ESCAPE stop. Do not interpret this alias as permission for another writer, a new product rule, or an automatic R3.
 
-## Compatibility behavior
-
-When an older prompt invokes this skill:
-
-1. Do not resume an unbounded review and repair loop.
-2. Load the current `dev-process` authority.
-3. Reconstruct one finite R1 Review Discovery Ledger from supported current findings.
-4. Classify product decisions, new invariants, authority changes, and state-machine additions as owner stops.
-5. Route accepted in-scope findings to the existing issue-owner worker for one consolidated repair pass.
-6. Use one targeted R2 closure review.
-7. Do not start an automatic R3 whole-diff review. If closure incidentally exposes one supported-world merge blocker
-   outside the frozen ledger, record `DISCOVERY ESCAPE` and stop rather than ignoring it or continuing discovery.
-8. Simplify, split, or supersede when the finite closure protocol cannot converge.
-
-## Migration
-
-Update prompts or documents that still route Grace review recovery here. New Grace work should reference `dev-process`
-directly. Remove this compatibility skill after no active project source links to it.
+New callers should name dev-process directly. Keep this alias until active callers have been migrated.
