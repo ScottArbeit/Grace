@@ -53,6 +53,17 @@ do not add total scan or wrapper deadlines. SQL per-command behavior and short a
 A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
 Source identity belongs to each route/table; matching GUIDs across the two sources do not identify a combined observation.
 
+## Artifact declaration diagnostic
+
+`POST /admin/artifact-size/diagnose` requires SystemAdmin before parsing and reuses explicit three-ID repository
+parameters. `ArtifactSizeDiagnosis` reads retained Artifact snapshots from the existing Cosmos container, checks the
+nondeleted repository scope before and after enumeration, and returns declared bytes plus distinct Artifact count
+only after complete bounded reads. Zero is explicit; empty State contributes nothing; malformed or incomplete source
+returns no quantity. The one response record is server-local and the route is intentionally excluded from public
+OpenAPI generation. It has no Blob, SQL, usage, producer or startup dependency. Preserve the two existing diagnostics
+and observation handlers. Hosted acceptance must use actual positive and zero public Artifact Create calls; seeded
+lifecycle documents supplement that test without claiming executed cleanup.
+
 ## Validation
 
 - Update or add tests covering new endpoints or handlers and run
