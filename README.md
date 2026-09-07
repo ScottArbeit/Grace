@@ -76,6 +76,8 @@ for one, ask to start tracked implementation, or otherwise request tracker setup
 See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
 validation profiles, review expectations, and cleanup steps.
 
+See [Grace Operations](./docs/Operations.md) for the current usage-measurement design and its discovery experiment.
+
 ## Running Grace locally
 
 The fastest way to understand Grace is to run it locally and poke at it.
