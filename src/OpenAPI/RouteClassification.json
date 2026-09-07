@@ -12,13 +12,14 @@
     },
     {
       "classification": "intentionallyExcludedOperationalSurface",
-      "reason": "Operational liveness, metrics, root HTML, and SignalR notification surfaces are runtime operations, not the public JSON API contract.",
+      "reason": "Operational liveness, metrics, root HTML, SignalR notifications, and internal SystemAdmin diagnostics and repairs are runtime operations, not the public JSON API contract.",
       "traceIds": [ "B-024", "B-041", "surf-host", "surf-startup-admin" ],
       "routes": [
         { "method": "GET", "path": "/" },
         { "method": "GET", "path": "/healthz" },
         { "method": "GET", "path": "/metrics" },
         { "method": "GET", "path": "/notifications" },
+        { "method": "POST", "path": "/admin/directory-version-size/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/repair" }
       ]

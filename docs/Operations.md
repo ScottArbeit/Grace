@@ -76,6 +76,7 @@ The response type and diagnostic route name identify the fixed DirectoryVersion 
 | Internal operator contract | One successful server-local DTO above; reuse repository parameters and standard success/error envelopes. |
 | Operator entrypoint | One PowerShell script following the existing manifest-diagnosis authentication and output convention. Document scope, zero, limits, errors, and class-specific meaning; avoid copying its report hierarchy or signing model. |
 | Public SDK, CLI, OpenAPI and generated clients | Unchanged: this is an internal SystemAdmin diagnostic like the existing manifest diagnosis route, not an owner usage API. |
+| Internal route classification | Register the route in `src/OpenAPI/RouteClassification.json` as `intentionallyExcludedOperationalSurface`, alongside the existing manifest diagnostics. |
 | Persistence, events, broker, SQL and Operations worker | No changes. Request-local aggregation only; a caller may save the returned diagnostic. There is no runtime capture/recovery lifecycle. |
 | Tests | Actual Cosmos query/serialization integration against isolated data; duplicate identities, known zero, retained logical deletion, invalid/conflicting declaration, scope isolation, limits, read failure/cancellation, and mixed-page observation; operator response serialization and SystemAdmin/denied reads. |
 
