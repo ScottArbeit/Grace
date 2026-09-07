@@ -494,12 +494,13 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             | _ -> return ()
         }
 
-    /// Creates the operations usage schema, raw fact table, and minute aggregate table when they are absent.
+    /// Creates the operations schema, immutable observations, raw facts and minute aggregates when they are absent.
     member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
         task {
             do! ensureDatabaseCreatedAsync cancellationToken
             use! connection = openConnectionAsync bootstrapPlan.SchemaConnectionString cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateSchema cancellationToken
+            do! executeCommandAsync connection DirectoryVersionSizeObservations.CreateTable cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateRawUsageFactTable cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateUsageAggregateMinuteTable cancellationToken
         }

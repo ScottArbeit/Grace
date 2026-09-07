@@ -111,6 +111,7 @@
                 <Compile Include="ManifestContributionDiagnosis.Server.fs" />
                 <Compile Include="ManifestContributionRepair.Server.fs" />
 		<Compile Include="DirectoryVersionSizeDiagnosis.Server.fs" />
+		<Compile Include="DirectoryVersionSizeObservation.Server.fs" />
 		<Compile Include="TextContentSizeDiagnosis.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Cache.Server.fs" />
@@ -136,6 +137,7 @@
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
+		<ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
 		<ProjectReference Include="..\Grace.Actors\Grace.Actors.fsproj" />
 		<ProjectReference Include="..\Grace.Orleans.CodeGen\Grace.Orleans.CodeGen.csproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />

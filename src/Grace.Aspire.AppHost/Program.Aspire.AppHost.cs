@@ -400,6 +400,15 @@ public partial class Program
                             .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscriptionName);
 
+                        graceServer.WithEnvironment(async context =>
+                        {
+                            var sqlEndpoint = await serviceBusSqlEndpoint.GetValueAsync(context.CancellationToken);
+                            var sqlEndpointUri = new Uri(sqlEndpoint ?? throw new InvalidOperationException("Operations SQL endpoint was not allocated."));
+                            var sqlDataSource = BuildSqlTcpDataSource(sqlEndpointUri.Host, sqlEndpointUri.Port);
+                            context.EnvironmentVariables[OperationsSqlConnectionStringSettingName] =
+                                $"Server={sqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;";
+                        });
+
                         _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
                             .WithParentRelationship(serviceBusSql)
                             .WithParentRelationship(serviceBusEmulator)
@@ -516,6 +525,7 @@ public partial class Program
                     }
 
                     graceServer
+                        .WithEnvironment(OperationsSqlConnectionStringSettingName, operationsSqlConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
                         .WithEnvironment(EnvironmentVariables.AzureStorageConnectionString, azureStorageConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBEndpoint, cosmosdbEndpoint)
