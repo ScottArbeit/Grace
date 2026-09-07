@@ -7,7 +7,7 @@ open Grace.Types.UsageObservation
 open NodaTime.Text
 open NUnit.Framework
 
-/// Exercises the single completed-observation contract independently of storage and hosting.
+/// Exercises the separate source observation contracts independently of storage and hosting.
 type UsageObservationTests() =
     let observation =
         {
@@ -20,6 +20,33 @@ type UsageObservationTests() =
                 }
             DeclaredLogicalBytes = 0L
             DistinctContentCount = 0L
+            EnumerationStartedAt =
+                InstantPattern
+                    .ExtendedIso
+                    .Parse(
+                        "2026-09-07T01:02:03.123456789Z"
+                    )
+                    .Value
+            EnumerationFinishedAt =
+                InstantPattern
+                    .ExtendedIso
+                    .Parse(
+                        "2026-09-07T01:02:03.123456790Z"
+                    )
+                    .Value
+        }
+
+    let textObservation =
+        {
+            ObservationId = Guid.Parse "10560000-0000-0000-0000-000000000001"
+            Scope =
+                {
+                    OwnerId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                    OrganizationId = Guid.Parse "22222222-2222-2222-2222-222222222222"
+                    RepositoryId = Guid.Parse "33333333-3333-3333-3333-333333333333"
+                }
+            DeclaredTextContentUtf8Bytes = 0L
+            DistinctTextContentCount = 0L
             EnumerationStartedAt =
                 InstantPattern
                     .ExtendedIso
@@ -110,6 +137,84 @@ type UsageObservationTests() =
         |> List.iter (fun value ->
             Assert.That(
                 DirectoryVersionSizeObservation.Validate value
+                |> Result.isError,
+                Is.True
+            ))
+
+    /// Accepts known zero and positive completed readings while preserving every nanosecond in real Grace JSON.
+    [<Test>]
+    member _.``text zero positive and precise windows round trip through Grace JSON``() =
+        [
+            textObservation
+            { textObservation with DeclaredTextContentUtf8Bytes = 37L; DistinctTextContentCount = 2L }
+        ]
+        |> List.iter (fun value ->
+            Assert.That(
+                TextContentSizeObservation.Validate value
+                |> Result.isOk,
+                Is.True
+            )
+
+            let json = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)
+            use document = JsonDocument.Parse json
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("DeclaredTextContentUtf8Bytes")
+                    .GetInt64(),
+                Is.EqualTo value.DeclaredTextContentUtf8Bytes
+            )
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("DistinctTextContentCount")
+                    .GetInt64(),
+                Is.EqualTo value.DistinctTextContentCount
+            )
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("EnumerationStartedAt")
+                    .GetString(),
+                Is.EqualTo "2026-09-07T01:02:03.123456789Z"
+            )
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("EnumerationFinishedAt")
+                    .GetString(),
+                Is.EqualTo "2026-09-07T01:02:03.12345679Z"
+            )
+
+            Assert.That(JsonSerializer.Deserialize<TextContentSizeObservation>(json, Constants.JsonSerializerOptions), Is.EqualTo value))
+
+    /// Rejects each independently incomplete identity, negative quantity and missing or reversed read window.
+    [<Test>]
+    member _.``invalid text observation partitions are rejected``() =
+        [
+            Unchecked.defaultof<TextContentSizeObservation>
+            { textObservation with ObservationId = Guid.Empty }
+            { textObservation with Scope = Unchecked.defaultof<_> }
+            { textObservation with Scope = { textObservation.Scope with OwnerId = Guid.Empty } }
+            { textObservation with Scope = { textObservation.Scope with OrganizationId = Guid.Empty } }
+            { textObservation with Scope = { textObservation.Scope with RepositoryId = Guid.Empty } }
+            { textObservation with DeclaredTextContentUtf8Bytes = -1L }
+            { textObservation with DistinctTextContentCount = -1L }
+            { textObservation with EnumerationStartedAt = Constants.DefaultTimestamp }
+            { textObservation with EnumerationFinishedAt = Constants.DefaultTimestamp }
+            { textObservation with
+                EnumerationFinishedAt =
+                    textObservation.EnumerationStartedAt
+                    - NodaTime.Duration.FromNanoseconds 1L
+            }
+        ]
+        |> List.iter (fun value ->
+            Assert.That(
+                TextContentSizeObservation.Validate value
                 |> Result.isError,
                 Is.True
             ))

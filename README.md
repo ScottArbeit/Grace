@@ -76,7 +76,7 @@ for one, ask to start tracked implementation, or otherwise request tracker setup
 See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
 validation profiles, review expectations, and cleanup steps.
 
-See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion and retained TextContent declarations, and durable DirectoryVersion observation capture/read.
+See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion and retained TextContent declarations, and durable source-specific observation capture/read for both.
 
 ## Running Grace locally
 

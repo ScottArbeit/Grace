@@ -40,14 +40,15 @@ code.
 3. Note any unusual hosting assumptions or deployment considerations here so
    agents avoid unnecessary spelunking.
 
-## DirectoryVersion observation SQL access
+## DirectoryVersion and TextContent observation SQL access
 
 The internal SystemAdmin capture/read routes use `Grace.Operations.Data` and the existing
 `grace__operations__sql__connectionstring` setting. The Operations worker creates their source-specific observation
-table. SQL is not a Server startup requirement: missing configuration/schema returns unavailable on these routes.
+tables. SQL is not a Server startup requirement: missing configuration/schema returns unavailable on these routes.
 Preserve live diagnostic dependencies and the separate additive usage worker. Same-ID capture checks SQL before
 repository/source access; new capture checks repository scope and nondeleted state before and after enumeration.
 A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
+Source identity belongs to each route/table; matching GUIDs across the two sources do not identify a combined observation.
 
 ## Validation
 

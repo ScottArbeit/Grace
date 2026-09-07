@@ -263,6 +263,45 @@ Focused tests cover Types validation/serialization, no-Aspire orchestration/erro
 
 Public OpenAPI, generated SDK/CLI, producer events and broker contracts are unchanged: these routes are explicitly classified internal operational surfaces. This slice adds no provider abstraction, journal, pending/rejected/dispatch lifecycle, scheduler, new accounting rule, owner API, compatibility migration or broader content coverage.
 
+## Retained TextContent observations
+
+A SystemAdmin can capture and read an immutable retained TextContent declaration using the same SQL-first acceptance sequence as DirectoryVersion observations. The existing WorkItem reader counts distinct TextContent IDs and their declared uncompressed UTF-8 bytes across retained Created, DescriptionSet and DescriptionCleared history, including superseded references. It does not inspect blobs or measure physical storage, repository totals or an interval.
+
+| Request | Behavior |
+| --- | --- |
+| `POST /admin/text-content-size/observations/{observationId}` | Capture or return the first committed TextContent row. Body is existing `GetRepositoryParameters` with explicit owner, organization and repository GUIDs. |
+| `GET /admin/text-content-size/observations/{observationId}?OwnerId=...&OrganizationId=...&RepositoryId=...` | Read the stored row without repository or source access. |
+
+Success returns `GraceReturnValue<TextContentSizeObservation>` with `ObservationId`, `Scope`, `DeclaredTextContentUtf8Bytes`, `DistinctTextContentCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. The two quantities are nonnegative 64-bit integers; known zero and all Instant fractional digits are preserved. HTTP 400 rejects invalid IDs, scope, names or malformed source; 409 rejects conflicting scope without stored values; a missing read is 404; unavailable SQL/source, deadline and cancellation return 503 without a successful observation.
+
+Authorization precedes parsing. A matching prior SQL row bypasses the source even after repository deletion. New capture verifies current repository scope and nondeleted state before and after the unchanged bounded retained scan, then enters the short acceptance transaction. Its original non-atomic window and 32-page, 10,000-document, 100,000-reference, 256-page-hint and 30-second limits remain. A same-ID retry returns the original quantities and window; choose a new ID to recollect.
+
+The worker initializer creates `ops.TextContentSizeObservation` through the existing Operations SQL setting. No Server startup dependency or AppHost change is added. Its row is separate from DirectoryVersion observations, raw usage facts and minute aggregates. Identical GUIDs on the two source routes address separate observations, with no combined identity or total.
+
+### TextContent operator command
+
+Set `GRACE_SERVER_URI` and `GRACE_TOKEN` as above. Supply an explicit ObservationId and an output file in an existing directory.
+
+PowerShell:
+
+```powershell
+$observationId = '10580000-0000-0000-0000-000000000001'
+./scripts/capture-text-content-size.ps1 -ObservationId $observationId -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath './text-observation.json'
+./scripts/capture-text-content-size.ps1 -Mode Read -ObservationId $observationId -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath './text-observation.json'
+```
+
+bash / zsh:
+
+```bash
+observationId='10580000-0000-0000-0000-000000000001'
+pwsh ./scripts/capture-text-content-size.ps1 -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './text-observation.json'
+pwsh ./scripts/capture-text-content-size.ps1 -Mode Read -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './text-observation.json'
+```
+
+The script rejects a DirectoryVersion response, validates the source-specific quantities, ID, complete scope and precise UTC window, then publishes the original JSON atomically. HTTP, transport and validation failures preserve prior output. Capture may have committed despite a failed response: retry the same ID. Read failures direct another read of that ID. There are no automatic retries.
+
+The [algorithm applicability record](design/Operations.TextContentObservation-Applicability.json) maps this table and its fields to the predecessor's captured SQL experiment. Locking, absent-or-complete state, scope binding, time representation, commit ordering and retry behavior are unchanged. It reuses the recorded 25 controls and extracted replay without claiming a new experiment. Actual TextContent Data checks use isolated SQL; hosted acceptance runs in isolated GitHub Validate, followed by Windows validation of the actual hosted envelope. No new DebugAzure deployment or unsupported crash guarantee is claimed.
+
 ## Later decisions and preservation
 
 Complete repository measurement needs an explicit coverage contract for all selected retained-content classes, unavailable observations, deletion timing, and a consistent interpretation of time. Current scans cannot reconstruct historical storage intervals. Scheduling does not solve that gap. No partial diagnostic may enter `RepositoryStorageBytesMinute`.

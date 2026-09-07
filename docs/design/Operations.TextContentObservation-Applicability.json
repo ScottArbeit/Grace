@@ -1,0 +1,106 @@
+{
+  "Issue": 1058,
+  "Verdict": "Applicable unchanged algorithm; recorded before production edits",
+  "Base": "5e224a700f1b42431972c484c9f7339fdeb36a3e",
+  "Evidence": "Operations.DirectoryVersionObservation-Preflight.json",
+  "SourceBundle": "1056-preflight/preflight.zip",
+  "SourceBundleSHA256": "241F28A4DB1BB380D7E43EB1BEACAE25C61AA3D723931A0BFE925F912AA93EC0",
+  "CapturedControls": 25,
+  "CapturedRows": 7,
+  "Mapping": {
+    "dbo.Observation then ops.DirectoryVersionSizeObservation": "ops.TextContentSizeObservation",
+    "Id then ObservationId": "ObservationId uniqueidentifier PRIMARY KEY",
+    "OwnerId OrganizationId RepositoryId": "Same three required GUID scope columns and equality check",
+    "Bytes then DeclaredLogicalBytes": "DeclaredTextContentUtf8Bytes bigint nonnegative",
+    "Count then DistinctContentCount": "DistinctTextContentCount bigint nonnegative",
+    "Started Finished then EnumerationStartedAt EnumerationFinishedAt": "Same ExtendedIso varchar(40) values preserving all Instant fractional digits"
+  },
+  "UnchangedSequence": [
+    "SQL lookup before repository or source access; matching stored row returns immediately",
+    "Current repository scope and nondeleted check; bounded retained source read; repository recheck",
+    "Short Serializable transaction; ID lookup WITH (UPDLOCK,HOLDLOCK)",
+    "Compare all scope IDs; conflicting scope returns no stored payload",
+    "Insert only when absent; read complete stored row; commit; return stored winner",
+    "No SQL lock spans collection; first committed reading retains quantities and entire window"
+  ],
+  "FailureAndRetry": "Before commit rollback leaves absent state. Discarded acknowledgment may leave a complete row. Fresh same-ID retry resolves it; cancellation never promises rollback to the caller.",
+  "Chronology": "Initial SQL controls preceded the predecessor first draft. Complete source packaging and extracted replay followed it. This issue reuses those captured results and does not claim a new replay.",
+  "Limits": [
+    "No process kill, power loss, network partition, load or arbitrary corruption claim",
+    "No transaction spans SQL and repository/Cosmos; retained enumeration is non-atomic",
+    "Source-specific production Data checks remain required after implementation",
+    "Actual hosted acceptance runs in isolated GitHub Validate; local shared Aspire is excluded",
+    "DebugAzure has no new runtime change or deployment claim"
+  ],
+  "ProductionDataVerification": {
+    "Project": "1058-evidence/ProductionCheck.fsproj",
+    "ResultSHA256": "8149C93CFF79DF93CB4575AE99EE79CE683AFD3204AA2C5D0D74A5E65A63F00B",
+    "Controls": [
+      "setup source-specific DirectoryVersion row with same GUID",
+      "production initially absent read",
+      "production concurrent callers return same winner",
+      "winner is one full completed candidate",
+      "fresh production lookup preserves winner",
+      "changed reading cannot replace winner",
+      "production zero preserves precise window",
+      "production missing read",
+      "scope dimension 0 returns no acceptance payload",
+      "scope dimension 0 returns no lookup payload",
+      "scope dimension 1 returns no acceptance payload",
+      "scope dimension 1 returns no lookup payload",
+      "scope dimension 2 returns no acceptance payload",
+      "scope dimension 2 returns no lookup payload",
+      "production cancellation propagated",
+      "cancelled acceptance leaves no row",
+      "independent SQL exact winner and zero rows",
+      "production leaves DirectoryVersion row count and empty usage tables unchanged",
+      "same GUID TextContent capture preserves exact DirectoryVersion row"
+    ],
+    "CapturedRows": [
+      {
+        "ObservationId": "fc6e65fb-e75e-4506-8d21-cbd4d55cd0cd",
+        "Scope": {
+          "OwnerId": "39dd50e6-62ce-48c5-844c-8762ae6b7832",
+          "OrganizationId": "c16ada60-b7fc-4eaa-9d4b-acfe7be34c10",
+          "RepositoryId": "655bd51a-3f7c-4f97-8d52-f2ed245958c3"
+        },
+        "DeclaredTextContentUtf8Bytes": 71,
+        "DistinctTextContentCount": 2,
+        "EnumerationStartedAt": "2026-09-07T01:02:03.123456789Z",
+        "EnumerationFinishedAt": "2026-09-07T01:02:03.12345679Z"
+      },
+      {
+        "ObservationId": "58ee3c48-34bc-4643-bbeb-fc24ec1b3e89",
+        "Scope": {
+          "OwnerId": "39dd50e6-62ce-48c5-844c-8762ae6b7832",
+          "OrganizationId": "c16ada60-b7fc-4eaa-9d4b-acfe7be34c10",
+          "RepositoryId": "655bd51a-3f7c-4f97-8d52-f2ed245958c3"
+        },
+        "DeclaredTextContentUtf8Bytes": 0,
+        "DistinctTextContentCount": 0,
+        "EnumerationStartedAt": "2026-09-07T01:02:03.123456789Z",
+        "EnumerationFinishedAt": "2026-09-07T01:02:03.12345679Z"
+      }
+    ],
+    "SQLImageSHA256": "ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89",
+    "Fixture": "grace-ops-1058-sql",
+    "Result": "Passed 19 actual source-specific Data controls",
+    "Meaning": "Actual final Data functions with a SQL gate; both callers return one complete candidate. Separate same-GUID DirectoryVersion row and usage table counts remain unchanged.",
+    "Port": "127.0.0.1:14341",
+    "SourceSHA256": "D41FB8E53813506BB0614E539BCD793A2A32692C79FB27BF71F496DACC904629",
+    "ProductionDataSHA256": "2C63FBB8102AB0BDFF41743BEF0E625E095035E3F18B7ABD40B10548D6C5BFD3",
+    "ProjectSHA256": "43CF76A6F4247600910482734B21086C717D5E271AE2D05885616A266E2D4C1B",
+    "Source": "1058-evidence/ProductionCheck.fs",
+    "CapturedRowsSHA256": "730861E3B4C67E5E9241781EB1B9058B6D34B429D6D04D55E8EDFC7371C31054"
+  },
+  "LocalVerification": {
+    "Markdown": "Three actual files linted, zero errors",
+    "AuthorizationAndRouteRegistryTests": 27,
+    "ObservationAndDiagnosticUnitTests": 73,
+    "Pending": "Final-head GitHub Validate hosted acceptance and root Windows replay/publication of emitted actual envelope; independent R1 and Shape review",
+    "TypesTests": 4,
+    "Operator": "Windows capture/read, zero/nanoseconds, foreign source rejection, truthful uncertainty and prior output preservation passed",
+    "HostedProject": "Release build passed with zero warnings and errors; execution reserved for isolated GitHub Validate"
+  },
+  "FixtureDisposition": "Stopped and retained after checks; no unowned container stopped or removed."
+}
