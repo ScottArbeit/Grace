@@ -358,67 +358,49 @@ type RepositoryLibraryActor
         }
 
     /// Reads and validates the existing upload session used by an accepted content change.
-    let resolveUpload repositoryId operationId principalId uploadSessionId correlationId =
+    let resolveUpload now repositoryId operationId principalId uploadSessionId correlationId =
         task {
             let actor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy uploadSessionId repositoryId correlationId
             let! upload = actor.Get correlationId
-            let now = SystemClock.Instance.GetCurrentInstant()
 
-            let completed =
-                match upload.LifecycleState with
-                | UploadSessionLifecycleState.Finalized
-                | UploadSessionLifecycleState.RetentionPending -> true
-                | _ -> false
+            match LibraryTransfer.validatePreparedUpload now repositoryId operationId principalId upload with
+            | Error reason -> return Error reason
+            | Ok (binding, manifest) ->
+                let proposedContent =
+                    {
+                        ContentVersionId = LibraryDecision.contentVersionId upload.FileContentHash
+                        Blake3Hash = upload.FileContentHash
+                        Sha256Hash = binding.ExpectedSha256
+                        Size = upload.ExpectedSize
+                        CreatedAt = now
+                    }
 
-            let binding =
-                upload.LibraryPreparation
-                |> Option.defaultWith (fun () -> invalidOp "The upload session has no Library binding.")
+                match! readContent repositoryId proposedContent.ContentVersionId with
+                | Some (existing, _) when
+                    existing.Content.Blake3Hash = proposedContent.Blake3Hash
+                    && existing.Content.Sha256Hash = proposedContent.Sha256Hash
+                    && existing.Content.Size = proposedContent.Size
+                    && existing.Manifest = manifest
+                    ->
+                    return Ok existing
+                | Some _ -> return invalidOp "A Library content identity already refers to different immutable bytes."
+                | None ->
+                    let location = { SchemaVersion = 1; Content = proposedContent; AuthorizedScope = upload.AuthorizedScope; Manifest = manifest }
 
-            let manifest =
-                upload.FinalizedManifest
-                |> Option.defaultWith (fun () -> invalidOp "The upload session has no completed manifest.")
+                    let! created =
+                        LibraryRecords.createExact
+                            services
+                            LibraryRecords.CurrentStorageName
+                            contentType
+                            (key
+                                repositoryId
+                                [
+                                    "content"
+                                    proposedContent.ContentVersionId.ToString("D")
+                                ])
+                            location
 
-            if not completed
-               || upload.RepositoryId <> repositoryId
-               || binding.OperationId <> operationId
-               || binding.PrincipalId <> principalId
-               || binding.ExpiresAt <= now
-               || manifest.FileContentHash <> upload.FileContentHash then
-                invalidOp "The completed upload does not match this Library operation."
-
-            let proposedContent =
-                {
-                    ContentVersionId = LibraryDecision.contentVersionId upload.FileContentHash
-                    Blake3Hash = upload.FileContentHash
-                    Sha256Hash = binding.ExpectedSha256
-                    Size = upload.ExpectedSize
-                    CreatedAt = now
-                }
-
-            match! readContent repositoryId proposedContent.ContentVersionId with
-            | Some (existing, _) when
-                existing.Content.Blake3Hash = proposedContent.Blake3Hash
-                && existing.Content.Sha256Hash = proposedContent.Sha256Hash
-                && existing.Content.Size = proposedContent.Size
-                && existing.Manifest = manifest
-                ->
-                return existing
-            | Some _ -> return invalidOp "A Library content identity already refers to different immutable bytes."
-            | None ->
-                let location = { SchemaVersion = 1; Content = proposedContent; AuthorizedScope = upload.AuthorizedScope; Manifest = manifest }
-
-                return!
-                    LibraryRecords.createExact
-                        services
-                        LibraryRecords.CurrentStorageName
-                        contentType
-                        (key
-                            repositoryId
-                            [
-                                "content"
-                                proposedContent.ContentVersionId.ToString("D")
-                            ])
-                        location
+                    return Ok created
         }
 
     /// Completes the permanent tracked-manifest contribution and verifies its persisted workflow result.
@@ -427,55 +409,63 @@ type RepositoryLibraryActor
             let manifest = location.Manifest
             let counterOperationId = LibraryTransfer.counterOperationId operationId location.Content.ContentVersionId
             let metadata = EventMetadata.New correlationId "RepositoryLibraryActor"
+            let ranges = LibraryTransfer.workflowRanges manifest
 
-            let counter =
-                grainFactory.GetGrain<IRepositoryContentCounterActor>(
-                    RepositoryContentCounter.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
+            if Array.isEmpty ranges then
+                invalidOp "A retained Library manifest must contain at least one block."
+
+            let workflow =
+                grainFactory.GetGrain<IManifestContributionWorkflowActor>(
+                    ManifestContributionWorkflow.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
                 )
 
-            match! counter.AddTrackedReference counterOperationId repositoryId manifest.StoragePoolId manifest.ManifestAddress metadata with
-            | Error error -> return invalidOp $"Library manifest counter failed: {error.Error}"
-            | Ok result ->
-                let transition =
-                    result.ReturnValue.Intents
-                    |> List.tryPick (function
-                        | IncrementManifestReferenceCount (_, pool, address, revision) -> Some(pool, address, revision)
-                        | _ -> None)
+            let! existingWorkflow = workflow.Get correlationId
 
-                let! counterState = counter.Get correlationId
+            if LibraryTransfer.workflowCompletedForTrackedManifest repositoryId counterOperationId manifest ranges existingWorkflow then
+                return ()
+            else
+                let counter =
+                    grainFactory.GetGrain<IRepositoryContentCounterActor>(
+                        RepositoryContentCounter.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
+                    )
 
-                let pool, address, revision =
-                    match transition, counterState.PendingTrackedAdd with
-                    | Some value, _ -> value
-                    | None, Some pending when pending.OperationId = counterOperationId -> manifest.StoragePoolId, manifest.ManifestAddress, pending.Revision
-                    | None, _ -> manifest.StoragePoolId, manifest.ManifestAddress, counterState.Revision
+                match! counter.AddTrackedReference counterOperationId repositoryId manifest.StoragePoolId manifest.ManifestAddress metadata with
+                | Error error -> return invalidOp $"Library manifest counter failed: {error.Error}"
+                | Ok result ->
+                    let transition =
+                        result.ReturnValue.Intents
+                        |> List.tryPick (function
+                            | IncrementManifestReferenceCount (_, pool, address, revision) -> Some(pool, address, revision)
+                            | _ -> None)
 
-                let ranges = LibraryTransfer.workflowRanges manifest
+                    let! counterState = counter.Get correlationId
 
-                if Array.isEmpty ranges then
-                    invalidOp "A retained Library manifest must contain at least one block."
+                    let pool, address, revision =
+                        match transition, counterState.PendingTrackedAdd with
+                        | Some value, _ -> value
+                        | None, Some pending when pending.OperationId = counterOperationId -> manifest.StoragePoolId, manifest.ManifestAddress, pending.Revision
+                        | None, _ -> manifest.StoragePoolId, manifest.ManifestAddress, counterState.Revision
 
-                let workflow = grainFactory.GetGrain<IManifestContributionWorkflowActor>(ManifestContributionWorkflow.primaryKey repositoryId pool address)
+                    match!
+                        workflow.Start $"{counterOperationId}:fanout" repositoryId pool address ManifestContributionDirection.Increment ranges revision metadata
+                        with
+                    | Error error -> return invalidOp $"Library manifest workflow failed: {error.Error}"
+                    | Ok _ ->
+                        let! persisted = workflow.Get correlationId
 
-                match! workflow.Start $"{counterOperationId}:fanout" repositoryId pool address ManifestContributionDirection.Increment ranges revision metadata
-                    with
-                | Error error -> return invalidOp $"Library manifest workflow failed: {error.Error}"
-                | Ok _ ->
-                    let! persisted = workflow.Get correlationId
-
-                    if
-                        persisted.LifecycleState
-                        <> ManifestContributionWorkflowLifecycleState.Completed
-                        || persisted.CompletedRanges.Length <> ranges.Length
-                        || not
-                            (
-                                ranges
-                                |> Array.forall (fun expected ->
-                                    persisted.CompletedRanges
-                                    |> Array.exists (fun actual -> actual.Range = expected))
-                            )
-                    then
-                        return invalidOp "The Library manifest contribution workflow did not complete every retained range."
+                        if
+                            persisted.LifecycleState
+                            <> ManifestContributionWorkflowLifecycleState.Completed
+                            || persisted.CompletedRanges.Length <> ranges.Length
+                            || not
+                                (
+                                    ranges
+                                    |> Array.forall (fun expected ->
+                                        persisted.CompletedRanges
+                                        |> Array.exists (fun actual -> actual.Range = expected))
+                                )
+                        then
+                            return invalidOp "The Library manifest contribution workflow did not complete every retained range."
         }
 
     /// Releases the counter's tracked-add marker after receipt durability.
@@ -562,12 +552,6 @@ type RepositoryLibraryActor
                     | _ -> return None
                 }
 
-            match location with
-            | Some value -> do! activateManifest repositoryId record.Change.OperationId record.CorrelationId value
-            | None -> ()
-
-            do! writeProjections repositoryId record
-
             let receipt =
                 {
                     SchemaVersion = 1
@@ -576,7 +560,22 @@ type RepositoryLibraryActor
                     Outcome = LibraryOperationOutcome.AcceptedChange record.Cursor
                 }
 
-            let! _ = createReceipt repositoryId receipt
+            let! completedBeforeAcknowledgement =
+                task {
+                    match! readReceipt repositoryId receipt.OperationId with
+                    | Some (existing, _) when existing = receipt -> return true
+                    | Some _ -> return invalidOp "The pending Library decision conflicts with its permanent receipt."
+                    | None -> return false
+                }
+
+            if not completedBeforeAcknowledgement then
+                match location with
+                | Some value -> do! activateManifest repositoryId record.Change.OperationId record.CorrelationId value
+                | None -> ()
+
+                do! writeProjections repositoryId record
+                let! _ = createReceipt repositoryId receipt
+                ()
 
             match location with
             | Some value -> do! acknowledgeManifest repositoryId record.Change.OperationId record.CorrelationId value
@@ -1188,18 +1187,19 @@ type RepositoryLibraryActor
         member this.ChangeCatalog add expectedVersion path operationId requestHash principalId authorization outgoingSystemEmpty correlationId =
             task {
                 let repositoryId = this.GetPrimaryKey()
-                do! repairPending repositoryId
 
-                match! readReceipt repositoryId operationId with
-                | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
-                | Some (existing, _) ->
-                    match existing.Outcome with
-                    | LibraryOperationOutcome.CatalogResult result -> return Ok result
-                    | _ -> return Error RejectionReason.OperationIdentityMismatch
-                | None ->
-                    match! authorize.Invoke(repositoryId, authorization, CancellationToken.None) with
-                    | Denied reason -> return Error reason
-                    | Allowed _ ->
+                match! authorize.Invoke(repositoryId, authorization, CancellationToken.None) with
+                | Denied reason -> return Error reason
+                | Allowed _ ->
+                    do! repairPending repositoryId
+
+                    match! readReceipt repositoryId operationId with
+                    | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
+                    | Some (existing, _) ->
+                        match existing.Outcome with
+                        | LibraryOperationOutcome.CatalogResult result -> return Ok result
+                        | _ -> return Error RejectionReason.OperationIdentityMismatch
+                    | None ->
                         match! readControl repositoryId with
                         | None -> return Error "Library catalog is not initialized."
                         | Some (control, etag) ->
@@ -1314,21 +1314,22 @@ type RepositoryLibraryActor
                 let repositoryId = this.GetPrimaryKey()
                 let operationId = LibraryDecision.operationId command
                 let requestHash = LibraryDecision.requestHash command
-                do! repairPending repositoryId
-                do! tryDrainNotifications repositoryId
 
-                match! readReceipt repositoryId operationId with
-                | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
-                | Some (existing, _) ->
-                    match existing.Outcome with
-                    | LibraryOperationOutcome.CatalogResult _ -> return Error RejectionReason.OperationIdentityMismatch
-                    | outcome ->
-                        let! receipt = resolveOutcome repositoryId operationId requestHash outcome
-                        return Ok receipt
-                | None ->
-                    match! authorize.Invoke(repositoryId, authorization, CancellationToken.None) with
-                    | Denied reason -> return Error reason
-                    | Allowed _ ->
+                match! authorize.Invoke(repositoryId, authorization, CancellationToken.None) with
+                | Denied reason -> return Error reason
+                | Allowed _ ->
+                    do! repairPending repositoryId
+                    do! tryDrainNotifications repositoryId
+
+                    match! readReceipt repositoryId operationId with
+                    | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
+                    | Some (existing, _) ->
+                        match existing.Outcome with
+                        | LibraryOperationOutcome.CatalogResult _ -> return Error RejectionReason.OperationIdentityMismatch
+                        | outcome ->
+                            let! receipt = resolveOutcome repositoryId operationId requestHash outcome
+                            return Ok receipt
+                    | None ->
                         match! readControl repositoryId with
                         | None -> return Error "Library catalog is not initialized."
                         | Some (control, etag) ->
@@ -1369,44 +1370,49 @@ type RepositoryLibraryActor
                                         return Error "The Library current-record capacity has been reached."
                                     else
                                         let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
-                                        let! location = resolveUpload repositoryId operationId principalId uploadSessionId correlationId
-                                        let itemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
 
-                                        let ns =
-                                            {
-                                                Parent = expectation.Parent
-                                                Name = LibraryDecision.normalizeName expectation.Name
-                                                NamespaceVersion = LibraryDecision.deterministicGuid repositoryId operationId "namespace"
-                                            }
+                                        match! resolveUpload now repositoryId operationId principalId uploadSessionId correlationId with
+                                        | Error reason ->
+                                            let! receipt = reject repositoryId operationId requestHash reason control.Catalog
+                                            return Ok receipt
+                                        | Ok location ->
+                                            let itemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
 
-                                        let item =
-                                            {
-                                                ItemId = itemId
-                                                ItemKind = ItemKind.File
-                                                LastChangeCursor = publicCursor
-                                                Namespace = Some ns
-                                                Content = Some location.Content
-                                                ContentRevision = Some publicCursor
-                                                Tombstone = None
-                                            }
+                                            let ns =
+                                                {
+                                                    Parent = expectation.Parent
+                                                    Name = LibraryDecision.normalizeName expectation.Name
+                                                    NamespaceVersion = LibraryDecision.deterministicGuid repositoryId operationId "namespace"
+                                                }
 
-                                        let change = acceptedChange operationId ChangeKind.CreateFile now principalId control.Catalog.Version item None
+                                            let item =
+                                                {
+                                                    ItemId = itemId
+                                                    ItemKind = ItemKind.File
+                                                    LastChangeCursor = publicCursor
+                                                    Namespace = Some ns
+                                                    Content = Some location.Content
+                                                    ContentRevision = Some publicCursor
+                                                    Tombstone = None
+                                                }
 
-                                        return!
-                                            acceptedRecord
-                                                cursor
-                                                requestHash
-                                                correlationId
-                                                change
-                                                None
-                                                None
-                                                None
-                                                None
-                                                None
-                                                (Some expectation.ExpectedSlotVersion)
-                                                true
-                                                existingSlot.IsNone
-                                            |> submit
+                                            let change = acceptedChange operationId ChangeKind.CreateFile now principalId control.Catalog.Version item None
+
+                                            return!
+                                                acceptedRecord
+                                                    cursor
+                                                    requestHash
+                                                    correlationId
+                                                    change
+                                                    None
+                                                    None
+                                                    None
+                                                    None
+                                                    None
+                                                    (Some expectation.ExpectedSlotVersion)
+                                                    true
+                                                    existingSlot.IsNone
+                                                |> submit
 
                                 | LibraryChangeCommand.CreateDirectory (_, _, _, expectation) ->
                                     let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
@@ -1485,9 +1491,11 @@ type RepositoryLibraryActor
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.NamespaceChanged control.Catalog
                                         return Ok receipt
                                     | Some (current, _) ->
-                                        let! location = resolveUpload repositoryId operationId principalId uploadSessionId correlationId
-
-                                        if contentMatches current.Item contentPrecondition then
+                                        match! resolveUpload now repositoryId operationId principalId uploadSessionId correlationId with
+                                        | Error reason ->
+                                            let! receipt = reject repositoryId operationId requestHash reason control.Catalog
+                                            return Ok receipt
+                                        | Ok location when contentMatches current.Item contentPrecondition ->
                                             let item =
                                                 { current.Item with
                                                     LastChangeCursor = publicCursor
@@ -1514,9 +1522,8 @@ type RepositoryLibraryActor
                                                     false
                                                     false
                                                 |> submit
-                                        elif control.ItemRecordCount >= 100000 then
-                                            return Error "The Library current-item capacity has been reached."
-                                        else
+                                        | Ok _ when control.ItemRecordCount >= 100000 -> return Error "The Library current-item capacity has been reached."
+                                        | Ok location ->
                                             let ns = current.Item.Namespace.Value
                                             let! conflictName, destinationSlot = chooseConflictSlot repositoryId ns.Parent ns.Name operationId
                                             let conflictItemId = LibraryDecision.deterministicGuid repositoryId operationId "conflict-item"
@@ -1991,20 +1998,11 @@ type RepositoryLibraryActor
                     ->
                     let size = boundedPageSize pageSize
                     let! records = LibraryQueries.readChanges services repositoryId position boundary (size + 1) CancellationToken.None
+                    let selected, lastPosition, hasMore = LibraryQueries.changePageWindow position boundary size records
 
                     let changes =
-                        records
-                        |> Array.truncate size
+                        selected
                         |> Array.map (fun record -> record.Change)
-
-                    let hasMore = records.Length > size
-
-                    let lastPosition =
-                        if changes.Length = 0 then
-                            position
-                        else
-                            (records |> Array.truncate size |> Array.last)
-                                .Cursor
 
                     let expires =
                         SystemClock

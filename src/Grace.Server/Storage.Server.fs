@@ -1335,7 +1335,7 @@ module Storage =
                     return
                         Error(
                             GraceError.Create
-                                $"UploadSession {parameters.UploadSessionId} in repository {repositoryId} must be active before issuing a ContentBlock upload URI; current state is {session.LifecycleState}."
+                                $"UploadSession must be active before issuing a ContentBlock upload URI; session {parameters.UploadSessionId} in repository {repositoryId} is currently {session.LifecycleState}."
                                 correlationId
                         )
                 else

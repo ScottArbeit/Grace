@@ -264,6 +264,11 @@ module Library =
 
                     let! upload = (libraryActor ids.RepositoryId).PrepareContent start correlationId
 
+                    let persistedExpiresAt =
+                        upload.LibraryPreparation
+                        |> Option.map (fun preparation -> preparation.ExpiresAt)
+                        |> Option.defaultWith (fun () -> invalidOp "The Library upload preparation did not retain its expiry.")
+
                     return!
                         ok
                             context
@@ -274,7 +279,7 @@ module Library =
                                 Size = parameters.Size
                                 AuthorizedScope = upload.AuthorizedScope
                                 StoragePoolId = upload.StoragePoolId
-                                ExpiresAt = expiresAt
+                                ExpiresAt = persistedExpiresAt
                             }
             }
 

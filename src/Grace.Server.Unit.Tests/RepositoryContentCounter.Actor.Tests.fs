@@ -400,6 +400,42 @@ type RepositoryContentCounterActorTests() =
             Assert.That(added.Counter.Count, Is.EqualTo(1L))
         }
 
+    /// Verifies a normal add still advances when Redis misses the operation and rejects both bounded-result writes.
+    [<Test>]
+    member _.RedisMissAndWriteFailureDoNotDiscardNormalAdd() =
+        task {
+            let first =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-first") (metadata "corr-add-first")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult(None)
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult false
+                }
+
+            let mutable persisted = RepositoryContentCounterDto.Default
+
+            let! result =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    recent
+                    (fun snapshot ->
+                        persisted <- snapshot
+                        Task.CompletedTask)
+                    None
+                    first.Counter
+                    (add "op-add-second")
+                    (metadata "corr-add-second")
+                    CancellationToken.None
+
+            let decision = expectDecision result
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Counter.Count, Is.EqualTo(2L))
+            Assert.That(decision.Counter.Revision, Is.EqualTo(first.Counter.Revision + 1L))
+            Assert.That(decision.Counter.LastCompletedChange.Value.OperationId, Is.EqualTo("op-add-second"))
+            Assert.That(persisted, Is.EqualTo(decision.Counter))
+        }
+
     /// Verifies a removal whose Redis reply is lost remains recoverable from LastCompletedChange.
     [<Test>]
     member _.RemovalRecoversAfterCompletedResultWriteReturnsUnknown() =

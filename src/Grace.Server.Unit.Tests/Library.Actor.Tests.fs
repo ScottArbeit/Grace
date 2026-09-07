@@ -3,13 +3,66 @@ namespace Grace.Server.Tests
 open Grace.Actors
 open Grace.Shared
 open Grace.Shared.Validation
+open Grace.Types.Authorization
+open Grace.Types.Common
 open Grace.Types.Library
+open Grace.Types.ManifestContributionWorkflow
+open Grace.Types.UploadSession
 open NodaTime
+open Microsoft.Extensions.DependencyInjection
 open NUnit.Framework
+open Orleans
+open Orleans.Runtime
+open Orleans.Storage
 open System
 open System.Collections.Generic
+open System.Reflection
 open System.Text
+open System.Threading
 open System.Threading.Tasks
+
+/// Supplies the one real grain identity needed to invoke RepositoryLibraryActor methods in a focused harness.
+type LibraryTestGrainContextProxy() =
+    inherit DispatchProxy()
+
+    member val GrainId = GrainId.Create(GrainType.Create("Grace.RepositoryLibraryActor"), GrainIdKeyExtensions.CreateGuidKey(Guid.Empty)) with get, set
+
+    override this.Invoke(methodInfo, _arguments) =
+        match methodInfo.Name with
+        | "get_GrainId" -> box this.GrainId
+        | _ when methodInfo.ReturnType = typeof<Void> -> null
+        | _ when methodInfo.ReturnType.IsValueType -> Activator.CreateInstance(methodInfo.ReturnType)
+        | _ -> null
+
+/// Stores exact Library records so authorization ordering can be exercised through the real actor methods.
+type LibraryReplayTestStorage() =
+    let records = Dictionary<string, obj>(StringComparer.Ordinal)
+    let mutable readCount = 0
+
+    let storageKey (grainType: string) (grainId: GrainId) = $"{grainType}|{grainId}"
+
+    member _.ReadCount = readCount
+
+    member _.Store<'T>(grainType, recordKey, value: 'T) = records[storageKey grainType (GrainId.Create(grainType, recordKey))] <- box value
+
+    interface IGrainStorage with
+        member _.ReadStateAsync<'T>(grainType, grainId, state: IGrainState<'T>) =
+            readCount <- readCount + 1
+
+            match records.TryGetValue(storageKey grainType grainId) with
+            | true, value ->
+                state.State <- unbox<'T> value
+                state.ETag <- "library-replay-test"
+                state.RecordExists <- true
+            | _ -> state.RecordExists <- false
+
+            Task.CompletedTask
+
+        member _.WriteStateAsync<'T>(_, _, _: IGrainState<'T>) =
+            Task.FromException(InvalidOperationException("The authorization replay harness must not write Library records."))
+
+        member _.ClearStateAsync<'T>(_, _, _: IGrainState<'T>) =
+            Task.FromException(InvalidOperationException("The authorization replay harness must not clear Library records."))
 
 /// Verifies deterministic Library decisions, tokens, and notification effect ordering.
 [<Parallelizable(ParallelScope.All)>]
@@ -64,6 +117,294 @@ type LibraryActorTests() =
 
         let run () = LibraryNotifications.attempt send advance persist clear hasRetained (envelope ())
         effects, run
+
+    let acceptedRecord cursor =
+        {
+            SchemaVersion = 1
+            Cursor = cursor
+            RequestHash = $"request-{cursor}"
+            CorrelationId = $"correlation-{cursor}"
+            Change = Unchecked.defaultof<LibraryChangeDto>
+            PriorNamespace = None
+            PriorContentVersionId = None
+            ConsumedNamespaceVersion = None
+            ConsumedContentVersionId = None
+            ConsumedContentRevision = None
+            ConsumedSlotVersion = None
+            AddedItemRecord = false
+            AddedSlotRecord = false
+        }
+
+    let preparedManifest () =
+        let bytes = Encoding.UTF8.GetBytes("prepared Library content")
+        let blockAddress = ContentBlockAddress(ContentAddress.computeBlake3Hex bytes)
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                RabinChunking.SuiteName,
+                FileContentHash(ContentAddress.computeBlake3Hex bytes),
+                int64 bytes.Length,
+                StoragePoolId "pool-library",
+                [
+                    ContentBlock.Create(blockAddress, 0L, int64 bytes.Length)
+                ]
+            )
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let preparedUpload expiresAt =
+        let manifest = preparedManifest ()
+
+        { UploadSessionDto.Default with
+            UploadSessionId = Guid.Parse("918d5491-fc38-4010-886c-17541171670f")
+            RepositoryId = repositoryId
+            StoragePoolId = manifest.StoragePoolId
+            AuthorizedScope = RelativePath "Library/918d5491-fc38-4010-886c-17541171670f"
+            FileContentHash = manifest.FileContentHash
+            ExpectedSize = manifest.Size
+            LifecycleState = UploadSessionLifecycleState.RetentionPending
+            FinalizedManifestAddress = Some manifest.ManifestAddress
+            FinalizedManifest = Some manifest
+            LibraryPreparation = Some { OperationId = operationId; PrincipalId = "user:test"; ExpectedSha256 = String.replicate 64 "a"; ExpiresAt = expiresAt }
+        }
+
+    /// Builds a real RepositoryLibraryActor with exact keyed records and a controllable current permission result.
+    let replayActor permission (receipt: LibraryReceiptDocument) =
+        let catalog = LibraryCatalogDto.CreateInitial(repositoryId, timestamp, "user:test")
+
+        let control =
+            {
+                SchemaVersion = 1
+                Catalog = catalog
+                Epoch = Guid.Parse("d805308a-a0cc-4e9f-8050-95170e60aefd")
+                CommittedCursor = 0L
+                ReplayFloor = 1L
+                Pending = None
+                ItemRecordCount = 0
+                SlotRecordCount = 0
+                HistoryThrough = 0L
+                NotifyThrough = 0L
+            }
+
+        let storage = LibraryReplayTestStorage()
+        storage.Store("Grace.Library.Control.v2", repositoryId.ToString("D"), control)
+
+        storage.Store(
+            "Grace.Library.Receipt.v2",
+            LibraryRecords.key [ repositoryId.ToString("D")
+                                 "operation"
+                                 receipt.OperationId.ToString("D") ],
+            receipt
+        )
+
+        let services = ServiceCollection()
+
+        for storageName in
+            [|
+                LibraryRecords.ControlStorageName
+                LibraryRecords.ChangesStorageName
+                LibraryRecords.CurrentStorageName
+                LibraryRecords.ReceiptsStorageName
+                LibraryRecords.HistoryStorageName
+                LibraryRecords.BaselinesStorageName
+            |] do
+            services.AddKeyedSingleton<IGrainStorage>(storageName, storage)
+            |> ignore
+
+        let provider = services.BuildServiceProvider()
+        let mutable authorizationCalls = 0
+
+        let authorize =
+            Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>> (fun _ _ _ ->
+                authorizationCalls <- authorizationCalls + 1
+                Task.FromResult permission)
+
+        let actor = RepositoryLibraryActor(provider, null, authorize, Array.create 32 7uy)
+        let context = DispatchProxy.Create<IGrainContext, LibraryTestGrainContextProxy>()
+
+        (context :?> LibraryTestGrainContextProxy).GrainId <- GrainId.Create(
+            GrainType.Create("Grace.RepositoryLibraryActor"),
+            GrainIdKeyExtensions.CreateGuidKey(repositoryId)
+        )
+
+        typeof<Grain>
+            .GetProperty(
+                "GrainContext",
+                BindingFlags.Instance
+                ||| BindingFlags.Public
+                ||| BindingFlags.NonPublic
+            )
+            .SetValue(actor, context)
+
+        actor :> Grace.Actors.Interfaces.IRepositoryLibraryActor, storage, provider, (fun () -> authorizationCalls), catalog
+
+    let authorization = { OwnerId = Guid.Empty; OrganizationId = Guid.Empty; Principals = Array.empty; EffectiveClaims = Array.empty }
+
+    /// Verifies current denial prevents both permanent catalog and item receipt disclosure inside the actor turn.
+    [<Test>]
+    member _.CurrentPermissionDenialPrecedesStoredResultReplay() =
+        task {
+            let catalogResult =
+                {
+                    OperationId = operationId
+                    Outcome = OutcomeKind.Accepted
+                    LibraryCatalog = LibraryCatalogDto.CreateInitial(repositoryId, timestamp, "user:test")
+                    ReasonCode = None
+                    RecordedAt = timestamp
+                }
+
+            let catalogReceipt =
+                { SchemaVersion = 1; OperationId = operationId; RequestHash = "catalog-request"; Outcome = LibraryOperationOutcome.CatalogResult catalogResult }
+
+            let deniedReason = "Library permission was revoked before the actor turn."
+            let catalogActor, catalogStorage, catalogServices, catalogAuthorizationCalls, catalog = replayActor (Denied deniedReason) catalogReceipt
+            use _catalogServices = catalogServices
+
+            let! catalogReplay =
+                catalogActor.ChangeCatalog
+                    true
+                    catalog.Version
+                    "Library"
+                    operationId
+                    catalogReceipt.RequestHash
+                    "user:test"
+                    authorization
+                    true
+                    "corr-catalog-denied"
+
+            match catalogReplay with
+            | Error reason -> Assert.That(reason, Is.EqualTo(deniedReason))
+            | Ok _ -> Assert.Fail("Denied catalog replay disclosed its stored result.")
+
+            Assert.That(catalogAuthorizationCalls (), Is.EqualTo(1))
+            Assert.That(catalogStorage.ReadCount, Is.EqualTo(0))
+
+            let rejectedReceipt =
+                {
+                    OperationId = operationId
+                    RequestHash = "submit-request"
+                    Outcome = OutcomeKind.Rejected
+                    Change = None
+                    ReasonCode = Some "preparedContentExpired"
+                    CurrentLibraryCatalog = Some catalog
+                    Rebaseline = None
+                }
+
+            let submitReceipt =
+                {
+                    SchemaVersion = 1
+                    OperationId = operationId
+                    RequestHash = rejectedReceipt.RequestHash
+                    Outcome = LibraryOperationOutcome.RejectedChange rejectedReceipt
+                }
+
+            let command =
+                LibraryChangeCommand.CreateDirectory(
+                    operationId,
+                    rejectedReceipt.RequestHash,
+                    catalog.Version,
+                    {
+                        Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
+                        Name = "denied"
+                        ExpectedSlotVersion = Guid.Empty
+                        ExpectedState = "vacant"
+                    }
+                )
+
+            let submitActor, submitStorage, submitServices, submitAuthorizationCalls, _ = replayActor (Denied deniedReason) submitReceipt
+            use _submitServices = submitServices
+            let! submitReplay = submitActor.Submit command "user:test" authorization "corr-submit-denied"
+
+            match submitReplay with
+            | Error reason -> Assert.That(reason, Is.EqualTo(deniedReason))
+            | Ok _ -> Assert.Fail("Denied item replay disclosed its stored receipt.")
+
+            Assert.That(submitAuthorizationCalls (), Is.EqualTo(1))
+            Assert.That(submitStorage.ReadCount, Is.EqualTo(0))
+        }
+
+    /// Verifies current permission allows exact catalog and item receipt replay through the same actor boundary.
+    [<Test>]
+    member _.CurrentPermissionAllowsExactStoredResultReplay() =
+        task {
+            let catalogResult =
+                {
+                    OperationId = operationId
+                    Outcome = OutcomeKind.Accepted
+                    LibraryCatalog = LibraryCatalogDto.CreateInitial(repositoryId, timestamp, "user:test")
+                    ReasonCode = None
+                    RecordedAt = timestamp
+                }
+
+            let catalogReceipt =
+                { SchemaVersion = 1; OperationId = operationId; RequestHash = "catalog-request"; Outcome = LibraryOperationOutcome.CatalogResult catalogResult }
+
+            let catalogActor, catalogStorage, catalogServices, catalogAuthorizationCalls, catalog = replayActor (Allowed "current") catalogReceipt
+            use _catalogServices = catalogServices
+
+            let! catalogReplay =
+                catalogActor.ChangeCatalog
+                    true
+                    catalog.Version
+                    "Library"
+                    operationId
+                    catalogReceipt.RequestHash
+                    "user:test"
+                    authorization
+                    true
+                    "corr-catalog-allowed"
+
+            match catalogReplay with
+            | Ok result -> Assert.That(result, Is.EqualTo(catalogResult))
+            | Error reason -> Assert.Fail($"Allowed catalog replay failed: {reason}")
+
+            Assert.That(catalogAuthorizationCalls (), Is.EqualTo(1))
+            Assert.That(catalogStorage.ReadCount, Is.GreaterThan(0))
+
+            let rejectedReceipt =
+                {
+                    OperationId = operationId
+                    RequestHash = "submit-request"
+                    Outcome = OutcomeKind.Rejected
+                    Change = None
+                    ReasonCode = Some "preparedContentExpired"
+                    CurrentLibraryCatalog = Some catalog
+                    Rebaseline = None
+                }
+
+            let submitReceipt =
+                {
+                    SchemaVersion = 1
+                    OperationId = operationId
+                    RequestHash = rejectedReceipt.RequestHash
+                    Outcome = LibraryOperationOutcome.RejectedChange rejectedReceipt
+                }
+
+            let command =
+                LibraryChangeCommand.CreateDirectory(
+                    operationId,
+                    rejectedReceipt.RequestHash,
+                    catalog.Version,
+                    {
+                        Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
+                        Name = "allowed"
+                        ExpectedSlotVersion = Guid.Empty
+                        ExpectedState = "vacant"
+                    }
+                )
+
+            let submitActor, submitStorage, submitServices, submitAuthorizationCalls, _ = replayActor (Allowed "current") submitReceipt
+            use _submitServices = submitServices
+            let! submitReplay = submitActor.Submit command "user:test" authorization "corr-submit-allowed"
+
+            match submitReplay with
+            | Ok receipt -> Assert.That(receipt, Is.EqualTo(rejectedReceipt))
+            | Error reason -> Assert.Fail($"Allowed item replay failed: {reason}")
+
+            Assert.That(submitAuthorizationCalls (), Is.EqualTo(1))
+            Assert.That(submitStorage.ReadCount, Is.GreaterThan(0))
+        }
 
     /// A first successful send advances the durable cursor without creating failure state.
     [<Test>]
@@ -202,6 +543,122 @@ type LibraryActorTests() =
                 Assert.That(LibraryDecision.movedDescendantPathsAreValid catalog "Media" movingId "moved" oversizedDocuments, Is.False))
         )
 
+    /// A temporarily visible later segment cannot move a change page beyond a missing committed cursor.
+    [<Test>]
+    member _.ChangePagesStopAtVisibilityGapAndResumeContiguously() =
+        let first = ResizeArray<LibraryAcceptedChangeRecord>()
+        let firstCursor, firstGap = LibraryQueries.appendContiguousChanges 200L 10 first [| acceptedRecord 201L |]
+        let initialPage, initialPosition, initialHasMore = LibraryQueries.changePageWindow 199L 201L 10 (first.ToArray())
+        let retry = ResizeArray<LibraryAcceptedChangeRecord>()
+
+        let retryCursor, retryGap =
+            LibraryQueries.appendContiguousChanges
+                200L
+                10
+                retry
+                [|
+                    acceptedRecord 200L
+                    acceptedRecord 201L
+                |]
+
+        let retryPage, retryPosition, retryHasMore = LibraryQueries.changePageWindow 199L 201L 10 (retry.ToArray())
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(first, Is.Empty)
+                Assert.That(firstCursor, Is.EqualTo(200L))
+                Assert.That(firstGap, Is.True)
+                Assert.That(initialPage, Is.Empty)
+                Assert.That(initialPosition, Is.EqualTo(199L))
+                Assert.That(initialHasMore, Is.True)
+                Assert.That(retry |> Seq.map (fun value -> value.Cursor), Is.EqualTo(box [| 200L; 201L |]))
+                Assert.That(retryCursor, Is.EqualTo(202L))
+                Assert.That(retryGap, Is.False)
+                Assert.That(retryPage |> Array.map (fun value -> value.Cursor), Is.EqualTo(box [| 200L; 201L |]))
+                Assert.That(retryPosition, Is.EqualTo(201L))
+                Assert.That(retryHasMore, Is.False))
+        )
+
+    /// A valid preparation stops being consumable at its declared expiry boundary.
+    [<Test>]
+    member _.PreparedUploadExpiresAtThePersistedBoundary() =
+        let upload = preparedUpload timestamp
+
+        let before = LibraryTransfer.validatePreparedUpload (timestamp - Duration.FromTicks(1L)) repositoryId operationId "user:test" upload
+
+        let atBoundary = LibraryTransfer.validatePreparedUpload timestamp repositoryId operationId "user:test" upload
+
+        Assert.Multiple(
+            Action (fun () ->
+                match before with
+                | Error reason -> Assert.Fail($"Expected valid preparation before expiry, got {reason}.")
+                | Ok (binding, manifest) ->
+                    Assert.That(binding.ExpiresAt, Is.EqualTo(timestamp))
+                    Assert.That(manifest, Is.EqualTo(upload.FinalizedManifest.Value))
+
+                match atBoundary with
+                | Error reason -> Assert.That(reason, Is.EqualTo(RejectionReason.PreparedContentExpired))
+                | Ok _ -> Assert.Fail("Expected the preparation to expire at its persisted boundary."))
+        )
+
+    /// Only the exact completed workflow can suppress a repeated tracked-manifest activation.
+    [<Test>]
+    member _.CompletedTrackedWorkflowMatchesExactOperationAndCounterRevision() =
+        let manifest = preparedManifest ()
+        let ranges = LibraryTransfer.workflowRanges manifest
+        let counterOperationId = LibraryTransfer.counterOperationId operationId contentVersionId
+
+        let completedRanges =
+            ranges
+            |> Array.mapi (fun index range ->
+                {
+                    OperationId = $"{counterOperationId}:fanout:revision:7:range:{index}:completed"
+                    RepositoryId = repositoryId
+                    StoragePoolId = manifest.StoragePoolId
+                    ManifestAddress = manifest.ManifestAddress
+                    Range = range
+                })
+
+        let completed =
+            { ManifestContributionWorkflowDto.Default with
+                RepositoryId = repositoryId
+                StoragePoolId = manifest.StoragePoolId
+                ManifestAddress = manifest.ManifestAddress
+                Direction = ManifestContributionDirection.Increment
+                Ranges = ranges
+                CompletedRanges = completedRanges
+                LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+                StartOperationId = Some $"{counterOperationId}:fanout"
+                LastOperationId =
+                    completedRanges
+                    |> Array.tryLast
+                    |> Option.map (fun value -> value.OperationId)
+                CounterRevision = 7L
+                Revision = 2L
+            }
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(LibraryTransfer.workflowCompletedForTrackedManifest repositoryId counterOperationId manifest ranges completed, Is.True)
+
+                Assert.That(LibraryTransfer.workflowCompletedForTrackedManifest repositoryId "different-operation" manifest ranges completed, Is.False)
+
+                Assert.That(
+                    LibraryTransfer.workflowCompletedForTrackedManifest repositoryId counterOperationId manifest ranges { completed with CounterRevision = 0L },
+                    Is.False
+                )
+
+                Assert.That(
+                    LibraryTransfer.workflowCompletedForTrackedManifest
+                        repositoryId
+                        counterOperationId
+                        manifest
+                        ranges
+                        { completed with LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress },
+                    Is.False
+                ))
+        )
+
     /// Signed Library tokens reject a changed purpose, repository, payload, and expiry boundary.
     [<Test>]
     member _.LibraryTokensBindPurposeRepositoryPayloadAndExpiry() =
@@ -310,7 +767,7 @@ type LibraryActorTests() =
 
             let recordShard shard =
                 let bytes = LibraryQueries.serializeBaselineShard shard
-                fingerprints.Add(shard.Items.Length, bytes.Length, ContentAddress.computeBlake3Hex bytes)
+                fingerprints.Add((shard.Items.Length, bytes.Length, ContentAddress.computeBlake3Hex bytes))
 
                 Assert.That(bytes.Length, Is.LessThanOrEqualTo(LibraryQueries.BaselineShardMaximumBytes))
 

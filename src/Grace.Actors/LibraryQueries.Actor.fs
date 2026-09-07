@@ -191,6 +191,33 @@ module LibraryQueries =
                 return false
         }
 
+    /// Appends only the visible contiguous journal prefix and reports the first missing cursor.
+    let appendContiguousChanges expectedCursor maximumCount (results: ResizeArray<LibraryAcceptedChangeRecord>) changes =
+        let mutable cursor = expectedCursor
+        let mutable gap = false
+
+        for change in changes do
+            if not gap && results.Count < maximumCount then
+                if change.Cursor = cursor then
+                    results.Add change
+                    cursor <- cursor + 1L
+                elif change.Cursor > cursor then
+                    gap <- true
+
+        cursor, gap
+
+    /// Selects one public change page while retaining continuation until its pinned boundary is reached.
+    let changePageWindow position boundary pageSize (records: LibraryAcceptedChangeRecord array) =
+        let selected = records |> Array.truncate pageSize
+
+        let lastPosition =
+            if Array.isEmpty selected then
+                position
+            else
+                selected[selected.Length - 1].Cursor
+
+        selected, lastPosition, lastPosition < boundary
+
     /// Reads committed journal records after one position while touching only required cursor segments.
     let readChanges (services: IServiceProvider) (repositoryId: RepositoryId) afterCursor committedCursor maximumCount cancellationToken =
         task {
@@ -200,9 +227,11 @@ module LibraryQueries =
 
             let results = ResizeArray<LibraryAcceptedChangeRecord>()
             let mutable cursor = afterCursor + 1L
+            let mutable gap = false
 
             while cursor <= committedCursor
-                  && results.Count < maximumCount do
+                  && results.Count < maximumCount
+                  && not gap do
                 let segment =
                     (cursor - 1L) / 200L
                     |> fun value -> value.ToString("D20")
@@ -222,13 +251,17 @@ module LibraryQueries =
                 use iterator = container.GetItemQueryIterator<LibraryAcceptedChangeRecord>(query, requestOptions = options)
 
                 while iterator.HasMoreResults
-                      && results.Count < maximumCount do
+                      && results.Count < maximumCount
+                      && not gap do
                     let! page = iterator.ReadNextAsync(cancellationToken)
+                    let nextCursor, pageGap = appendContiguousChanges cursor maximumCount results page.Resource
+                    cursor <- nextCursor
+                    gap <- pageGap
 
-                    for value in page.Resource do
-                        if results.Count < maximumCount then results.Add value
-
-                cursor <- segmentEnd + 1L
+                if not gap
+                   && results.Count < maximumCount
+                   && cursor <= segmentEnd then
+                    gap <- true
 
             return results.ToArray()
         }
