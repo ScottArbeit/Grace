@@ -7,9 +7,40 @@ open Grace.Types.Library
 open NUnit.Framework
 open System
 
-/// Verifies the remote-only library CLI and SDK surface accepted by Issue #1038.
+/// Verifies Library catalog and synchronization command parsing without invoking runtime state.
 [<Parallelizable(ParallelScope.All)>]
 module LibraryCliParsingTests =
+
+    /// Keeps the synchronization capability budget confined to enable, run, and status.
+    [<Test>]
+    let ``library synchronization accepts exact verbs and repository locators`` () =
+        for verb in [ "enable"; "run"; "status" ] do
+            let parsed =
+                GraceCommand.rootCommand.Parse [| "library"
+                                                  "sync"
+                                                  verb
+                                                  "--repository-id"
+                                                  "a140fd79-c198-4f9d-8d73-76a7f5fb3649"
+                                                  "--output"
+                                                  "Json" |]
+
+            parsed.Errors.Count |> should equal 0
+
+        for verb in
+            [
+                "disable"
+                "offline"
+                "repair"
+                "re-enable"
+            ] do
+            GraceCommand
+                .rootCommand
+                .Parse(
+                    [| "library"; "sync"; verb |]
+                )
+                .Errors
+                .Count
+            |> should be (greaterThan 0)
 
     /// Verifies `grace library` exposes exactly the four accepted remote catalog operations.
     [<Test>]

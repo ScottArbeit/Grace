@@ -5,6 +5,7 @@ open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Library
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Library
@@ -17,7 +18,7 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
-/// Defines the remote-only Library command tree without activating local synchronization participation.
+/// Defines Library catalog management and local synchronization commands.
 module LibraryCommand =
 
     /// Defines options shared by the Library handlers.
@@ -173,7 +174,34 @@ module LibraryCommand =
                 return renderOutput parseResult result
             }
 
-    /// Builds the remote-only `grace library` command tree accepted by Issue #1038.
+    /// Runs synchronization against the repository configured for this working copy.
+    let internal synchronizationHandler verb (parseResult: ParseResult) cancellationToken =
+        task {
+            try
+                let configuration = Current()
+                let locator = applyScope (GetLibraryCatalogParameters()) parseResult
+
+                if locator.RepositoryId
+                   <> configuration.RepositoryId.ToString("D")
+                   || locator.OwnerId
+                      <> configuration.OwnerId.ToString("D")
+                   || locator.OrganizationId
+                      <> configuration.OrganizationId.ToString("D") then
+                    invalidOp "Library synchronization must target the configured working-copy repository."
+
+                let! status =
+                    match verb with
+                    | "enable" -> LibrarySynchronization.enable configuration locator.CorrelationId cancellationToken
+                    | "run" -> LibrarySynchronization.run configuration locator.CorrelationId cancellationToken
+                    | "status" -> LibrarySynchronization.status configuration
+                    | _ -> invalidArg (nameof verb) "Unsupported Library synchronization command."
+
+                return Ok(GraceReturnValue.Create status locator.CorrelationId)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Builds Library catalog and synchronization commands.
     let Build =
         let addScopeOptions (command: Command) =
             command
@@ -223,4 +251,23 @@ module LibraryCommand =
         removeCommand.Action <- RemoveLibrary()
         libraryCommand.Subcommands.Add removeCommand
 
+        let syncCommand = Command("sync", "Synchronize Library files in this working copy.")
+
+        for verb in [ "enable"; "run"; "status" ] do
+            let command =
+                Command(verb, $"Library synchronization {verb}.")
+                |> addScopeOptions
+
+            command.Action <-
+                { new AsynchronousCommandLineAction() with
+                    override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
+                        task {
+                            let! result = synchronizationHandler verb parseResult cancellationToken
+                            return renderOutput parseResult result
+                        }
+                }
+
+            syncCommand.Subcommands.Add command
+
+        libraryCommand.Subcommands.Add syncCommand
         libraryCommand

@@ -1,6 +1,6 @@
 # Libraries
 
-Libraries are Grace's repository-ordered remote namespace and immutable-byte service. Product V1 provides the complete remote contract while deliberately leaving local filesystem participation for later work.
+Libraries let authorized Windows working copies share ordinary files through a repository-ordered namespace and immutable-byte service. Each copy retains saved input, materialized edit bases, and completed progress locally.
 
 An authorized remote client can:
 
@@ -12,7 +12,7 @@ An authorized remote client can:
 - Read retained immutable content through a signed URL that remains valid until its fixed expiry.
 - Read content-free repository synchronization status.
 
-Product V1 does not include local SQLite state, filesystem publication, `library sync enable`, `library sync disable`, `library sync run`, local synchronization status, or Watch-driven synchronization.
+Local Product V1 supports Windows 11, two authorized copies of one repository, and one initially empty Library. Enable both copies before adding files. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
 
 ## Library ownership
 
@@ -76,7 +76,7 @@ After bootstrap, clients call `/libraries/changes/get` with their opaque cursor.
 
 ## Library CLI
 
-The CLI exposes catalog operations only. Use the existing repository locator options by ID or name.
+Use the existing repository locator options by ID or name for catalog operations. Local synchronization targets the repository configured for the current working copy.
 
 PowerShell:
 
@@ -96,7 +96,25 @@ grace library add shared --repository-id "$repository_id" --expected-version "$c
 grace library remove shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
 ```
 
-Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. Local synchronization commands remain deferred.
+Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. Run these commands in each configured Windows working copy:
+
+```powershell
+grace library sync enable
+grace library sync run
+grace library sync status --output Json
+```
+
+After both copies enable the empty baseline, create a file in A's Library and run synchronization in A and B. Edit the file in B and run synchronization in B and A. `grace watch` also invokes this same finite synchronization path from its existing timer.
+
+`ReturnValue.State` is `disabled`, `catchingUp`, `current`, or `blocked`. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. Catalog changes and rebaseline responses stop application and retain saved work.
+
+Saved bytes are captured before upload. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling.
+
+Local state uses exactly three Library tables in `.grace/grace-local.db`: repository participation/catalog/progress, materialized items, and pending/terminal operations. A Library connection uses WAL, foreign keys, and FULL synchronization. File bytes are verified before item state, terminal operation, and applied cursor commit together. Restart reuses frozen requests and verifies already-published bytes, avoiding another logical operation or completed-file rewrite.
+
+An empty change page with `HasMore=true` retains its continuation and reports `catchingUp`. Page continuation is stored with repository progress. Each completed item clears the previous page token atomically, so interruption midway through a page resumes from the last applied cursor. A rebaseline response blocks synchronization and retains saved work; Product V1 does not run an automatic repair or bootstrap over existing files.
+
+Library application shares root exclusion with Branch, Connect, and Watch while retaining its own completion. It creates no Save, Reference, DirectoryVersion, Attachment, or WDU completion. Terminal operations retain exact Watch echo evidence until classification and safe bounded pruning.
 
 ## HTTP, SDK, and generated clients
 

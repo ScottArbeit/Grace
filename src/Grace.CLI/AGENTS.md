@@ -45,6 +45,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 ## Recent Patterns
 
+- `grace library sync enable/run/status` owns Windows Library participation in exactly three tables in the existing local database. Keep its frozen requests, materialized edit bases, filesystem guards, and completion transaction in the Library modules. Library work shares root exclusion with WDU but must never create a WDU completion. Watch consumes `LibraryContentAvailable.v1` only as a pull hint.
 - `grace history` commands operate without requiring a repo `graceconfig.json`.
   Avoid `Configuration.Current()` in history-related flows.
 - `grace connect` accepts a positional shortcut in the form
