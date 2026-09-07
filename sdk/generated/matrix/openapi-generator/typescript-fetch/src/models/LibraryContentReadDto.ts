@@ -24,75 +24,66 @@ import {
 /**
  * 
  * @export
- * @interface LibraryContentReadGrantDto
+ * @interface LibraryContentReadDto
  */
-export interface LibraryContentReadGrantDto {
+export interface LibraryContentReadDto {
     /**
      * 
      * @type {string}
-     * @memberof LibraryContentReadGrantDto
-     */
-    grantId: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryContentReadGrantDto
+     * @memberof LibraryContentReadDto
      */
     downloadPath: string;
     /**
      * 
      * @type {LibraryContentVersionDto}
-     * @memberof LibraryContentReadGrantDto
+     * @memberof LibraryContentReadDto
      */
     content: LibraryContentVersionDto;
     /**
      * 
      * @type {Date}
-     * @memberof LibraryContentReadGrantDto
+     * @memberof LibraryContentReadDto
      */
     expiresAt: Date;
 }
 
 /**
- * Check if a given object implements the LibraryContentReadGrantDto interface.
+ * Check if a given object implements the LibraryContentReadDto interface.
  */
-export function instanceOfLibraryContentReadGrantDto(value: object): value is LibraryContentReadGrantDto {
-    if (!('grantId' in value) || value['grantId'] === undefined) return false;
+export function instanceOfLibraryContentReadDto(value: object): value is LibraryContentReadDto {
     if (!('downloadPath' in value) || value['downloadPath'] === undefined) return false;
     if (!('content' in value) || value['content'] === undefined) return false;
     if (!('expiresAt' in value) || value['expiresAt'] === undefined) return false;
     return true;
 }
 
-export function LibraryContentReadGrantDtoFromJSON(json: any): LibraryContentReadGrantDto {
-    return LibraryContentReadGrantDtoFromJSONTyped(json, false);
+export function LibraryContentReadDtoFromJSON(json: any): LibraryContentReadDto {
+    return LibraryContentReadDtoFromJSONTyped(json, false);
 }
 
-export function LibraryContentReadGrantDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryContentReadGrantDto {
+export function LibraryContentReadDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryContentReadDto {
     if (json == null) {
         return json;
     }
     return {
         
-        'grantId': json['GrantId'],
         'downloadPath': json['DownloadPath'],
         'content': LibraryContentVersionDtoFromJSON(json['Content']),
         'expiresAt': (new Date(json['ExpiresAt'])),
     };
 }
 
-export function LibraryContentReadGrantDtoToJSON(json: any): LibraryContentReadGrantDto {
-    return LibraryContentReadGrantDtoToJSONTyped(json, false);
+export function LibraryContentReadDtoToJSON(json: any): LibraryContentReadDto {
+    return LibraryContentReadDtoToJSONTyped(json, false);
 }
 
-export function LibraryContentReadGrantDtoToJSONTyped(value?: LibraryContentReadGrantDto | null, ignoreDiscriminator: boolean = false): any {
+export function LibraryContentReadDtoToJSONTyped(value?: LibraryContentReadDto | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
 
     return {
         
-        'GrantId': value['grantId'],
         'DownloadPath': value['downloadPath'],
         'Content': LibraryContentVersionDtoToJSON(value['content']),
         'ExpiresAt': value['expiresAt'].toISOString(),

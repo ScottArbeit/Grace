@@ -1,34 +1,34 @@
 
-# LibraryPreparedContentDto
+# LibraryContentPreparationDto
 
 
 ## Properties
 
 Name | Type
 ------------ | -------------
-`preparedContentId` | string
+`uploadSessionId` | string
 `blake3Hash` | string
 `sha256Hash` | string
 `size` | number
-`uploadRequired` | boolean
-`uploadInstructions` | string
+`authorizedScope` | string
+`storagePoolId` | string
 `expiresAt` | Date
 
 ## Example
 
 ```typescript
-import type { LibraryPreparedContentDto } from '@grace-vcs/generated-openapi-probe'
+import type { LibraryContentPreparationDto } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
-  "preparedContentId": null,
+  "uploadSessionId": null,
   "blake3Hash": 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d,
   "sha256Hash": 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243,
   "size": null,
-  "uploadRequired": null,
-  "uploadInstructions": null,
+  "authorizedScope": null,
+  "storagePoolId": null,
   "expiresAt": null,
-} satisfies LibraryPreparedContentDto
+} satisfies LibraryContentPreparationDto
 
 console.log(example)
 
@@ -37,7 +37,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as LibraryPreparedContentDto
+const exampleParsed = JSON.parse(exampleJSON) as LibraryContentPreparationDto
 console.log(exampleParsed)
 ```
 

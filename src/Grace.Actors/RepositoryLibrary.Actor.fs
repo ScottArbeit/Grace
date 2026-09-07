@@ -1002,7 +1002,7 @@ type RepositoryLibraryActor
                     match! readBaselineShard repositoryId bootstrapId reference.Ordinal with
                     | None -> invalidOp "A published Library baseline references a missing shard."
                     | Some (shard, _) ->
-                        let bytes = JsonSerializer.SerializeToUtf8Bytes(shard, Constants.JsonSerializerOptions)
+                        let bytes = LibraryQueries.serializeBaselineShard shard
                         let hash = ContentAddress.computeBlake3Hex bytes
 
                         if not (String.Equals(hash, reference.Blake3Hash, StringComparison.OrdinalIgnoreCase)) then
@@ -1027,64 +1027,63 @@ type RepositoryLibraryActor
             match! readBaselineManifest repositoryId bootstrapId with
             | Some (manifest, _) -> return bootstrapId, manifest
             | None ->
-                let! documents = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
-
-                if documents.Length <> control.ItemRecordCount then
-                    invalidOp "The current Library item count does not match authoritative control."
-
-                let items =
-                    documents
-                    |> Array.map (fun document -> document.Item)
-                    |> Array.sortBy (fun item -> item.ItemId)
-
-                let shards = ResizeArray<LibraryBaselineShardDocument>()
-                let mutable current = ResizeArray<LibraryItemDto>()
-
-                let flush () =
-                    if current.Count > 0 then
-                        shards.Add { SchemaVersion = 1; Items = current.ToArray() }
-                        current <- ResizeArray<LibraryItemDto>()
-
-                for item in items do
-                    current.Add item
-                    let candidate = { SchemaVersion = 1; Items = current.ToArray() }
-
-                    if JsonSerializer
-                        .SerializeToUtf8Bytes(
-                            candidate,
-                            Constants.JsonSerializerOptions
-                        )
-                        .Length > 1_000_000 then
-                        current.RemoveAt(current.Count - 1)
-
-                        if current.Count = 0 then
-                            invalidOp "One Library baseline item exceeds the one-megabyte shard bound."
-
-                        flush ()
-                        current.Add item
-
-                flush ()
                 let references = ResizeArray<LibraryBaselineShardReference>()
+                let mutable current = ResizeArray<LibraryItemDto>()
+                let mutable currentBytes = LibraryQueries.emptyBaselineShardBytes
+                let mutable ordinal = 0
+                let mutable itemCount = 0
+                let mutable continuationToken = None
+                let mutable more = true
 
-                for ordinal in 0 .. shards.Count - 1 do
-                    let shard = shards[ordinal]
-                    let bytes = JsonSerializer.SerializeToUtf8Bytes(shard, Constants.JsonSerializerOptions)
-                    let hash = ContentAddress.computeBlake3Hex bytes
+                let persistShard shard =
+                    task {
+                        let bytes = LibraryQueries.serializeBaselineShard shard
 
-                    let! _ =
-                        LibraryRecords.createExact
-                            services
-                            LibraryRecords.BaselinesStorageName
-                            baselineShardType
-                            (key
-                                repositoryId
-                                [
-                                    bootstrapId.ToString("D")
-                                    ordinal.ToString("D8")
-                                ])
-                            shard
+                        if bytes.Length > LibraryQueries.BaselineShardMaximumBytes then
+                            invalidOp "A Library baseline shard exceeded the one-megabyte byte bound."
 
-                    references.Add { Ordinal = ordinal; Blake3Hash = hash; ItemCount = shard.Items.Length }
+                        let hash = ContentAddress.computeBlake3Hex bytes
+
+                        let! _ =
+                            LibraryRecords.createExact
+                                services
+                                LibraryRecords.BaselinesStorageName
+                                baselineShardType
+                                (key
+                                    repositoryId
+                                    [
+                                        bootstrapId.ToString("D")
+                                        ordinal.ToString("D8")
+                                    ])
+                                shard
+
+                        references.Add { Ordinal = ordinal; Blake3Hash = hash; ItemCount = shard.Items.Length }
+                        ordinal <- ordinal + 1
+                    }
+
+                while more do
+                    let! documents, next = LibraryQueries.readCurrentItemPage services repositoryId continuationToken CancellationToken.None
+
+                    for document in documents do
+                        itemCount <- itemCount + 1
+
+                        let nextBytes, completed = LibraryQueries.appendBaselineItem current currentBytes document.Item
+                        currentBytes <- nextBytes
+
+                        match completed with
+                        | Some shard -> do! persistShard shard
+                        | None -> ()
+
+                    continuationToken <- next
+                    more <- next.IsSome
+                    do! Task.Yield()
+
+                match LibraryQueries.finishBaselineShard current currentBytes with
+                | Some shard -> do! persistShard shard
+                | None -> ()
+
+                if itemCount <> control.ItemRecordCount then
+                    invalidOp "The current Library item count does not match authoritative control."
 
                 let manifest =
                     {

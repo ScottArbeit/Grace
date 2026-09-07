@@ -19,22 +19,46 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from grace_generated_openapi_probe.models.library_content_read_grant_dto import LibraryContentReadGrantDto
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List
+from typing_extensions import Annotated
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class LibraryContentReadGrantReturnValue(BaseModel):
+class LibraryContentPreparationDto(BaseModel):
     """
-    LibraryContentReadGrantReturnValue
+    LibraryContentPreparationDto
     """ # noqa: E501
-    event_time: datetime = Field(alias="EventTime")
-    correlation_id: StrictStr = Field(description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.", alias="CorrelationId")
-    properties: Dict[str, StrictStr] = Field(alias="Properties")
-    return_value: Optional[LibraryContentReadGrantDto] = Field(default=None, alias="ReturnValue")
-    __properties: ClassVar[List[str]] = ["EventTime", "CorrelationId", "Properties", "ReturnValue"]
+    upload_session_id: UUID = Field(alias="UploadSessionId")
+    blake3_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
+    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    size: Annotated[int, Field(strict=True, ge=1)] = Field(alias="Size")
+    authorized_scope: StrictStr = Field(alias="AuthorizedScope")
+    storage_pool_id: StrictStr = Field(alias="StoragePoolId")
+    expires_at: datetime = Field(alias="ExpiresAt")
+    __properties: ClassVar[List[str]] = ["UploadSessionId", "Blake3Hash", "Sha256Hash", "Size", "AuthorizedScope", "StoragePoolId", "ExpiresAt"]
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -54,7 +78,7 @@ class LibraryContentReadGrantReturnValue(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of LibraryContentReadGrantReturnValue from a JSON string"""
+        """Create an instance of LibraryContentPreparationDto from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -75,14 +99,11 @@ class LibraryContentReadGrantReturnValue(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of return_value
-        if self.return_value:
-            _dict['ReturnValue'] = self.return_value.to_dict()
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of LibraryContentReadGrantReturnValue from a dict"""
+        """Create an instance of LibraryContentPreparationDto from a dict"""
         if obj is None:
             return None
 
@@ -90,10 +111,13 @@ class LibraryContentReadGrantReturnValue(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "EventTime": obj.get("EventTime"),
-            "CorrelationId": obj.get("CorrelationId"),
-            "Properties": obj.get("Properties"),
-            "ReturnValue": LibraryContentReadGrantDto.from_dict(obj["ReturnValue"]) if obj.get("ReturnValue") is not None else None
+            "UploadSessionId": obj.get("UploadSessionId"),
+            "Blake3Hash": obj.get("Blake3Hash"),
+            "Sha256Hash": obj.get("Sha256Hash"),
+            "Size": obj.get("Size"),
+            "AuthorizedScope": obj.get("AuthorizedScope"),
+            "StoragePoolId": obj.get("StoragePoolId"),
+            "ExpiresAt": obj.get("ExpiresAt")
         })
         return _obj
 

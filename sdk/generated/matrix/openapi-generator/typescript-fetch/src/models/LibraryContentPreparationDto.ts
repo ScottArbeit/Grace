@@ -16,104 +16,104 @@ import { mapValues } from '../runtime';
 /**
  * 
  * @export
- * @interface LibraryPreparedContentDto
+ * @interface LibraryContentPreparationDto
  */
-export interface LibraryPreparedContentDto {
+export interface LibraryContentPreparationDto {
     /**
      * 
      * @type {string}
-     * @memberof LibraryPreparedContentDto
+     * @memberof LibraryContentPreparationDto
      */
-    preparedContentId: string;
+    uploadSessionId: string;
     /**
      * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
-     * @memberof LibraryPreparedContentDto
+     * @memberof LibraryContentPreparationDto
      */
     blake3Hash: string;
     /**
      * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
-     * @memberof LibraryPreparedContentDto
+     * @memberof LibraryContentPreparationDto
      */
     sha256Hash: string;
     /**
      * 
      * @type {number}
-     * @memberof LibraryPreparedContentDto
+     * @memberof LibraryContentPreparationDto
      */
     size: number;
     /**
      * 
-     * @type {boolean}
-     * @memberof LibraryPreparedContentDto
+     * @type {string}
+     * @memberof LibraryContentPreparationDto
      */
-    uploadRequired: boolean;
+    authorizedScope: string;
     /**
      * 
      * @type {string}
-     * @memberof LibraryPreparedContentDto
+     * @memberof LibraryContentPreparationDto
      */
-    uploadInstructions: string;
+    storagePoolId: string;
     /**
      * 
      * @type {Date}
-     * @memberof LibraryPreparedContentDto
+     * @memberof LibraryContentPreparationDto
      */
     expiresAt: Date;
 }
 
 /**
- * Check if a given object implements the LibraryPreparedContentDto interface.
+ * Check if a given object implements the LibraryContentPreparationDto interface.
  */
-export function instanceOfLibraryPreparedContentDto(value: object): value is LibraryPreparedContentDto {
-    if (!('preparedContentId' in value) || value['preparedContentId'] === undefined) return false;
+export function instanceOfLibraryContentPreparationDto(value: object): value is LibraryContentPreparationDto {
+    if (!('uploadSessionId' in value) || value['uploadSessionId'] === undefined) return false;
     if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
     if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
     if (!('size' in value) || value['size'] === undefined) return false;
-    if (!('uploadRequired' in value) || value['uploadRequired'] === undefined) return false;
-    if (!('uploadInstructions' in value) || value['uploadInstructions'] === undefined) return false;
+    if (!('authorizedScope' in value) || value['authorizedScope'] === undefined) return false;
+    if (!('storagePoolId' in value) || value['storagePoolId'] === undefined) return false;
     if (!('expiresAt' in value) || value['expiresAt'] === undefined) return false;
     return true;
 }
 
-export function LibraryPreparedContentDtoFromJSON(json: any): LibraryPreparedContentDto {
-    return LibraryPreparedContentDtoFromJSONTyped(json, false);
+export function LibraryContentPreparationDtoFromJSON(json: any): LibraryContentPreparationDto {
+    return LibraryContentPreparationDtoFromJSONTyped(json, false);
 }
 
-export function LibraryPreparedContentDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryPreparedContentDto {
+export function LibraryContentPreparationDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryContentPreparationDto {
     if (json == null) {
         return json;
     }
     return {
         
-        'preparedContentId': json['PreparedContentId'],
+        'uploadSessionId': json['UploadSessionId'],
         'blake3Hash': json['Blake3Hash'],
         'sha256Hash': json['Sha256Hash'],
         'size': json['Size'],
-        'uploadRequired': json['UploadRequired'],
-        'uploadInstructions': json['UploadInstructions'],
+        'authorizedScope': json['AuthorizedScope'],
+        'storagePoolId': json['StoragePoolId'],
         'expiresAt': (new Date(json['ExpiresAt'])),
     };
 }
 
-export function LibraryPreparedContentDtoToJSON(json: any): LibraryPreparedContentDto {
-    return LibraryPreparedContentDtoToJSONTyped(json, false);
+export function LibraryContentPreparationDtoToJSON(json: any): LibraryContentPreparationDto {
+    return LibraryContentPreparationDtoToJSONTyped(json, false);
 }
 
-export function LibraryPreparedContentDtoToJSONTyped(value?: LibraryPreparedContentDto | null, ignoreDiscriminator: boolean = false): any {
+export function LibraryContentPreparationDtoToJSONTyped(value?: LibraryContentPreparationDto | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
 
     return {
         
-        'PreparedContentId': value['preparedContentId'],
+        'UploadSessionId': value['uploadSessionId'],
         'Blake3Hash': value['blake3Hash'],
         'Sha256Hash': value['sha256Hash'],
         'Size': value['size'],
-        'UploadRequired': value['uploadRequired'],
-        'UploadInstructions': value['uploadInstructions'],
+        'AuthorizedScope': value['authorizedScope'],
+        'StoragePoolId': value['storagePoolId'],
         'ExpiresAt': value['expiresAt'].toISOString(),
     };
 }

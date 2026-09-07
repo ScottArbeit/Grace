@@ -8,11 +8,10 @@ Name | Type
 ------------ | -------------
 `itemId` | string
 `itemKind` | [LibraryItemKind](LibraryItemKind.md)
-`state` | string
 `lastChangeCursor` | string
-`libraryCatalogVersion` | string
 `namespace` | [LibraryNamespaceDto](LibraryNamespaceDto.md)
 `content` | [LibraryContentVersionDto](LibraryContentVersionDto.md)
+`contentRevision` | string
 `tombstone` | [LibraryTombstoneDto](LibraryTombstoneDto.md)
 
 ## Example
@@ -24,11 +23,10 @@ import type { LibraryItemDto } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "itemId": null,
   "itemKind": null,
-  "state": null,
   "lastChangeCursor": null,
-  "libraryCatalogVersion": null,
   "namespace": null,
   "content": null,
+  "contentRevision": null,
   "tombstone": null,
 } satisfies LibraryItemDto
 

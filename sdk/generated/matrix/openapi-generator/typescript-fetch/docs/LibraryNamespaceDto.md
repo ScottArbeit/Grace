@@ -8,9 +8,7 @@ Name | Type
 ------------ | -------------
 `parent` | [LibraryParentDto](LibraryParentDto.md)
 `name` | string
-`normalizedPath` | string
 `namespaceVersion` | string
-`slotVersion` | string
 
 ## Example
 
@@ -21,9 +19,7 @@ import type { LibraryNamespaceDto } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "parent": null,
   "name": null,
-  "normalizedPath": null,
   "namespaceVersion": null,
-  "slotVersion": null,
 } satisfies LibraryNamespaceDto
 
 console.log(example)

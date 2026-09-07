@@ -7,6 +7,18 @@ const {
   TypedReferenceApiDtoFromJSON,
   TypedReferenceApiDtoToJSON,
 } = require(path.join(generatedRoot, 'dist', 'models', 'TypedReferenceApiDto.js'));
+const {
+  LibraryContentPreparationDtoFromJSON,
+  LibraryContentPreparationDtoToJSON,
+} = require(path.join(generatedRoot, 'dist', 'models', 'LibraryContentPreparationDto.js'));
+const {
+  LibraryNamespaceSlotDtoFromJSON,
+  LibraryNamespaceSlotDtoToJSON,
+} = require(path.join(generatedRoot, 'dist', 'models', 'LibraryNamespaceSlotDto.js'));
+const {
+  PrepareLibraryContentReadParametersFromJSON,
+  PrepareLibraryContentReadParametersToJSON,
+} = require(path.join(generatedRoot, 'dist', 'models', 'PrepareLibraryContentReadParameters.js'));
 
 const zero = '00000000-0000-0000-0000-000000000000';
 
@@ -66,4 +78,50 @@ for (const [field, value] of Object.entries({
 })) {
   assert.throws(() => TypedReferenceApiDtoFromJSON({ ...sentinel, [field]: value }), /canonical/);
 }
-console.log('TypeScript PascalCase BranchApiDto wire round trip passed');
+
+const libraryPreparation = {
+  UploadSessionId: '77777777-7777-7777-7777-777777777777',
+  Blake3Hash: 'c'.repeat(64),
+  Sha256Hash: 'd'.repeat(64),
+  Size: 123456,
+  AuthorizedScope: 'repository:44444444-4444-4444-4444-444444444444',
+  StoragePoolId: 'pool-primary',
+  ExpiresAt: '2026-07-11T20:15:00Z',
+};
+const preparation = LibraryContentPreparationDtoFromJSON(libraryPreparation);
+assert.equal(preparation.uploadSessionId, libraryPreparation.UploadSessionId);
+assert.equal(preparation.authorizedScope, libraryPreparation.AuthorizedScope);
+assert.deepEqual(
+  LibraryContentPreparationDtoToJSON(preparation),
+  { ...libraryPreparation, ExpiresAt: '2026-07-11T20:15:00.000Z' },
+);
+
+const librarySlot = {
+  Parent: {
+    Kind: 'item',
+    LibraryPath: 'media',
+    ItemId: '88888888-8888-8888-8888-888888888888',
+  },
+  Name: 'logo.svg',
+  SlotVersion: '99999999-9999-9999-9999-999999999999',
+  OccupantItemId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+};
+const slot = LibraryNamespaceSlotDtoFromJSON(librarySlot);
+assert.equal(slot.parent.kind, 'item');
+assert.equal(slot.parent.itemId, librarySlot.Parent.ItemId);
+assert.equal(slot.name, librarySlot.Name);
+assert.deepEqual(LibraryNamespaceSlotDtoToJSON(slot), librarySlot);
+
+const contentReadRequest = {
+  ItemId: librarySlot.OccupantItemId,
+  ContentVersionId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+  ContentRevision: 'cursor-revision-3',
+};
+const readRequest = PrepareLibraryContentReadParametersFromJSON(contentReadRequest);
+assert.equal(readRequest.contentRevision, contentReadRequest.ContentRevision);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(PrepareLibraryContentReadParametersToJSON(readRequest))),
+  contentReadRequest,
+);
+
+console.log('TypeScript Reference and Library wire round trips passed');

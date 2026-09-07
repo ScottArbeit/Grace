@@ -22,7 +22,7 @@ Name | Type | Description | Notes
 **creation_slot_expectation** | Option<[**models::LibraryCreationSlotExpectationDto**](LibraryCreationSlotExpectationDto.md)> |  | [optional]
 **destination_parent** | Option<[**models::LibraryParentDto**](LibraryParentDto.md)> |  | [optional]
 **destination_name** | Option<**String**> |  | [optional]
-**prepared_content_id** | Option<**uuid::Uuid**> |  | [optional]
+**upload_session_id** | Option<**uuid::Uuid**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

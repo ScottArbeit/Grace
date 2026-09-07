@@ -18,9 +18,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
@@ -30,15 +30,10 @@ class LibraryConflictProvenanceDto(BaseModel):
     """
     LibraryConflictProvenanceDto
     """ # noqa: E501
-    source_operation_id: UUID = Field(alias="SourceOperationId")
-    source_item_id: UUID = Field(alias="SourceItemId")
-    canonical_item_id: UUID = Field(alias="CanonicalItemId")
-    conflict_item_id: UUID = Field(alias="ConflictItemId")
-    conflict_path: StrictStr = Field(alias="ConflictPath")
-    accepted_at: datetime = Field(alias="AcceptedAt")
-    source_content_version_id: UUID = Field(alias="SourceContentVersionId")
+    original_item_id: UUID = Field(alias="OriginalItemId")
     base_content_version_id: UUID = Field(alias="BaseContentVersionId")
-    __properties: ClassVar[List[str]] = ["SourceOperationId", "SourceItemId", "CanonicalItemId", "ConflictItemId", "ConflictPath", "AcceptedAt", "SourceContentVersionId", "BaseContentVersionId"]
+    base_content_revision: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="BaseContentRevision")
+    __properties: ClassVar[List[str]] = ["OriginalItemId", "BaseContentVersionId", "BaseContentRevision"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -91,14 +86,9 @@ class LibraryConflictProvenanceDto(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "SourceOperationId": obj.get("SourceOperationId"),
-            "SourceItemId": obj.get("SourceItemId"),
-            "CanonicalItemId": obj.get("CanonicalItemId"),
-            "ConflictItemId": obj.get("ConflictItemId"),
-            "ConflictPath": obj.get("ConflictPath"),
-            "AcceptedAt": obj.get("AcceptedAt"),
-            "SourceContentVersionId": obj.get("SourceContentVersionId"),
-            "BaseContentVersionId": obj.get("BaseContentVersionId")
+            "OriginalItemId": obj.get("OriginalItemId"),
+            "BaseContentVersionId": obj.get("BaseContentVersionId"),
+            "BaseContentRevision": obj.get("BaseContentRevision")
         })
         return _obj
 

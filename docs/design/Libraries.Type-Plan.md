@@ -1,6 +1,6 @@
 # Library type plan
 
-Status: accepted 2026-09-06. Applies to the source reviewed at PR #1043 head `6399d4db015085a1185eb7e367a8d24ece6ddbaa`, including the inherited Library work from Issue #1038. Exact current identifiers are retained for lookup. Production code has not changed.
+Status: accepted 2026-09-06 and implemented by the Issue #1042 replacement candidate. The inventory applies to the source reviewed at PR #1043 head `6399d4db015085a1185eb7e367a8d24ece6ddbaa`, including the inherited Library work from Issue #1038. Exact prior identifiers remain in the table for lookup.
 
 Use [Libraries design](../Libraries.Design.md) for behavior and storage rules. This inventory contains 58 Remove, 56 Change, 55 Keep and 4 Stay removed entries. Shared types predating Libraries require stronger caller and benefit evidence before changing them. Each new declaration beyond this plan must explain the behavior and ownership it supports.
 

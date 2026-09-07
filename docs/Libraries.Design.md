@@ -1,6 +1,6 @@
 # Libraries design
 
-Status: Design accepted by Scott on 2026-09-06. Production replacement has not started. Required platform experiments are in progress under Issue #1042.
+Status: Design accepted by Scott on 2026-09-06. Issue #1042 implements the remote replacement; focused validation and independent review remain before delivery.
 
 Quality: Product V1. This document is the maintained Library design for [Epic #1037](https://github.com/ScottArbeit/Grace/issues/1037). It replaces the implementation instructions in revision 0.32 and the old Issue #1042 repair scope. The supplied revision 0.32 files remain historical source material, unchanged in Downloads. The HTML review remains the detailed assessment of the older code.
 
@@ -107,7 +107,7 @@ Keep six storage purposes and the accepted full partition keys. The registered O
 
 **Why keep both journal and current records?** The journal answers what was accepted and supports exact retry/history. Current records answer point/aggregate queries without replaying a repository's lifetime. Their duplication buys a necessary access path. Pending buys crash recovery; receipts buy operation-ID lookup; history cursor lists buy targeted access; immutable baselines buy stable paged transfer. The removed indexes and repeated payloads provide weaker benefits at substantially more cost.
 
-**History policy status:** the recommendation above keeps compact indexes. The owner has been asked whether Product V1 should instead defer them. Deferral would remove the history-segment type, both tail fields and HistoryThrough; the permanent journal and historical content would remain. No deferral is treated as approved yet.
+**History policy status:** the accepted Product V1 design keeps compact indexes, both tail fields and `HistoryThrough`. The permanent journal and historical content remain independently durable.
 
 ## New declarations
 
@@ -228,9 +228,9 @@ A watcher cannot see unsaved editor memory. If disk X is unchanged while Alice h
 
 Keep three kinds of local data: repository progress and participation; each item’s last materialized base; and operations with their frozen source bytes, expected target, server result and recovery details. Once the filesystem change has been checked, one SQLite transaction may update the item and advance the cursor. Save the pending operation before touching files. Keep the predecessor and catalog checks, restart handling and bounded retention of completed operations. If the user edits again during an upload, preserve that edit separately; do not change the operation already submitted.
 
-## Tests needed before implementing this design
+## Validation matrix
 
-The accepted design requires an executable prototype and integration tests against the pinned provider and actual serializer. Use the following cases before starting implementation. They can use a small set of test functions; no general recovery framework or collection of production test interfaces is needed.
+The accepted design uses an executable prototype and focused production tests against the pinned provider and actual serializers. These cases may use a small set of test functions; no general recovery framework or collection of production test interfaces is needed.
 
 | Test area | Concrete cases | What it protects |
 | --- | --- | --- |
@@ -259,10 +259,10 @@ The accepted design requires an executable prototype and integration tests again
 
 Server work updates Types, Shared validation/parameters, Actors, Server handlers/composition, SDK, OpenAPI, generated clients, deployment/provider configuration, documentation and focused tests. Client work updates local configuration, SQLite, CLI, Watch routing, shared exclusion integration, public status and the Windows fixture. Existing WDU row/caller/completion contracts remain unchanged. No new public history route or successful-send outbox is introduced.
 
-## Readiness and next implementation run
+## Implementation and next delivery
 
-Design acceptance does not make unexecuted platform cases pass. Complete the relevant experiments and update their result before a production run. Keep provider setup and failure tests separate from tests of the full acceptance protocol, live manifest accounting, signed reads and local filesystem/SQLite behavior.
+Issue #1042 implements the remote replacement and keeps provider setup evidence separate from the hosted acceptance, manifest accounting, signed-read and restart tests. The implementation retains useful provider and component work from PR #1043 without adopting its record-actor topology.
 
-The remote replacement is the next delivery under Issue #1042. It replaces the unmerged second enabler. Preserve useful changes from PR #1043 selectively; do not land its thirteen record actors as an intermediate foundation. Adapt Issue #1039 after the reviewed server replacement lands, then reassess Epic #1037 before selecting more work.
+Issue #1039 adapts the client to this reviewed server candidate, including the three-table SQLite model and two-copy fixture. Epic #1037 is reassessed after those two dependent changes are composed and validated.
 
 Return to Scott if evidence requires a different actor owner, another durable lifecycle, a changed conflict rule, a new product capability or a material change to delivery scope. Routine field naming, module placement and test plumbing within this design remain implementation choices.

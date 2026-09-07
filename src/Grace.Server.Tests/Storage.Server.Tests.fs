@@ -3883,6 +3883,37 @@ type StorageManifestUploadSessionRoutes() =
 
             delete.CorrelationId <- correlationId
             let! deleteReceipt = submitAsync delete
+
+            let directoryName = "paged-directory"
+            let directorySlotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
+            directorySlotRequest.OwnerId <- ownerId
+            directorySlotRequest.OrganizationId <- organizationId
+            directorySlotRequest.RepositoryId <- repositoryId
+            directorySlotRequest.Parent <- Some parent
+            directorySlotRequest.Name <- directoryName
+            directorySlotRequest.CorrelationId <- correlationId
+            use! directorySlotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent directorySlotRequest)
+            let! directorySlotBody = directorySlotResponse.Content.ReadAsStringAsync()
+            Assert.That(directorySlotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), directorySlotBody)
+
+            let directorySlot =
+                (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> directorySlotBody)
+                    .ReturnValue
+
+            let createDirectory = Parameters.Library.SubmitLibraryChangeParameters()
+            createDirectory.OwnerId <- ownerId
+            createDirectory.OrganizationId <- organizationId
+            createDirectory.RepositoryId <- repositoryId
+            createDirectory.OperationId <- Guid.NewGuid()
+            createDirectory.LibraryCatalogVersion <- configuredCatalog.Version
+            createDirectory.ChangeKind <- ChangeKind.CreateDirectory
+            createDirectory.ItemKind <- ItemKind.Directory
+
+            createDirectory.CreationSlotExpectation <-
+                Some { Parent = parent; Name = directoryName; ExpectedSlotVersion = directorySlot.SlotVersion; ExpectedState = "vacant" }
+
+            createDirectory.CorrelationId <- correlationId
+            let! directoryReceipt = submitAsync createDirectory
             let! historicalDescriptor = readAsync firstReceipt payload
             let! historicalYDescriptor = readAsync updateYReceipt yPayload
             let! historicalSecondXDescriptor = readAsync updateXReceipt payload
@@ -3891,15 +3922,48 @@ type StorageManifestUploadSessionRoutes() =
             bootstrap.OwnerId <- ownerId
             bootstrap.OrganizationId <- organizationId
             bootstrap.RepositoryId <- repositoryId
-            bootstrap.PageSize <- 10
+            bootstrap.PageSize <- 1
             bootstrap.CorrelationId <- correlationId
             use! bootstrapResponse = Client.PostAsync("/libraries/bootstrap/start", createJsonContent bootstrap)
             let! bootstrapBody = bootstrapResponse.Content.ReadAsStringAsync()
-            Assert.That(bootstrapResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), bootstrapBody)
+
+            let! bootstrapDiagnostics =
+                task {
+                    if bootstrapResponse.StatusCode = HttpStatusCode.OK then
+                        return bootstrapBody
+                    else
+                        let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
+                        let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                        return $"{bootstrapBody}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
+                }
+
+            Assert.That(bootstrapResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), bootstrapDiagnostics)
 
             let bootstrapPage =
                 (deserialize<GraceReturnValue<LibraryBootstrapPageDto>> bootstrapBody)
                     .ReturnValue
+
+            let continueBootstrap = Parameters.Library.ContinueLibraryBootstrapParameters()
+            continueBootstrap.OwnerId <- ownerId
+            continueBootstrap.OrganizationId <- organizationId
+            continueBootstrap.RepositoryId <- repositoryId
+            continueBootstrap.BootstrapId <- bootstrapPage.BootstrapId
+            continueBootstrap.PageToken <- bootstrapPage.NextPageToken.Value
+            continueBootstrap.PageSize <- 1
+            continueBootstrap.CorrelationId <- correlationId
+
+            let continueBootstrapAsync () =
+                task {
+                    use! response = Client.PostAsync("/libraries/bootstrap/continue", createJsonContent continueBootstrap)
+                    let! body = response.Content.ReadAsStringAsync()
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+                    return
+                        (deserialize<GraceReturnValue<LibraryBootstrapPageDto>> body)
+                            .ReturnValue
+                }
+
+            let! secondBootstrapPage = continueBootstrapAsync ()
 
             let statusParameters = Parameters.Library.GetLibraryStatusParameters()
             statusParameters.OwnerId <- ownerId
@@ -3989,6 +4053,7 @@ type StorageManifestUploadSessionRoutes() =
                 |> Seq.toArray
 
             do! AspireTestHost.restartGraceServerAsync state "Library accepted-content replay"
+            let! replayedSecondBootstrapPage = continueBootstrapAsync ()
             let! replayReceipt = submitAsync submit
             let! replayDescriptor = readAsync replayReceipt payload
             let! after = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
@@ -4046,14 +4111,31 @@ type StorageManifestUploadSessionRoutes() =
                     Assert.That(renameReceipt.Change.Value.Item.ContentRevision, Is.EqualTo(updateXReceipt.Change.Value.Item.ContentRevision))
                     Assert.That(deleteReceipt.Change.Value.Item.Tombstone.IsSome, Is.True)
                     Assert.That(deleteReceipt.Change.Value.Item.Content, Is.EqualTo(None))
-                    Assert.That(bootstrapPage.BoundaryCursor, Is.EqualTo(deleteReceipt.Change.Value.Item.LastChangeCursor))
+                    Assert.That(directoryReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That(directoryReceipt.Change.Value.Item.ItemKind, Is.EqualTo(ItemKind.Directory))
+                    Assert.That(bootstrapPage.BoundaryCursor, Is.EqualTo(directoryReceipt.Change.Value.Item.LastChangeCursor))
                     Assert.That(bootstrapPage.Items.Length, Is.EqualTo(1))
-                    Assert.That(bootstrapPage.Items[0], Is.EqualTo(deleteReceipt.Change.Value.Item))
-                    Assert.That(bootstrapPage.NextPageToken, Is.EqualTo(None))
+                    Assert.That(bootstrapPage.NextPageToken.IsSome, Is.True)
+                    Assert.That(secondBootstrapPage.Items.Length, Is.EqualTo(1))
+                    Assert.That(secondBootstrapPage.NextPageToken, Is.EqualTo(None))
+                    Assert.That(replayedSecondBootstrapPage, Is.EqualTo(secondBootstrapPage))
+
+                    Assert.That(
+                        Array.append bootstrapPage.Items secondBootstrapPage.Items
+                        |> Array.map (fun value -> value.ItemId)
+                        |> Set.ofArray,
+                        Is.EqualTo(
+                            box (
+                                Set.ofList [ deleteReceipt.Change.Value.Item.ItemId
+                                             directoryReceipt.Change.Value.Item.ItemId ]
+                            )
+                        )
+                    )
+
                     Assert.That(repositoryStatus.State, Is.EqualTo("ready"))
                     Assert.That(repositoryStatus.IsCaughtUp, Is.True)
                     Assert.That(repositoryStatus.ProjectionLagCount, Is.EqualTo(0L))
-                    Assert.That(controlBefore.CommittedCursor, Is.EqualTo(5L))
+                    Assert.That(controlBefore.CommittedCursor, Is.EqualTo(6L))
                     Assert.That(controlBefore.HistoryThrough, Is.EqualTo(controlBefore.CommittedCursor))
                     Assert.That(controlBefore.NotifyThrough, Is.EqualTo(controlBefore.CommittedCursor))
                     Assert.That(controlBefore.Pending, Is.EqualTo(None))
@@ -4065,7 +4147,7 @@ type StorageManifestUploadSessionRoutes() =
                         |> Array.filter (fun value ->
                             value.HistoryTailSegment.IsSome
                             && value.Slot.Parent.LibraryPath = Some libraryPath),
-                        Has.Length.EqualTo(2)
+                        Has.Length.EqualTo(3)
                     )
 
                     Assert.That(failedEventsBefore, Is.Empty)
@@ -4074,7 +4156,7 @@ type StorageManifestUploadSessionRoutes() =
                     Assert.That(
                         baselineManifestBefore.Shards
                         |> Array.sumBy (fun value -> value.ItemCount),
-                        Is.EqualTo(1)
+                        Is.EqualTo(2)
                     )
 
                     Assert.That(counterBefore.Count, Is.EqualTo(2L))

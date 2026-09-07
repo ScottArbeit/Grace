@@ -1,5 +1,5 @@
 
-# LibraryContentReadGrantReturnValue
+# LibraryContentReadReturnValue
 
 
 ## Properties
@@ -9,12 +9,12 @@ Name | Type
 `eventTime` | Date
 `correlationId` | string
 `properties` | { [key: string]: string; }
-`returnValue` | [LibraryContentReadGrantDto](LibraryContentReadGrantDto.md)
+`returnValue` | [LibraryContentReadDto](LibraryContentReadDto.md)
 
 ## Example
 
 ```typescript
-import type { LibraryContentReadGrantReturnValue } from '@grace-vcs/generated-openapi-probe'
+import type { LibraryContentReadReturnValue } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
@@ -22,7 +22,7 @@ const example = {
   "correlationId": cli-20260604T181500Z-0001,
   "properties": null,
   "returnValue": null,
-} satisfies LibraryContentReadGrantReturnValue
+} satisfies LibraryContentReadReturnValue
 
 console.log(example)
 
@@ -31,7 +31,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as LibraryContentReadGrantReturnValue
+const exampleParsed = JSON.parse(exampleJSON) as LibraryContentReadReturnValue
 console.log(exampleParsed)
 ```
 

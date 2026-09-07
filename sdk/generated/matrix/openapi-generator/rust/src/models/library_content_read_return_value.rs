@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LibraryContentReadGrantReturnValue {
+pub struct LibraryContentReadReturnValue {
     #[serde(rename = "EventTime")]
     pub event_time: chrono::DateTime<chrono::FixedOffset>,
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
@@ -21,12 +21,12 @@ pub struct LibraryContentReadGrantReturnValue {
     #[serde(rename = "Properties")]
     pub properties: std::collections::HashMap<String, String>,
     #[serde(rename = "ReturnValue", skip_serializing_if = "Option::is_none")]
-    pub return_value: Option<Box<models::LibraryContentReadGrantDto>>,
+    pub return_value: Option<Box<models::LibraryContentReadDto>>,
 }
 
-impl LibraryContentReadGrantReturnValue {
-    pub fn new(event_time: chrono::DateTime<chrono::FixedOffset>, correlation_id: String, properties: std::collections::HashMap<String, String>) -> LibraryContentReadGrantReturnValue {
-        LibraryContentReadGrantReturnValue {
+impl LibraryContentReadReturnValue {
+    pub fn new(event_time: chrono::DateTime<chrono::FixedOffset>, correlation_id: String, properties: std::collections::HashMap<String, String>) -> LibraryContentReadReturnValue {
+        LibraryContentReadReturnValue {
             event_time,
             correlation_id,
             properties,

@@ -32,10 +32,8 @@ class LibraryNamespaceDto(BaseModel):
     """ # noqa: E501
     parent: LibraryParentDto = Field(alias="Parent")
     name: StrictStr = Field(alias="Name")
-    normalized_path: StrictStr = Field(alias="NormalizedPath")
     namespace_version: UUID = Field(alias="NamespaceVersion")
-    slot_version: UUID = Field(alias="SlotVersion")
-    __properties: ClassVar[List[str]] = ["Parent", "Name", "NormalizedPath", "NamespaceVersion", "SlotVersion"]
+    __properties: ClassVar[List[str]] = ["Parent", "Name", "NamespaceVersion"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -93,9 +91,7 @@ class LibraryNamespaceDto(BaseModel):
         _obj = cls.model_validate({
             "Parent": LibraryParentDto.from_dict(obj["Parent"]) if obj.get("Parent") is not None else None,
             "Name": obj.get("Name"),
-            "NormalizedPath": obj.get("NormalizedPath"),
-            "NamespaceVersion": obj.get("NamespaceVersion"),
-            "SlotVersion": obj.get("SlotVersion")
+            "NamespaceVersion": obj.get("NamespaceVersion")
         })
         return _obj
 

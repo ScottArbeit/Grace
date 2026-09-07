@@ -12,25 +12,35 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LibraryPreparedContentReturnValue {
-    #[serde(rename = "EventTime")]
-    pub event_time: chrono::DateTime<chrono::FixedOffset>,
-    /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
-    #[serde(rename = "CorrelationId")]
-    pub correlation_id: String,
-    #[serde(rename = "Properties")]
-    pub properties: std::collections::HashMap<String, String>,
-    #[serde(rename = "ReturnValue", skip_serializing_if = "Option::is_none")]
-    pub return_value: Option<Box<models::LibraryPreparedContentDto>>,
+pub struct LibraryContentPreparationDto {
+    #[serde(rename = "UploadSessionId")]
+    pub upload_session_id: uuid::Uuid,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash")]
+    pub sha256_hash: String,
+    #[serde(rename = "Size")]
+    pub size: i64,
+    #[serde(rename = "AuthorizedScope")]
+    pub authorized_scope: String,
+    #[serde(rename = "StoragePoolId")]
+    pub storage_pool_id: String,
+    #[serde(rename = "ExpiresAt")]
+    pub expires_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
-impl LibraryPreparedContentReturnValue {
-    pub fn new(event_time: chrono::DateTime<chrono::FixedOffset>, correlation_id: String, properties: std::collections::HashMap<String, String>) -> LibraryPreparedContentReturnValue {
-        LibraryPreparedContentReturnValue {
-            event_time,
-            correlation_id,
-            properties,
-            return_value: None,
+impl LibraryContentPreparationDto {
+    pub fn new(upload_session_id: uuid::Uuid, blake3_hash: String, sha256_hash: String, size: i64, authorized_scope: String, storage_pool_id: String, expires_at: chrono::DateTime<chrono::FixedOffset>) -> LibraryContentPreparationDto {
+        LibraryContentPreparationDto {
+            upload_session_id,
+            blake3_hash,
+            sha256_hash,
+            size,
+            authorized_scope,
+            storage_pool_id,
+            expires_at,
         }
     }
 }

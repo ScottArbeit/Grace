@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.library_prepared_content_return_value import LibraryPreparedContentReturnValue
+from grace_generated_openapi_probe.models.library_content_preparation_return_value import LibraryContentPreparationReturnValue
 
-class TestLibraryPreparedContentReturnValue(unittest.TestCase):
-    """LibraryPreparedContentReturnValue unit test stubs"""
+class TestLibraryContentPreparationReturnValue(unittest.TestCase):
+    """LibraryContentPreparationReturnValue unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,32 +26,32 @@ class TestLibraryPreparedContentReturnValue(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> LibraryPreparedContentReturnValue:
-        """Test LibraryPreparedContentReturnValue
+    def make_instance(self, include_optional) -> LibraryContentPreparationReturnValue:
+        """Test LibraryContentPreparationReturnValue
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `LibraryPreparedContentReturnValue`
+        # uncomment below to create an instance of `LibraryContentPreparationReturnValue`
         """
-        model = LibraryPreparedContentReturnValue()
+        model = LibraryContentPreparationReturnValue()
         if include_optional:
-            return LibraryPreparedContentReturnValue(
+            return LibraryContentPreparationReturnValue(
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
                     'key' : ''
                     },
-                return_value = grace_generated_openapi_probe.models.library_prepared_content_dto.LibraryPreparedContentDto(
-                    prepared_content_id = '', 
+                return_value = grace_generated_openapi_probe.models.library_content_preparation_dto.LibraryContentPreparationDto(
+                    upload_session_id = '', 
                     blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d', 
                     sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243', 
                     size = 1, 
-                    upload_required = True, 
-                    upload_instructions = '', 
+                    authorized_scope = '', 
+                    storage_pool_id = '', 
                     expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
             )
         else:
-            return LibraryPreparedContentReturnValue(
+            return LibraryContentPreparationReturnValue(
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
@@ -60,8 +60,8 @@ class TestLibraryPreparedContentReturnValue(unittest.TestCase):
         )
         """
 
-    def testLibraryPreparedContentReturnValue(self):
-        """Test LibraryPreparedContentReturnValue"""
+    def testLibraryContentPreparationReturnValue(self):
+        """Test LibraryContentPreparationReturnValue"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

@@ -21,14 +21,10 @@ import json
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.library_change_kind import LibraryChangeKind
 from grace_generated_openapi_probe.models.library_conflict_provenance_dto import LibraryConflictProvenanceDto
-from grace_generated_openapi_probe.models.library_content_version_dto import LibraryContentVersionDto
-from grace_generated_openapi_probe.models.library_item_kind import LibraryItemKind
-from grace_generated_openapi_probe.models.library_namespace_dto import LibraryNamespaceDto
-from grace_generated_openapi_probe.models.library_tombstone_dto import LibraryTombstoneDto
+from grace_generated_openapi_probe.models.library_item_dto import LibraryItemDto
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -37,19 +33,14 @@ class LibraryChangeDto(BaseModel):
     """
     LibraryChangeDto
     """ # noqa: E501
-    cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="Cursor")
     operation_id: UUID = Field(alias="OperationId")
     change_kind: LibraryChangeKind = Field(alias="ChangeKind")
-    item_id: UUID = Field(alias="ItemId")
-    item_kind: LibraryItemKind = Field(alias="ItemKind")
     accepted_at: datetime = Field(alias="AcceptedAt")
     accepted_by: StrictStr = Field(alias="AcceptedBy")
     library_catalog_version: UUID = Field(alias="LibraryCatalogVersion")
-    namespace: LibraryNamespaceDto = Field(alias="Namespace")
-    content: LibraryContentVersionDto = Field(alias="Content")
-    tombstone: LibraryTombstoneDto = Field(alias="Tombstone")
+    item: LibraryItemDto = Field(alias="Item")
     conflict: LibraryConflictProvenanceDto = Field(alias="Conflict")
-    __properties: ClassVar[List[str]] = ["Cursor", "OperationId", "ChangeKind", "ItemId", "ItemKind", "AcceptedAt", "AcceptedBy", "LibraryCatalogVersion", "Namespace", "Content", "Tombstone", "Conflict"]
+    __properties: ClassVar[List[str]] = ["OperationId", "ChangeKind", "AcceptedAt", "AcceptedBy", "LibraryCatalogVersion", "Item", "Conflict"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -90,15 +81,9 @@ class LibraryChangeDto(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of namespace
-        if self.namespace:
-            _dict['Namespace'] = self.namespace.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of content
-        if self.content:
-            _dict['Content'] = self.content.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of tombstone
-        if self.tombstone:
-            _dict['Tombstone'] = self.tombstone.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of item
+        if self.item:
+            _dict['Item'] = self.item.to_dict()
         # override the default output from pydantic by calling `to_dict()` of conflict
         if self.conflict:
             _dict['Conflict'] = self.conflict.to_dict()
@@ -114,17 +99,12 @@ class LibraryChangeDto(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "Cursor": obj.get("Cursor"),
             "OperationId": obj.get("OperationId"),
             "ChangeKind": obj.get("ChangeKind"),
-            "ItemId": obj.get("ItemId"),
-            "ItemKind": obj.get("ItemKind"),
             "AcceptedAt": obj.get("AcceptedAt"),
             "AcceptedBy": obj.get("AcceptedBy"),
             "LibraryCatalogVersion": obj.get("LibraryCatalogVersion"),
-            "Namespace": LibraryNamespaceDto.from_dict(obj["Namespace"]) if obj.get("Namespace") is not None else None,
-            "Content": LibraryContentVersionDto.from_dict(obj["Content"]) if obj.get("Content") is not None else None,
-            "Tombstone": LibraryTombstoneDto.from_dict(obj["Tombstone"]) if obj.get("Tombstone") is not None else None,
+            "Item": LibraryItemDto.from_dict(obj["Item"]) if obj.get("Item") is not None else None,
             "Conflict": LibraryConflictProvenanceDto.from_dict(obj["Conflict"]) if obj.get("Conflict") is not None else None
         })
         return _obj

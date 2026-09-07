@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.library_content_read_grant_return_value import LibraryContentReadGrantReturnValue
+from grace_generated_openapi_probe.models.library_content_read_return_value import LibraryContentReadReturnValue
 
-class TestLibraryContentReadGrantReturnValue(unittest.TestCase):
-    """LibraryContentReadGrantReturnValue unit test stubs"""
+class TestLibraryContentReadReturnValue(unittest.TestCase):
+    """LibraryContentReadReturnValue unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,23 +26,22 @@ class TestLibraryContentReadGrantReturnValue(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> LibraryContentReadGrantReturnValue:
-        """Test LibraryContentReadGrantReturnValue
+    def make_instance(self, include_optional) -> LibraryContentReadReturnValue:
+        """Test LibraryContentReadReturnValue
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `LibraryContentReadGrantReturnValue`
+        # uncomment below to create an instance of `LibraryContentReadReturnValue`
         """
-        model = LibraryContentReadGrantReturnValue()
+        model = LibraryContentReadReturnValue()
         if include_optional:
-            return LibraryContentReadGrantReturnValue(
+            return LibraryContentReadReturnValue(
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
                     'key' : ''
                     },
-                return_value = grace_generated_openapi_probe.models.library_content_read_grant_dto.LibraryContentReadGrantDto(
-                    grant_id = '', 
+                return_value = grace_generated_openapi_probe.models.library_content_read_dto.LibraryContentReadDto(
                     download_path = '', 
                     content = grace_generated_openapi_probe.models.library_content_version_dto.LibraryContentVersionDto(
                         content_version_id = '', 
@@ -53,7 +52,7 @@ class TestLibraryContentReadGrantReturnValue(unittest.TestCase):
                     expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
             )
         else:
-            return LibraryContentReadGrantReturnValue(
+            return LibraryContentReadReturnValue(
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
@@ -62,8 +61,8 @@ class TestLibraryContentReadGrantReturnValue(unittest.TestCase):
         )
         """
 
-    def testLibraryContentReadGrantReturnValue(self):
-        """Test LibraryContentReadGrantReturnValue"""
+    def testLibraryContentReadReturnValue(self):
+        """Test LibraryContentReadReturnValue"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

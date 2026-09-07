@@ -79,10 +79,15 @@ import {
     LibraryChangePageReturnValueToJSON,
 } from '../models/LibraryChangePageReturnValue';
 import {
-    type LibraryContentReadGrantReturnValue,
-    LibraryContentReadGrantReturnValueFromJSON,
-    LibraryContentReadGrantReturnValueToJSON,
-} from '../models/LibraryContentReadGrantReturnValue';
+    type LibraryContentPreparationReturnValue,
+    LibraryContentPreparationReturnValueFromJSON,
+    LibraryContentPreparationReturnValueToJSON,
+} from '../models/LibraryContentPreparationReturnValue';
+import {
+    type LibraryContentReadReturnValue,
+    LibraryContentReadReturnValueFromJSON,
+    LibraryContentReadReturnValueToJSON,
+} from '../models/LibraryContentReadReturnValue';
 import {
     type LibraryItemReturnValue,
     LibraryItemReturnValueFromJSON,
@@ -98,11 +103,6 @@ import {
     LibraryOperationReceiptReturnValueFromJSON,
     LibraryOperationReceiptReturnValueToJSON,
 } from '../models/LibraryOperationReceiptReturnValue';
-import {
-    type LibraryPreparedContentReturnValue,
-    LibraryPreparedContentReturnValueFromJSON,
-    LibraryPreparedContentReturnValueToJSON,
-} from '../models/LibraryPreparedContentReturnValue';
 import {
     type LibraryStatusReturnValue,
     LibraryStatusReturnValueFromJSON,
@@ -148,7 +148,7 @@ export interface ContinueLibraryBootstrapRequest {
 }
 
 export interface DownloadLibraryContentRequest {
-    grantId: string;
+    readToken: string;
 }
 
 export interface GetLibraryCatalogRequest {
@@ -318,10 +318,10 @@ export class LibrariesApi extends runtime.BaseAPI {
      * Creates request options for downloadLibraryContent without sending the request
      */
     async downloadLibraryContentRequestOpts(requestParameters: DownloadLibraryContentRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['grantId'] == null) {
+        if (requestParameters['readToken'] == null) {
             throw new runtime.RequiredError(
-                'grantId',
-                'Required parameter "grantId" was null or undefined when calling downloadLibraryContent().'
+                'readToken',
+                'Required parameter "readToken" was null or undefined when calling downloadLibraryContent().'
             );
         }
 
@@ -330,8 +330,8 @@ export class LibrariesApi extends runtime.BaseAPI {
         const headerParameters: runtime.HTTPHeaders = {};
 
 
-        let urlPath = `/libraries/content/{grantId}`;
-        urlPath = urlPath.replace('{grantId}', encodeURIComponent(String(requestParameters['grantId'])));
+        let urlPath = `/libraries/content/{readToken}`;
+        urlPath = urlPath.replace('{readToken}', encodeURIComponent(String(requestParameters['readToken'])));
 
         return {
             path: urlPath,
@@ -342,7 +342,7 @@ export class LibrariesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Redeem one authorized short-lived immutable-content read grant.
+     * Download authorized immutable content through a signed token until expiry.
      */
     async downloadLibraryContentRaw(requestParameters: DownloadLibraryContentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Blob>> {
         const requestOptions = await this.downloadLibraryContentRequestOpts(requestParameters);
@@ -352,7 +352,7 @@ export class LibrariesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Redeem one authorized short-lived immutable-content read grant.
+     * Download authorized immutable content through a signed token until expiry.
      */
     async downloadLibraryContent(requestParameters: DownloadLibraryContentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Blob> {
         const response = await this.downloadLibraryContentRaw(requestParameters, initOverrides);
@@ -784,17 +784,17 @@ export class LibrariesApi extends runtime.BaseAPI {
     /**
      * Prepare exact immutable bytes for a later Library change.
      */
-    async prepareLibraryContentRaw(requestParameters: PrepareLibraryContentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LibraryPreparedContentReturnValue>> {
+    async prepareLibraryContentRaw(requestParameters: PrepareLibraryContentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LibraryContentPreparationReturnValue>> {
         const requestOptions = await this.prepareLibraryContentRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => LibraryPreparedContentReturnValueFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => LibraryContentPreparationReturnValueFromJSON(jsonValue));
     }
 
     /**
      * Prepare exact immutable bytes for a later Library change.
      */
-    async prepareLibraryContent(requestParameters: PrepareLibraryContentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LibraryPreparedContentReturnValue> {
+    async prepareLibraryContent(requestParameters: PrepareLibraryContentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LibraryContentPreparationReturnValue> {
         const response = await this.prepareLibraryContentRaw(requestParameters, initOverrides);
         return await response.value();
     }
@@ -837,19 +837,19 @@ export class LibrariesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Prepare a one-use read grant for an authorized retained content version.
+     * Prepare a signed read URL for an authorized retained content version until expiry.
      */
-    async prepareLibraryContentReadRaw(requestParameters: PrepareLibraryContentReadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LibraryContentReadGrantReturnValue>> {
+    async prepareLibraryContentReadRaw(requestParameters: PrepareLibraryContentReadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<LibraryContentReadReturnValue>> {
         const requestOptions = await this.prepareLibraryContentReadRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => LibraryContentReadGrantReturnValueFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => LibraryContentReadReturnValueFromJSON(jsonValue));
     }
 
     /**
-     * Prepare a one-use read grant for an authorized retained content version.
+     * Prepare a signed read URL for an authorized retained content version until expiry.
      */
-    async prepareLibraryContentRead(requestParameters: PrepareLibraryContentReadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LibraryContentReadGrantReturnValue> {
+    async prepareLibraryContentRead(requestParameters: PrepareLibraryContentReadRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<LibraryContentReadReturnValue> {
         const response = await this.prepareLibraryContentReadRaw(requestParameters, initOverrides);
         return await response.value();
     }

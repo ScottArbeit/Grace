@@ -89,7 +89,7 @@ module LibraryTokens =
                 None
         | None -> None
 
-    /// Encodes a short-lived retained-content descriptor without adding another durable grant lifecycle.
+    /// Encodes a short-lived retained-content descriptor without adding another durable lifecycle.
     let contentRead key repositoryId itemId contentVersionId contentRevision expiresUnixSeconds =
         sign key "content" $"{repositoryId:D}|{itemId:D}|{contentVersionId:D}|{contentRevision}|{expiresUnixSeconds}"
 

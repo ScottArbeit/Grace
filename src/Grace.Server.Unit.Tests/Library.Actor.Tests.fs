@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Shared
 open Grace.Shared.Validation
 open Grace.Types.Library
 open NodaTime
@@ -251,4 +252,104 @@ type LibraryActorTests() =
                         .IsNone,
                     Is.True
                 ))
+        )
+
+    /// The production baseline packer streams the full item limit into deterministic byte-bounded shards, including tombstones.
+    [<Test>]
+    member _.BaselinePackerBoundsOneHundredThousandItemsAndReplaysExactly() =
+        let namespaceVersion = Guid.Parse("1a591698-8f6f-40c1-9b6c-c2c7763b6df7")
+        let parent = { Kind = "root"; LibraryPath = Some "Media"; ItemId = None }
+
+        let item index =
+            let idBytes = Array.zeroCreate<byte> 16
+
+            BitConverter
+                .GetBytes(index + 1)
+                .CopyTo(idBytes, 0)
+
+            let id = Guid idBytes
+
+            let ns = { Parent = parent; Name = $"file-{index:D6}.bin"; NamespaceVersion = namespaceVersion }
+
+            if index % 1000 = 0 then
+                {
+                    ItemId = id
+                    ItemKind = ItemKind.File
+                    LastChangeCursor = $"cursor-{index:D6}"
+                    Namespace = None
+                    Content = None
+                    ContentRevision = None
+                    Tombstone =
+                        Some
+                            {
+                                DeletedAt = timestamp
+                                DeletedBy = "user:baseline"
+                                DeleteCursor = $"cursor-{index:D6}"
+                                LastNamespace = ns
+                                LastContentVersionId = Some contentVersionId
+                            }
+                }
+            else
+                {
+                    ItemId = id
+                    ItemKind = ItemKind.Directory
+                    LastChangeCursor = $"cursor-{index:D6}"
+                    Namespace = Some ns
+                    Content = None
+                    ContentRevision = None
+                    Tombstone = None
+                }
+
+        let pack () =
+            let current = ResizeArray<LibraryItemDto>()
+            let fingerprints = ResizeArray<int * int * string>()
+            let mutable itemCount = 0
+            let mutable tombstoneCount = 0
+            let mutable currentBytes = LibraryQueries.emptyBaselineShardBytes
+            let mutable maximumPendingBytes = currentBytes
+
+            let recordShard shard =
+                let bytes = LibraryQueries.serializeBaselineShard shard
+                fingerprints.Add(shard.Items.Length, bytes.Length, ContentAddress.computeBlake3Hex bytes)
+
+                Assert.That(bytes.Length, Is.LessThanOrEqualTo(LibraryQueries.BaselineShardMaximumBytes))
+
+            for index in 0..99_999 do
+                let value = item index
+                itemCount <- itemCount + 1
+                if value.Tombstone.IsSome then tombstoneCount <- tombstoneCount + 1
+
+                let nextBytes, completed = LibraryQueries.appendBaselineItem current currentBytes value
+                currentBytes <- nextBytes
+                maximumPendingBytes <- Math.Max(maximumPendingBytes, currentBytes)
+
+                match completed with
+                | Some shard -> recordShard shard
+                | None -> ()
+
+            match LibraryQueries.finishBaselineShard current currentBytes with
+            | Some shard -> recordShard shard
+            | None -> ()
+
+            itemCount, tombstoneCount, maximumPendingBytes, fingerprints.ToArray()
+
+        let firstCount, firstTombstones, firstMaximumPendingBytes, first = pack ()
+        let secondCount, secondTombstones, secondMaximumPendingBytes, second = pack ()
+        let totalSerializedBytes = first |> Array.sumBy (fun (_, bytes, _) -> bytes)
+
+        TestContext.Out.WriteLine(
+            $"Library baseline packer: items={firstCount}; tombstones={firstTombstones}; shards={first.Length}; largestPendingShardBytes={firstMaximumPendingBytes}; totalSerializedShardBytes={totalSerializedBytes}"
+        )
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(firstCount, Is.EqualTo(100_000))
+                Assert.That(firstTombstones, Is.EqualTo(100))
+                Assert.That(first.Length, Is.GreaterThan(1))
+                Assert.That(first |> Array.sumBy (fun (count, _, _) -> count), Is.EqualTo(100_000))
+                Assert.That(firstMaximumPendingBytes, Is.LessThanOrEqualTo(LibraryQueries.BaselineShardMaximumBytes))
+                Assert.That(secondCount, Is.EqualTo(firstCount))
+                Assert.That(secondTombstones, Is.EqualTo(firstTombstones))
+                Assert.That(secondMaximumPendingBytes, Is.EqualTo(firstMaximumPendingBytes))
+                Assert.That(second, Is.EqualTo(box first)))
         )

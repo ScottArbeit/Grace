@@ -1,10 +1,9 @@
-# LibraryContentReadGrantDto
+# LibraryContentReadDto
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**grant_id** | **String** |  | 
 **download_path** | **String** |  | 
 **content** | [**models::LibraryContentVersionDto**](LibraryContentVersionDto.md) |  | 
 **expires_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 

@@ -8,10 +8,88 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open System
 open System.Collections.Generic
+open System.Text.Json
 open System.Threading
 
 /// Runs the bounded full-partition SQL reads that Orleans point storage cannot express.
 module LibraryQueries =
+
+    /// Caps one immutable baseline shard below the provider document limit.
+    [<Literal>]
+    let BaselineShardMaximumBytes = 1_000_000
+
+    /// Uses the production JSON contract without diagnostic indentation so item bytes compose exactly inside a shard.
+    let private baselineSerializerOptions =
+        let options = JsonSerializerOptions(Constants.JsonSerializerOptions)
+        options.WriteIndented <- false
+        options
+
+    /// Serializes one baseline shard with the exact options used for its durable hash and byte limit.
+    let serializeBaselineShard (shard: LibraryBaselineShardDocument) = JsonSerializer.SerializeToUtf8Bytes(shard, baselineSerializerOptions)
+
+    /// Returns the exact serialized size of an empty baseline shard before item bytes and separators are added.
+    let emptyBaselineShardBytes =
+        serializeBaselineShard { SchemaVersion = 1; Items = Array.empty }
+        |> Array.length
+
+    /// Adds one independently serialized item to the exact shard byte count without repeatedly serializing the growing buffer.
+    let appendBaselineItem (current: ResizeArray<LibraryItemDto>) currentBytes item =
+        let itemBytes =
+            JsonSerializer
+                .SerializeToUtf8Bytes(
+                    item,
+                    baselineSerializerOptions
+                )
+                .Length
+
+        let separatorBytes = if current.Count = 0 then 0 else 1
+        let candidateBytes = currentBytes + separatorBytes + itemBytes
+
+        if current.Count = 0 then
+            let singleton = { SchemaVersion = 1; Items = [| item |] }
+            let exactSingletonBytes = (serializeBaselineShard singleton).Length
+
+            if exactSingletonBytes <> candidateBytes then
+                invalidOp $"The incremental Library baseline singleton byte count {candidateBytes} did not match exact serialization {exactSingletonBytes}."
+
+        if candidateBytes <= BaselineShardMaximumBytes then
+            current.Add item
+            candidateBytes, None
+        else
+            if current.Count = 0 then
+                invalidOp "One Library baseline item exceeds the one-megabyte shard bound."
+
+            let completed = { SchemaVersion = 1; Items = current.ToArray() }
+            let exactBytes = (serializeBaselineShard completed).Length
+
+            if exactBytes <> currentBytes then
+                invalidOp $"The incremental Library baseline byte count {currentBytes} did not match exact serialization {exactBytes}."
+
+            current.Clear()
+            current.Add item
+            let singletonBytes = emptyBaselineShardBytes + itemBytes
+
+            if singletonBytes > BaselineShardMaximumBytes then
+                invalidOp "One Library baseline item exceeds the one-megabyte shard bound."
+
+            singletonBytes, Some completed
+
+    /// Completes the remaining baseline buffer after the last current-item query page.
+    let finishBaselineShard (current: ResizeArray<LibraryItemDto>) currentBytes =
+        if current.Count = 0 then
+            None
+        else
+            let shard = { SchemaVersion = 1; Items = current.ToArray() }
+            let serializedBytes = (serializeBaselineShard shard).Length
+
+            if serializedBytes <> currentBytes then
+                invalidOp $"The incremental Library baseline byte count {currentBytes} did not match exact serialization {serializedBytes}."
+
+            if serializedBytes > BaselineShardMaximumBytes then
+                invalidOp "A Library baseline shard exceeded the one-megabyte byte bound."
+
+            current.Clear()
+            Some shard
 
     /// Returns the configured Library database through the silo's shared Cosmos client.
     let private database (services: IServiceProvider) =
@@ -31,25 +109,46 @@ module LibraryQueries =
             .Add(purpose)
             .Build()
 
-    /// Reads every current item in stable provider-document order from the exact repository item partition.
-    let readCurrentItems (services: IServiceProvider) (repositoryId: RepositoryId) cancellationToken =
+    /// Reads one bounded current-item page in stable provider-document order from the exact repository item partition.
+    let readCurrentItemPage (services: IServiceProvider) (repositoryId: RepositoryId) continuationToken cancellationToken =
         task {
             let container =
                 (database services)
                     .GetContainer LibraryRecords.CurrentContainerName
 
-            let options = QueryRequestOptions(PartitionKey = Nullable(partition repositoryId "item"), MaxItemCount = Nullable 2000)
+            let options = QueryRequestOptions(PartitionKey = Nullable(partition repositoryId "item"), MaxItemCount = Nullable 256)
 
             let query =
                 QueryDefinition("SELECT VALUE c.State FROM c WHERE c.PartitionKey = @repository AND c.PartitionKey2 = 'item' ORDER BY c.id")
                     .WithParameter("@repository", repositoryId.ToString("D"))
 
-            use iterator = container.GetItemQueryIterator<LibraryCurrentItemDocument>(query, requestOptions = options)
-            let values = ResizeArray<LibraryCurrentItemDocument>()
+            use iterator = container.GetItemQueryIterator<LibraryCurrentItemDocument>(query, defaultArg continuationToken null, options)
 
-            while iterator.HasMoreResults do
+            if iterator.HasMoreResults then
                 let! page = iterator.ReadNextAsync(cancellationToken)
-                values.AddRange page.Resource
+
+                return
+                    page.Resource |> Seq.toArray,
+                    if String.IsNullOrWhiteSpace page.ContinuationToken then
+                        None
+                    else
+                        Some page.ContinuationToken
+            else
+                return Array.empty, None
+        }
+
+    /// Reads every current item for the bounded catalog and descendant checks that require the complete namespace graph.
+    let readCurrentItems (services: IServiceProvider) (repositoryId: RepositoryId) cancellationToken =
+        task {
+            let values = ResizeArray<LibraryCurrentItemDocument>()
+            let mutable continuationToken = None
+            let mutable more = true
+
+            while more do
+                let! page, next = readCurrentItemPage services repositoryId continuationToken cancellationToken
+                values.AddRange page
+                continuationToken <- next
+                more <- next.IsSome
 
             return values.ToArray()
         }

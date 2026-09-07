@@ -78,20 +78,17 @@ The model's terminal checks require cleared pending work, one accepted change, m
 
 Counter, workflow and broker operations are modeled. The experiment did not run the production content-counter actor, real manifest activation, Redis loss or a live Service Bus outage. Existing PR #1043 tests remain evidence for those unchanged components; the replacement must preserve their operation identities and order and test their actual composition.
 
-## Implementation consequence and remaining checks
+## Implementation consequence and delivery checks
 
 The experiment supports keeping one repository actor, typed provider functions, direct SQL queries, a paused baseline build, compact history and notification progress. It found no need for record actors or another production type.
 
-The next Issue #1042 run can implement the first remote vertical slice under a new charter. Its first integration test must use the actual upload, retained-content, counter/workflow, acceptance, signed-read and restart path. Preserve the successful component tests from PR #1043 selectively. Stop if composition requires changing the accepted sequence or adding another owner/lifecycle.
+Issue #1042 now composes the production upload session, retained content, repository content counter, manifest workflow, acceptance, signed read and full-silo restart path. It also implements the final record and RPC shapes, generated clients, stale revalidation, directory and slot checks, repeated-content conflict handling, compact history, notification recovery and immutable baseline paging.
 
-Before the remote replacement is merge-ready, also complete:
+The production baseline packer streams provider pages of at most 256 current records and retains at most one byte-bounded shard while the repository actor holds its turn. A focused 100,000-item test uses final production item shapes, includes tombstones, verifies exact replay and checks every serialized shard against the 1,000,000-byte bound. A hosted test covers publication, public paging and reuse of the same page token after a full server restart.
 
-- Full production record and RPC serialization, nested query paths, field IDs and generated clients.
-- Concurrent/stale activation handling beyond the stale-ETag storage case.
-- Directory cycles, moves, catalog/slot revalidation and real repeated-content conflicts.
-- Actual history segment/tail and notification recovery using the implemented functions.
-- Production baseline identity/reuse, public token paging, tombstones, cancellation, full byte limits and measured memory/latency.
-- Current-revision GitHub Validate and independent review.
+The original experiment remains the failure-injection evidence for the unchanged provider `createExact` path: an interrupted build leaves no manifest, retry reuses its shard, manifest publication occurs last and a concurrent mutation waits for the actor turn. Its managed-memory samples describe the disposable fixture, not the production implementation. The production code removes the experiment's full-repository accumulation and repeatedly serialized growing shards, so those measurements are not release memory or latency limits.
+
+Current-revision GitHub Validate and independent review remain delivery gates.
 
 Issue #1039 must separately test the redesigned three-table SQLite model with real filesystem publication and the existing two-copy fixture. The 34 model cases do not substitute for that test.
 

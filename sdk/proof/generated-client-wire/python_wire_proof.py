@@ -7,6 +7,9 @@ sys.path.insert(0, sys.argv[1])
 from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiDto
 from grace_generated_openapi_probe.models.reference_default_sentinel import ReferenceDefaultSentinel
 from grace_generated_openapi_probe.models.typed_reference_api_dto import TypedReferenceApiDto
+from grace_generated_openapi_probe.models.library_content_preparation_dto import LibraryContentPreparationDto
+from grace_generated_openapi_probe.models.library_namespace_slot_dto import LibraryNamespaceSlotDto
+from grace_generated_openapi_probe.models.prepare_library_content_read_parameters import PrepareLibraryContentReadParameters
 
 ZERO = "00000000-0000-0000-0000-000000000000"
 REAL = {
@@ -61,4 +64,43 @@ except ValueError:
 else:
     raise AssertionError("sentinel with non-canonical Links was accepted")
 
-print("Python UUID-coerced typed Reference wire round trip passed")
+library_preparation = {
+    "UploadSessionId": "77777777-7777-7777-7777-777777777777",
+    "Blake3Hash": "c" * 64,
+    "Sha256Hash": "d" * 64,
+    "Size": 123456,
+    "AuthorizedScope": "repository:44444444-4444-4444-4444-444444444444",
+    "StoragePoolId": "pool-primary",
+    "ExpiresAt": "2026-07-11T20:15:00Z",
+}
+preparation = LibraryContentPreparationDto.from_dict(library_preparation)
+assert preparation.upload_session_id == UUID(library_preparation["UploadSessionId"])
+assert preparation.authorized_scope == library_preparation["AuthorizedScope"]
+assert json.loads(preparation.to_json()) == library_preparation
+
+library_slot = {
+    "Parent": {
+        "Kind": "item",
+        "LibraryPath": "media",
+        "ItemId": "88888888-8888-8888-8888-888888888888",
+    },
+    "Name": "logo.svg",
+    "SlotVersion": "99999999-9999-9999-9999-999999999999",
+    "OccupantItemId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+}
+slot = LibraryNamespaceSlotDto.from_dict(library_slot)
+assert slot.parent.kind == "item"
+assert slot.parent.item_id == UUID(library_slot["Parent"]["ItemId"])
+assert slot.name == library_slot["Name"]
+assert json.loads(slot.to_json()) == library_slot
+
+content_read_request = {
+    "ItemId": library_slot["OccupantItemId"],
+    "ContentVersionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "ContentRevision": "cursor-revision-3",
+}
+read_request = PrepareLibraryContentReadParameters.from_dict(content_read_request)
+assert read_request.content_revision == content_read_request["ContentRevision"]
+assert json.loads(read_request.to_json()) == content_read_request
+
+print("Python Reference and Library wire round trips passed")

@@ -26,15 +26,14 @@ from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class LibraryContentReadGrantDto(BaseModel):
+class LibraryContentReadDto(BaseModel):
     """
-    LibraryContentReadGrantDto
+    LibraryContentReadDto
     """ # noqa: E501
-    grant_id: StrictStr = Field(alias="GrantId")
     download_path: StrictStr = Field(alias="DownloadPath")
     content: LibraryContentVersionDto = Field(alias="Content")
     expires_at: datetime = Field(alias="ExpiresAt")
-    __properties: ClassVar[List[str]] = ["GrantId", "DownloadPath", "Content", "ExpiresAt"]
+    __properties: ClassVar[List[str]] = ["DownloadPath", "Content", "ExpiresAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -54,7 +53,7 @@ class LibraryContentReadGrantDto(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of LibraryContentReadGrantDto from a JSON string"""
+        """Create an instance of LibraryContentReadDto from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,7 +81,7 @@ class LibraryContentReadGrantDto(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of LibraryContentReadGrantDto from a dict"""
+        """Create an instance of LibraryContentReadDto from a dict"""
         if obj is None:
             return None
 
@@ -90,7 +89,6 @@ class LibraryContentReadGrantDto(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "GrantId": obj.get("GrantId"),
             "DownloadPath": obj.get("DownloadPath"),
             "Content": LibraryContentVersionDto.from_dict(obj["Content"]) if obj.get("Content") is not None else None,
             "ExpiresAt": obj.get("ExpiresAt")

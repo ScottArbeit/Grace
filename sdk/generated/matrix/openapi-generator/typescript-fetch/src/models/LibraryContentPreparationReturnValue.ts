@@ -13,61 +13,61 @@
  */
 
 import { mapValues } from '../runtime';
-import type { LibraryPreparedContentDto } from './LibraryPreparedContentDto';
+import type { LibraryContentPreparationDto } from './LibraryContentPreparationDto';
 import {
-    LibraryPreparedContentDtoFromJSON,
-    LibraryPreparedContentDtoFromJSONTyped,
-    LibraryPreparedContentDtoToJSON,
-    LibraryPreparedContentDtoToJSONTyped,
-} from './LibraryPreparedContentDto';
+    LibraryContentPreparationDtoFromJSON,
+    LibraryContentPreparationDtoFromJSONTyped,
+    LibraryContentPreparationDtoToJSON,
+    LibraryContentPreparationDtoToJSONTyped,
+} from './LibraryContentPreparationDto';
 
 /**
  * 
  * @export
- * @interface LibraryPreparedContentReturnValue
+ * @interface LibraryContentPreparationReturnValue
  */
-export interface LibraryPreparedContentReturnValue {
+export interface LibraryContentPreparationReturnValue {
     /**
      * 
      * @type {Date}
-     * @memberof LibraryPreparedContentReturnValue
+     * @memberof LibraryContentPreparationReturnValue
      */
     eventTime: Date;
     /**
      * Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
      * @type {string}
-     * @memberof LibraryPreparedContentReturnValue
+     * @memberof LibraryContentPreparationReturnValue
      */
     correlationId: string;
     /**
      * 
      * @type {{ [key: string]: string; }}
-     * @memberof LibraryPreparedContentReturnValue
+     * @memberof LibraryContentPreparationReturnValue
      */
     properties: { [key: string]: string; };
     /**
      * 
-     * @type {LibraryPreparedContentDto}
-     * @memberof LibraryPreparedContentReturnValue
+     * @type {LibraryContentPreparationDto}
+     * @memberof LibraryContentPreparationReturnValue
      */
-    returnValue?: LibraryPreparedContentDto;
+    returnValue?: LibraryContentPreparationDto;
 }
 
 /**
- * Check if a given object implements the LibraryPreparedContentReturnValue interface.
+ * Check if a given object implements the LibraryContentPreparationReturnValue interface.
  */
-export function instanceOfLibraryPreparedContentReturnValue(value: object): value is LibraryPreparedContentReturnValue {
+export function instanceOfLibraryContentPreparationReturnValue(value: object): value is LibraryContentPreparationReturnValue {
     if (!('eventTime' in value) || value['eventTime'] === undefined) return false;
     if (!('correlationId' in value) || value['correlationId'] === undefined) return false;
     if (!('properties' in value) || value['properties'] === undefined) return false;
     return true;
 }
 
-export function LibraryPreparedContentReturnValueFromJSON(json: any): LibraryPreparedContentReturnValue {
-    return LibraryPreparedContentReturnValueFromJSONTyped(json, false);
+export function LibraryContentPreparationReturnValueFromJSON(json: any): LibraryContentPreparationReturnValue {
+    return LibraryContentPreparationReturnValueFromJSONTyped(json, false);
 }
 
-export function LibraryPreparedContentReturnValueFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryPreparedContentReturnValue {
+export function LibraryContentPreparationReturnValueFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryContentPreparationReturnValue {
     if (json == null) {
         return json;
     }
@@ -76,15 +76,15 @@ export function LibraryPreparedContentReturnValueFromJSONTyped(json: any, ignore
         'eventTime': (new Date(json['EventTime'])),
         'correlationId': json['CorrelationId'],
         'properties': json['Properties'],
-        'returnValue': json['ReturnValue'] == null ? undefined : LibraryPreparedContentDtoFromJSON(json['ReturnValue']),
+        'returnValue': json['ReturnValue'] == null ? undefined : LibraryContentPreparationDtoFromJSON(json['ReturnValue']),
     };
 }
 
-export function LibraryPreparedContentReturnValueToJSON(json: any): LibraryPreparedContentReturnValue {
-    return LibraryPreparedContentReturnValueToJSONTyped(json, false);
+export function LibraryContentPreparationReturnValueToJSON(json: any): LibraryContentPreparationReturnValue {
+    return LibraryContentPreparationReturnValueToJSONTyped(json, false);
 }
 
-export function LibraryPreparedContentReturnValueToJSONTyped(value?: LibraryPreparedContentReturnValue | null, ignoreDiscriminator: boolean = false): any {
+export function LibraryContentPreparationReturnValueToJSONTyped(value?: LibraryContentPreparationReturnValue | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
@@ -94,7 +94,7 @@ export function LibraryPreparedContentReturnValueToJSONTyped(value?: LibraryPrep
         'EventTime': value['eventTime'].toISOString(),
         'CorrelationId': value['correlationId'],
         'Properties': value['properties'],
-        'ReturnValue': LibraryPreparedContentDtoToJSON(value['returnValue']),
+        'ReturnValue': LibraryContentPreparationDtoToJSON(value['returnValue']),
     };
 }
 

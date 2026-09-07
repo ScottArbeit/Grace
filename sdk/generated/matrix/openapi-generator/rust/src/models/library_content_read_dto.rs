@@ -12,34 +12,20 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LibraryPreparedContentDto {
-    #[serde(rename = "PreparedContentId")]
-    pub prepared_content_id: uuid::Uuid,
-    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
-    #[serde(rename = "Blake3Hash")]
-    pub blake3_hash: String,
-    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
-    #[serde(rename = "Sha256Hash")]
-    pub sha256_hash: String,
-    #[serde(rename = "Size")]
-    pub size: i64,
-    #[serde(rename = "UploadRequired")]
-    pub upload_required: bool,
-    #[serde(rename = "UploadInstructions")]
-    pub upload_instructions: String,
+pub struct LibraryContentReadDto {
+    #[serde(rename = "DownloadPath")]
+    pub download_path: String,
+    #[serde(rename = "Content")]
+    pub content: Box<models::LibraryContentVersionDto>,
     #[serde(rename = "ExpiresAt")]
     pub expires_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
-impl LibraryPreparedContentDto {
-    pub fn new(prepared_content_id: uuid::Uuid, blake3_hash: String, sha256_hash: String, size: i64, upload_required: bool, upload_instructions: String, expires_at: chrono::DateTime<chrono::FixedOffset>) -> LibraryPreparedContentDto {
-        LibraryPreparedContentDto {
-            prepared_content_id,
-            blake3_hash,
-            sha256_hash,
-            size,
-            upload_required,
-            upload_instructions,
+impl LibraryContentReadDto {
+    pub fn new(download_path: String, content: models::LibraryContentVersionDto, expires_at: chrono::DateTime<chrono::FixedOffset>) -> LibraryContentReadDto {
+        LibraryContentReadDto {
+            download_path,
+            content: Box::new(content),
             expires_at,
         }
     }

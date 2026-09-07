@@ -8,13 +8,7 @@ Name | Type | Description | Notes
 **operation_id** | **UUID** |  | 
 **request_hash** | **str** |  | 
 **outcome** | [**LibraryOutcomeKind**](LibraryOutcomeKind.md) |  | 
-**library_catalog_version** | **UUID** |  | 
-**recorded_at** | **datetime** |  | 
-**principal_id** | **str** |  | 
 **change** | [**LibraryChangeDto**](LibraryChangeDto.md) |  | 
-**cursor** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
-**item** | [**LibraryItemDto**](LibraryItemDto.md) |  | 
-**conflict** | [**LibraryConflictProvenanceDto**](LibraryConflictProvenanceDto.md) |  | 
 **reason_code** | **str** |  | 
 **current_library_catalog** | [**LibraryCatalogDto**](LibraryCatalogDto.md) |  | 
 **rebaseline** | [**LibraryRebaselineDto**](LibraryRebaselineDto.md) |  | 

@@ -19,46 +19,22 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
-from uuid import UUID
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
+from grace_generated_openapi_probe.models.library_content_read_dto import LibraryContentReadDto
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class LibraryPreparedContentDto(BaseModel):
+class LibraryContentReadReturnValue(BaseModel):
     """
-    LibraryPreparedContentDto
+    LibraryContentReadReturnValue
     """ # noqa: E501
-    prepared_content_id: UUID = Field(alias="PreparedContentId")
-    blake3_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
-    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
-    size: Annotated[int, Field(strict=True, ge=1)] = Field(alias="Size")
-    upload_required: StrictBool = Field(alias="UploadRequired")
-    upload_instructions: StrictStr = Field(alias="UploadInstructions")
-    expires_at: datetime = Field(alias="ExpiresAt")
-    __properties: ClassVar[List[str]] = ["PreparedContentId", "Blake3Hash", "Sha256Hash", "Size", "UploadRequired", "UploadInstructions", "ExpiresAt"]
-
-    @field_validator('blake3_hash')
-    def blake3_hash_validate_regular_expression(cls, value):
-        """Validates the regular expression"""
-        if not isinstance(value, str):
-            value = str(value)
-
-        if not re.match(r"^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
-        return value
-
-    @field_validator('sha256_hash')
-    def sha256_hash_validate_regular_expression(cls, value):
-        """Validates the regular expression"""
-        if not isinstance(value, str):
-            value = str(value)
-
-        if not re.match(r"^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
-        return value
+    event_time: datetime = Field(alias="EventTime")
+    correlation_id: StrictStr = Field(description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.", alias="CorrelationId")
+    properties: Dict[str, StrictStr] = Field(alias="Properties")
+    return_value: Optional[LibraryContentReadDto] = Field(default=None, alias="ReturnValue")
+    __properties: ClassVar[List[str]] = ["EventTime", "CorrelationId", "Properties", "ReturnValue"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -78,7 +54,7 @@ class LibraryPreparedContentDto(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of LibraryPreparedContentDto from a JSON string"""
+        """Create an instance of LibraryContentReadReturnValue from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -99,11 +75,14 @@ class LibraryPreparedContentDto(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of return_value
+        if self.return_value:
+            _dict['ReturnValue'] = self.return_value.to_dict()
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of LibraryPreparedContentDto from a dict"""
+        """Create an instance of LibraryContentReadReturnValue from a dict"""
         if obj is None:
             return None
 
@@ -111,13 +90,10 @@ class LibraryPreparedContentDto(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "PreparedContentId": obj.get("PreparedContentId"),
-            "Blake3Hash": obj.get("Blake3Hash"),
-            "Sha256Hash": obj.get("Sha256Hash"),
-            "Size": obj.get("Size"),
-            "UploadRequired": obj.get("UploadRequired"),
-            "UploadInstructions": obj.get("UploadInstructions"),
-            "ExpiresAt": obj.get("ExpiresAt")
+            "EventTime": obj.get("EventTime"),
+            "CorrelationId": obj.get("CorrelationId"),
+            "Properties": obj.get("Properties"),
+            "ReturnValue": LibraryContentReadDto.from_dict(obj["ReturnValue"]) if obj.get("ReturnValue") is not None else None
         })
         return _obj
 

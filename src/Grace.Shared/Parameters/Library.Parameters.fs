@@ -80,7 +80,7 @@ module Library =
         member val Sha256Hash = String.Empty with get, set
         member val Size = 0L with get, set
 
-    /// Requests a one-use read grant for an authorized retained content version.
+    /// Requests a signed read URL for an authorized retained content version until its fixed expiry.
     type PrepareLibraryContentReadParameters() =
         inherit LibraryParameters()
         member val ItemId = Guid.Empty with get, set

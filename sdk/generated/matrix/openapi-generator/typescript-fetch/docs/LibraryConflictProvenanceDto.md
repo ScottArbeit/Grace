@@ -6,14 +6,9 @@
 
 Name | Type
 ------------ | -------------
-`sourceOperationId` | string
-`sourceItemId` | string
-`canonicalItemId` | string
-`conflictItemId` | string
-`conflictPath` | string
-`acceptedAt` | Date
-`sourceContentVersionId` | string
+`originalItemId` | string
 `baseContentVersionId` | string
+`baseContentRevision` | string
 
 ## Example
 
@@ -22,14 +17,9 @@ import type { LibraryConflictProvenanceDto } from '@grace-vcs/generated-openapi-
 
 // TODO: Update the object below with actual values
 const example = {
-  "sourceOperationId": null,
-  "sourceItemId": null,
-  "canonicalItemId": null,
-  "conflictItemId": null,
-  "conflictPath": null,
-  "acceptedAt": null,
-  "sourceContentVersionId": null,
+  "originalItemId": null,
   "baseContentVersionId": null,
+  "baseContentRevision": null,
 } satisfies LibraryConflictProvenanceDto
 
 console.log(example)

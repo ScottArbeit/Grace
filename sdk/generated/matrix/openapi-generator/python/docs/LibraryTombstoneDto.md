@@ -5,12 +5,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**item_id** | **UUID** |  | 
-**item_kind** | [**LibraryItemKind**](LibraryItemKind.md) |  | 
 **deleted_at** | **datetime** |  | 
 **deleted_by** | **str** |  | 
 **delete_cursor** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
-**last_namespace_version** | **UUID** |  | 
+**last_namespace** | [**LibraryNamespaceDto**](LibraryNamespaceDto.md) |  | 
 **last_content_version_id** | **UUID** |  | 
 
 ## Example

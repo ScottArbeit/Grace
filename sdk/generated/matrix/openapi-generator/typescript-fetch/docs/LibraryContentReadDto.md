@@ -1,12 +1,11 @@
 
-# LibraryContentReadGrantDto
+# LibraryContentReadDto
 
 
 ## Properties
 
 Name | Type
 ------------ | -------------
-`grantId` | string
 `downloadPath` | string
 `content` | [LibraryContentVersionDto](LibraryContentVersionDto.md)
 `expiresAt` | Date
@@ -14,15 +13,14 @@ Name | Type
 ## Example
 
 ```typescript
-import type { LibraryContentReadGrantDto } from '@grace-vcs/generated-openapi-probe'
+import type { LibraryContentReadDto } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
-  "grantId": null,
   "downloadPath": null,
   "content": null,
   "expiresAt": null,
-} satisfies LibraryContentReadGrantDto
+} satisfies LibraryContentReadDto
 
 console.log(example)
 
@@ -31,7 +29,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as LibraryContentReadGrantDto
+const exampleParsed = JSON.parse(exampleJSON) as LibraryContentReadDto
 console.log(exampleParsed)
 ```
 

@@ -13,61 +13,61 @@
  */
 
 import { mapValues } from '../runtime';
-import type { LibraryContentReadGrantDto } from './LibraryContentReadGrantDto';
+import type { LibraryContentReadDto } from './LibraryContentReadDto';
 import {
-    LibraryContentReadGrantDtoFromJSON,
-    LibraryContentReadGrantDtoFromJSONTyped,
-    LibraryContentReadGrantDtoToJSON,
-    LibraryContentReadGrantDtoToJSONTyped,
-} from './LibraryContentReadGrantDto';
+    LibraryContentReadDtoFromJSON,
+    LibraryContentReadDtoFromJSONTyped,
+    LibraryContentReadDtoToJSON,
+    LibraryContentReadDtoToJSONTyped,
+} from './LibraryContentReadDto';
 
 /**
  * 
  * @export
- * @interface LibraryContentReadGrantReturnValue
+ * @interface LibraryContentReadReturnValue
  */
-export interface LibraryContentReadGrantReturnValue {
+export interface LibraryContentReadReturnValue {
     /**
      * 
      * @type {Date}
-     * @memberof LibraryContentReadGrantReturnValue
+     * @memberof LibraryContentReadReturnValue
      */
     eventTime: Date;
     /**
      * Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
      * @type {string}
-     * @memberof LibraryContentReadGrantReturnValue
+     * @memberof LibraryContentReadReturnValue
      */
     correlationId: string;
     /**
      * 
      * @type {{ [key: string]: string; }}
-     * @memberof LibraryContentReadGrantReturnValue
+     * @memberof LibraryContentReadReturnValue
      */
     properties: { [key: string]: string; };
     /**
      * 
-     * @type {LibraryContentReadGrantDto}
-     * @memberof LibraryContentReadGrantReturnValue
+     * @type {LibraryContentReadDto}
+     * @memberof LibraryContentReadReturnValue
      */
-    returnValue?: LibraryContentReadGrantDto;
+    returnValue?: LibraryContentReadDto;
 }
 
 /**
- * Check if a given object implements the LibraryContentReadGrantReturnValue interface.
+ * Check if a given object implements the LibraryContentReadReturnValue interface.
  */
-export function instanceOfLibraryContentReadGrantReturnValue(value: object): value is LibraryContentReadGrantReturnValue {
+export function instanceOfLibraryContentReadReturnValue(value: object): value is LibraryContentReadReturnValue {
     if (!('eventTime' in value) || value['eventTime'] === undefined) return false;
     if (!('correlationId' in value) || value['correlationId'] === undefined) return false;
     if (!('properties' in value) || value['properties'] === undefined) return false;
     return true;
 }
 
-export function LibraryContentReadGrantReturnValueFromJSON(json: any): LibraryContentReadGrantReturnValue {
-    return LibraryContentReadGrantReturnValueFromJSONTyped(json, false);
+export function LibraryContentReadReturnValueFromJSON(json: any): LibraryContentReadReturnValue {
+    return LibraryContentReadReturnValueFromJSONTyped(json, false);
 }
 
-export function LibraryContentReadGrantReturnValueFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryContentReadGrantReturnValue {
+export function LibraryContentReadReturnValueFromJSONTyped(json: any, ignoreDiscriminator: boolean): LibraryContentReadReturnValue {
     if (json == null) {
         return json;
     }
@@ -76,15 +76,15 @@ export function LibraryContentReadGrantReturnValueFromJSONTyped(json: any, ignor
         'eventTime': (new Date(json['EventTime'])),
         'correlationId': json['CorrelationId'],
         'properties': json['Properties'],
-        'returnValue': json['ReturnValue'] == null ? undefined : LibraryContentReadGrantDtoFromJSON(json['ReturnValue']),
+        'returnValue': json['ReturnValue'] == null ? undefined : LibraryContentReadDtoFromJSON(json['ReturnValue']),
     };
 }
 
-export function LibraryContentReadGrantReturnValueToJSON(json: any): LibraryContentReadGrantReturnValue {
-    return LibraryContentReadGrantReturnValueToJSONTyped(json, false);
+export function LibraryContentReadReturnValueToJSON(json: any): LibraryContentReadReturnValue {
+    return LibraryContentReadReturnValueToJSONTyped(json, false);
 }
 
-export function LibraryContentReadGrantReturnValueToJSONTyped(value?: LibraryContentReadGrantReturnValue | null, ignoreDiscriminator: boolean = false): any {
+export function LibraryContentReadReturnValueToJSONTyped(value?: LibraryContentReadReturnValue | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
@@ -94,7 +94,7 @@ export function LibraryContentReadGrantReturnValueToJSONTyped(value?: LibraryCon
         'EventTime': value['eventTime'].toISOString(),
         'CorrelationId': value['correlationId'],
         'Properties': value['properties'],
-        'ReturnValue': LibraryContentReadGrantDtoToJSON(value['returnValue']),
+        'ReturnValue': LibraryContentReadDtoToJSON(value['returnValue']),
     };
 }
 

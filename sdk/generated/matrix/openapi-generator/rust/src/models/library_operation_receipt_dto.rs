@@ -19,21 +19,8 @@ pub struct LibraryOperationReceiptDto {
     pub request_hash: String,
     #[serde(rename = "Outcome")]
     pub outcome: models::LibraryOutcomeKind,
-    #[serde(rename = "LibraryCatalogVersion")]
-    pub library_catalog_version: uuid::Uuid,
-    #[serde(rename = "RecordedAt")]
-    pub recorded_at: chrono::DateTime<chrono::FixedOffset>,
-    #[serde(rename = "PrincipalId")]
-    pub principal_id: String,
     #[serde(rename = "Change")]
     pub change: Box<models::LibraryChangeDto>,
-    /// Opaque repository cursor. Clients must not parse or compare its contents.
-    #[serde(rename = "Cursor")]
-    pub cursor: String,
-    #[serde(rename = "Item")]
-    pub item: Box<models::LibraryItemDto>,
-    #[serde(rename = "Conflict")]
-    pub conflict: Box<models::LibraryConflictProvenanceDto>,
     #[serde(rename = "ReasonCode")]
     pub reason_code: String,
     #[serde(rename = "CurrentLibraryCatalog")]
@@ -43,18 +30,12 @@ pub struct LibraryOperationReceiptDto {
 }
 
 impl LibraryOperationReceiptDto {
-    pub fn new(operation_id: uuid::Uuid, request_hash: String, outcome: models::LibraryOutcomeKind, library_catalog_version: uuid::Uuid, recorded_at: chrono::DateTime<chrono::FixedOffset>, principal_id: String, change: models::LibraryChangeDto, cursor: String, item: models::LibraryItemDto, conflict: models::LibraryConflictProvenanceDto, reason_code: String, current_library_catalog: models::LibraryCatalogDto, rebaseline: models::LibraryRebaselineDto) -> LibraryOperationReceiptDto {
+    pub fn new(operation_id: uuid::Uuid, request_hash: String, outcome: models::LibraryOutcomeKind, change: models::LibraryChangeDto, reason_code: String, current_library_catalog: models::LibraryCatalogDto, rebaseline: models::LibraryRebaselineDto) -> LibraryOperationReceiptDto {
         LibraryOperationReceiptDto {
             operation_id,
             request_hash,
             outcome,
-            library_catalog_version,
-            recorded_at,
-            principal_id,
             change: Box::new(change),
-            cursor,
-            item: Box::new(item),
-            conflict: Box::new(conflict),
             reason_code,
             current_library_catalog: Box::new(current_library_catalog),
             rebaseline: Box::new(rebaseline),

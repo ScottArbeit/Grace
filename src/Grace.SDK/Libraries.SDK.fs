@@ -70,11 +70,11 @@ type Libraries() =
     static member public GetStatus(parameters: GetLibraryStatusParameters) =
         postServer<GetLibraryStatusParameters, LibraryRepositoryStatusDto> (parameters |> ensureCorrelationIdIsSet, "libraries/status/get")
 
-    /// Redeems one authorized read grant and returns its exact immutable bytes.
-    static member public DownloadContent(grantId: string, correlationId: string) : Task<GraceResult<byte array>> =
+    /// Downloads exact immutable bytes through one signed token until its fixed expiry.
+    static member public DownloadContent(readToken: string, correlationId: string) : Task<GraceResult<byte array>> =
         task {
             let correlationId = ensureNonEmptyCorrelationId correlationId
-            let route = $"libraries/content/{Uri.EscapeDataString grantId}"
+            let route = $"libraries/content/{Uri.EscapeDataString readToken}"
 
             try
                 use httpClient = ClientIdentity.getHttpClient correlationId

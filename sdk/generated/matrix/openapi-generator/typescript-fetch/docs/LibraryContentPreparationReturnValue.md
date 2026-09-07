@@ -1,5 +1,5 @@
 
-# LibraryPreparedContentReturnValue
+# LibraryContentPreparationReturnValue
 
 
 ## Properties
@@ -9,12 +9,12 @@ Name | Type
 `eventTime` | Date
 `correlationId` | string
 `properties` | { [key: string]: string; }
-`returnValue` | [LibraryPreparedContentDto](LibraryPreparedContentDto.md)
+`returnValue` | [LibraryContentPreparationDto](LibraryContentPreparationDto.md)
 
 ## Example
 
 ```typescript
-import type { LibraryPreparedContentReturnValue } from '@grace-vcs/generated-openapi-probe'
+import type { LibraryContentPreparationReturnValue } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
@@ -22,7 +22,7 @@ const example = {
   "correlationId": cli-20260604T181500Z-0001,
   "properties": null,
   "returnValue": null,
-} satisfies LibraryPreparedContentReturnValue
+} satisfies LibraryContentPreparationReturnValue
 
 console.log(example)
 
@@ -31,7 +31,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as LibraryPreparedContentReturnValue
+const exampleParsed = JSON.parse(exampleJSON) as LibraryContentPreparationReturnValue
 console.log(exampleParsed)
 ```
 

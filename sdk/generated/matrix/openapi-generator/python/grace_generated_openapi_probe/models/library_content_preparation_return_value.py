@@ -21,19 +21,19 @@ import json
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from grace_generated_openapi_probe.models.library_prepared_content_dto import LibraryPreparedContentDto
+from grace_generated_openapi_probe.models.library_content_preparation_dto import LibraryContentPreparationDto
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class LibraryPreparedContentReturnValue(BaseModel):
+class LibraryContentPreparationReturnValue(BaseModel):
     """
-    LibraryPreparedContentReturnValue
+    LibraryContentPreparationReturnValue
     """ # noqa: E501
     event_time: datetime = Field(alias="EventTime")
     correlation_id: StrictStr = Field(description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.", alias="CorrelationId")
     properties: Dict[str, StrictStr] = Field(alias="Properties")
-    return_value: Optional[LibraryPreparedContentDto] = Field(default=None, alias="ReturnValue")
+    return_value: Optional[LibraryContentPreparationDto] = Field(default=None, alias="ReturnValue")
     __properties: ClassVar[List[str]] = ["EventTime", "CorrelationId", "Properties", "ReturnValue"]
 
     model_config = ConfigDict(
@@ -54,7 +54,7 @@ class LibraryPreparedContentReturnValue(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of LibraryPreparedContentReturnValue from a JSON string"""
+        """Create an instance of LibraryContentPreparationReturnValue from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,7 +82,7 @@ class LibraryPreparedContentReturnValue(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of LibraryPreparedContentReturnValue from a dict"""
+        """Create an instance of LibraryContentPreparationReturnValue from a dict"""
         if obj is None:
             return None
 
@@ -93,7 +93,7 @@ class LibraryPreparedContentReturnValue(BaseModel):
             "EventTime": obj.get("EventTime"),
             "CorrelationId": obj.get("CorrelationId"),
             "Properties": obj.get("Properties"),
-            "ReturnValue": LibraryPreparedContentDto.from_dict(obj["ReturnValue"]) if obj.get("ReturnValue") is not None else None
+            "ReturnValue": LibraryContentPreparationDto.from_dict(obj["ReturnValue"]) if obj.get("ReturnValue") is not None else None
         })
         return _obj
 

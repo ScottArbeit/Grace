@@ -124,7 +124,7 @@ All URIs are relative to *http://localhost:5000*
 *DirectoriesApi* | [**saveDirectoryVersions**](docs/DirectoriesApi.md#savedirectoryversions) | **POST** /directory/saveDirectoryVersions | Save directory versions.
 *LibrariesApi* | [**addLibrary**](docs/LibrariesApi.md#addlibrary) | **POST** /libraries/add | Add one empty normalized Library under an exact configuration version.
 *LibrariesApi* | [**continueLibraryBootstrap**](docs/LibrariesApi.md#continuelibrarybootstrap) | **POST** /libraries/bootstrap/continue | Continue one immutable bootstrap baseline page sequence.
-*LibrariesApi* | [**downloadLibraryContent**](docs/LibrariesApi.md#downloadlibrarycontent) | **GET** /libraries/content/{grantId} | Redeem one authorized short-lived immutable-content read grant.
+*LibrariesApi* | [**downloadLibraryContent**](docs/LibrariesApi.md#downloadlibrarycontent) | **GET** /libraries/content/{readToken} | Download authorized immutable content through a signed token until expiry.
 *LibrariesApi* | [**getLibraryCatalog**](docs/LibrariesApi.md#getlibrarycatalog) | **POST** /libraries/catalog/get | Get the persisted Library configuration.
 *LibrariesApi* | [**getLibraryChanges**](docs/LibrariesApi.md#getlibrarychanges) | **POST** /libraries/changes/get | Read repository-ordered accepted Library changes after an opaque cursor.
 *LibrariesApi* | [**getLibraryItem**](docs/LibrariesApi.md#getlibraryitem) | **POST** /libraries/items/get | Get one current Library item.
@@ -133,7 +133,7 @@ All URIs are relative to *http://localhost:5000*
 *LibrariesApi* | [**getLibraryStatus**](docs/LibrariesApi.md#getlibrarystatus) | **POST** /libraries/status/get | Get content-free Library repository status.
 *LibrariesApi* | [**listLibraries**](docs/LibrariesApi.md#listlibraries) | **POST** /libraries/list | List the sorted Libraries and their exact configuration version.
 *LibrariesApi* | [**prepareLibraryContent**](docs/LibrariesApi.md#preparelibrarycontent) | **POST** /libraries/content/prepare | Prepare exact immutable bytes for a later Library change.
-*LibrariesApi* | [**prepareLibraryContentRead**](docs/LibrariesApi.md#preparelibrarycontentread) | **POST** /libraries/content/read | Prepare a one-use read grant for an authorized retained content version.
+*LibrariesApi* | [**prepareLibraryContentRead**](docs/LibrariesApi.md#preparelibrarycontentread) | **POST** /libraries/content/read | Prepare a signed read URL for an authorized retained content version until expiry.
 *LibrariesApi* | [**removeLibrary**](docs/LibrariesApi.md#removelibrary) | **POST** /libraries/remove | Remove one empty normalized Library under an exact configuration version.
 *LibrariesApi* | [**startLibraryBootstrap**](docs/LibrariesApi.md#startlibrarybootstrap) | **POST** /libraries/bootstrap/start | Start a bounded bootstrap from the current immutable baseline.
 *LibrariesApi* | [**submitLibraryChange**](docs/LibrariesApi.md#submitlibrarychange) | **POST** /libraries/changes/submit | Submit one exact idempotent Library namespace or content change.
@@ -349,8 +349,10 @@ All URIs are relative to *http://localhost:5000*
 - [LibraryConflictProvenanceDto](docs/LibraryConflictProvenanceDto.md)
 - [LibraryContentAvailable](docs/LibraryContentAvailable.md)
 - [LibraryContentPreconditionDto](docs/LibraryContentPreconditionDto.md)
-- [LibraryContentReadGrantDto](docs/LibraryContentReadGrantDto.md)
-- [LibraryContentReadGrantReturnValue](docs/LibraryContentReadGrantReturnValue.md)
+- [LibraryContentPreparationDto](docs/LibraryContentPreparationDto.md)
+- [LibraryContentPreparationReturnValue](docs/LibraryContentPreparationReturnValue.md)
+- [LibraryContentReadDto](docs/LibraryContentReadDto.md)
+- [LibraryContentReadReturnValue](docs/LibraryContentReadReturnValue.md)
 - [LibraryContentVersionDto](docs/LibraryContentVersionDto.md)
 - [LibraryCreationSlotExpectationDto](docs/LibraryCreationSlotExpectationDto.md)
 - [LibraryItemDto](docs/LibraryItemDto.md)
@@ -365,8 +367,6 @@ All URIs are relative to *http://localhost:5000*
 - [LibraryOutcomeKind](docs/LibraryOutcomeKind.md)
 - [LibraryParameters](docs/LibraryParameters.md)
 - [LibraryParentDto](docs/LibraryParentDto.md)
-- [LibraryPreparedContentDto](docs/LibraryPreparedContentDto.md)
-- [LibraryPreparedContentReturnValue](docs/LibraryPreparedContentReturnValue.md)
 - [LibraryRebaselineDto](docs/LibraryRebaselineDto.md)
 - [LibraryRejectionReason](docs/LibraryRejectionReason.md)
 - [LibraryRepositoryStatusDto](docs/LibraryRepositoryStatusDto.md)

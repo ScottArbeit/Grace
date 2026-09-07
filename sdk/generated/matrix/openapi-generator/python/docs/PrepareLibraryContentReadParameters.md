@@ -15,6 +15,7 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **item_id** | **UUID** |  | 
 **content_version_id** | **UUID** |  | 
+**content_revision** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 
 ## Example
 
