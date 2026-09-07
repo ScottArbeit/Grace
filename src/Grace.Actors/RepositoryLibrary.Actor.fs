@@ -358,12 +358,19 @@ type RepositoryLibraryActor
         }
 
     /// Reads and validates the existing upload session used by an accepted content change.
-    let resolveUpload now repositoryId operationId principalId uploadSessionId correlationId =
+    let resolveUpload repositoryId operationId principalId uploadSessionId correlationId =
         task {
             let actor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy uploadSessionId repositoryId correlationId
-            let! upload = actor.Get correlationId
 
-            match LibraryTransfer.validatePreparedUpload now repositoryId operationId principalId upload with
+            let! now, upload, validation =
+                LibraryTransfer.readAndValidatePreparedUpload
+                    (fun () -> actor.Get correlationId)
+                    (fun () -> SystemClock.Instance.GetCurrentInstant())
+                    repositoryId
+                    operationId
+                    principalId
+
+            match validation with
             | Error reason -> return Error reason
             | Ok (binding, manifest) ->
                 let proposedContent =
@@ -1371,7 +1378,7 @@ type RepositoryLibraryActor
                                     else
                                         let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
 
-                                        match! resolveUpload now repositoryId operationId principalId uploadSessionId correlationId with
+                                        match! resolveUpload repositoryId operationId principalId uploadSessionId correlationId with
                                         | Error reason ->
                                             let! receipt = reject repositoryId operationId requestHash reason control.Catalog
                                             return Ok receipt
@@ -1491,7 +1498,7 @@ type RepositoryLibraryActor
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.NamespaceChanged control.Catalog
                                         return Ok receipt
                                     | Some (current, _) ->
-                                        match! resolveUpload now repositoryId operationId principalId uploadSessionId correlationId with
+                                        match! resolveUpload repositoryId operationId principalId uploadSessionId correlationId with
                                         | Error reason ->
                                             let! receipt = reject repositoryId operationId requestHash reason control.Catalog
                                             return Ok receipt

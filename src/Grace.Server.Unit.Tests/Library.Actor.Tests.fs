@@ -601,6 +601,48 @@ type LibraryActorTests() =
                 | Ok _ -> Assert.Fail("Expected the preparation to expire at its persisted boundary."))
         )
 
+    /// An upload that expires during its awaited actor read is validated against the later observation time.
+    [<Test>]
+    member _.PreparedUploadExpiryIsObservedAfterAwaitedRead() =
+        task {
+            let upload = preparedUpload timestamp
+            let readStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let releaseRead = TaskCompletionSource<UploadSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let mutable currentInstant = timestamp - Duration.FromTicks(1L)
+            let mutable clockCalls = 0
+
+            let validation =
+                LibraryTransfer.readAndValidatePreparedUpload
+                    (fun () ->
+                        task {
+                            readStarted.TrySetResult() |> ignore
+                            return! releaseRead.Task
+                        })
+                    (fun () ->
+                        clockCalls <- clockCalls + 1
+                        currentInstant)
+                    repositoryId
+                    operationId
+                    "user:test"
+
+            do! readStarted.Task
+            Assert.That(clockCalls, Is.Zero)
+            currentInstant <- timestamp
+            releaseRead.SetResult upload
+            let! observedAt, returnedUpload, result = validation
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(clockCalls, Is.EqualTo(1))
+                    Assert.That(observedAt, Is.EqualTo(timestamp))
+                    Assert.That(returnedUpload, Is.EqualTo(upload))
+
+                    match result with
+                    | Error reason -> Assert.That(reason, Is.EqualTo(RejectionReason.PreparedContentExpired))
+                    | Ok _ -> Assert.Fail("Expected the upload to expire while its actor read was awaiting."))
+            )
+        }
+
     /// Only the exact completed workflow can suppress a repeated tracked-manifest activation.
     [<Test>]
     member _.CompletedTrackedWorkflowMatchesExactOperationAndCounterRevision() =

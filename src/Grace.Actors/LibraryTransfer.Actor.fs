@@ -6,6 +6,7 @@ open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.UploadSession
 open NodaTime
 open System.Collections.Generic
+open System.Threading.Tasks
 
 /// Maps accepted Library content onto the existing counter and manifest-workflow protocol.
 module LibraryTransfer =
@@ -51,6 +52,14 @@ module LibraryTransfer =
             Error RejectionReason.PreparedContentExpired
         else
             Ok(binding, manifest)
+
+    /// Reads a completed upload before observing the expiry clock used by the consuming Library decision.
+    let readAndValidatePreparedUpload (readUpload: unit -> Task<UploadSessionDto>) (getCurrentInstant: unit -> Instant) repositoryId operationId principalId =
+        task {
+            let! upload = readUpload ()
+            let now = getCurrentInstant ()
+            return now, upload, validatePreparedUpload now repositoryId operationId principalId upload
+        }
 
     /// Reports whether durable workflow state already proves the exact tracked Library contribution completed.
     let workflowCompletedForTrackedManifest repositoryId counterOperationId (manifest: FileManifest) ranges (workflow: ManifestContributionWorkflowDto) =
