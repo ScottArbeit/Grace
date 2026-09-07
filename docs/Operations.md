@@ -26,6 +26,8 @@ For each observed DirectoryVersion, fold its retained events and inspect its dir
 
 Logical deletion does not remove a surviving declaration. Physical deletion removes the event document from the enumerated source. The diagnostic follows that source boundary, even when a blob workflow has not finished. A result of zero is available only after the selected enumeration is exhausted and all observed declarations pass validation. Bounds, read failure, cancellation, missing required fields, conflicting sizes, scope mismatch, and overflow return an error with no quantity.
 
+Grace's current serializer omits `FileVersion.Size` when it is zero. The diagnostic honors that encoding; explicit null, malformed, fractional, or out-of-range sizes fail. Required Created, scope, `Files`, and content-reference fields are checked before typed deserialization so their absence cannot become an apparently empty declaration. This follows the current producer contract and does not add a compatibility path.
+
 Two matching enumerations can report observational agreement; they cannot establish that the contents existed together at one instant. The first production diagnostic needs only one bounded enumeration and an explicit start/end time. It makes no agreement or snapshot promise.
 
 ## Retained-content dispositions
@@ -42,17 +44,17 @@ Two matching enumerations can report observational agreement; they cannot establ
 
 Issue #829's eventual TextContent accounting must keep description success independent of Operations availability. Identical text under different TextContent IDs represents distinct stored objects. Gzip upload does not itself provide the retained uncompressed length for an orphan without a reference. These gaps preclude a complete repository-storage total today.
 
-## Selected next production slice
+## DirectoryVersion declaration diagnostic
 
-Readiness: **Design-ready recommendation, with a bounded provider preflight required before production implementation.** D1-D5 are accepted; the concrete route, fixed limits, and single-record budget below are the experiment's recommendation for the next issue. Its source adapter must pass the deciding preflight, and the controller must record the next issue's accepted scope before edits.
+Implementation: [Issue #1047](https://github.com/ScottArbeit/Grace/issues/1047) adds the selected internal diagnostic after its isolated Cosmos preflight passed. The [follow-up evidence](design/Operations.Measurement-Experiment.md#issue-1047-real-provider-preflight) records the real provider check; the preceding Issue #1045 experiment remains the source of the selected byte meaning.
 
-Quality profile for that slice: Product V1, narrowed to an authenticated SystemAdmin on the existing Grace Server/Cosmos topology and its PowerShell operator script. The query is read-only, request-local, and explicitly triggered. It promises no automatic retry, background activity, durable recovery, legacy-data compatibility, or additional provider support. Errors abort the attempt; the operator may issue a fresh request.
+Quality profile: Product V1, narrowed to an authenticated SystemAdmin on the existing Grace Server/Cosmos topology and its PowerShell operator script. The query is read-only, request-local, and explicitly triggered. It promises no automatic retry, background activity, durable recovery, legacy-data compatibility, or additional provider support. Errors abort the attempt; the operator may issue a fresh request.
 
-**Outcome:** a maintainer with `SystemAdmin` explicitly requests the DirectoryVersion declaration diagnostic and receives either a scoped observed byte count, including zero, or the existing error response with no quantity. This is the next recommendation from the experiment; it is not implemented by Issue #1045.
+**Outcome:** a maintainer with `SystemAdmin` explicitly requests the DirectoryVersion declaration diagnostic and receives either a scoped observed byte count, including zero, or the existing error response with no quantity. Issue #1047 implements this selected result.
 
 Use the existing internal `/admin` diagnostic boundary with `requireSystemAdmin`. Select one `POST /admin/directory-version-size/diagnose` query, reusing `GetRepositoryParameters` for its owner, organization, and repository identifiers. Resolve and verify their relationship through existing repository scope checks. Accept explicit identifiers only; reject name selectors rather than silently ignoring them. The source reader belongs behind Grace's server/actor storage boundary; Operations must not independently parse actor storage as a product API. Use the existing Cosmos container without provisioning it. Filter the repository partition and DirectoryVersion grain type, fold every returned event document, and verify owner, organization, repository, required Created data, direct-file shapes, and content identities before accumulating values.
 
-Use fixed initial limits: at most 32 pages, at most 10,000 DirectoryVersion documents, at most 100,000 direct file references, and a 30-second linked cancellation deadline; set page size to 256 documents. Limits constrain work, not sampling. A remaining continuation at a limit means error, never successful truncation. Do not expose continuation tokens, object keys, or partial counts in the successful operator result. These conservative limits are proposed operating limits, not measured Cosmos performance results.
+Use fixed initial limits: at most 32 pages, at most 10,000 DirectoryVersion documents, at most 100,000 direct file references, and a 30-second linked cancellation deadline; set page size to 256 documents. Limits constrain work, not sampling. A remaining continuation at a limit means error, never successful truncation. Do not expose continuation tokens, object keys, or partial counts in the successful operator result. These conservative limits are fixed operating limits, not measured Cosmos performance results.
 
 ### Type and surface budget
 
@@ -68,7 +70,7 @@ One new production declaration is justified: `DirectoryVersionSizeDiagnostic`, a
 
 The response type and diagnostic route name identify the fixed DirectoryVersion class. Documentation states units are logical bytes and includes the coverage exclusions. Error codes/messages use existing Grace mechanisms. A failure has no success record to accidentally interpret as zero.
 
-| Surface | Selected work for the next slice |
+| Surface | Implementation boundary |
 | --- | --- |
 | Source and server | One bounded read-only source function and one SystemAdmin diagnostic query; no recursive-directory materialization helper. |
 | Internal operator contract | One successful server-local DTO above; reuse repository parameters and standard success/error envelopes. |
@@ -79,17 +81,47 @@ The response type and diagnostic route name identify the fixed DirectoryVersion 
 
 Queue this next slice with the active Libraries replacement wherever it shares `Grace.Server.fsproj` or `Startup.Server.fs`; do not write concurrently in that worktree. The diagnostic does not require changes to Library types, Common types, AppHost, package policy, or generated clients.
 
-The deciding preflight is the real, isolated Cosmos enumeration through the selected storage adapter. The local experiment has not established provider behavior or route authorization. If that preflight fails, return a source-specific diagnostic blocker; do not substitute fixture results as product integration evidence. A new durable acceptance path is deferred until a supported measurement outcome needs it. No production enabling PR has been consumed by this discovery work.
+The isolated provider preflight established actual paginated Cosmos enumeration with Grace serialization and retained event documents. Hosted tests exercise the admin route, scope checks, and source reader against isolated repository data. A new durable acceptance path remains deferred until a supported measurement outcome needs it.
 
 ### Requirement and validation map
 
-| ID | Required behavior | Likely implementation | Acceptance evidence |
+| ID | Required behavior | Implementation | Acceptance evidence |
 | --- | --- | --- | --- |
 | OPS-DV-01 | Explicit SystemAdmin query with resolved, verified repository scope | Server diagnostic handler and existing admin route composition | Allowed admin response; non-admin denied; mismatched scope rejected before source read. |
 | OPS-DV-02 | Sum distinct valid direct declarations from an exhausted bounded enumeration | Server-side Cosmos read and existing DTO/key functions | Isolated actual Cosmos pages plus serializer/fold tests reproduce duplicates, known bytes, known zero, and logical retention. |
 | OPS-DV-03 | Bounds, invalid/conflicting data, cancellation, or failed reads yield an error without quantity | Source function and existing Grace error envelope | Each selected failure produces no successful diagnostic record; retry begins a new enumeration. |
 | OPS-DV-04 | Observation window and class remain explicit; no atomic snapshot or physical-byte claim | Successful response record, operator script, and diagnostic documentation | Serialized zero/nonzero responses, mixed-page test, and rendered/documented operator output state the boundary. |
 | OPS-DV-05 | No accounting publication or runtime persistence | Read-only dependency selection | Source inspection and tests establish that the diagnostic cannot call provisioning, cache materialization, broker publication, or SQL writes. |
+
+## Run the diagnostic
+
+Set `GRACE_SERVER_URI` and `GRACE_TOKEN` to the existing Grace Server URI and a SystemAdmin token. Supply all three explicit IDs; names are rejected. The output directory must already exist.
+
+PowerShell:
+
+```powershell
+./scripts/diagnose-directory-version-size.ps1 `
+    -OwnerId '11111111-1111-1111-1111-111111111111' `
+    -OrganizationId '22222222-2222-2222-2222-222222222222' `
+    -RepositoryId '33333333-3333-3333-3333-333333333333' `
+    -OutputPath './directory-version-size.json'
+```
+
+bash / zsh, invoking the supported PowerShell command:
+
+```bash
+pwsh -File ./scripts/diagnose-directory-version-size.ps1 \
+    -OwnerId '11111111-1111-1111-1111-111111111111' \
+    -OrganizationId '22222222-2222-2222-2222-222222222222' \
+    -RepositoryId '33333333-3333-3333-3333-333333333333' \
+    -OutputPath './directory-version-size.json'
+```
+
+Exit `0` means a complete success envelope was validated and saved. Exit `4` means request, response validation, or local output failed. A failed request or invalid response preserves an existing destination. The command validates scope, nonnegative integer quantities, and the read window before creating a temporary file, then publishes it by a same-directory rename. It promises no power-loss flush guarantee or concurrent-writer coordination.
+
+The saved JSON uses Grace's `ReturnValue`, `EventTime`, `CorrelationId`, and `Properties` envelope. `ReturnValue` contains the five fields above. Zero with `DistinctContentCount = 0` means no content declarations were encountered; zero with a positive count means zero-length declarations were encountered. Neither establishes physical blob presence. The server returns HTTP `400` for invalid scope or source declarations and HTTP `503` for an interrupted, timed-out, or failed enumeration, with `GraceError` and no successful quantity. A caller can issue a new request; partial counts and continuations are never resumed.
+
+No usage fact, SQL row, counter change, content object, cache, reminder, or runtime diagnostic state is created. The route does not read blobs and does not verify a repository-wide snapshot. The only saved diagnostic is the caller's local output file.
 
 ## Later decisions and preservation
 
