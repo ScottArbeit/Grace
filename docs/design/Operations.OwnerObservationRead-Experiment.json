@@ -1,0 +1,2279 @@
+{
+  "schemaVersion": 1,
+  "issue": 1066,
+  "question": "Can the existing DirectoryVersion observation preserve exact quantities and timestamps while two existing OwnerAdmin checks prevent disclosure after a detected intervening revocation?",
+  "selectedBase": "97d73103c6cd531dea40997ed00270c429d36faa",
+  "compiledRevision": "25f14402b785ac7143afbd892fa2b8e4a8d6fcf8",
+  "sourceLoadedEvaluatorRevision": "97d73103c6cd531dea40997ed00270c429d36faa",
+  "provenance": {
+    "verifiedOriginalArtifacts": [
+      {
+        "path": "owner-read-codec-experiment/above-js-safe-numeric.json",
+        "sha256": "63A6C98175C87AC334D9039AA37496DC77EB5C071F66FAF05C1007D63AA200A4"
+      },
+      {
+        "path": "owner-read-codec-experiment/above-js-safe-string.json",
+        "sha256": "82FB2A4E10FC999ABC58E7422D15AB718915600A00CFEA7A932E802A174BE562"
+      },
+      {
+        "path": "owner-read-codec-experiment/Check.cjs",
+        "sha256": "78C559B6B0B3D6626A82BAAFC3574E8D139F02E0EEAE10237972E2140230FE98"
+      },
+      {
+        "path": "owner-read-codec-experiment/dotnet.log",
+        "sha256": "350B2F44402B2FFAD0F582CDDE17F97A40D9B932A067E2A052650DA5DE77FC59"
+      },
+      {
+        "path": "owner-read-codec-experiment/Experiment.fsx",
+        "sha256": "C6FD4BA46EC8726F489FEDBC42B8D0C046BF32558AE755FF856F9EFD1F31E116"
+      },
+      {
+        "path": "owner-read-codec-experiment/max-int64-numeric.json",
+        "sha256": "4292DE72CEFCC3D9E4275450755C10A88DB52E0283BDE8F1004820FD38967C5B"
+      },
+      {
+        "path": "owner-read-codec-experiment/max-int64-string.json",
+        "sha256": "B0A0916A8875D1BBBA77C1B94801F2342E2FF107882ADCA07E8588ACFEB7D2D2"
+      },
+      {
+        "path": "owner-read-codec-experiment/node.log",
+        "sha256": "18AD05C849AD462B781A1AF49DB048A3023A206F1AEBB6552A05D4AE7FF274D3"
+      },
+      {
+        "path": "owner-read-codec-experiment/README.md",
+        "sha256": "5CD063CBA87BEDEF2454E87AC4C1C6DAC4B9E22CB2A2ECC99809F94BF0BE19F0"
+      },
+      {
+        "path": "owner-read-codec-experiment/References.fsx",
+        "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5"
+      },
+      {
+        "path": "owner-read-codec-experiment/zero-numeric.json",
+        "sha256": "187233C767CC17A23B698A557DA80E95735563E37F236477C4C6FBC24FCE3BAA"
+      },
+      {
+        "path": "owner-read-codec-experiment/zero-string.json",
+        "sha256": "2A16383C0F47A6A88A53AA97A6724D851A0AA305FF1140C38C07308746FE0378"
+      },
+      {
+        "path": "owner-read-generated-codec/Check.cjs",
+        "sha256": "02DC3A40366AD2687651BAEF7BB7DB9F7423EAC1D8DFE2A141A29B307C8C7EEA"
+      },
+      {
+        "path": "owner-read-generated-codec/compiler-install.log",
+        "sha256": "F2A59920B7BB73F83AD4F8B1D8A245309CAE6F3B4FCF1650759B421D16C7B6F6"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string-build.log",
+        "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string-generator.log",
+        "sha256": "9F7F52C0D84C1216BD6130D4DEF017692858301960412435B2086F9817B974A4"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string.json",
+        "sha256": "4A168E57E2DFC80358B7201250858AB8B0D61E0F4914ABD10AE18453B88675B1"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime-build.log",
+        "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime-generator.log",
+        "sha256": "81B2A858A07129B8D9CB03DE4CA91C3D895966DF1CE7A397147EF83D2D59D97B"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime.json",
+        "sha256": "AED568D6D5ADB6D400405189A798385234DA936085FD050B4E76AA054A99AF5F"
+      },
+      {
+        "path": "owner-read-generated-codec/README.md",
+        "sha256": "64B507576BD4CF5992FC429E8B39F1BCADA133322128C21A41BEED429EF586B5"
+      },
+      {
+        "path": "owner-read-generated-codec/results.json",
+        "sha256": "06671E541DC82F2D719A0D1ECA7C6A66141DD8F69AD9D1F1A445EA594667FE6D"
+      },
+      {
+        "path": "owner-read-generated-codec/results.log",
+        "sha256": "F7968D7ACAF4D20976B871B31F62ED14E4FB6C3FC785A22A454D5F2A03D41998"
+      },
+      {
+        "path": "owner-read-generated-codec/Run.ps1",
+        "sha256": "E3AD88E0136DC6F88CA3018FDBFB73EBF8343D5FECD05837879682F1FB3C7D06"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\.gitignore",
+        "sha256": "5D06E3029B1E6AA5DD85C360766039EE9A768A0BC80D1B9848F3F392A6F677FE"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\.npmignore",
+        "sha256": "B335630551682C19A781AFEBCF4D07BF978FB1F8AC04C6BF87428ED5106870F5"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\.openapi-generator-ignore",
+        "sha256": "A6ED8F4E275EEE926D27E0C52F30F2D1C4D8409465AC1FBC4511F7CC62DE51DB"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\package.json",
+        "sha256": "43068F8636524ACD09DE06C2793E3CA304136D3B35EB08F1388B4491330CF62F"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\README.md",
+        "sha256": "D044E7B6105AF0A511B057200CB754866B4810630C72A7A293F1389F261858B3"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\tsconfig.esm.json",
+        "sha256": "040F32B42D1DDE7A082C25E53D50D37AD1685E12030099A444739BBA8998C3CF"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\tsconfig.json",
+        "sha256": "B430BDECBD3A3CD68EC9EC7AF0125C2AB8BAD6512DA27904AF5B7C2FE8809587"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\.openapi-generator\\FILES",
+        "sha256": "9269CB78FBD75121BF0394AF90FF885BAB217B196B4008871F7685C6C925EC46"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\.openapi-generator\\VERSION",
+        "sha256": "139DDAB26FCA5D6AE105E6E70F97746CE49263B46E3BB9011C362A6D9944F697"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\index.d.ts",
+        "sha256": "A659139F8AAE1311D0C66071603FFD7AF0F78A0CB32444F9C915ABA612C7E84A"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\index.js",
+        "sha256": "B54CC669E062FB2F3C2A4AA9C85E372005596C5B90D31BFA623BA4C67773CF11"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\runtime.d.ts",
+        "sha256": "B463A4CBF0958CCA3ACB417AA38D17F1547FF7A21EEA0953559E2BA9E8012795"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\runtime.js",
+        "sha256": "B9419D3DB07C1181820B87CDA845559BA41B014839A8BE966AC707D37CFF49C9"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\apis\\DefaultApi.d.ts",
+        "sha256": "9A4BBA2E38FC8BC02CB7F4D0EA59A12E90BF5F810A26535F2A639BCBD66099C9"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\apis\\DefaultApi.js",
+        "sha256": "F4F74A42EC6600C59746599BBD704C6A8E148629771E27B3676CC185C1063A95"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\apis\\index.d.ts",
+        "sha256": "BE43ADCF43D8982F95ABEBD67270AA970D5D2B6506B51F6CB7E3AF90EA2A7902"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\apis\\index.js",
+        "sha256": "75B7146704DFD5415255F37D738BF50B7EF744647B5AAA5ECEE0D695F855F8CE"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\models\\DirectoryVersionSizeObservation.d.ts",
+        "sha256": "07E83BE867CADA42D3E2FF941C75A584C2CAB1D2BE8EA93682E011BD2C22A393"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\models\\DirectoryVersionSizeObservation.js",
+        "sha256": "2523B4C45EFEEEFC3388E86608B42D45CED3C5D171870C851B78B58CED796162"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\models\\index.d.ts",
+        "sha256": "FA54132119E9521222179DDB43A0FBDD711FA1D5156922A1C6B6C003C8CE1269"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\models\\index.js",
+        "sha256": "D0FAFB884DE01B5A2297ED1E73E1FEA79CA2F32161822DDB09DFF4B577AC1289"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\models\\UsageFactScope.d.ts",
+        "sha256": "E05AC01DB02C8CEE40C7DB701CFAE7859D1836C09DC3FE3A688EDE29BC1CF821"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\dist\\models\\UsageFactScope.js",
+        "sha256": "0FFC73C6DA5D7445CB63715D862F09965C6B8214CD950FCDC575F29E603A5B09"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\docs\\DefaultApi.md",
+        "sha256": "5900492E41DB9B44E474E4729092AF31BB5E4B911EB588B5013A1584038516D3"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\docs\\DirectoryVersionSizeObservation.md",
+        "sha256": "93AB9B4626752AD5F022E44364A3F526F4AC34B3E23F0CD2CB9210D6E58C94C4"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\docs\\UsageFactScope.md",
+        "sha256": "9EE2E177B9D58B27C309650FF0FE770332895925508F70136C273DB5D6F8E02A"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\index.ts",
+        "sha256": "7FA0F2909685ED2BD45A1D4CDED16DA3F25B2BD3E41149018C2DAF4C3F6CF42B"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\runtime.ts",
+        "sha256": "A1A9D5813FC3ED3C5282EC423766ECAE112908740465DFB803292021DDE21D83"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\apis\\DefaultApi.ts",
+        "sha256": "630FC7174B361B8878809F35F123252F2C70B892DE0E00F97E157D3433F26FF9"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\apis\\index.ts",
+        "sha256": "68CF9082EF19BBDE36388E812DFA77BA7956C9086AF00E5EF14CE00A80067454"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\models\\DirectoryVersionSizeObservation.ts",
+        "sha256": "9114BE03D7B18664834853AD570326DDF2175334EDFF4AB1C34E5F793C7E0D73"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\models\\index.ts",
+        "sha256": "51EC37340730E09099E5EE0DDFD6FFCBEA3E756936F664BD7071A9721616DDBE"
+      },
+      {
+        "path": "owner-read-generated-codec/decimal-string\\src\\models\\UsageFactScope.ts",
+        "sha256": "32AB8DFC6913C235A3C891904AB274C21064AFFC2C7435E92886C72245BE5E69"
+      },
+      {
+        "path": "owner-read-generated-codec/inputs\\above-js-safe-numeric.json",
+        "sha256": "63A6C98175C87AC334D9039AA37496DC77EB5C071F66FAF05C1007D63AA200A4"
+      },
+      {
+        "path": "owner-read-generated-codec/inputs\\above-js-safe-string.json",
+        "sha256": "82FB2A4E10FC999ABC58E7422D15AB718915600A00CFEA7A932E802A174BE562"
+      },
+      {
+        "path": "owner-read-generated-codec/inputs\\max-int64-numeric.json",
+        "sha256": "4292DE72CEFCC3D9E4275450755C10A88DB52E0283BDE8F1004820FD38967C5B"
+      },
+      {
+        "path": "owner-read-generated-codec/inputs\\max-int64-string.json",
+        "sha256": "B0A0916A8875D1BBBA77C1B94801F2342E2FF107882ADCA07E8588ACFEB7D2D2"
+      },
+      {
+        "path": "owner-read-generated-codec/inputs\\zero-numeric.json",
+        "sha256": "187233C767CC17A23B698A557DA80E95735563E37F236477C4C6FBC24FCE3BAA"
+      },
+      {
+        "path": "owner-read-generated-codec/inputs\\zero-string.json",
+        "sha256": "2A16383C0F47A6A88A53AA97A6724D851A0AA305FF1140C38C07308746FE0378"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\.gitignore",
+        "sha256": "5D06E3029B1E6AA5DD85C360766039EE9A768A0BC80D1B9848F3F392A6F677FE"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\.npmignore",
+        "sha256": "B335630551682C19A781AFEBCF4D07BF978FB1F8AC04C6BF87428ED5106870F5"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\.openapi-generator-ignore",
+        "sha256": "A6ED8F4E275EEE926D27E0C52F30F2D1C4D8409465AC1FBC4511F7CC62DE51DB"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\package.json",
+        "sha256": "43068F8636524ACD09DE06C2793E3CA304136D3B35EB08F1388B4491330CF62F"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\README.md",
+        "sha256": "D044E7B6105AF0A511B057200CB754866B4810630C72A7A293F1389F261858B3"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\tsconfig.esm.json",
+        "sha256": "040F32B42D1DDE7A082C25E53D50D37AD1685E12030099A444739BBA8998C3CF"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\tsconfig.json",
+        "sha256": "B430BDECBD3A3CD68EC9EC7AF0125C2AB8BAD6512DA27904AF5B7C2FE8809587"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\.openapi-generator\\FILES",
+        "sha256": "9269CB78FBD75121BF0394AF90FF885BAB217B196B4008871F7685C6C925EC46"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\.openapi-generator\\VERSION",
+        "sha256": "139DDAB26FCA5D6AE105E6E70F97746CE49263B46E3BB9011C362A6D9944F697"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\index.d.ts",
+        "sha256": "A659139F8AAE1311D0C66071603FFD7AF0F78A0CB32444F9C915ABA612C7E84A"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\index.js",
+        "sha256": "B54CC669E062FB2F3C2A4AA9C85E372005596C5B90D31BFA623BA4C67773CF11"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\runtime.d.ts",
+        "sha256": "B463A4CBF0958CCA3ACB417AA38D17F1547FF7A21EEA0953559E2BA9E8012795"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\runtime.js",
+        "sha256": "B9419D3DB07C1181820B87CDA845559BA41B014839A8BE966AC707D37CFF49C9"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\apis\\DefaultApi.d.ts",
+        "sha256": "9A4BBA2E38FC8BC02CB7F4D0EA59A12E90BF5F810A26535F2A639BCBD66099C9"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\apis\\DefaultApi.js",
+        "sha256": "F4F74A42EC6600C59746599BBD704C6A8E148629771E27B3676CC185C1063A95"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\apis\\index.d.ts",
+        "sha256": "BE43ADCF43D8982F95ABEBD67270AA970D5D2B6506B51F6CB7E3AF90EA2A7902"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\apis\\index.js",
+        "sha256": "75B7146704DFD5415255F37D738BF50B7EF744647B5AAA5ECEE0D695F855F8CE"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\models\\DirectoryVersionSizeObservation.d.ts",
+        "sha256": "733ED6C9E00C2582404DAE63CC59E20957265B8FA1C131D8CB06E2DA389D67F5"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\models\\DirectoryVersionSizeObservation.js",
+        "sha256": "8843110EFCF605A2DC4926EF2B6177745F00417D26301FC7B69A571A021DF068"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\models\\index.d.ts",
+        "sha256": "FA54132119E9521222179DDB43A0FBDD711FA1D5156922A1C6B6C003C8CE1269"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\models\\index.js",
+        "sha256": "D0FAFB884DE01B5A2297ED1E73E1FEA79CA2F32161822DDB09DFF4B577AC1289"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\models\\UsageFactScope.d.ts",
+        "sha256": "E05AC01DB02C8CEE40C7DB701CFAE7859D1836C09DC3FE3A688EDE29BC1CF821"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\dist\\models\\UsageFactScope.js",
+        "sha256": "0FFC73C6DA5D7445CB63715D862F09965C6B8214CD950FCDC575F29E603A5B09"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\docs\\DefaultApi.md",
+        "sha256": "5900492E41DB9B44E474E4729092AF31BB5E4B911EB588B5013A1584038516D3"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\docs\\DirectoryVersionSizeObservation.md",
+        "sha256": "FCC19EED1C578C9B333A702EBD83E96196BA8A34968BA66225D2DFDAE7B4AD33"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\docs\\UsageFactScope.md",
+        "sha256": "9EE2E177B9D58B27C309650FF0FE770332895925508F70136C273DB5D6F8E02A"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\index.ts",
+        "sha256": "7FA0F2909685ED2BD45A1D4CDED16DA3F25B2BD3E41149018C2DAF4C3F6CF42B"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\runtime.ts",
+        "sha256": "A1A9D5813FC3ED3C5282EC423766ECAE112908740465DFB803292021DDE21D83"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\apis\\DefaultApi.ts",
+        "sha256": "630FC7174B361B8878809F35F123252F2C70B892DE0E00F97E157D3433F26FF9"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\apis\\index.ts",
+        "sha256": "68CF9082EF19BBDE36388E812DFA77BA7956C9086AF00E5EF14CE00A80067454"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\models\\DirectoryVersionSizeObservation.ts",
+        "sha256": "83A7B99A03BCD649C5DF27BCBEB377E864FCC734AE0697CAFB012E5A92934E8B"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\models\\index.ts",
+        "sha256": "51EC37340730E09099E5EE0DDFD6FFCBEA3E756936F664BD7071A9721616DDBE"
+      },
+      {
+        "path": "owner-read-generated-codec/numeric-datetime\\src\\models\\UsageFactScope.ts",
+        "sha256": "32AB8DFC6913C235A3C891904AB274C21064AFFC2C7435E92886C72245BE5E69"
+      },
+      {
+        "path": "owner-read-permission-experiment/bootstrap-failure.log",
+        "sha256": "602617444D5CBAE6FCF4F1D7DCA06738C26E029FBD08F7AE5AB8830238DC0DD8"
+      },
+      {
+        "path": "owner-read-permission-experiment/Experiment.fsx",
+        "sha256": "407745CB06A6258E127FB86A56429C168ECF44E9EFFD9643FCC2525B2BEB1721"
+      },
+      {
+        "path": "owner-read-permission-experiment/global.json",
+        "sha256": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0"
+      },
+      {
+        "path": "owner-read-permission-experiment/README.md",
+        "sha256": "4257589D635DA87CA74BC3E4D0993D512CEC0677C37155EED8E36786DCFEF44A"
+      },
+      {
+        "path": "owner-read-permission-experiment/References.fsx",
+        "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5"
+      },
+      {
+        "path": "owner-read-permission-experiment/results.json",
+        "sha256": "070C1B7D6E75D3E737249C03C9A0B7BAB2C533D2CA6395B8E65C6A3F1B5C8105"
+      },
+      {
+        "path": "owner-read-permission-experiment/run.log",
+        "sha256": "7C392F672F717D7558F30688BDD4E57A187B3B45781ABD7B77B3A2425321EE92"
+      }
+    ],
+    "dependencies": [
+      {
+        "sha256": "D53D832629B76FCAE7F0E0352788C43C79E13480247DBA11E37961B60E52C142",
+        "name": "Azure.Core.Amqp.dll"
+      },
+      {
+        "sha256": "D0773E2EBFC5DD9F478F82AFF0F77F18F446268F22B95DC8201525DCD959D743",
+        "name": "Azure.Core.dll"
+      },
+      {
+        "sha256": "8B7ADFA847A90860922E9CB90BF27839652F8D75DFC1EC0B55BECA301E2E29EC",
+        "name": "Azure.Data.Tables.dll"
+      },
+      {
+        "sha256": "41B6A42A4ABAB1D9FF0F99C6F46A5509FEBB651AFCE0BAB4C8AB530F90E98B75",
+        "name": "Azure.Identity.dll"
+      },
+      {
+        "sha256": "F07A2A15B7A1276970E512E9486DE8A2EA8B551833669B40F9C0117544191E5B",
+        "name": "Azure.Messaging.ServiceBus.dll"
+      },
+      {
+        "sha256": "BC7D7C6ED709930362F3FF65991C115E12482449EA6EC350B86C33D9EBD7492A",
+        "name": "Azure.Storage.Blobs.Batch.dll"
+      },
+      {
+        "sha256": "E3AC899273AF3E079759DF37BF2A81301635084CB9CA38FE91D21948BF38E69B",
+        "name": "Azure.Storage.Blobs.dll"
+      },
+      {
+        "sha256": "678D23C3DF79E6C6B76C3BD46691DC55224E6D7F2ACFE86232A42C9BEEC54353",
+        "name": "Azure.Storage.Common.dll"
+      },
+      {
+        "sha256": "E09E0511F289BECB78B96FEF18E7AD3737C64AA5E02CB0C1C366BE0759D72BF4",
+        "name": "Azure.Storage.Queues.dll"
+      },
+      {
+        "sha256": "BD7EA4D5979649195E3E5E41D78591335D155657B9D2832E65C479ACE24433A3",
+        "name": "Ben.Demystifier.dll"
+      },
+      {
+        "sha256": "797EF7C1BE7CD5C559E6558B47C94DB5FE092DEB778C878771CBA51A3A6D33A3",
+        "name": "Blake3.dll"
+      },
+      {
+        "sha256": "36A0891813EF2D2BD19F87A6C37A193F717656ABFB8161B0BC77CD9B6454D67E",
+        "name": "Cosmos.CRTCompat.dll"
+      },
+      {
+        "sha256": "2B69F90834C498988A9E0CCD51D7FAD4C0FCD416F467E14ABFE9FED50E484194",
+        "name": "DiffPlex.dll"
+      },
+      {
+        "sha256": "802FF5B8AE4BDD89A2E015B7D33CC33EE363E977FA02BC98984DAF5A4662CE32",
+        "name": "FSharp.Control.TaskSeq.dll"
+      },
+      {
+        "sha256": "454275E6F64F26C19F989CC0E0C43A2EAF41705FC0F456097FAA1DA445139394",
+        "name": "FSharp.Core.dll"
+      },
+      {
+        "sha256": "0BAC55212F42878AD0D9E0E05DF5B40299F0D870CD82CA41695F3E77D9B26711",
+        "name": "FSharp.SystemTextJson.dll"
+      },
+      {
+        "sha256": "9418CD623B0C4E2B71966D154944534B3DB508E345A42CD76EE8CCAAF191A2EC",
+        "name": "FSharpPlus.dll"
+      },
+      {
+        "sha256": "49E5C28527C78C4C4C681A26A564D974486A1F419FD0C0054D8DD8AD852BE80A",
+        "name": "Grace.Actors.dll"
+      },
+      {
+        "sha256": "D4F52939E6B33BFD003C7DFDC066D538EBCF7D41708F212DC25EDB9BCAE195EA",
+        "name": "Grace.Shared.dll"
+      },
+      {
+        "sha256": "CD4240B6BB815ABC16D71C1837C52F66237E6EAA8F8C8D9EF783E4F92CEF2BB4",
+        "name": "Grace.Types.dll"
+      },
+      {
+        "sha256": "D6853075547D7E303EFD60354D911A2FF18EDBA582CDA2FA59D91A2E5DCF9E98",
+        "name": "Humanizer.dll"
+      },
+      {
+        "sha256": "BBA53A8B44184FCE30178502149ADA027185E17F4156BAF2DC38AD6C1550CDD6",
+        "name": "MessagePack.Annotations.dll"
+      },
+      {
+        "sha256": "DA7762A5931644CBC6C3A44E274A75510117A70D07C48FB71E512E99E69939CC",
+        "name": "MessagePack.dll"
+      },
+      {
+        "sha256": "DFC7891629E76074010566A21BA922D6F206CE93E6D6156283C42DE2D4577C56",
+        "name": "MessagePack.FSharpExtensions.dll"
+      },
+      {
+        "sha256": "E3414C7D86515F0E7FE8EEA825128480075038294B30D4A81B7BB50E76C70ECD",
+        "name": "MessagePack.NodaTime.dll"
+      },
+      {
+        "sha256": "99B59F7D7F14C4EAEC30525E64D4096423B582F4CD68296F4B475DACD9C003B5",
+        "name": "Microsoft.AspNetCore.Authentication.Abstractions.dll"
+      },
+      {
+        "sha256": "9C9E688AC709A97CBDD189370FFC024C0877F84AFCB763FBAD8D03EDD8339147",
+        "name": "Microsoft.AspNetCore.Authorization.dll"
+      },
+      {
+        "sha256": "F8C30C3E094549A0466C5A2C5409CAD45E599B3690982F1227FE0FF2AFCD9EA2",
+        "name": "Microsoft.AspNetCore.Authorization.Policy.dll"
+      },
+      {
+        "sha256": "FE1FA190630FA2AB9F6DA9164440D705CC9EFCF8425407EA375C669E2E486FB5",
+        "name": "Microsoft.AspNetCore.Connections.Abstractions.dll"
+      },
+      {
+        "sha256": "BAB38E0E11212BB5A3144BA93D1F85206F559FFB599A86C2AD7BDB832CB096A6",
+        "name": "Microsoft.AspNetCore.Hosting.Abstractions.dll"
+      },
+      {
+        "sha256": "91B10B746F6843A9C33FF48EDB84160033A31B975F2D4C1F881B6A76CF7440C7",
+        "name": "Microsoft.AspNetCore.Hosting.Server.Abstractions.dll"
+      },
+      {
+        "sha256": "A4A093CC8CA5BF4814F13664E6CC667B2BE8BC9E7A924F57A5294115BBE2E22B",
+        "name": "Microsoft.AspNetCore.Http.Abstractions.dll"
+      },
+      {
+        "sha256": "0BE48CF52B42C27413F6E09C216462AA7486FB89633C5D09929DE0A6C90F06FA",
+        "name": "Microsoft.AspNetCore.Http.Connections.Common.dll"
+      },
+      {
+        "sha256": "F76C5557B128C3BAA97185EF5E91C2EEE6AC722A8976E75420F0CC64C43948A3",
+        "name": "Microsoft.AspNetCore.Http.Connections.dll"
+      },
+      {
+        "sha256": "3E9ACFCD745B7D54707352201EB409949E6FAC2669265A4E8667DE352658C6DF",
+        "name": "Microsoft.AspNetCore.Http.dll"
+      },
+      {
+        "sha256": "5E713DBEAE1253E6DF5855AC13468ACF4E69A69DAE9192C866DCDBCCCBCD2D54",
+        "name": "Microsoft.AspNetCore.Http.Extensions.dll"
+      },
+      {
+        "sha256": "9F03C8B176E837237B40E69453EDBB3F1220E3CD07DFC291868DFC9737CF0A37",
+        "name": "Microsoft.AspNetCore.Http.Features.dll"
+      },
+      {
+        "sha256": "C6CF822915C0B6E6DB8FA0B776CD0FD66EF1789B1F914B4880F13BEC73486D1A",
+        "name": "Microsoft.AspNetCore.Routing.Abstractions.dll"
+      },
+      {
+        "sha256": "465BBF36630C62E2FFFF6790D747BEF805265C08291FB0FE2208A3E4C743E2CF",
+        "name": "Microsoft.AspNetCore.Routing.dll"
+      },
+      {
+        "sha256": "26BE055E348773E8DED95DAFF96FB116BD05720B1FDCF4ECB8D6898CFE8FD519",
+        "name": "Microsoft.AspNetCore.SignalR.Common.dll"
+      },
+      {
+        "sha256": "DB2ACE1C6ED8E83EF2290080DF26C56CF48E7A6128D904B0E02E8AF07723E6ED",
+        "name": "Microsoft.AspNetCore.SignalR.Core.dll"
+      },
+      {
+        "sha256": "96125AB92CAB6F28BE81551B1A0D8B3D03734D65046CD64ADEC8C25E1798D105",
+        "name": "Microsoft.AspNetCore.SignalR.dll"
+      },
+      {
+        "sha256": "D186653BEDAACF73B7BF9B48F6304C122041ACB34AD49DD4A755C5722F7B9D45",
+        "name": "Microsoft.AspNetCore.SignalR.Protocols.Json.dll"
+      },
+      {
+        "sha256": "024AA0CEDA31DCC2CAA8A08B1C27886507088B038EC80D357055FA9C0B44DEE7",
+        "name": "Microsoft.AspNetCore.WebSockets.dll"
+      },
+      {
+        "sha256": "9E140EDBCD2223B387DAAD3CE8A121EF919A168940D3EF87C5F2FCDA78FB17BE",
+        "name": "Microsoft.AspNetCore.WebUtilities.dll"
+      },
+      {
+        "sha256": "EB58A9058B6CDE95081608E1921967CC704D6E411745436B20C68CAA37389980",
+        "name": "Microsoft.Azure.Amqp.dll"
+      },
+      {
+        "sha256": "81950879D91A9B925A70D411FB60478998ADCB0D1ED507D53B29E1606D748E66",
+        "name": "Microsoft.Azure.Cosmos.Client.dll"
+      },
+      {
+        "sha256": "6A23B5FB024442913ACC7D9A5C9B536BAF06302380247B3E16421B42E6659D4C",
+        "name": "Microsoft.Azure.Cosmos.Core.dll"
+      },
+      {
+        "sha256": "8DD1B986D4331C53B4DEA2AB1E4223825F9ECB0B63A32EF3FC296741C1421933",
+        "name": "Microsoft.Azure.Cosmos.Direct.dll"
+      },
+      {
+        "sha256": "B28EB43FB9B2DB0D87D83F4B7511C1A24F0EDB05DDE54432BDEB6ADC538EC95C",
+        "name": "Microsoft.Azure.Cosmos.Serialization.HybridRow.dll"
+      },
+      {
+        "sha256": "F41846A2556D425F7B523125400C879BC04036786E32E72DB9AD60075455827D",
+        "name": "Microsoft.Azure.Cosmos.ServiceInterop.dll"
+      },
+      {
+        "sha256": "94805B8F147E2ACE9FD058F5BE82AA06DBCB92B8D6F5284DC2CC870905F0A870",
+        "name": "Microsoft.Bcl.AsyncInterfaces.dll"
+      },
+      {
+        "sha256": "CB9F8EF871353CD8129F44F03E8DE11F862386EC25B52DE060892B4930F640EB",
+        "name": "Microsoft.Bcl.HashCode.dll"
+      },
+      {
+        "sha256": "10F489DB67B8AC7489E58D392166C928302BA5698506DD652311DA5D89F0A0F8",
+        "name": "Microsoft.CodeAnalysis.dll"
+      },
+      {
+        "sha256": "79498055635572590009A4781A6E3EE1E2E70E3085B2EA3CE161820F809B0B2B",
+        "name": "Microsoft.CodeAnalysis.Workspaces.dll"
+      },
+      {
+        "sha256": "D3E8D6B1BFE488C670C277BA27B871DEA27192C60289E1D65173B21286A8EB32",
+        "name": "Microsoft.Extensions.Caching.Abstractions.dll"
+      },
+      {
+        "sha256": "27A3B754253C2ECBD1E695BC3DC67C8D047D9DC3219F60F7DC0B84BAF5F43023",
+        "name": "Microsoft.Extensions.Caching.Memory.dll"
+      },
+      {
+        "sha256": "CFDB91156D4D875BA6F540E53F96988E266AB24AB6F367150DB6EB9B645CFEB3",
+        "name": "Microsoft.Extensions.Configuration.Abstractions.dll"
+      },
+      {
+        "sha256": "99DA3C074C66E16BCC37989F3A0AF306895B12BA594F8A9A0BA3DB48A08277D4",
+        "name": "Microsoft.Extensions.Configuration.Binder.dll"
+      },
+      {
+        "sha256": "705B47C9EDDFD30D80B509C4ABC38149FEC341E0EB33056FEE480504DE9E7896",
+        "name": "Microsoft.Extensions.Configuration.CommandLine.dll"
+      },
+      {
+        "sha256": "E2C8220DE237C913E0BC4A40C5AA80038975774BDC940CA9AAA86FBCC1B13603",
+        "name": "Microsoft.Extensions.Configuration.dll"
+      },
+      {
+        "sha256": "65A8683C21D18445F56556B875CB8455404FA5AFF15850C3F6B96D8FF52E5616",
+        "name": "Microsoft.Extensions.Configuration.EnvironmentVariables.dll"
+      },
+      {
+        "sha256": "6C16EE1787CC70A957C8EB372A35217CB19F3A695101137A89C76F52F69DBD87",
+        "name": "Microsoft.Extensions.Configuration.FileExtensions.dll"
+      },
+      {
+        "sha256": "B33ECC843B36FF7D7D3960984E5320A5BD5C8EA3F1CA3277233F3145826EA237",
+        "name": "Microsoft.Extensions.Configuration.Json.dll"
+      },
+      {
+        "sha256": "BAE4BED08C1DB117628F3A1CBCBAAA32A3F9ED417DF65B42278E0BF289EB3EB1",
+        "name": "Microsoft.Extensions.Configuration.UserSecrets.dll"
+      },
+      {
+        "sha256": "43497D8F23B82159295933EFFE92C82447469B60CDBEFCCA4A62232E4EBBCA99",
+        "name": "Microsoft.Extensions.DependencyInjection.Abstractions.dll"
+      },
+      {
+        "sha256": "C3B96FFAD102F1BFC79B9CF1C3ADB7A629D6C1F3755F9606050EC2AD55A22F06",
+        "name": "Microsoft.Extensions.DependencyInjection.dll"
+      },
+      {
+        "sha256": "CA95F1AA49AD6DD47714DBDFBFD0D34EC0983B1471A0C40D485B701705813BA7",
+        "name": "Microsoft.Extensions.DependencyModel.dll"
+      },
+      {
+        "sha256": "D1C04CF42E58D5FE52A61E8E547C9365795FA4C464AAA91CBC115D3C43DA0C63",
+        "name": "Microsoft.Extensions.Diagnostics.Abstractions.dll"
+      },
+      {
+        "sha256": "456AD32114882C01F0BCE822E7D29F303629A196F465269B118396481D703634",
+        "name": "Microsoft.Extensions.Diagnostics.dll"
+      },
+      {
+        "sha256": "2EF71500319C4F81D299C11B31FC12EF36D6126A76E64C54E0797B0F6466AFDF",
+        "name": "Microsoft.Extensions.Features.dll"
+      },
+      {
+        "sha256": "718BA4FBAD76976E6BC2B4F16F2465E6F8216BF973F8D447B218C7847CB64970",
+        "name": "Microsoft.Extensions.FileProviders.Abstractions.dll"
+      },
+      {
+        "sha256": "7075857D3D929B7243917F63C93B992033DF66E76176FB5975DC80BC985701A9",
+        "name": "Microsoft.Extensions.FileProviders.Physical.dll"
+      },
+      {
+        "sha256": "D2606E4EC8D866F51965B97A52F3776E5E13A5F789563C3A86DD61D233984715",
+        "name": "Microsoft.Extensions.FileSystemGlobbing.dll"
+      },
+      {
+        "sha256": "7055B34EDD36E3554DA3AE33AF57A374304CC615786BCECA8F4C167E233C036F",
+        "name": "Microsoft.Extensions.Hosting.Abstractions.dll"
+      },
+      {
+        "sha256": "F542B69F4F5ECF7AAC4636D420FFB518099B2B46447653C5DF4F5EBF0E44460F",
+        "name": "Microsoft.Extensions.Hosting.dll"
+      },
+      {
+        "sha256": "CEC836C1DFF8E64701EE4FD3A710BD971FEF953C90A34B577D9F4363103E6C39",
+        "name": "Microsoft.Extensions.Logging.Abstractions.dll"
+      },
+      {
+        "sha256": "8EEBA93211C328A78DF10939A30157221594180B058BFC844426AAEAFF68160D",
+        "name": "Microsoft.Extensions.Logging.Configuration.dll"
+      },
+      {
+        "sha256": "66BA3FBA8F1F075FA83B5118C6660742C329A4D217D9CB999549FE8C8F7BFF30",
+        "name": "Microsoft.Extensions.Logging.Console.dll"
+      },
+      {
+        "sha256": "B7F698FC582A9528438746B641DF7FD2332B70A51BB8313E745F87E8E36F3EE1",
+        "name": "Microsoft.Extensions.Logging.Debug.dll"
+      },
+      {
+        "sha256": "607E91F57502684E35D1C766E84926F2E4F9D35CFB4173C0764FE6EB8A8A6B11",
+        "name": "Microsoft.Extensions.Logging.dll"
+      },
+      {
+        "sha256": "C04971A197013B21927D7EE16CECD76FCCDE40DC68222DA9A3AC74732A67A80D",
+        "name": "Microsoft.Extensions.Logging.EventLog.dll"
+      },
+      {
+        "sha256": "7CAABEAD28543311B0333EF13F2139493475B32C3E7BCF956D06322870A751D4",
+        "name": "Microsoft.Extensions.Logging.EventSource.dll"
+      },
+      {
+        "sha256": "633A263D940CD83B2A54467771A287370DFBE71F37DAF0E098D4CCF67D30EA38",
+        "name": "Microsoft.Extensions.ObjectPool.dll"
+      },
+      {
+        "sha256": "ACB694FF92C66B001EC019EE05A1A88939EFD8F045E842B8AE0E8B8490D5403E",
+        "name": "Microsoft.Extensions.Options.ConfigurationExtensions.dll"
+      },
+      {
+        "sha256": "C734C6A9FECA3A2DF39597E028EFEA8EEA796E7E5DFC815DF8B5893384297728",
+        "name": "Microsoft.Extensions.Options.dll"
+      },
+      {
+        "sha256": "1F9F027817B0F277F45CCEB0927C14E41CABFE6D52DAFB5AB6BF68895294814B",
+        "name": "Microsoft.Extensions.Primitives.dll"
+      },
+      {
+        "sha256": "F9BC295D0011112FE4D7D8A728A27A38627739DF6CD144C8402B5DAE03BF40AF",
+        "name": "Microsoft.Identity.Client.dll"
+      },
+      {
+        "sha256": "C870717A01751953D40376E1E662127626951871C592235DCA806DB23CA724E7",
+        "name": "Microsoft.Identity.Client.Extensions.Msal.dll"
+      },
+      {
+        "sha256": "24E97B54B6B5C234A124A336757E3116617AC6C30B655CDAE74517DC2ECB5746",
+        "name": "Microsoft.IdentityModel.Abstractions.dll"
+      },
+      {
+        "sha256": "361ABB640C5C81B6BC3F12CB707D4DF855499E60174568451C5D4DFC4D8072AD",
+        "name": "Microsoft.Net.Http.Headers.dll"
+      },
+      {
+        "sha256": "E51C8678FD602A21C249B369E833966019935132476F9434DA896BEF808BA3B1",
+        "name": "Microsoft.NET.StringTools.dll"
+      },
+      {
+        "sha256": "CA495BF6C86B7F092D624928101985A941532D149DCD8ACFEA170F8A53BE8850",
+        "name": "Microsoft.Win32.SystemEvents.dll"
+      },
+      {
+        "sha256": "48F86A4D84CD6252F55950AC77D2551EAE7CEAB598FDBB2BEFE85DC275FED039",
+        "name": "MimeTypes.dll"
+      },
+      {
+        "sha256": "613F30A21FE9502DB585F1721F73C7CA41C4621B8C4F13EB6BE887AAD579AE2A",
+        "name": "msvcp140.dll"
+      },
+      {
+        "sha256": "03C411A85320ED5E0F5C86A8C32066CF111F4BE5B1DEFCDB7FB998600B37239A",
+        "name": "Nanoid.dll"
+      },
+      {
+        "sha256": "A28C251DFE36D881E9E2462E171441B8B0EC156FE3F452602C9149B1B9EFE05B",
+        "name": "Newtonsoft.Json.dll"
+      },
+      {
+        "sha256": "02CC09C061F8927841659B06031D800E969EFF20A68B9462672A0FA68C3B43DF",
+        "name": "Nito.AsyncEx.Context.dll"
+      },
+      {
+        "sha256": "D2BAA6A62D5328E982707EEAFAAAC23428A36C3AF78BCEEA44A0B0F5DF34514E",
+        "name": "Nito.AsyncEx.Coordination.dll"
+      },
+      {
+        "sha256": "A2E1AFFC27326261BFCDC5F2F64621802F8498C643D8BE1F0258142467F65CEB",
+        "name": "Nito.AsyncEx.Interop.WaitHandles.dll"
+      },
+      {
+        "sha256": "C438A7F3CB756A2738E4CFC6F0445770DA61B536F2B8F9D02B0BCB7D550EA248",
+        "name": "Nito.AsyncEx.Oop.dll"
+      },
+      {
+        "sha256": "2B7B0132E793B248352EA719AC116365643279FC8E2F25DE4F516A11BA7BE41E",
+        "name": "Nito.AsyncEx.Tasks.dll"
+      },
+      {
+        "sha256": "B0EF5DFB70EC0486F0A332B83DD271B89D7E2B7282220B7B17CB1516E9DAE780",
+        "name": "Nito.Cancellation.dll"
+      },
+      {
+        "sha256": "509BED02F2EA6C4BFF4E68CAE5907797244D1E87A58E7AAD75748139AD70EEDA",
+        "name": "Nito.Collections.Deque.dll"
+      },
+      {
+        "sha256": "2E1E58AE51BE2BCA21E1574DE9D02435A18D6E514304A5C6A92D273CD910F703",
+        "name": "Nito.Disposables.dll"
+      },
+      {
+        "sha256": "CAFA84A12852E81A8DD848F3B652747BB7B7895D0F6A7FE6BB7FC275929B7363",
+        "name": "NodaTime.dll"
+      },
+      {
+        "sha256": "85411A9F366682CC5E11B53868485A423FECE16A02DCE316AEE000051D2E6F93",
+        "name": "NodaTime.Serialization.SystemTextJson.dll"
+      },
+      {
+        "sha256": "33B6EC0BDF3B22D9DC0F48083CB23AE1CD7E2E56661750244B7CDD7CE5AAE57F",
+        "name": "Orleans.Core.Abstractions.dll"
+      },
+      {
+        "sha256": "74057BACC56B4899047BF380BC66F823FF4A0432D8E1062F4B7B85D579D4C131",
+        "name": "Orleans.Core.dll"
+      },
+      {
+        "sha256": "97BB9343DF40D62CF31B755FA96373B3B224E24A126CD47730BD32543442C546",
+        "name": "Orleans.Runtime.dll"
+      },
+      {
+        "sha256": "67BE3DB7E0CA30B3B989AD18FCFF6B36BF6000E7F788164949CFD924D242FB4F",
+        "name": "Orleans.Serialization.Abstractions.dll"
+      },
+      {
+        "sha256": "BEEB3A193E4BF8EBBF7A19FF3117343B63D9BBBBF4222821A11746055CB66B90",
+        "name": "Orleans.Serialization.dll"
+      },
+      {
+        "sha256": "500399C7B62488EDE7A9D1773BD67AA51132F7F5676A8FB266B9524FB21AC36D",
+        "name": "Orleans.Serialization.FSharp.dll"
+      },
+      {
+        "sha256": "93C65B86E65AF2BA9F6B41DC987EBC28E83A2B64114640D3A257BDCD58B7E827",
+        "name": "Orleans.Serialization.NodaTime.dll"
+      },
+      {
+        "sha256": "0981B884A852E850951E2CF1042100C702CB8116BAC9E7C3FDCBB5EF8D0831CA",
+        "name": "Orleans.Serialization.SystemTextJson.dll"
+      },
+      {
+        "sha256": "F97FCA4790A5C2F6E74540BF586F32B1B31B464B135466763AFC1A0F7C12898D",
+        "name": "Orleans.Streaming.AzureStorage.dll"
+      },
+      {
+        "sha256": "10AC518BC3A465B315A13A5DB03AAB1E215170334B0A9758C63D0DAF61F4FF4E",
+        "name": "Orleans.Streaming.dll"
+      },
+      {
+        "sha256": "3FB02F7CB4C122998CFCA8931EA8477396CFE664107BBD7EB794438A4BD4A11C",
+        "name": "Polly.Contrib.WaitAndRetry.dll"
+      },
+      {
+        "sha256": "F7F50017CA9F457B854498358AE595C2A8AB69C1FD8B915139D22BED8F7E4F2A",
+        "name": "Polly.Core.dll"
+      },
+      {
+        "sha256": "CECB78EE944FD7CD1889C21602CC905DF8F72AF06A3798FB0FD75D96D436891E",
+        "name": "Polly.dll"
+      },
+      {
+        "sha256": "B198EB70311E99EDC2AFABC101FAFF3228FB8BE6AF38386BD14B1D5A1D6FFAE9",
+        "name": "System.ClientModel.dll"
+      },
+      {
+        "sha256": "D4F1EC85E742B77CDA48F709210DAAF34D8B4A7E1E540F353EFF741DCC058128",
+        "name": "System.Composition.AttributedModel.dll"
+      },
+      {
+        "sha256": "BE95F480449AB3236315BEB321CE598A61382D64479DDF500E7434637345F474",
+        "name": "System.Composition.Convention.dll"
+      },
+      {
+        "sha256": "2C8F10923C3B60FD1B16D89F2661712A9BE112E697990BEDBD6FAB9DBAABB1B6",
+        "name": "System.Composition.Hosting.dll"
+      },
+      {
+        "sha256": "148012DB7DDAFC76D28BBEAA0BAEA3E2351E7BC195E9031D57F107989C2E0EAA",
+        "name": "System.Composition.Runtime.dll"
+      },
+      {
+        "sha256": "EBC942C358D997E41635C9A365DB542A3FD2A05F301F602D5D6A8B0D5DD42071",
+        "name": "System.Composition.TypedParts.dll"
+      },
+      {
+        "sha256": "4B265C9FAF49BBCD7DE9B39677A8DB013560AB60760515AFCB969D34C4F01941",
+        "name": "System.Configuration.ConfigurationManager.dll"
+      },
+      {
+        "sha256": "D3A509594129C7E7E6826BD14EE57894B4CAC705A6EE6EBD0CE1B0A5C2EAE641",
+        "name": "System.Diagnostics.EventLog.dll"
+      },
+      {
+        "sha256": "98D07E6B1E7D3641A8608A360B3DC273FE8A0F78926B6E1E5F679A7A074D491F",
+        "name": "System.Drawing.Common.dll"
+      },
+      {
+        "sha256": "EA0BE3BCEF840A9DA018E801F64AEAED01C22CD3B74C0273B4E874B098EE61F6",
+        "name": "System.IO.Hashing.dll"
+      },
+      {
+        "sha256": "5864E9B77732B6210689E529E5BDAEC8016F96C2E26F81F9800EAA23156907B6",
+        "name": "System.Memory.Data.dll"
+      },
+      {
+        "sha256": "C1BDAC77DE553B1C33AB42313000816A3160B198519DD34EDA8CFF5B9127AF0E",
+        "name": "System.Net.WebSockets.WebSocketProtocol.dll"
+      },
+      {
+        "sha256": "D186453EEBBA21E19A90E4FEA16C11C3DF59ED9610201C5A3C6D636B9864D840",
+        "name": "System.Security.Cryptography.ProtectedData.dll"
+      },
+      {
+        "sha256": "62068C0F6BFFB0EB4EC1C6A45A16784CAEE7565F6C5404D8342089F4FF4B3712",
+        "name": "System.Security.Permissions.dll"
+      },
+      {
+        "sha256": "810E8767D02D70AF173BC33CC1048FF31A7DF015FD46CF423A309CC89C50DC69",
+        "name": "System.Windows.Extensions.dll"
+      },
+      {
+        "sha256": "69019AA1992B3093179682D32032F06F6D596E0B34B1267C74197CE6E55378BB",
+        "name": "vcruntime140_1.dll"
+      },
+      {
+        "sha256": "CF8EDF6F3675DAD4338CB42117FE9265FC228FD46E9443E5A716AA9E6AD6A49F",
+        "name": "vcruntime140.dll"
+      }
+    ],
+    "sourceApplicability": [
+      {
+        "path": "src/Grace.Shared/Constants.Shared.fs",
+        "compiledSourceSha256": "F39394D6210B1752BF6CA2ADDBEAEF259F30857DCC2DD4D2D683972555B5F817",
+        "selectedBaseSha256": "F39394D6210B1752BF6CA2ADDBEAEF259F30857DCC2DD4D2D683972555B5F817",
+        "wholeFileEqual": true
+      },
+      {
+        "path": "src/Grace.Types/Usage.Types.fs",
+        "compiledSourceSha256": "65F534E4CC9ACDB6CAC48B9C655AA6142675FB0E27B1C69C0FC0DDFE1C7A7369",
+        "selectedBaseSha256": "65F534E4CC9ACDB6CAC48B9C655AA6142675FB0E27B1C69C0FC0DDFE1C7A7369",
+        "wholeFileEqual": true
+      },
+      {
+        "path": "src/Grace.Types/UsageObservation.Types.fs",
+        "compiledSourceSha256": "20D85994A643BFA7C38C386058D3C1A6F414141F9D408584C28FBBBDEF94BC04",
+        "selectedBaseSha256": "5A75AA3E479D2BE503AC257CAC7850B472E0FD8BD681C85A7227C532E3BC903C",
+        "wholeFileEqual": false
+      },
+      {
+        "path": "src/Grace.Types/Authorization.Types.fs",
+        "compiledSourceSha256": "5F8133F344D1494EE1ACB63C28B75CD451AB547208FFFFB1ABB0EBF21B9DBC60",
+        "selectedBaseSha256": "5F8133F344D1494EE1ACB63C28B75CD451AB547208FFFFB1ABB0EBF21B9DBC60",
+        "wholeFileEqual": true
+      },
+      {
+        "path": "src/Grace.Shared/Authorization.Shared.fs",
+        "compiledSourceSha256": "E00B2AB190A9C65CF41DF3A86D9722355580E3ABAC6BC1E1BB192B6342594149",
+        "selectedBaseSha256": "E00B2AB190A9C65CF41DF3A86D9722355580E3ABAC6BC1E1BB192B6342594149",
+        "wholeFileEqual": true
+      },
+      {
+        "path": "src/Grace.Server/Security/PermissionEvaluator.Server.fs",
+        "compiledSourceSha256": "1C17FE44649C2903546D97FA5237A7307E46C5192147AF3503713ABA38846F8E",
+        "selectedBaseSha256": "1C17FE44649C2903546D97FA5237A7307E46C5192147AF3503713ABA38846F8E",
+        "wholeFileEqual": true
+      }
+    ],
+    "directoryVersionDeclarationAndValidatorEqual": true,
+    "usedSourceSha256": "91B31455246C64C762A830EC25A77F291C5AD505ADE0C67A230B16F1CC8C2CD2",
+    "originalManifestHashes": [
+      {
+        "sha256": "5CFB43962A811C91B3321518ACB46CDA7BD32EF88F9C81088FEA0AE70D5D70A2",
+        "path": "owner-read-codec-experiment/evidence.json"
+      },
+      {
+        "sha256": "878C1AC7F5AE0899D796F11B35FEF274BF918559A3E287978DB2375042E58B3D",
+        "path": "owner-read-generated-codec/evidence.json"
+      },
+      {
+        "sha256": "51879962EE8808E7612659A02830EDC3551DFD204088367E8C0728FD1B0709BA",
+        "path": "owner-read-permission-experiment/evidence.json"
+      }
+    ]
+  },
+  "adaptations": [
+    "Permission Experiment.fsx loads the embedded unchanged evaluator source by relative path.",
+    "Generated Run.ps1 resolves the exact cached image ID and uses a unique owned container name.",
+    "Replay relocates only the assembly search directive after checking all 137 original DLL hashes.",
+    "All other experiment assertions and cases are unchanged; global.json selects 10.0.400 with latestPatch."
+  ],
+  "generator": {
+    "schemaVersion": "3.1.0",
+    "typescript": "5.9.3",
+    "image": "openapitools/openapi-generator-cli:v7.22.0",
+    "imageId": "sha256:1f459499a7c794aa0ea769c3c9b0eb54806c5ad2f68510a0ebb9338d0a626ced",
+    "variants": [
+      "numeric-datetime",
+      "decimal-string"
+    ]
+  },
+  "executableInputs": [
+    {
+      "path": "codec/Check.cjs",
+      "sha256": "78C559B6B0B3D6626A82BAAFC3574E8D139F02E0EEAE10237972E2140230FE98",
+      "utf8": "const fs = require('node:fs');\nconst path = require('node:path');\nconst assert = require('node:assert/strict');\n// Checks native JavaScript decoding of the actual Grace serializer outputs.\nfor (const [name, expected] of [['zero', '0'], ['above-js-safe', '9007199254740993'], ['max-int64', '9223372036854775807']]) {\n  const numeric = JSON.parse(fs.readFileSync(path.join(__dirname, `${name}-numeric.json`), 'utf8'));\n  const strings = JSON.parse(fs.readFileSync(path.join(__dirname, `${name}-string.json`), 'utf8'));\n  assert.equal(strings.DeclaredLogicalBytes, expected);\n  assert.equal(BigInt(strings.DeclaredLogicalBytes).toString(), expected);\n  assert.equal(strings.EnumerationStartedAt, '2026-09-07T15:00:00.123456789Z');\n  if (name !== 'zero') assert.notEqual(BigInt(numeric.DeclaredLogicalBytes).toString(), expected);\n  console.log(JSON.stringify({name, exact: expected, numericDecoded: BigInt(numeric.DeclaredLogicalBytes).toString(), stringDecoded: strings.DeclaredLogicalBytes, timestamp: strings.EnumerationStartedAt, result: 'PASS'}));\n}\nconsole.log('VERDICT: decimal strings survive native JSON.parse exactly; Date conversion and generated clients are outside this experiment.');\n"
+    },
+    {
+      "path": "codec/Experiment.fsx",
+      "sha256": "C6FD4BA46EC8726F489FEDBC42B8D0C046BF32558AE755FF856F9EFD1F31E116",
+      "utf8": "#load \"References.fsx\"\n\nopen System\nopen System.IO\nopen System.Text.Json\nopen System.Text.Json.Serialization\nopen Grace.Shared\nopen Grace.Types.Usage\nopen Grace.Types.UsageObservation\nopen NodaTime.Text\n\n/// Tests whether existing Grace observation records can round-trip decimal-string quantities without changing shared options.\nlet output = __SOURCE_DIRECTORY__\nlet originalHandling = Constants.JsonSerializerOptions.NumberHandling\nlet lossless = JsonSerializerOptions(Constants.JsonSerializerOptions)\nlossless.NumberHandling <- JsonNumberHandling.AllowReadingFromString ||| JsonNumberHandling.WriteAsString\nlet started = InstantPattern.ExtendedIso.Parse(\"2026-09-07T15:00:00.123456789Z\").Value\nlet finished = InstantPattern.ExtendedIso.Parse(\"2026-09-07T15:00:01.987654321Z\").Value\n\n/// Fails the disposable witness immediately if an observed codec property differs.\nlet require label condition =\n    if not condition then failwith label\n    printfn \"PASS: %s\" label\n\nfor label, amount, count in [ \"zero\", 0L, 0L; \"above-js-safe\", 9007199254740993L, 1L; \"max-int64\", Int64.MaxValue, Int64.MaxValue ] do\n    let value: DirectoryVersionSizeObservation =\n        { ObservationId = Guid.Parse \"10000000-0000-0000-0000-000000000001\"\n          Scope = { OwnerId = Guid.Parse \"10000000-0000-0000-0000-000000000002\"; OrganizationId = Guid.Parse \"10000000-0000-0000-0000-000000000003\"; RepositoryId = Guid.Parse \"10000000-0000-0000-0000-000000000004\" }\n          DeclaredLogicalBytes = amount; DistinctContentCount = count\n          EnumerationStartedAt = started; EnumerationFinishedAt = finished }\n    require (label + \" validates\") (DirectoryVersionSizeObservation.Validate(value) = Ok())\n    for wire, options in [ \"numeric\", Constants.JsonSerializerOptions; \"string\", lossless ] do\n        let json = JsonSerializer.Serialize(value, options)\n        File.WriteAllText(Path.Combine(output, label + \"-\" + wire + \".json\"), json)\n        let restored = JsonSerializer.Deserialize<DirectoryVersionSizeObservation>(json, Constants.JsonSerializerOptions)\n        require (label + \" \" + wire + \" existing Grace reader exact round-trip\") (restored = value)\n        use parsed = JsonDocument.Parse(json)\n        let bytes = parsed.RootElement.GetProperty(\"DeclaredLogicalBytes\")\n        let expectedKind = if wire = \"string\" then JsonValueKind.String else JsonValueKind.Number\n        require (label + \" \" + wire + \" explicit quantity token\") (bytes.ValueKind = expectedKind)\n        require (label + \" \" + wire + \" all timestamp digits\") (parsed.RootElement.GetProperty(\"EnumerationStartedAt\").GetString() = \"2026-09-07T15:00:00.123456789Z\")\n\nrequire \"shared serializer options remain unchanged\" (Constants.JsonSerializerOptions.NumberHandling = originalHandling)\nprintfn \"VERDICT: codec feasibility proven for existing record; HTTP, authorization, SDK transport and generated clients were not executed.\"\n"
+    },
+    {
+      "path": "codec/References.fsx",
+      "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5",
+      "utf8": "#I \"C:/Source/Grace-worktrees/issue-1062-artifact-size-diagnostic/src/Grace.Actors/bin/Release/net10.0\"\r\n#r \"Azure.Core.Amqp.dll\"\r\n#r \"Azure.Core.dll\"\r\n#r \"Azure.Data.Tables.dll\"\r\n#r \"Azure.Identity.dll\"\r\n#r \"Azure.Messaging.ServiceBus.dll\"\r\n#r \"Azure.Storage.Blobs.Batch.dll\"\r\n#r \"Azure.Storage.Blobs.dll\"\r\n#r \"Azure.Storage.Common.dll\"\r\n#r \"Azure.Storage.Queues.dll\"\r\n#r \"Ben.Demystifier.dll\"\r\n#r \"Blake3.dll\"\r\n#r \"DiffPlex.dll\"\r\n#r \"FSharp.Control.TaskSeq.dll\"\r\n#r \"FSharp.SystemTextJson.dll\"\r\n#r \"FSharpPlus.dll\"\r\n#r \"Grace.Actors.dll\"\r\n#r \"Grace.Shared.dll\"\r\n#r \"Grace.Types.dll\"\r\n#r \"Humanizer.dll\"\r\n#r \"MessagePack.Annotations.dll\"\r\n#r \"MessagePack.dll\"\r\n#r \"MessagePack.FSharpExtensions.dll\"\r\n#r \"MessagePack.NodaTime.dll\"\r\n#r \"Microsoft.AspNetCore.Authentication.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Authorization.dll\"\r\n#r \"Microsoft.AspNetCore.Authorization.Policy.dll\"\r\n#r \"Microsoft.AspNetCore.Connections.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Hosting.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Hosting.Server.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Connections.Common.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Connections.dll\"\r\n#r \"Microsoft.AspNetCore.Http.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Extensions.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Features.dll\"\r\n#r \"Microsoft.AspNetCore.Routing.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Routing.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.Common.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.Core.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.Protocols.Json.dll\"\r\n#r \"Microsoft.AspNetCore.WebSockets.dll\"\r\n#r \"Microsoft.AspNetCore.WebUtilities.dll\"\r\n#r \"Microsoft.Azure.Amqp.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Client.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Core.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Direct.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Serialization.HybridRow.dll\"\r\n#r \"Microsoft.Bcl.AsyncInterfaces.dll\"\r\n#r \"Microsoft.Bcl.HashCode.dll\"\r\n#r \"Microsoft.CodeAnalysis.dll\"\r\n#r \"Microsoft.CodeAnalysis.Workspaces.dll\"\r\n#r \"Microsoft.Extensions.Caching.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Caching.Memory.dll\"\r\n#r \"Microsoft.Extensions.Configuration.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Configuration.Binder.dll\"\r\n#r \"Microsoft.Extensions.Configuration.CommandLine.dll\"\r\n#r \"Microsoft.Extensions.Configuration.dll\"\r\n#r \"Microsoft.Extensions.Configuration.EnvironmentVariables.dll\"\r\n#r \"Microsoft.Extensions.Configuration.FileExtensions.dll\"\r\n#r \"Microsoft.Extensions.Configuration.Json.dll\"\r\n#r \"Microsoft.Extensions.Configuration.UserSecrets.dll\"\r\n#r \"Microsoft.Extensions.DependencyInjection.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.DependencyInjection.dll\"\r\n#r \"Microsoft.Extensions.DependencyModel.dll\"\r\n#r \"Microsoft.Extensions.Diagnostics.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Diagnostics.dll\"\r\n#r \"Microsoft.Extensions.Features.dll\"\r\n#r \"Microsoft.Extensions.FileProviders.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.FileProviders.Physical.dll\"\r\n#r \"Microsoft.Extensions.FileSystemGlobbing.dll\"\r\n#r \"Microsoft.Extensions.Hosting.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Hosting.dll\"\r\n#r \"Microsoft.Extensions.Logging.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Logging.Configuration.dll\"\r\n#r \"Microsoft.Extensions.Logging.Console.dll\"\r\n#r \"Microsoft.Extensions.Logging.Debug.dll\"\r\n#r \"Microsoft.Extensions.Logging.dll\"\r\n#r \"Microsoft.Extensions.Logging.EventLog.dll\"\r\n#r \"Microsoft.Extensions.Logging.EventSource.dll\"\r\n#r \"Microsoft.Extensions.ObjectPool.dll\"\r\n#r \"Microsoft.Extensions.Options.ConfigurationExtensions.dll\"\r\n#r \"Microsoft.Extensions.Options.dll\"\r\n#r \"Microsoft.Extensions.Primitives.dll\"\r\n#r \"Microsoft.Identity.Client.dll\"\r\n#r \"Microsoft.Identity.Client.Extensions.Msal.dll\"\r\n#r \"Microsoft.IdentityModel.Abstractions.dll\"\r\n#r \"Microsoft.Net.Http.Headers.dll\"\r\n#r \"Microsoft.NET.StringTools.dll\"\r\n#r \"Microsoft.Win32.SystemEvents.dll\"\r\n#r \"MimeTypes.dll\"\r\n#r \"Nanoid.dll\"\r\n#r \"Newtonsoft.Json.dll\"\r\n#r \"Nito.AsyncEx.Context.dll\"\r\n#r \"Nito.AsyncEx.Coordination.dll\"\r\n#r \"Nito.AsyncEx.Interop.WaitHandles.dll\"\r\n#r \"Nito.AsyncEx.Oop.dll\"\r\n#r \"Nito.AsyncEx.Tasks.dll\"\r\n#r \"Nito.Cancellation.dll\"\r\n#r \"Nito.Collections.Deque.dll\"\r\n#r \"Nito.Disposables.dll\"\r\n#r \"NodaTime.dll\"\r\n#r \"NodaTime.Serialization.SystemTextJson.dll\"\r\n#r \"Orleans.Core.Abstractions.dll\"\r\n#r \"Orleans.Core.dll\"\r\n#r \"Orleans.Runtime.dll\"\r\n#r \"Orleans.Serialization.Abstractions.dll\"\r\n#r \"Orleans.Serialization.dll\"\r\n#r \"Orleans.Serialization.FSharp.dll\"\r\n#r \"Orleans.Serialization.NodaTime.dll\"\r\n#r \"Orleans.Serialization.SystemTextJson.dll\"\r\n#r \"Orleans.Streaming.AzureStorage.dll\"\r\n#r \"Orleans.Streaming.dll\"\r\n#r \"Polly.Contrib.WaitAndRetry.dll\"\r\n#r \"Polly.Core.dll\"\r\n#r \"Polly.dll\"\r\n#r \"System.ClientModel.dll\"\r\n#r \"System.Composition.AttributedModel.dll\"\r\n#r \"System.Composition.Convention.dll\"\r\n#r \"System.Composition.Hosting.dll\"\r\n#r \"System.Composition.Runtime.dll\"\r\n#r \"System.Composition.TypedParts.dll\"\r\n#r \"System.Configuration.ConfigurationManager.dll\"\r\n#r \"System.Diagnostics.EventLog.dll\"\r\n#r \"System.Drawing.Common.dll\"\r\n#r \"System.IO.Hashing.dll\"\r\n#r \"System.Memory.Data.dll\"\r\n#r \"System.Net.WebSockets.WebSocketProtocol.dll\"\r\n#r \"System.Security.Cryptography.ProtectedData.dll\"\r\n#r \"System.Security.Permissions.dll\"\r\n#r \"System.Windows.Extensions.dll\"\r\n"
+    },
+    {
+      "path": "generated/Check.cjs",
+      "sha256": "02DC3A40366AD2687651BAEF7BB7DB9F7423EAC1D8DFE2A141A29B307C8C7EEA",
+      "utf8": "const assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\nconst source = path.join(__dirname, 'inputs');\nconst numeric = require('./numeric-datetime/dist/models/DirectoryVersionSizeObservation.js');\nconst strings = require('./decimal-string/dist/models/DirectoryVersionSizeObservation.js');\nconst results = [];\n\n// Exercises generated FromJSON/ToJSON functions on the preceding actual Grace serializer outputs.\nfor (const [name, exact] of [['zero','0'], ['above-js-safe','9007199254740993'], ['max-int64','9223372036854775807']]) {\n  const numericWire = JSON.parse(fs.readFileSync(path.join(source, `${name}-numeric.json`), 'utf8'));\n  const stringWire = JSON.parse(fs.readFileSync(path.join(source, `${name}-string.json`), 'utf8'));\n  const decodedNumeric = numeric.DirectoryVersionSizeObservationFromJSON(numericWire);\n  const decodedString = strings.DirectoryVersionSizeObservationFromJSON(stringWire);\n  const numericAgain = numeric.DirectoryVersionSizeObservationToJSON(decodedNumeric);\n  const stringAgain = strings.DirectoryVersionSizeObservationToJSON(decodedString);\n  assert.deepEqual(stringAgain, stringWire);\n  assert.equal(decodedString.declaredLogicalBytes, exact);\n  assert.equal(decodedString.enumerationStartedAt, '2026-09-07T15:00:00.123456789Z');\n  assert.equal(typeof decodedString.enumerationStartedAt, 'string');\n  assert.ok(decodedNumeric.enumerationStartedAt instanceof Date);\n  assert.equal(numericAgain.EnumerationStartedAt, '2026-09-07T15:00:00.123Z');\n  if (name !== 'zero') assert.notEqual(BigInt(decodedNumeric.declaredLogicalBytes).toString(), exact);\n  results.push({name, result:'PASS', exactBytes:exact, numericBytes:BigInt(decodedNumeric.declaredLogicalBytes).toString(), numericTimestamp:numericAgain.EnumerationStartedAt, stringTimestamp:stringAgain.EnumerationStartedAt, stringWholeRecordExact:true});\n}\nfs.writeFileSync(path.join(__dirname,'results.json'), JSON.stringify(results,null,2));\nconsole.log(JSON.stringify(results,null,2));\nconsole.log('VERDICT: selected TypeScript generator preserves exact decimal/string projection. This is a codec-only schema fixture, not a selected or implemented public endpoint.');\n"
+    },
+    {
+      "path": "generated/inputs/above-js-safe-numeric.json",
+      "sha256": "63A6C98175C87AC334D9039AA37496DC77EB5C071F66FAF05C1007D63AA200A4",
+      "utf8": "{\r\n  \"ObservationId\": \"10000000-0000-0000-0000-000000000001\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10000000-0000-0000-0000-000000000002\",\r\n    \"OrganizationId\": \"10000000-0000-0000-0000-000000000003\",\r\n    \"RepositoryId\": \"10000000-0000-0000-0000-000000000004\"\r\n  },\r\n  \"DeclaredLogicalBytes\": 9007199254740993,\r\n  \"DistinctContentCount\": 1,\r\n  \"EnumerationStartedAt\": \"2026-09-07T15:00:00.123456789Z\",\r\n  \"EnumerationFinishedAt\": \"2026-09-07T15:00:01.987654321Z\"\r\n}"
+    },
+    {
+      "path": "generated/inputs/above-js-safe-string.json",
+      "sha256": "82FB2A4E10FC999ABC58E7422D15AB718915600A00CFEA7A932E802A174BE562",
+      "utf8": "{\r\n  \"ObservationId\": \"10000000-0000-0000-0000-000000000001\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10000000-0000-0000-0000-000000000002\",\r\n    \"OrganizationId\": \"10000000-0000-0000-0000-000000000003\",\r\n    \"RepositoryId\": \"10000000-0000-0000-0000-000000000004\"\r\n  },\r\n  \"DeclaredLogicalBytes\": \"9007199254740993\",\r\n  \"DistinctContentCount\": \"1\",\r\n  \"EnumerationStartedAt\": \"2026-09-07T15:00:00.123456789Z\",\r\n  \"EnumerationFinishedAt\": \"2026-09-07T15:00:01.987654321Z\"\r\n}"
+    },
+    {
+      "path": "generated/inputs/max-int64-numeric.json",
+      "sha256": "4292DE72CEFCC3D9E4275450755C10A88DB52E0283BDE8F1004820FD38967C5B",
+      "utf8": "{\r\n  \"ObservationId\": \"10000000-0000-0000-0000-000000000001\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10000000-0000-0000-0000-000000000002\",\r\n    \"OrganizationId\": \"10000000-0000-0000-0000-000000000003\",\r\n    \"RepositoryId\": \"10000000-0000-0000-0000-000000000004\"\r\n  },\r\n  \"DeclaredLogicalBytes\": 9223372036854775807,\r\n  \"DistinctContentCount\": 9223372036854775807,\r\n  \"EnumerationStartedAt\": \"2026-09-07T15:00:00.123456789Z\",\r\n  \"EnumerationFinishedAt\": \"2026-09-07T15:00:01.987654321Z\"\r\n}"
+    },
+    {
+      "path": "generated/inputs/max-int64-string.json",
+      "sha256": "B0A0916A8875D1BBBA77C1B94801F2342E2FF107882ADCA07E8588ACFEB7D2D2",
+      "utf8": "{\r\n  \"ObservationId\": \"10000000-0000-0000-0000-000000000001\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10000000-0000-0000-0000-000000000002\",\r\n    \"OrganizationId\": \"10000000-0000-0000-0000-000000000003\",\r\n    \"RepositoryId\": \"10000000-0000-0000-0000-000000000004\"\r\n  },\r\n  \"DeclaredLogicalBytes\": \"9223372036854775807\",\r\n  \"DistinctContentCount\": \"9223372036854775807\",\r\n  \"EnumerationStartedAt\": \"2026-09-07T15:00:00.123456789Z\",\r\n  \"EnumerationFinishedAt\": \"2026-09-07T15:00:01.987654321Z\"\r\n}"
+    },
+    {
+      "path": "generated/inputs/zero-numeric.json",
+      "sha256": "187233C767CC17A23B698A557DA80E95735563E37F236477C4C6FBC24FCE3BAA",
+      "utf8": "{\r\n  \"ObservationId\": \"10000000-0000-0000-0000-000000000001\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10000000-0000-0000-0000-000000000002\",\r\n    \"OrganizationId\": \"10000000-0000-0000-0000-000000000003\",\r\n    \"RepositoryId\": \"10000000-0000-0000-0000-000000000004\"\r\n  },\r\n  \"DeclaredLogicalBytes\": 0,\r\n  \"DistinctContentCount\": 0,\r\n  \"EnumerationStartedAt\": \"2026-09-07T15:00:00.123456789Z\",\r\n  \"EnumerationFinishedAt\": \"2026-09-07T15:00:01.987654321Z\"\r\n}"
+    },
+    {
+      "path": "generated/inputs/zero-string.json",
+      "sha256": "2A16383C0F47A6A88A53AA97A6724D851A0AA305FF1140C38C07308746FE0378",
+      "utf8": "{\r\n  \"ObservationId\": \"10000000-0000-0000-0000-000000000001\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10000000-0000-0000-0000-000000000002\",\r\n    \"OrganizationId\": \"10000000-0000-0000-0000-000000000003\",\r\n    \"RepositoryId\": \"10000000-0000-0000-0000-000000000004\"\r\n  },\r\n  \"DeclaredLogicalBytes\": \"0\",\r\n  \"DistinctContentCount\": \"0\",\r\n  \"EnumerationStartedAt\": \"2026-09-07T15:00:00.123456789Z\",\r\n  \"EnumerationFinishedAt\": \"2026-09-07T15:00:01.987654321Z\"\r\n}"
+    },
+    {
+      "path": "generated/Run.ps1",
+      "sha256": "EF8603E274622A6BDEF253CC47FD57D5C4BB3BC4294FA8B93416C690873B1184",
+      "utf8": "#Requires -Version 7.6\n[CmdletBinding()]\nparam()\n$ErrorActionPreference = 'Stop'\n$experimentRoot = $PSScriptRoot\n$generatorImage = 'sha256:1f459499a7c794aa0ea769c3c9b0eb54806c5ad2f68510a0ebb9338d0a626ced'\n$actualImage = & docker image inspect $generatorImage --format '{{.Id}}'\nif ($LASTEXITCODE -ne 0 -or $actualImage.Trim() -ne $generatorImage) { throw 'Pinned generator image is unavailable.' }\n$containerPrefix = 'grace-ops-1066-' + [Guid]::NewGuid().ToString('N')\n$tooling = Join-Path $experimentRoot 'tooling'\n\n# Generates two disposable projections to test exact observation fields through the repository's selected generator.\nforeach ($variant in @('numeric-datetime', 'decimal-string')) {\n    $quantity = if ($variant -eq 'numeric-datetime') { @{type='integer';format='int64';minimum=0} } else { @{type='string';pattern='^(0|[1-9][0-9]{0,18})$'} }\n    $timestamp = if ($variant -eq 'numeric-datetime') { @{type='string';format='date-time'} } else { @{type='string';pattern='^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$'} }\n    $scope = @{type='object';required=@('OwnerId','OrganizationId','RepositoryId');properties=@{OwnerId=@{type='string';format='uuid'};OrganizationId=@{type='string';format='uuid'};RepositoryId=@{type='string';format='uuid'}}}\n    $model = @{type='object';required=@('ObservationId','Scope','DeclaredLogicalBytes','DistinctContentCount','EnumerationStartedAt','EnumerationFinishedAt');properties=@{ObservationId=@{type='string';format='uuid'};Scope=@{'$ref'='#/components/schemas/UsageFactScope'};DeclaredLogicalBytes=$quantity;DistinctContentCount=$quantity;EnumerationStartedAt=$timestamp;EnumerationFinishedAt=$timestamp}}\n    $schema = [ordered]@{openapi='3.1.0';info=@{title='Disposable observation codec proof';version='0.0.0'};paths=@{'/probe'=@{get=@{operationId='readProbe';responses=@{'200'=@{description='Codec fixture only';content=@{'application/json'=@{schema=@{'$ref'='#/components/schemas/DirectoryVersionSizeObservation'}}}}}}}};components=@{schemas=@{UsageFactScope=$scope;DirectoryVersionSizeObservation=$model}}}\n    $schema | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $experimentRoot \"$variant.json\")\n    $output = Join-Path $experimentRoot $variant\n    if (Test-Path -LiteralPath $output) { throw \"Refusing to overwrite generated experiment output: $output\" }\n    & docker run --rm --name \"$containerPrefix-$variant\" --mount \"type=bind,source=$experimentRoot,target=/local\" $generatorImage generate -g typescript-fetch -i \"/local/$variant.json\" -o \"/local/$variant\" '--additional-properties=supportsES6=true,npmName=grace-ops-codec-probe,npmVersion=0.0.0-private' *> (Join-Path $experimentRoot \"$variant-generator.log\")\n    if ($LASTEXITCODE -ne 0) { throw \"Generation failed: $variant\" }\n}\n\n# Installs only the compiler in this disposable directory, without package scripts or repository dependency changes.\n& npm install --prefix $tooling --ignore-scripts --no-audit --no-fund typescript@5.9.3 *> (Join-Path $experimentRoot 'compiler-install.log')\nif ($LASTEXITCODE -ne 0) { throw 'Disposable compiler installation failed' }\nforeach ($variant in @('numeric-datetime', 'decimal-string')) {\n    & node (Join-Path $tooling 'node_modules/typescript/bin/tsc') -p (Join-Path $experimentRoot \"$variant/tsconfig.json\") *> (Join-Path $experimentRoot \"$variant-build.log\")\n    if ($LASTEXITCODE -ne 0) { throw \"Generated codec compilation failed: $variant\" }\n}\n& node (Join-Path $experimentRoot 'Check.cjs') *> (Join-Path $experimentRoot 'results.log')\nif ($LASTEXITCODE -ne 0) { throw 'Generated codec checks failed' }\nGet-Content -LiteralPath (Join-Path $experimentRoot 'results.log')\n"
+    },
+    {
+      "path": "global.json",
+      "sha256": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0",
+      "utf8": "{\r\n  \"sdk\": {\r\n    \"version\": \"10.0.400\",\r\n    \"rollForward\": \"latestPatch\"\r\n  }\r\n}\r\n"
+    },
+    {
+      "path": "permission/Experiment.fsx",
+      "sha256": "A6CD0486C7AFDD0F7C0C5492B2D9212AC3E77066121535C576166D4E1E88A82D",
+      "utf8": "#load \"References.fsx\"\n#load \"PermissionEvaluator.Server.fs\"\n\nopen System\nopen System.IO\nopen System.Threading\nopen System.Threading.Tasks\nopen System.Text.Json\nopen Grace.Server.Security\nopen Grace.Shared\nopen Grace.Types.Authorization\nopen Grace.Types.Common\nopen Grace.Types.Usage\nopen Grace.Types.UsageObservation\nopen NodaTime.Text\n\n/// Captures whether two existing permission evaluations prevent disclosure after an intervening revocation.\nlet output = __SOURCE_DIRECTORY__\nlet ownerId = Guid.Parse \"10000000-0000-0000-0000-000000000002\"\nlet organizationId = Guid.Parse \"10000000-0000-0000-0000-000000000003\"\nlet repositoryId = Guid.Parse \"10000000-0000-0000-0000-000000000004\"\nlet otherId = Guid.Parse \"20000000-0000-0000-0000-000000000002\"\nlet principal = { PrincipalType = PrincipalType.User; PrincipalId = \"owner-reader\" }\nlet scope: UsageFactScope = { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId }\nlet instant = InstantPattern.ExtendedIso.Parse(\"2026-09-07T16:00:00.123456789Z\").Value\nlet stored: DirectoryVersionSizeObservation =\n    { ObservationId = Guid.Parse \"10000000-0000-0000-0000-000000000001\"\n      Scope = scope; DeclaredLogicalBytes = 9007199254740993L; DistinctContentCount = 1L\n      EnumerationStartedAt = instant; EnumerationFinishedAt = instant }\nlet results = ResizeArray<obj>()\n\n/// Creates a real existing role assignment without adding a permission or domain type.\nlet assignment role assignmentScope =\n    { Principal = principal; Scope = assignmentScope; RoleId = role\n      Source = \"disposable-experiment\"; SourceDetail = None; CreatedAt = instant }\n\n/// Fails immediately if a named case violates the expected status, disclosure or selected read sequence.\nlet require label condition = if not condition then failwith label\n\n/// Executes the proposed read ordering with actual GracePermissionEvaluator and controlled assignment/lookup boundaries.\nlet runCase label (assignments: RoleAssignment list) (requestedScope: UsageFactScope) (row: DirectoryVersionSizeObservation option) failAt revokeAt cancelAt authenticated =\n    task {\n        let mutable activeAssignments = assignments\n        let effects = ResizeArray<string>()\n        let mutable evaluations = 0\n        let mutable lookups = 0\n        use cancellation = new CancellationTokenSource()\n        /// Uses the evaluator's real scope selection and role catalog while controlling current assignment values.\n        let fetch (queryScope: Scope, _: CorrelationId) =\n            task {\n                effects.Add $\"assignments:{queryScope}\"\n                if failAt = \"permission\" || (failAt = \"second-permission\" && evaluations = 2) then failwith \"controlled assignment read failure\"\n                return activeAssignments |> List.filter (fun value -> value.Scope = queryScope)\n            }\n        let evaluator = GracePermissionEvaluator(fetch, fun _ -> Task.FromResult []) :> IGracePermissionEvaluator\n        /// Changes permission or cancellation exactly at a named awaited boundary, with no sleeps.\n        let boundary name =\n            effects.Add name\n            if revokeAt = name then activeAssignments <- []\n            if cancelAt = name then cancellation.Cancel()\n            if failAt = name then failwith (\"controlled failure:\" + name)\n            cancellation.Token.ThrowIfCancellationRequested()\n        /// Executes a fresh current-assignment evaluation for the requested recorded owner.\n        let check () =\n            task {\n                evaluations <- evaluations + 1\n                let! decision = evaluator.CheckAsync([principal], Set.empty, Operation.OwnerAdmin, Resource.Owner requestedScope.OwnerId)\n                return match decision with Allowed _ -> true | Denied _ -> false\n            }\n        let! status, body =\n            task {\n                try\n                    boundary \"start\"\n                    if not authenticated then return 401, None\n                    else\n                        let! allowed = check ()\n                        boundary \"after-first-check\"\n                        if not allowed then return 403, None\n                        else\n                            boundary \"before-lookup\"\n                            lookups <- lookups + 1\n                            let! found = Task.FromResult row\n                            boundary \"after-lookup\"\n                            let! stillAllowed = if failAt = \"omit-second-check\" then Task.FromResult true else check ()\n                            boundary \"after-second-check\"\n                            if not stillAllowed then return 403, None\n                            else\n                                match found with\n                                | Some value when value.Scope = requestedScope && value.ObservationId = stored.ObservationId ->\n                                    boundary \"before-publication\"\n                                    return 200, Some value\n                                | _ -> return 404, None\n                with _ -> return 503, None\n            }\n        results.Add(box {| Case = label; Status = status; Disclosed = body.IsSome; Evaluations = evaluations; Lookups = lookups; Effects = effects.ToArray() |})\n        return status, body, evaluations, lookups\n    }\n\n/// Checks a case's observable result and confirms that rejected requests never disclose the stored record.\nlet verify label expectedStatus expectedLookups (work: Task<int * DirectoryVersionSizeObservation option * int * int>) =\n    let status, body, evaluations, lookups = work |> Async.AwaitTask |> Async.RunSynchronously\n    require (label + \" status\") (status = expectedStatus)\n    require (label + \" lookups\") (lookups = expectedLookups)\n    require (label + \" disclosure\") (body.IsSome = (expectedStatus = 200))\n    if expectedStatus = 200 then require (label + \" exact immutable record\") (body = Some stored)\n    printfn \"PASS: %s (%d; evaluations=%d; lookups=%d)\" label status evaluations lookups\n\nlet owner = [assignment \"OwnerAdmin\" (Scope.Owner ownerId)]\nlet cases =\n    [ \"owner admin exact historical record\", owner, scope, Some stored, \"\", \"\", \"\", true, 200, 1\n      \"owner reader is insufficient\", [assignment \"OwnerReader\" (Scope.Owner ownerId)], scope, Some stored, \"\", \"\", \"\", true, 403, 0\n      \"repository admin is insufficient\", [assignment \"RepositoryAdmin\" (Scope.Repository(ownerId, organizationId, repositoryId))], scope, Some stored, \"\", \"\", \"\", true, 403, 0\n      \"other owner cannot read requested owner\", [assignment \"OwnerAdmin\" (Scope.Owner otherId)], scope, Some stored, \"\", \"\", \"\", true, 403, 0\n      \"system admin retains existing permission\", [assignment \"SystemAdmin\" Scope.System], scope, Some stored, \"\", \"\", \"\", true, 200, 1\n      \"system operator retains existing permission\", [assignment \"SystemOperator\" Scope.System], scope, Some stored, \"\", \"\", \"\", true, 200, 1\n      \"unauthenticated never evaluates or reads\", owner, scope, Some stored, \"\", \"\", \"\", false, 401, 0\n      \"permission failure denies before SQL\", owner, scope, Some stored, \"permission\", \"\", \"\", true, 403, 0\n      \"missing row is not found\", owner, scope, None, \"\", \"\", \"\", true, 404, 1\n      \"different stored owner is not found\", owner, scope, Some {stored with Scope = {scope with OwnerId = otherId}}, \"\", \"\", \"\", true, 404, 1\n      \"different organization is not found\", owner, scope, Some {stored with Scope = {scope with OrganizationId = otherId}}, \"\", \"\", \"\", true, 404, 1\n      \"different repository is not found\", owner, scope, Some {stored with Scope = {scope with RepositoryId = otherId}}, \"\", \"\", \"\", true, 404, 1\n      \"different observation ID is not found\", owner, scope, Some {stored with ObservationId = otherId}, \"\", \"\", \"\", true, 404, 1\n      \"revoked after first check prevents publication\", owner, scope, Some stored, \"\", \"after-first-check\", \"\", true, 403, 1\n      \"revoked after lookup prevents publication\", owner, scope, Some stored, \"\", \"after-lookup\", \"\", true, 403, 1\n      \"second permission failure prevents publication\", owner, scope, Some stored, \"second-permission\", \"\", \"\", true, 403, 1\n      \"negative control omitted recheck discloses revoked reading\", owner, scope, Some stored, \"omit-second-check\", \"after-lookup\", \"\", true, 200, 1\n      \"revocation after final check is outside atomic guarantee\", owner, scope, Some stored, \"\", \"after-second-check\", \"\", true, 200, 1\n      \"failure before lookup preserves read-only state\", owner, scope, Some stored, \"before-lookup\", \"\", \"\", true, 503, 0\n      \"failure after lookup discloses nothing\", owner, scope, Some stored, \"after-lookup\", \"\", \"\", true, 503, 1\n      \"failure before publication discloses nothing\", owner, scope, Some stored, \"before-publication\", \"\", \"\", true, 503, 1\n      \"cancelled before lookup reads nothing\", owner, scope, Some stored, \"\", \"\", \"before-lookup\", true, 503, 0\n      \"cancelled after lookup discloses nothing\", owner, scope, Some stored, \"\", \"\", \"after-lookup\", true, 503, 1\n      \"cancelled before publication discloses nothing\", owner, scope, Some stored, \"\", \"\", \"before-publication\", true, 503, 1\n      \"fresh retry after failures uses same unchanged record\", owner, scope, Some stored, \"\", \"\", \"\", true, 200, 1 ]\nfor label, roles, requested, row, failure, revocation, cancellation, authenticated, status, lookups in cases do\n    verify label status lookups (runCase label roles requested row failure revocation cancellation authenticated)\n\nFile.WriteAllText(Path.Combine(output, \"results.json\"), JsonSerializer.Serialize(results, JsonSerializerOptions(WriteIndented = true)))\nprintfn \"VERDICT: %d cases passed with actual Grace permission evaluation; HTTP and SQL lookup were modeled; no production route was added.\" results.Count\n"
+    },
+    {
+      "path": "permission/PermissionEvaluator.Server.fs",
+      "sha256": "1C17FE44649C2903546D97FA5237A7307E46C5192147AF3503713ABA38846F8E",
+      "utf8": "namespace Grace.Server.Security\n\nopen Grace.Actors\nopen Grace.Shared\nopen Grace.Shared.Authorization\nopen Grace.Shared.Utilities\nopen Grace.Types.Authorization\nopen Grace.Types.Common\nopen Grace.Types.Library\nopen System\nopen System.Threading.Tasks\n\n/// Defines the contract for igrace permission evaluator.\ntype IGracePermissionEvaluator =\n    /// Defines the check async operation for implementers.\n    abstract member CheckAsync:\n        principalSet: Principal list * effectiveClaims: Set<string> * operation: Operation * resource: Resource -> Task<PermissionCheckResult>\n\n/// Contains Grace Server permission evaluator defaults behavior and supporting helpers.\nmodule PermissionEvaluatorDefaults =\n\n    /// Loads RBAC assignments for the exact scope being evaluated.\n    let getAssignmentsForScope (scope: Scope, correlationId: CorrelationId) =\n        task {\n            let scopeKey = AccessControl.getScopeKey scope\n            let actorProxy = Extensions.ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId\n            return! actorProxy.GetAssignments None correlationId\n        }\n\n    /// Loads repository path permissions when the authorization resource targets a repository path.\n    let getPathPermissionsForRepository (repositoryId: RepositoryId, correlationId: CorrelationId) =\n        task {\n            let actorProxy = Extensions.ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId\n            return! actorProxy.GetPathPermissions None correlationId\n        }\n\n/// Represents grace permission evaluator used by Grace Server APIs and background services.\ntype GracePermissionEvaluator\n    (\n        getAssignmentsForScope: Scope * CorrelationId -> Task<RoleAssignment list>,\n        getPathPermissionsForRepository: RepositoryId * CorrelationId -> Task<PathPermission list>\n    ) =\n\n    new() = GracePermissionEvaluator(PermissionEvaluatorDefaults.getAssignmentsForScope, PermissionEvaluatorDefaults.getPathPermissionsForRepository)\n\n    interface IGracePermissionEvaluator with\n        /// Evaluates principals, scoped role assignments, and path permissions for one authorization decision.\n        member _.CheckAsync(principalSet, effectiveClaims, operation, resource) =\n            task {\n                try\n                    let correlationId = generateCorrelationId ()\n                    let roleCatalog = RoleCatalog.getAll ()\n                    let scopes = scopesForResource resource\n\n                    let! assignments =\n                        scopes\n                        |> List.map (fun scope -> getAssignmentsForScope (scope, correlationId))\n                        |> Task.WhenAll\n\n                    let allAssignments = assignments |> Seq.collect id |> Seq.toList\n\n                    let! pathPermissions =\n                        match resource with\n                        | Resource.Path (_, _, repositoryId, _) -> getPathPermissionsForRepository (repositoryId, correlationId)\n                        | _ -> Task.FromResult List.empty\n\n                    return checkPermission roleCatalog allAssignments pathPermissions principalSet effectiveClaims operation resource\n                with\n                | ex -> return Denied $\"Authorization evaluation failed: {ex.Message}\"\n            }\n\n/// Reuses Grace's current permission evaluator at the RepositoryLibraryActor reservation boundary.\ntype LibraryWriteAuthorizer(evaluator: IGracePermissionEvaluator) =\n\n    interface ILibraryWriteAuthorizer with\n\n        member _.CheckAsync(repositoryId, authorization, _cancellationToken) =\n            evaluator.CheckAsync(\n                authorization.Principals |> Array.toList,\n                authorization.EffectiveClaims |> Set.ofArray,\n                Operation.LibraryWrite,\n                Resource.Repository(authorization.OwnerId, authorization.OrganizationId, repositoryId)\n            )\n"
+    },
+    {
+      "path": "permission/References.fsx",
+      "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5",
+      "utf8": "#I \"C:/Source/Grace-worktrees/issue-1062-artifact-size-diagnostic/src/Grace.Actors/bin/Release/net10.0\"\r\n#r \"Azure.Core.Amqp.dll\"\r\n#r \"Azure.Core.dll\"\r\n#r \"Azure.Data.Tables.dll\"\r\n#r \"Azure.Identity.dll\"\r\n#r \"Azure.Messaging.ServiceBus.dll\"\r\n#r \"Azure.Storage.Blobs.Batch.dll\"\r\n#r \"Azure.Storage.Blobs.dll\"\r\n#r \"Azure.Storage.Common.dll\"\r\n#r \"Azure.Storage.Queues.dll\"\r\n#r \"Ben.Demystifier.dll\"\r\n#r \"Blake3.dll\"\r\n#r \"DiffPlex.dll\"\r\n#r \"FSharp.Control.TaskSeq.dll\"\r\n#r \"FSharp.SystemTextJson.dll\"\r\n#r \"FSharpPlus.dll\"\r\n#r \"Grace.Actors.dll\"\r\n#r \"Grace.Shared.dll\"\r\n#r \"Grace.Types.dll\"\r\n#r \"Humanizer.dll\"\r\n#r \"MessagePack.Annotations.dll\"\r\n#r \"MessagePack.dll\"\r\n#r \"MessagePack.FSharpExtensions.dll\"\r\n#r \"MessagePack.NodaTime.dll\"\r\n#r \"Microsoft.AspNetCore.Authentication.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Authorization.dll\"\r\n#r \"Microsoft.AspNetCore.Authorization.Policy.dll\"\r\n#r \"Microsoft.AspNetCore.Connections.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Hosting.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Hosting.Server.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Connections.Common.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Connections.dll\"\r\n#r \"Microsoft.AspNetCore.Http.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Extensions.dll\"\r\n#r \"Microsoft.AspNetCore.Http.Features.dll\"\r\n#r \"Microsoft.AspNetCore.Routing.Abstractions.dll\"\r\n#r \"Microsoft.AspNetCore.Routing.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.Common.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.Core.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.dll\"\r\n#r \"Microsoft.AspNetCore.SignalR.Protocols.Json.dll\"\r\n#r \"Microsoft.AspNetCore.WebSockets.dll\"\r\n#r \"Microsoft.AspNetCore.WebUtilities.dll\"\r\n#r \"Microsoft.Azure.Amqp.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Client.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Core.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Direct.dll\"\r\n#r \"Microsoft.Azure.Cosmos.Serialization.HybridRow.dll\"\r\n#r \"Microsoft.Bcl.AsyncInterfaces.dll\"\r\n#r \"Microsoft.Bcl.HashCode.dll\"\r\n#r \"Microsoft.CodeAnalysis.dll\"\r\n#r \"Microsoft.CodeAnalysis.Workspaces.dll\"\r\n#r \"Microsoft.Extensions.Caching.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Caching.Memory.dll\"\r\n#r \"Microsoft.Extensions.Configuration.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Configuration.Binder.dll\"\r\n#r \"Microsoft.Extensions.Configuration.CommandLine.dll\"\r\n#r \"Microsoft.Extensions.Configuration.dll\"\r\n#r \"Microsoft.Extensions.Configuration.EnvironmentVariables.dll\"\r\n#r \"Microsoft.Extensions.Configuration.FileExtensions.dll\"\r\n#r \"Microsoft.Extensions.Configuration.Json.dll\"\r\n#r \"Microsoft.Extensions.Configuration.UserSecrets.dll\"\r\n#r \"Microsoft.Extensions.DependencyInjection.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.DependencyInjection.dll\"\r\n#r \"Microsoft.Extensions.DependencyModel.dll\"\r\n#r \"Microsoft.Extensions.Diagnostics.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Diagnostics.dll\"\r\n#r \"Microsoft.Extensions.Features.dll\"\r\n#r \"Microsoft.Extensions.FileProviders.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.FileProviders.Physical.dll\"\r\n#r \"Microsoft.Extensions.FileSystemGlobbing.dll\"\r\n#r \"Microsoft.Extensions.Hosting.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Hosting.dll\"\r\n#r \"Microsoft.Extensions.Logging.Abstractions.dll\"\r\n#r \"Microsoft.Extensions.Logging.Configuration.dll\"\r\n#r \"Microsoft.Extensions.Logging.Console.dll\"\r\n#r \"Microsoft.Extensions.Logging.Debug.dll\"\r\n#r \"Microsoft.Extensions.Logging.dll\"\r\n#r \"Microsoft.Extensions.Logging.EventLog.dll\"\r\n#r \"Microsoft.Extensions.Logging.EventSource.dll\"\r\n#r \"Microsoft.Extensions.ObjectPool.dll\"\r\n#r \"Microsoft.Extensions.Options.ConfigurationExtensions.dll\"\r\n#r \"Microsoft.Extensions.Options.dll\"\r\n#r \"Microsoft.Extensions.Primitives.dll\"\r\n#r \"Microsoft.Identity.Client.dll\"\r\n#r \"Microsoft.Identity.Client.Extensions.Msal.dll\"\r\n#r \"Microsoft.IdentityModel.Abstractions.dll\"\r\n#r \"Microsoft.Net.Http.Headers.dll\"\r\n#r \"Microsoft.NET.StringTools.dll\"\r\n#r \"Microsoft.Win32.SystemEvents.dll\"\r\n#r \"MimeTypes.dll\"\r\n#r \"Nanoid.dll\"\r\n#r \"Newtonsoft.Json.dll\"\r\n#r \"Nito.AsyncEx.Context.dll\"\r\n#r \"Nito.AsyncEx.Coordination.dll\"\r\n#r \"Nito.AsyncEx.Interop.WaitHandles.dll\"\r\n#r \"Nito.AsyncEx.Oop.dll\"\r\n#r \"Nito.AsyncEx.Tasks.dll\"\r\n#r \"Nito.Cancellation.dll\"\r\n#r \"Nito.Collections.Deque.dll\"\r\n#r \"Nito.Disposables.dll\"\r\n#r \"NodaTime.dll\"\r\n#r \"NodaTime.Serialization.SystemTextJson.dll\"\r\n#r \"Orleans.Core.Abstractions.dll\"\r\n#r \"Orleans.Core.dll\"\r\n#r \"Orleans.Runtime.dll\"\r\n#r \"Orleans.Serialization.Abstractions.dll\"\r\n#r \"Orleans.Serialization.dll\"\r\n#r \"Orleans.Serialization.FSharp.dll\"\r\n#r \"Orleans.Serialization.NodaTime.dll\"\r\n#r \"Orleans.Serialization.SystemTextJson.dll\"\r\n#r \"Orleans.Streaming.AzureStorage.dll\"\r\n#r \"Orleans.Streaming.dll\"\r\n#r \"Polly.Contrib.WaitAndRetry.dll\"\r\n#r \"Polly.Core.dll\"\r\n#r \"Polly.dll\"\r\n#r \"System.ClientModel.dll\"\r\n#r \"System.Composition.AttributedModel.dll\"\r\n#r \"System.Composition.Convention.dll\"\r\n#r \"System.Composition.Hosting.dll\"\r\n#r \"System.Composition.Runtime.dll\"\r\n#r \"System.Composition.TypedParts.dll\"\r\n#r \"System.Configuration.ConfigurationManager.dll\"\r\n#r \"System.Diagnostics.EventLog.dll\"\r\n#r \"System.Drawing.Common.dll\"\r\n#r \"System.IO.Hashing.dll\"\r\n#r \"System.Memory.Data.dll\"\r\n#r \"System.Net.WebSockets.WebSocketProtocol.dll\"\r\n#r \"System.Security.Cryptography.ProtectedData.dll\"\r\n#r \"System.Security.Permissions.dll\"\r\n#r \"System.Windows.Extensions.dll\"\r\n"
+    }
+  ],
+  "replayScript": {
+    "fileName": "Replay.ps1",
+    "utf8": "#Requires -Version 7.6\n[CmdletBinding()]\nparam(\n    [Parameter(Mandatory)][string]$BundlePath,\n    [Parameter(Mandatory)][string]$Destination,\n    [Parameter(Mandatory)][string]$DependencyDirectory\n)\n$ErrorActionPreference = 'Stop'\n$bundle = Get-Content -LiteralPath $BundlePath -Raw | ConvertFrom-Json\n$destinationRoot = [IO.Path]::GetFullPath($Destination)\nif (Test-Path -LiteralPath $destinationRoot) { throw 'Replay requires a fresh destination.' }\n$dependencyRoot = (Resolve-Path -LiteralPath $DependencyDirectory).Path\n\n# Verifies the captured compiled inputs; a fresh build needs its own applicability record.\nforeach ($file in $bundle.provenance.dependencies) {\n    if ((Get-FileHash -LiteralPath (Join-Path $dependencyRoot $file.name)).Hash -ne $file.sha256) { throw \"Dependency differs: $($file.name)\" }\n}\nNew-Item -ItemType Directory -Path $destinationRoot | Out-Null\n\n# Extracts only hash-checked bundle members beneath the new owned directory.\nforeach ($file in $bundle.executableInputs) {\n    $path = [IO.Path]::GetFullPath((Join-Path $destinationRoot $file.path))\n    if (-not $path.StartsWith($destinationRoot + [IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Bundle member escapes destination.' }\n    $bytes = [Text.Encoding]::UTF8.GetBytes($file.utf8)\n    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ne $file.sha256) { throw \"Embedded source hash differs: $($file.path)\" }\n    New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force | Out-Null\n    [IO.File]::WriteAllBytes($path,$bytes)\n}\n$sourceHashes = @(Get-ChildItem $destinationRoot -File -Recurse | ForEach-Object { @{path=[IO.Path]::GetRelativePath($destinationRoot,$_.FullName);sha256=(Get-FileHash $_.FullName).Hash} })\n\n# Relocates only the assembly directory directive; every dependency name and byte hash remains pinned.\nforeach ($name in @('codec','permission')) {\n    $path = Join-Path $destinationRoot \"$name/References.fsx\"\n    $text = Get-Content -LiteralPath $path -Raw\n    $text = [regex]::Replace($text,'(?m)^#I \"[^\"]+\"',('#I \"' + $dependencyRoot.Replace('\\','/') + '\"'))\n    [IO.File]::WriteAllText($path,$text)\n}\n$runs = [Collections.Generic.List[object]]::new()\n\n# Captures each native exit code and full output before the next stage can run.\nfunction Invoke-Stage {\n    param([string]$Name,[string]$Directory,[string]$Program,[string[]]$Arguments)\n    Push-Location -LiteralPath $Directory\n    try {\n        $log = Join-Path $destinationRoot \"$Name.log\"\n        & $Program @Arguments *> $log\n        $exitCode = $LASTEXITCODE\n        $runs.Add([ordered]@{name=$Name;program=$Program;arguments=$Arguments;workingDirectory=[IO.Path]::GetRelativePath($destinationRoot,$Directory);exitCode=$exitCode;logSha256=(Get-FileHash $log).Hash})\n        if ($exitCode -ne 0) { throw \"Stage failed: $Name; see $log\" }\n        Write-Output \"$Name PASS\"\n    } finally { Pop-Location }\n}\nInvoke-Stage 'codec-fsharp' \"$destinationRoot/codec\" 'dotnet' @('fsi','--exec','Experiment.fsx')\nInvoke-Stage 'codec-node' \"$destinationRoot/codec\" 'node' @('Check.cjs')\nInvoke-Stage 'permission-fsharp' \"$destinationRoot/permission\" 'dotnet' @('fsi','--exec','Experiment.fsx')\nforeach ($file in Get-ChildItem \"$destinationRoot/generated/inputs\" -File) {\n    if ((Get-FileHash $file.FullName).Hash -ne (Get-FileHash \"$destinationRoot/codec/$($file.Name)\").Hash) { throw \"New serializer output differs: $($file.Name)\" }\n}\nInvoke-Stage 'generated-typescript' \"$destinationRoot/generated\" 'pwsh' @('-NoProfile','-File','Run.ps1')\n$permissionResults = @(Get-Content \"$destinationRoot/permission/results.json\" -Raw | ConvertFrom-Json)\n$generatedResults = @(Get-Content \"$destinationRoot/generated/results.json\" -Raw | ConvertFrom-Json)\n$codecAssertions = @(Select-String -LiteralPath \"$destinationRoot/codec-fsharp.log\" -Pattern '^PASS:').Count\nif ($permissionResults.Count -ne 25 -or $generatedResults.Count -ne 3 -or $codecAssertions -ne 22) { throw 'Unexpected result count.' }\n$outputs = @(Get-ChildItem $destinationRoot -File -Recurse | Where-Object { $_.FullName -notmatch '[/\\\\]tooling[/\\\\]' } | Sort-Object FullName | ForEach-Object { [ordered]@{path=[IO.Path]::GetRelativePath($destinationRoot,$_.FullName).Replace('\\','/');sha256=(Get-FileHash $_.FullName).Hash} })\n$result = [ordered]@{\n    capturedAtUtc=[DateTime]::UtcNow.ToString('o')\n    platform=[Runtime.InteropServices.RuntimeInformation]::OSDescription\n    dotnet=(& dotnet --version)\n    node=(& node --version)\n    powershell=$PSVersionTable.PSVersion.ToString()\n    dependencyCount=@($bundle.provenance.dependencies).Count\n    extractedInputHashes=$sourceHashes\n    stages=$runs.ToArray()\n    fsharpCodecAssertions=$codecAssertions\n    permissionResults=$permissionResults\n    generatedResults=$generatedResults\n    outputs=$outputs\n}\n$result | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath \"$destinationRoot/replay-result.json\"\nWrite-Output 'PASS: 22 F# assertions, 3 native Node cases, 25 permission cases, 2 fresh generated builds and 3 generated-codec cases.'\n",
+    "sha256": "B7A96FEA18FC8299CA7553F9F822C965BEDCDFE62C81340F64D0E5880DF4D695"
+  },
+  "verdict": "Simplified: exact existing-record codecs and two current permission evaluations pass the finite controls. Public route, SQL integration, full schema generation, SDK, CLI and facade implementation remain unimplemented.",
+  "actual": [
+    "Compiled DirectoryVersionSizeObservation validation and Grace F#/NodaTime serialization/deserialization.",
+    "Source-loaded GracePermissionEvaluator, compiled RoleCatalog and authorization types, with controlled existing callback inputs.",
+    "Native Node JSON.parse and actual freshly generated TypeScript FromJSON/ToJSON functions over six complete Grace outputs."
+  ],
+  "modeled": [
+    "Authentication, SQL lookup, assignment storage, publication and historical repository deletion/reassignment.",
+    "Failure/cancellation/revocation at deterministic in-memory boundaries; no actor concurrency, SQL wait or token-refresh execution."
+  ],
+  "limits": [
+    "The compiled dependency set was captured at PR #1063; this run verifies its hashes, not a fresh build at the selected base.",
+    "Permission recheck is not atomic with delivery, does not refresh token/group claims, and does not make scoped assignment reads atomic.",
+    "The two generated schemas are minimal OpenAPI 3.1.0 fixtures. Production source is 3.2.0 and the full compatibility projection is 3.1.2.",
+    "Fixture regexes do not define the selected production Instant range or validate the complete Int64 upper bound.",
+    "No HTTP envelope, hosted auth, actor assignment fetch, SQL, F# SDK transport, CLI output, supported TypeScript facade, full repository OpenAPI/matrix freshness, provider access or combined Library runtime is certified.",
+    "Negative numeric/date-time and omitted-recheck cases deliberately demonstrate incorrect alternatives; a PASS confirms the expected failure mode, not product acceptance.",
+    "No new production types or new named handwritten harness types. The embedded evaluator is unchanged existing Grace source. Generated interfaces/API/runtime declarations are disposable output.",
+    "No shared Aspire or SQL/Cosmos fixture was started. Original inputs/archives were preserved."
+  ],
+  "typeBudget": {
+    "newNamedHandwrittenHarnessTypes": 0,
+    "futureTracer": "Zero new domain/parameter/role types, one CLI action class; count new fixtures separately in the later charter.",
+    "generatedSchemaInterfacesPerProjection": 2,
+    "generatedApiAndRuntime": "Additional standard generator declarations remain disposable; no full SDK tree is embedded.",
+    "projectionCount": 2,
+    "productionTypesAdded": 0
+  },
+  "replay": {
+    "capturedAtUtc": "2026-09-07T16:50:25.2500433Z",
+    "platform": "Microsoft Windows 10.0.26340",
+    "dotnet": "10.0.400",
+    "node": "v26.7.0",
+    "powershell": "7.6.5",
+    "dependencyCount": 137,
+    "extractedInputHashes": [
+      {
+        "path": "global.json",
+        "sha256": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0"
+      },
+      {
+        "path": "codec\\Check.cjs",
+        "sha256": "78C559B6B0B3D6626A82BAAFC3574E8D139F02E0EEAE10237972E2140230FE98"
+      },
+      {
+        "path": "codec\\Experiment.fsx",
+        "sha256": "C6FD4BA46EC8726F489FEDBC42B8D0C046BF32558AE755FF856F9EFD1F31E116"
+      },
+      {
+        "path": "codec\\References.fsx",
+        "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5"
+      },
+      {
+        "path": "generated\\Check.cjs",
+        "sha256": "02DC3A40366AD2687651BAEF7BB7DB9F7423EAC1D8DFE2A141A29B307C8C7EEA"
+      },
+      {
+        "path": "generated\\Run.ps1",
+        "sha256": "EF8603E274622A6BDEF253CC47FD57D5C4BB3BC4294FA8B93416C690873B1184"
+      },
+      {
+        "path": "generated\\inputs\\above-js-safe-numeric.json",
+        "sha256": "63A6C98175C87AC334D9039AA37496DC77EB5C071F66FAF05C1007D63AA200A4"
+      },
+      {
+        "path": "generated\\inputs\\above-js-safe-string.json",
+        "sha256": "82FB2A4E10FC999ABC58E7422D15AB718915600A00CFEA7A932E802A174BE562"
+      },
+      {
+        "path": "generated\\inputs\\max-int64-numeric.json",
+        "sha256": "4292DE72CEFCC3D9E4275450755C10A88DB52E0283BDE8F1004820FD38967C5B"
+      },
+      {
+        "path": "generated\\inputs\\max-int64-string.json",
+        "sha256": "B0A0916A8875D1BBBA77C1B94801F2342E2FF107882ADCA07E8588ACFEB7D2D2"
+      },
+      {
+        "path": "generated\\inputs\\zero-numeric.json",
+        "sha256": "187233C767CC17A23B698A557DA80E95735563E37F236477C4C6FBC24FCE3BAA"
+      },
+      {
+        "path": "generated\\inputs\\zero-string.json",
+        "sha256": "2A16383C0F47A6A88A53AA97A6724D851A0AA305FF1140C38C07308746FE0378"
+      },
+      {
+        "path": "permission\\Experiment.fsx",
+        "sha256": "A6CD0486C7AFDD0F7C0C5492B2D9212AC3E77066121535C576166D4E1E88A82D"
+      },
+      {
+        "path": "permission\\PermissionEvaluator.Server.fs",
+        "sha256": "1C17FE44649C2903546D97FA5237A7307E46C5192147AF3503713ABA38846F8E"
+      },
+      {
+        "path": "permission\\References.fsx",
+        "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5"
+      }
+    ],
+    "stages": [
+      {
+        "name": "codec-fsharp",
+        "program": "dotnet",
+        "arguments": [
+          "fsi",
+          "--exec",
+          "Experiment.fsx"
+        ],
+        "workingDirectory": "codec",
+        "exitCode": 0,
+        "logSha256": "350B2F44402B2FFAD0F582CDDE17F97A40D9B932A067E2A052650DA5DE77FC59"
+      },
+      {
+        "name": "codec-node",
+        "program": "node",
+        "arguments": [
+          "Check.cjs"
+        ],
+        "workingDirectory": "codec",
+        "exitCode": 0,
+        "logSha256": "18AD05C849AD462B781A1AF49DB048A3023A206F1AEBB6552A05D4AE7FF274D3"
+      },
+      {
+        "name": "permission-fsharp",
+        "program": "dotnet",
+        "arguments": [
+          "fsi",
+          "--exec",
+          "Experiment.fsx"
+        ],
+        "workingDirectory": "permission",
+        "exitCode": 0,
+        "logSha256": "7C392F672F717D7558F30688BDD4E57A187B3B45781ABD7B77B3A2425321EE92"
+      },
+      {
+        "name": "generated-typescript",
+        "program": "pwsh",
+        "arguments": [
+          "-NoProfile",
+          "-File",
+          "Run.ps1"
+        ],
+        "workingDirectory": "generated",
+        "exitCode": 0,
+        "logSha256": "F7968D7ACAF4D20976B871B31F62ED14E4FB6C3FC785A22A454D5F2A03D41998"
+      }
+    ],
+    "fsharpCodecAssertions": 22,
+    "permissionResults": [
+      {
+        "Case": "owner admin exact historical record",
+        "Disclosed": true,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 200
+      },
+      {
+        "Case": "owner reader is insufficient",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check"
+        ],
+        "Evaluations": 1,
+        "Lookups": 0,
+        "Status": 403
+      },
+      {
+        "Case": "repository admin is insufficient",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check"
+        ],
+        "Evaluations": 1,
+        "Lookups": 0,
+        "Status": 403
+      },
+      {
+        "Case": "other owner cannot read requested owner",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check"
+        ],
+        "Evaluations": 1,
+        "Lookups": 0,
+        "Status": 403
+      },
+      {
+        "Case": "system admin retains existing permission",
+        "Disclosed": true,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 200
+      },
+      {
+        "Case": "system operator retains existing permission",
+        "Disclosed": true,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 200
+      },
+      {
+        "Case": "unauthenticated never evaluates or reads",
+        "Disclosed": false,
+        "Effects": [
+          "start"
+        ],
+        "Evaluations": 0,
+        "Lookups": 0,
+        "Status": 401
+      },
+      {
+        "Case": "permission failure denies before SQL",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check"
+        ],
+        "Evaluations": 1,
+        "Lookups": 0,
+        "Status": 403
+      },
+      {
+        "Case": "missing row is not found",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 404
+      },
+      {
+        "Case": "different stored owner is not found",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 404
+      },
+      {
+        "Case": "different organization is not found",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 404
+      },
+      {
+        "Case": "different repository is not found",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 404
+      },
+      {
+        "Case": "different observation ID is not found",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 404
+      },
+      {
+        "Case": "revoked after first check prevents publication",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 403
+      },
+      {
+        "Case": "revoked after lookup prevents publication",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 403
+      },
+      {
+        "Case": "second permission failure prevents publication",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 403
+      },
+      {
+        "Case": "negative control omitted recheck discloses revoked reading",
+        "Disclosed": true,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 1,
+        "Lookups": 1,
+        "Status": 200
+      },
+      {
+        "Case": "revocation after final check is outside atomic guarantee",
+        "Disclosed": true,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 200
+      },
+      {
+        "Case": "failure before lookup preserves read-only state",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup"
+        ],
+        "Evaluations": 1,
+        "Lookups": 0,
+        "Status": 503
+      },
+      {
+        "Case": "failure after lookup discloses nothing",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup"
+        ],
+        "Evaluations": 1,
+        "Lookups": 1,
+        "Status": 503
+      },
+      {
+        "Case": "failure before publication discloses nothing",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 503
+      },
+      {
+        "Case": "cancelled before lookup reads nothing",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup"
+        ],
+        "Evaluations": 1,
+        "Lookups": 0,
+        "Status": 503
+      },
+      {
+        "Case": "cancelled after lookup discloses nothing",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup"
+        ],
+        "Evaluations": 1,
+        "Lookups": 1,
+        "Status": 503
+      },
+      {
+        "Case": "cancelled before publication discloses nothing",
+        "Disclosed": false,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 503
+      },
+      {
+        "Case": "fresh retry after failures uses same unchanged record",
+        "Disclosed": true,
+        "Effects": [
+          "start",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-first-check",
+          "before-lookup",
+          "after-lookup",
+          "assignments:Owner 10000000-0000-0000-0000-000000000002",
+          "assignments:System",
+          "after-second-check",
+          "before-publication"
+        ],
+        "Evaluations": 2,
+        "Lookups": 1,
+        "Status": 200
+      }
+    ],
+    "generatedResults": [
+      {
+        "name": "zero",
+        "result": "PASS",
+        "exactBytes": "0",
+        "numericBytes": "0",
+        "numericTimestamp": "2026-09-07T15:00:00.123Z",
+        "stringTimestamp": "2026-09-07T15:00:00.123456789Z",
+        "stringWholeRecordExact": true
+      },
+      {
+        "name": "above-js-safe",
+        "result": "PASS",
+        "exactBytes": "9007199254740993",
+        "numericBytes": "9007199254740992",
+        "numericTimestamp": "2026-09-07T15:00:00.123Z",
+        "stringTimestamp": "2026-09-07T15:00:00.123456789Z",
+        "stringWholeRecordExact": true
+      },
+      {
+        "name": "max-int64",
+        "result": "PASS",
+        "exactBytes": "9223372036854775807",
+        "numericBytes": "9223372036854775808",
+        "numericTimestamp": "2026-09-07T15:00:00.123Z",
+        "stringTimestamp": "2026-09-07T15:00:00.123456789Z",
+        "stringWholeRecordExact": true
+      }
+    ],
+    "outputs": [
+      {
+        "path": "codec-fsharp.log",
+        "sha256": "350B2F44402B2FFAD0F582CDDE17F97A40D9B932A067E2A052650DA5DE77FC59"
+      },
+      {
+        "path": "codec-node.log",
+        "sha256": "18AD05C849AD462B781A1AF49DB048A3023A206F1AEBB6552A05D4AE7FF274D3"
+      },
+      {
+        "path": "codec/above-js-safe-numeric.json",
+        "sha256": "63A6C98175C87AC334D9039AA37496DC77EB5C071F66FAF05C1007D63AA200A4"
+      },
+      {
+        "path": "codec/above-js-safe-string.json",
+        "sha256": "82FB2A4E10FC999ABC58E7422D15AB718915600A00CFEA7A932E802A174BE562"
+      },
+      {
+        "path": "codec/Check.cjs",
+        "sha256": "78C559B6B0B3D6626A82BAAFC3574E8D139F02E0EEAE10237972E2140230FE98"
+      },
+      {
+        "path": "codec/Experiment.fsx",
+        "sha256": "C6FD4BA46EC8726F489FEDBC42B8D0C046BF32558AE755FF856F9EFD1F31E116"
+      },
+      {
+        "path": "codec/max-int64-numeric.json",
+        "sha256": "4292DE72CEFCC3D9E4275450755C10A88DB52E0283BDE8F1004820FD38967C5B"
+      },
+      {
+        "path": "codec/max-int64-string.json",
+        "sha256": "B0A0916A8875D1BBBA77C1B94801F2342E2FF107882ADCA07E8588ACFEB7D2D2"
+      },
+      {
+        "path": "codec/References.fsx",
+        "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5"
+      },
+      {
+        "path": "codec/zero-numeric.json",
+        "sha256": "187233C767CC17A23B698A557DA80E95735563E37F236477C4C6FBC24FCE3BAA"
+      },
+      {
+        "path": "codec/zero-string.json",
+        "sha256": "2A16383C0F47A6A88A53AA97A6724D851A0AA305FF1140C38C07308746FE0378"
+      },
+      {
+        "path": "generated-typescript.log",
+        "sha256": "F7968D7ACAF4D20976B871B31F62ED14E4FB6C3FC785A22A454D5F2A03D41998"
+      },
+      {
+        "path": "generated/Check.cjs",
+        "sha256": "02DC3A40366AD2687651BAEF7BB7DB9F7423EAC1D8DFE2A141A29B307C8C7EEA"
+      },
+      {
+        "path": "generated/compiler-install.log",
+        "sha256": "F2A59920B7BB73F83AD4F8B1D8A245309CAE6F3B4FCF1650759B421D16C7B6F6"
+      },
+      {
+        "path": "generated/decimal-string-build.log",
+        "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+      },
+      {
+        "path": "generated/decimal-string-generator.log",
+        "sha256": "9F7F52C0D84C1216BD6130D4DEF017692858301960412435B2086F9817B974A4"
+      },
+      {
+        "path": "generated/decimal-string.json",
+        "sha256": "0F354D9AD63A87E79931DD644066B2E993EDF2348BE8C369EC9F11BD6D24B96A"
+      },
+      {
+        "path": "generated/decimal-string/.gitignore",
+        "sha256": "5D06E3029B1E6AA5DD85C360766039EE9A768A0BC80D1B9848F3F392A6F677FE"
+      },
+      {
+        "path": "generated/decimal-string/.npmignore",
+        "sha256": "B335630551682C19A781AFEBCF4D07BF978FB1F8AC04C6BF87428ED5106870F5"
+      },
+      {
+        "path": "generated/decimal-string/.openapi-generator-ignore",
+        "sha256": "A6ED8F4E275EEE926D27E0C52F30F2D1C4D8409465AC1FBC4511F7CC62DE51DB"
+      },
+      {
+        "path": "generated/decimal-string/.openapi-generator/FILES",
+        "sha256": "9269CB78FBD75121BF0394AF90FF885BAB217B196B4008871F7685C6C925EC46"
+      },
+      {
+        "path": "generated/decimal-string/.openapi-generator/VERSION",
+        "sha256": "139DDAB26FCA5D6AE105E6E70F97746CE49263B46E3BB9011C362A6D9944F697"
+      },
+      {
+        "path": "generated/decimal-string/dist/apis/DefaultApi.d.ts",
+        "sha256": "9A4BBA2E38FC8BC02CB7F4D0EA59A12E90BF5F810A26535F2A639BCBD66099C9"
+      },
+      {
+        "path": "generated/decimal-string/dist/apis/DefaultApi.js",
+        "sha256": "F4F74A42EC6600C59746599BBD704C6A8E148629771E27B3676CC185C1063A95"
+      },
+      {
+        "path": "generated/decimal-string/dist/apis/index.d.ts",
+        "sha256": "BE43ADCF43D8982F95ABEBD67270AA970D5D2B6506B51F6CB7E3AF90EA2A7902"
+      },
+      {
+        "path": "generated/decimal-string/dist/apis/index.js",
+        "sha256": "75B7146704DFD5415255F37D738BF50B7EF744647B5AAA5ECEE0D695F855F8CE"
+      },
+      {
+        "path": "generated/decimal-string/dist/index.d.ts",
+        "sha256": "A659139F8AAE1311D0C66071603FFD7AF0F78A0CB32444F9C915ABA612C7E84A"
+      },
+      {
+        "path": "generated/decimal-string/dist/index.js",
+        "sha256": "B54CC669E062FB2F3C2A4AA9C85E372005596C5B90D31BFA623BA4C67773CF11"
+      },
+      {
+        "path": "generated/decimal-string/dist/models/DirectoryVersionSizeObservation.d.ts",
+        "sha256": "CECF9C9D9DF113F405CE6EA94E8CA66D31E44F42E422B38FD6B92728633A3D87"
+      },
+      {
+        "path": "generated/decimal-string/dist/models/DirectoryVersionSizeObservation.js",
+        "sha256": "A0B031AD2ABDD16EDD139D88ADDE5F5BD6D427F91EF9767DAEAEEE9CE5DFA32D"
+      },
+      {
+        "path": "generated/decimal-string/dist/models/index.d.ts",
+        "sha256": "FA54132119E9521222179DDB43A0FBDD711FA1D5156922A1C6B6C003C8CE1269"
+      },
+      {
+        "path": "generated/decimal-string/dist/models/index.js",
+        "sha256": "D0FAFB884DE01B5A2297ED1E73E1FEA79CA2F32161822DDB09DFF4B577AC1289"
+      },
+      {
+        "path": "generated/decimal-string/dist/models/UsageFactScope.d.ts",
+        "sha256": "7399063A20AA158D26A5DFA85E277ABF3D6EF262443EE20B711836B8B13BFC7C"
+      },
+      {
+        "path": "generated/decimal-string/dist/models/UsageFactScope.js",
+        "sha256": "F31D1F9F1E830C6A3075CBE9DD297EE323A5C9BDA27FF35A13369F6F2B7D6866"
+      },
+      {
+        "path": "generated/decimal-string/dist/runtime.d.ts",
+        "sha256": "B463A4CBF0958CCA3ACB417AA38D17F1547FF7A21EEA0953559E2BA9E8012795"
+      },
+      {
+        "path": "generated/decimal-string/dist/runtime.js",
+        "sha256": "B9419D3DB07C1181820B87CDA845559BA41B014839A8BE966AC707D37CFF49C9"
+      },
+      {
+        "path": "generated/decimal-string/docs/DefaultApi.md",
+        "sha256": "5900492E41DB9B44E474E4729092AF31BB5E4B911EB588B5013A1584038516D3"
+      },
+      {
+        "path": "generated/decimal-string/docs/DirectoryVersionSizeObservation.md",
+        "sha256": "8F031C6CDF5FE277B261D43B77489FAC7F59ED1F5376701EFEC9B7E2156F1756"
+      },
+      {
+        "path": "generated/decimal-string/docs/UsageFactScope.md",
+        "sha256": "6E50F31320E01C4B5FB73F039B72F8A0B6D65CD50EC0DFF6C499ECD14A77D5C8"
+      },
+      {
+        "path": "generated/decimal-string/package.json",
+        "sha256": "43068F8636524ACD09DE06C2793E3CA304136D3B35EB08F1388B4491330CF62F"
+      },
+      {
+        "path": "generated/decimal-string/README.md",
+        "sha256": "D044E7B6105AF0A511B057200CB754866B4810630C72A7A293F1389F261858B3"
+      },
+      {
+        "path": "generated/decimal-string/src/apis/DefaultApi.ts",
+        "sha256": "630FC7174B361B8878809F35F123252F2C70B892DE0E00F97E157D3433F26FF9"
+      },
+      {
+        "path": "generated/decimal-string/src/apis/index.ts",
+        "sha256": "68CF9082EF19BBDE36388E812DFA77BA7956C9086AF00E5EF14CE00A80067454"
+      },
+      {
+        "path": "generated/decimal-string/src/index.ts",
+        "sha256": "7FA0F2909685ED2BD45A1D4CDED16DA3F25B2BD3E41149018C2DAF4C3F6CF42B"
+      },
+      {
+        "path": "generated/decimal-string/src/models/DirectoryVersionSizeObservation.ts",
+        "sha256": "20FEC08F4BD1140D56E95944A760ABA9F249B9C3A4B26DDC3388A4B59ADDF442"
+      },
+      {
+        "path": "generated/decimal-string/src/models/index.ts",
+        "sha256": "51EC37340730E09099E5EE0DDFD6FFCBEA3E756936F664BD7071A9721616DDBE"
+      },
+      {
+        "path": "generated/decimal-string/src/models/UsageFactScope.ts",
+        "sha256": "0ADA904227D5D665898CC4A24AC42740D80B81B083CB8A217F292953115BE21B"
+      },
+      {
+        "path": "generated/decimal-string/src/runtime.ts",
+        "sha256": "A1A9D5813FC3ED3C5282EC423766ECAE112908740465DFB803292021DDE21D83"
+      },
+      {
+        "path": "generated/decimal-string/tsconfig.esm.json",
+        "sha256": "040F32B42D1DDE7A082C25E53D50D37AD1685E12030099A444739BBA8998C3CF"
+      },
+      {
+        "path": "generated/decimal-string/tsconfig.json",
+        "sha256": "B430BDECBD3A3CD68EC9EC7AF0125C2AB8BAD6512DA27904AF5B7C2FE8809587"
+      },
+      {
+        "path": "generated/inputs/above-js-safe-numeric.json",
+        "sha256": "63A6C98175C87AC334D9039AA37496DC77EB5C071F66FAF05C1007D63AA200A4"
+      },
+      {
+        "path": "generated/inputs/above-js-safe-string.json",
+        "sha256": "82FB2A4E10FC999ABC58E7422D15AB718915600A00CFEA7A932E802A174BE562"
+      },
+      {
+        "path": "generated/inputs/max-int64-numeric.json",
+        "sha256": "4292DE72CEFCC3D9E4275450755C10A88DB52E0283BDE8F1004820FD38967C5B"
+      },
+      {
+        "path": "generated/inputs/max-int64-string.json",
+        "sha256": "B0A0916A8875D1BBBA77C1B94801F2342E2FF107882ADCA07E8588ACFEB7D2D2"
+      },
+      {
+        "path": "generated/inputs/zero-numeric.json",
+        "sha256": "187233C767CC17A23B698A557DA80E95735563E37F236477C4C6FBC24FCE3BAA"
+      },
+      {
+        "path": "generated/inputs/zero-string.json",
+        "sha256": "2A16383C0F47A6A88A53AA97A6724D851A0AA305FF1140C38C07308746FE0378"
+      },
+      {
+        "path": "generated/numeric-datetime-build.log",
+        "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+      },
+      {
+        "path": "generated/numeric-datetime-generator.log",
+        "sha256": "81B2A858A07129B8D9CB03DE4CA91C3D895966DF1CE7A397147EF83D2D59D97B"
+      },
+      {
+        "path": "generated/numeric-datetime.json",
+        "sha256": "728472D7997F03E94FB196FDEA897CC3C48BB9DA2CA7EB18E8E0358BA1C9AAE4"
+      },
+      {
+        "path": "generated/numeric-datetime/.gitignore",
+        "sha256": "5D06E3029B1E6AA5DD85C360766039EE9A768A0BC80D1B9848F3F392A6F677FE"
+      },
+      {
+        "path": "generated/numeric-datetime/.npmignore",
+        "sha256": "B335630551682C19A781AFEBCF4D07BF978FB1F8AC04C6BF87428ED5106870F5"
+      },
+      {
+        "path": "generated/numeric-datetime/.openapi-generator-ignore",
+        "sha256": "A6ED8F4E275EEE926D27E0C52F30F2D1C4D8409465AC1FBC4511F7CC62DE51DB"
+      },
+      {
+        "path": "generated/numeric-datetime/.openapi-generator/FILES",
+        "sha256": "9269CB78FBD75121BF0394AF90FF885BAB217B196B4008871F7685C6C925EC46"
+      },
+      {
+        "path": "generated/numeric-datetime/.openapi-generator/VERSION",
+        "sha256": "139DDAB26FCA5D6AE105E6E70F97746CE49263B46E3BB9011C362A6D9944F697"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/apis/DefaultApi.d.ts",
+        "sha256": "9A4BBA2E38FC8BC02CB7F4D0EA59A12E90BF5F810A26535F2A639BCBD66099C9"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/apis/DefaultApi.js",
+        "sha256": "F4F74A42EC6600C59746599BBD704C6A8E148629771E27B3676CC185C1063A95"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/apis/index.d.ts",
+        "sha256": "BE43ADCF43D8982F95ABEBD67270AA970D5D2B6506B51F6CB7E3AF90EA2A7902"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/apis/index.js",
+        "sha256": "75B7146704DFD5415255F37D738BF50B7EF744647B5AAA5ECEE0D695F855F8CE"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/index.d.ts",
+        "sha256": "A659139F8AAE1311D0C66071603FFD7AF0F78A0CB32444F9C915ABA612C7E84A"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/index.js",
+        "sha256": "B54CC669E062FB2F3C2A4AA9C85E372005596C5B90D31BFA623BA4C67773CF11"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/models/DirectoryVersionSizeObservation.d.ts",
+        "sha256": "DA696EDE90BCA658AD7255B51B55D02E128AC9CC702CDC1F81BF2B1494EAAA6D"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/models/DirectoryVersionSizeObservation.js",
+        "sha256": "576990F509030B9CD702A59490A53F6A93470B5F0C78D6CA8A2B4A6EA39BE4C0"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/models/index.d.ts",
+        "sha256": "FA54132119E9521222179DDB43A0FBDD711FA1D5156922A1C6B6C003C8CE1269"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/models/index.js",
+        "sha256": "D0FAFB884DE01B5A2297ED1E73E1FEA79CA2F32161822DDB09DFF4B577AC1289"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/models/UsageFactScope.d.ts",
+        "sha256": "7399063A20AA158D26A5DFA85E277ABF3D6EF262443EE20B711836B8B13BFC7C"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/models/UsageFactScope.js",
+        "sha256": "F31D1F9F1E830C6A3075CBE9DD297EE323A5C9BDA27FF35A13369F6F2B7D6866"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/runtime.d.ts",
+        "sha256": "B463A4CBF0958CCA3ACB417AA38D17F1547FF7A21EEA0953559E2BA9E8012795"
+      },
+      {
+        "path": "generated/numeric-datetime/dist/runtime.js",
+        "sha256": "B9419D3DB07C1181820B87CDA845559BA41B014839A8BE966AC707D37CFF49C9"
+      },
+      {
+        "path": "generated/numeric-datetime/docs/DefaultApi.md",
+        "sha256": "5900492E41DB9B44E474E4729092AF31BB5E4B911EB588B5013A1584038516D3"
+      },
+      {
+        "path": "generated/numeric-datetime/docs/DirectoryVersionSizeObservation.md",
+        "sha256": "064EA0B6AE594A8F600914CC1AF01545D895726603D5101B8881B7524FD353A3"
+      },
+      {
+        "path": "generated/numeric-datetime/docs/UsageFactScope.md",
+        "sha256": "6E50F31320E01C4B5FB73F039B72F8A0B6D65CD50EC0DFF6C499ECD14A77D5C8"
+      },
+      {
+        "path": "generated/numeric-datetime/package.json",
+        "sha256": "43068F8636524ACD09DE06C2793E3CA304136D3B35EB08F1388B4491330CF62F"
+      },
+      {
+        "path": "generated/numeric-datetime/README.md",
+        "sha256": "D044E7B6105AF0A511B057200CB754866B4810630C72A7A293F1389F261858B3"
+      },
+      {
+        "path": "generated/numeric-datetime/src/apis/DefaultApi.ts",
+        "sha256": "630FC7174B361B8878809F35F123252F2C70B892DE0E00F97E157D3433F26FF9"
+      },
+      {
+        "path": "generated/numeric-datetime/src/apis/index.ts",
+        "sha256": "68CF9082EF19BBDE36388E812DFA77BA7956C9086AF00E5EF14CE00A80067454"
+      },
+      {
+        "path": "generated/numeric-datetime/src/index.ts",
+        "sha256": "7FA0F2909685ED2BD45A1D4CDED16DA3F25B2BD3E41149018C2DAF4C3F6CF42B"
+      },
+      {
+        "path": "generated/numeric-datetime/src/models/DirectoryVersionSizeObservation.ts",
+        "sha256": "A1A90DD1BD01ACE53167DA8239B8364FB518072B2ED5C7F6BDE1A53DED9255E8"
+      },
+      {
+        "path": "generated/numeric-datetime/src/models/index.ts",
+        "sha256": "51EC37340730E09099E5EE0DDFD6FFCBEA3E756936F664BD7071A9721616DDBE"
+      },
+      {
+        "path": "generated/numeric-datetime/src/models/UsageFactScope.ts",
+        "sha256": "0ADA904227D5D665898CC4A24AC42740D80B81B083CB8A217F292953115BE21B"
+      },
+      {
+        "path": "generated/numeric-datetime/src/runtime.ts",
+        "sha256": "A1A9D5813FC3ED3C5282EC423766ECAE112908740465DFB803292021DDE21D83"
+      },
+      {
+        "path": "generated/numeric-datetime/tsconfig.esm.json",
+        "sha256": "040F32B42D1DDE7A082C25E53D50D37AD1685E12030099A444739BBA8998C3CF"
+      },
+      {
+        "path": "generated/numeric-datetime/tsconfig.json",
+        "sha256": "B430BDECBD3A3CD68EC9EC7AF0125C2AB8BAD6512DA27904AF5B7C2FE8809587"
+      },
+      {
+        "path": "generated/results.json",
+        "sha256": "06671E541DC82F2D719A0D1ECA7C6A66141DD8F69AD9D1F1A445EA594667FE6D"
+      },
+      {
+        "path": "generated/results.log",
+        "sha256": "F7968D7ACAF4D20976B871B31F62ED14E4FB6C3FC785A22A454D5F2A03D41998"
+      },
+      {
+        "path": "generated/Run.ps1",
+        "sha256": "EF8603E274622A6BDEF253CC47FD57D5C4BB3BC4294FA8B93416C690873B1184"
+      },
+      {
+        "path": "global.json",
+        "sha256": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0"
+      },
+      {
+        "path": "permission-fsharp.log",
+        "sha256": "7C392F672F717D7558F30688BDD4E57A187B3B45781ABD7B77B3A2425321EE92"
+      },
+      {
+        "path": "permission/Experiment.fsx",
+        "sha256": "A6CD0486C7AFDD0F7C0C5492B2D9212AC3E77066121535C576166D4E1E88A82D"
+      },
+      {
+        "path": "permission/PermissionEvaluator.Server.fs",
+        "sha256": "1C17FE44649C2903546D97FA5237A7307E46C5192147AF3503713ABA38846F8E"
+      },
+      {
+        "path": "permission/References.fsx",
+        "sha256": "3A8F22B041400EB9DDBB8E688CA4550F6981FB6958BBAD5C125118A7990664D5"
+      },
+      {
+        "path": "permission/results.json",
+        "sha256": "070C1B7D6E75D3E737249C03C9A0B7BAB2C533D2CA6395B8E65C6A3F1B5C8105"
+      }
+    ],
+    "permissionResultSha256": "070C1B7D6E75D3E737249C03C9A0B7BAB2C533D2CA6395B8E65C6A3F1B5C8105",
+    "generatedResultSha256": "06671E541DC82F2D719A0D1ECA7C6A66141DD8F69AD9D1F1A445EA594667FE6D",
+    "newSerializerOutputsEqualCapturedInputs": true,
+    "freshGeneratedBuilds": 2,
+    "generatedOutputFileCountExcludingTooling": 83
+  },
+  "reproduction": {
+    "prerequisites": [
+      "PowerShell 7.6+, .NET SDK 10.0.400 (latestPatch policy), Node (captured v26.7.0), npm and Docker.",
+      "The 137 exact DLLs in provenance.dependencies, captured under the directory below. No dependency binaries are embedded.",
+      "Cached generator image ID in generator.imageId. npm can obtain TypeScript 5.9.3 externally with --ignore-scripts. No credentials or Grace services required."
+    ],
+    "capturedDependencyDirectory": "C:/Source/Grace-worktrees/issue-1062-artifact-size-diagnostic/src/Grace.Actors/bin/Release/net10.0",
+    "extractionPowerShell": "$bundlePath = (Resolve-Path './docs/design/Operations.OwnerObservationRead-Experiment.json').Path\n$bundle = Get-Content -LiteralPath $bundlePath -Raw | ConvertFrom-Json\n$replayDirectory = Join-Path ([IO.Path]::GetTempPath()) ('grace-1066-' + [Guid]::NewGuid().ToString('N'))\nNew-Item -ItemType Directory -Path $replayDirectory | Out-Null\n$scriptBytes = [Text.Encoding]::UTF8.GetBytes($bundle.replayScript.utf8)\nif ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($scriptBytes)) -ne $bundle.replayScript.sha256) { throw 'Replay script hash differs.' }\n$scriptPath = Join-Path $replayDirectory 'Replay.ps1'\n[IO.File]::WriteAllBytes($scriptPath, $scriptBytes)\n$dependencyDirectory = $bundle.reproduction.capturedDependencyDirectory\npwsh -NoProfile -File $scriptPath -BundlePath $bundlePath -Destination (Join-Path $replayDirectory 'extracted') -DependencyDirectory $dependencyDirectory\nif ($LASTEXITCODE -ne 0) { throw 'Evidence replay failed.' }",
+    "commandBehavior": "Requires a fresh destination; verifies every dependency and embedded source; relocates only References.fsx #I; runs FSI, Node, fresh Docker generation, npm compiler installation with lifecycle scripts disabled, both TypeScript builds, and generated checks. Writes per-stage logs, results.json files and replay-result.json with every non-tooling output hash.",
+    "relocatedDependencyRule": "A different directory is allowed only with all original DLL hashes matching. A fresh rebuild with different bytes needs a new explicit applicability/evidence capture; do not claim it reproduced this binary set.",
+    "generatedDifferenceRule": "Generated models/docs/schema text may vary with property ordering or generator banners; assert complete string-record equality and capture fresh output hashes instead of asserting every generated file is byte-identical across runs."
+  },
+  "capturedArtifacts": [
+    {
+      "sha256": "350B2F44402B2FFAD0F582CDDE17F97A40D9B932A067E2A052650DA5DE77FC59",
+      "utf8": "PASS: zero validates\r\nPASS: zero numeric existing Grace reader exact round-trip\r\nPASS: zero numeric explicit quantity token\r\nPASS: zero numeric all timestamp digits\r\nPASS: zero string existing Grace reader exact round-trip\r\nPASS: zero string explicit quantity token\r\nPASS: zero string all timestamp digits\r\nPASS: above-js-safe validates\r\nPASS: above-js-safe numeric existing Grace reader exact round-trip\r\nPASS: above-js-safe numeric explicit quantity token\r\nPASS: above-js-safe numeric all timestamp digits\r\nPASS: above-js-safe string existing Grace reader exact round-trip\r\nPASS: above-js-safe string explicit quantity token\r\nPASS: above-js-safe string all timestamp digits\r\nPASS: max-int64 validates\r\nPASS: max-int64 numeric existing Grace reader exact round-trip\r\nPASS: max-int64 numeric explicit quantity token\r\nPASS: max-int64 numeric all timestamp digits\r\nPASS: max-int64 string existing Grace reader exact round-trip\r\nPASS: max-int64 string explicit quantity token\r\nPASS: max-int64 string all timestamp digits\r\nPASS: shared serializer options remain unchanged\r\nVERDICT: codec feasibility proven for existing record; HTTP, authorization, SDK transport and generated clients were not executed.\r\n",
+      "path": "codec-fsharp.log"
+    },
+    {
+      "sha256": "18AD05C849AD462B781A1AF49DB048A3023A206F1AEBB6552A05D4AE7FF274D3",
+      "utf8": "{\"name\":\"zero\",\"exact\":\"0\",\"numericDecoded\":\"0\",\"stringDecoded\":\"0\",\"timestamp\":\"2026-09-07T15:00:00.123456789Z\",\"result\":\"PASS\"}\r\n{\"name\":\"above-js-safe\",\"exact\":\"9007199254740993\",\"numericDecoded\":\"9007199254740992\",\"stringDecoded\":\"9007199254740993\",\"timestamp\":\"2026-09-07T15:00:00.123456789Z\",\"result\":\"PASS\"}\r\n{\"name\":\"max-int64\",\"exact\":\"9223372036854775807\",\"numericDecoded\":\"9223372036854775808\",\"stringDecoded\":\"9223372036854775807\",\"timestamp\":\"2026-09-07T15:00:00.123456789Z\",\"result\":\"PASS\"}\r\nVERDICT: decimal strings survive native JSON.parse exactly; Date conversion and generated clients are outside this experiment.\r\n",
+      "path": "codec-node.log"
+    },
+    {
+      "sha256": "7C392F672F717D7558F30688BDD4E57A187B3B45781ABD7B77B3A2425321EE92",
+      "utf8": "PASS: owner admin exact historical record (200; evaluations=2; lookups=1)\r\nPASS: owner reader is insufficient (403; evaluations=1; lookups=0)\r\nPASS: repository admin is insufficient (403; evaluations=1; lookups=0)\r\nPASS: other owner cannot read requested owner (403; evaluations=1; lookups=0)\r\nPASS: system admin retains existing permission (200; evaluations=2; lookups=1)\r\nPASS: system operator retains existing permission (200; evaluations=2; lookups=1)\r\nPASS: unauthenticated never evaluates or reads (401; evaluations=0; lookups=0)\r\nPASS: permission failure denies before SQL (403; evaluations=1; lookups=0)\r\nPASS: missing row is not found (404; evaluations=2; lookups=1)\r\nPASS: different stored owner is not found (404; evaluations=2; lookups=1)\r\nPASS: different organization is not found (404; evaluations=2; lookups=1)\r\nPASS: different repository is not found (404; evaluations=2; lookups=1)\r\nPASS: different observation ID is not found (404; evaluations=2; lookups=1)\r\nPASS: revoked after first check prevents publication (403; evaluations=2; lookups=1)\r\nPASS: revoked after lookup prevents publication (403; evaluations=2; lookups=1)\r\nPASS: second permission failure prevents publication (403; evaluations=2; lookups=1)\r\nPASS: negative control omitted recheck discloses revoked reading (200; evaluations=1; lookups=1)\r\nPASS: revocation after final check is outside atomic guarantee (200; evaluations=2; lookups=1)\r\nPASS: failure before lookup preserves read-only state (503; evaluations=1; lookups=0)\r\nPASS: failure after lookup discloses nothing (503; evaluations=1; lookups=1)\r\nPASS: failure before publication discloses nothing (503; evaluations=2; lookups=1)\r\nPASS: cancelled before lookup reads nothing (503; evaluations=1; lookups=0)\r\nPASS: cancelled after lookup discloses nothing (503; evaluations=1; lookups=1)\r\nPASS: cancelled before publication discloses nothing (503; evaluations=2; lookups=1)\r\nPASS: fresh retry after failures uses same unchanged record (200; evaluations=2; lookups=1)\r\nVERDICT: 25 cases passed with actual Grace permission evaluation; HTTP and SQL lookup were modeled; no production route was added.\r\n",
+      "path": "permission-fsharp.log"
+    },
+    {
+      "sha256": "F7968D7ACAF4D20976B871B31F62ED14E4FB6C3FC785A22A454D5F2A03D41998",
+      "utf8": "[\r\n  {\r\n    \"name\": \"zero\",\r\n    \"result\": \"PASS\",\r\n    \"exactBytes\": \"0\",\r\n    \"numericBytes\": \"0\",\r\n    \"numericTimestamp\": \"2026-09-07T15:00:00.123Z\",\r\n    \"stringTimestamp\": \"2026-09-07T15:00:00.123456789Z\",\r\n    \"stringWholeRecordExact\": true\r\n  },\r\n  {\r\n    \"name\": \"above-js-safe\",\r\n    \"result\": \"PASS\",\r\n    \"exactBytes\": \"9007199254740993\",\r\n    \"numericBytes\": \"9007199254740992\",\r\n    \"numericTimestamp\": \"2026-09-07T15:00:00.123Z\",\r\n    \"stringTimestamp\": \"2026-09-07T15:00:00.123456789Z\",\r\n    \"stringWholeRecordExact\": true\r\n  },\r\n  {\r\n    \"name\": \"max-int64\",\r\n    \"result\": \"PASS\",\r\n    \"exactBytes\": \"9223372036854775807\",\r\n    \"numericBytes\": \"9223372036854775808\",\r\n    \"numericTimestamp\": \"2026-09-07T15:00:00.123Z\",\r\n    \"stringTimestamp\": \"2026-09-07T15:00:00.123456789Z\",\r\n    \"stringWholeRecordExact\": true\r\n  }\r\n]\r\nVERDICT: selected TypeScript generator preserves exact decimal/string projection. This is a codec-only schema fixture, not a selected or implemented public endpoint.\r\n",
+      "path": "generated-typescript.log"
+    },
+    {
+      "sha256": "9F7F52C0D84C1216BD6130D4DEF017692858301960412435B2086F9817B974A4",
+      "utf8": "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.\r\n[main] INFO  o.o.codegen.DefaultGenerator - Generating with dryRun=false\r\n[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/decimal-string) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.\r\n[main] INFO  o.o.codegen.DefaultGenerator - OpenAPI Generator: typescript-fetch (client)\r\n[main] INFO  o.o.codegen.DefaultGenerator - Generator 'typescript-fetch' is considered stable.\r\n[main] INFO  o.o.c.l.AbstractTypeScriptClientCodegen - Hint: Environment variable 'TS_POST_PROCESS_FILE' (optional) not defined. E.g. to format the source code, please try 'export TS_POST_PROCESS_FILE=\"/usr/local/bin/prettier --write\"' (Linux/Mac)\r\n[main] INFO  o.o.c.l.AbstractTypeScriptClientCodegen - Note: To enable file post-processing, 'enablePostProcessFile' must be set to `true` (--enable-post-process-file for CLI).\r\n[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/models/DirectoryVersionSizeObservation.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/docs/DirectoryVersionSizeObservation.md\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/models/UsageFactScope.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/docs/UsageFactScope.md\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/apis/DefaultApi.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/docs/DefaultApi.md\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/index.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/runtime.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/README.md\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/package.json\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/tsconfig.json\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/tsconfig.esm.json\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/.npmignore\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/.gitignore\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/models/index.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/src/apis/index.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/.openapi-generator-ignore\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/.openapi-generator/VERSION\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/decimal-string/.openapi-generator/FILES\r\n############################################################################################\r\n# Thanks for using OpenAPI Generator.                                                      #\r\n# We appreciate your support! Please consider donation to help us maintain this project.   #\r\n# https://opencollective.com/openapi_generator/donate                                      #\r\n############################################################################################\r\n",
+      "path": "generated/decimal-string-generator.log"
+    },
+    {
+      "sha256": "81B2A858A07129B8D9CB03DE4CA91C3D895966DF1CE7A397147EF83D2D59D97B",
+      "utf8": "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.\r\n[main] INFO  o.o.codegen.DefaultGenerator - Generating with dryRun=false\r\n[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/numeric-datetime) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.\r\n[main] INFO  o.o.codegen.DefaultGenerator - OpenAPI Generator: typescript-fetch (client)\r\n[main] INFO  o.o.codegen.DefaultGenerator - Generator 'typescript-fetch' is considered stable.\r\n[main] INFO  o.o.c.l.AbstractTypeScriptClientCodegen - Hint: Environment variable 'TS_POST_PROCESS_FILE' (optional) not defined. E.g. to format the source code, please try 'export TS_POST_PROCESS_FILE=\"/usr/local/bin/prettier --write\"' (Linux/Mac)\r\n[main] INFO  o.o.c.l.AbstractTypeScriptClientCodegen - Note: To enable file post-processing, 'enablePostProcessFile' must be set to `true` (--enable-post-process-file for CLI).\r\n[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/models/DirectoryVersionSizeObservation.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/docs/DirectoryVersionSizeObservation.md\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/models/UsageFactScope.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/docs/UsageFactScope.md\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/apis/DefaultApi.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/docs/DefaultApi.md\r\n[main] INFO  o.o.codegen.utils.URLPathUtils - 'host' (OAS 2.0) or 'servers' (OAS 3.0) not defined in the spec. Default to [http://localhost] for server URL [http://localhost/]\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/index.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/runtime.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/README.md\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/package.json\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/tsconfig.json\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/tsconfig.esm.json\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/.npmignore\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/.gitignore\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/models/index.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/src/apis/index.ts\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/.openapi-generator-ignore\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/.openapi-generator/VERSION\r\n[main] INFO  o.o.codegen.TemplateManager - writing file /local/numeric-datetime/.openapi-generator/FILES\r\n############################################################################################\r\n# Thanks for using OpenAPI Generator.                                                      #\r\n# We appreciate your support! Please consider donation to help us maintain this project.   #\r\n# https://opencollective.com/openapi_generator/donate                                      #\r\n############################################################################################\r\n",
+      "path": "generated/numeric-datetime-generator.log"
+    },
+    {
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+      "utf8": "",
+      "path": "generated/decimal-string-build.log"
+    },
+    {
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+      "utf8": "",
+      "path": "generated/numeric-datetime-build.log"
+    },
+    {
+      "sha256": "0F354D9AD63A87E79931DD644066B2E993EDF2348BE8C369EC9F11BD6D24B96A",
+      "utf8": "{\r\n  \"openapi\": \"3.1.0\",\r\n  \"info\": {\r\n    \"title\": \"Disposable observation codec proof\",\r\n    \"version\": \"0.0.0\"\r\n  },\r\n  \"paths\": {\r\n    \"/probe\": {\r\n      \"get\": {\r\n        \"operationId\": \"readProbe\",\r\n        \"responses\": {\r\n          \"200\": {\r\n            \"description\": \"Codec fixture only\",\r\n            \"content\": {\r\n              \"application/json\": {\r\n                \"schema\": {\r\n                  \"$ref\": \"#/components/schemas/DirectoryVersionSizeObservation\"\r\n                }\r\n              }\r\n            }\r\n          }\r\n        }\r\n      }\r\n    }\r\n  },\r\n  \"components\": {\r\n    \"schemas\": {\r\n      \"UsageFactScope\": {\r\n        \"properties\": {\r\n          \"RepositoryId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"OwnerId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"OrganizationId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          }\r\n        },\r\n        \"required\": [\r\n          \"OwnerId\",\r\n          \"OrganizationId\",\r\n          \"RepositoryId\"\r\n        ],\r\n        \"type\": \"object\"\r\n      },\r\n      \"DirectoryVersionSizeObservation\": {\r\n        \"properties\": {\r\n          \"DeclaredLogicalBytes\": {\r\n            \"pattern\": \"^(0|[1-9][0-9]{0,18})$\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"EnumerationFinishedAt\": {\r\n            \"pattern\": \"^\\\\d{4}-\\\\d{2}-\\\\d{2}T\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d{1,9})?Z$\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"Scope\": {\r\n            \"$ref\": \"#/components/schemas/UsageFactScope\"\r\n          },\r\n          \"DistinctContentCount\": {\r\n            \"pattern\": \"^(0|[1-9][0-9]{0,18})$\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"EnumerationStartedAt\": {\r\n            \"pattern\": \"^\\\\d{4}-\\\\d{2}-\\\\d{2}T\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d{1,9})?Z$\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"ObservationId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          }\r\n        },\r\n        \"required\": [\r\n          \"ObservationId\",\r\n          \"Scope\",\r\n          \"DeclaredLogicalBytes\",\r\n          \"DistinctContentCount\",\r\n          \"EnumerationStartedAt\",\r\n          \"EnumerationFinishedAt\"\r\n        ],\r\n        \"type\": \"object\"\r\n      }\r\n    }\r\n  }\r\n}\r\n",
+      "path": "generated/decimal-string.json"
+    },
+    {
+      "sha256": "728472D7997F03E94FB196FDEA897CC3C48BB9DA2CA7EB18E8E0358BA1C9AAE4",
+      "utf8": "{\r\n  \"openapi\": \"3.1.0\",\r\n  \"info\": {\r\n    \"title\": \"Disposable observation codec proof\",\r\n    \"version\": \"0.0.0\"\r\n  },\r\n  \"paths\": {\r\n    \"/probe\": {\r\n      \"get\": {\r\n        \"operationId\": \"readProbe\",\r\n        \"responses\": {\r\n          \"200\": {\r\n            \"description\": \"Codec fixture only\",\r\n            \"content\": {\r\n              \"application/json\": {\r\n                \"schema\": {\r\n                  \"$ref\": \"#/components/schemas/DirectoryVersionSizeObservation\"\r\n                }\r\n              }\r\n            }\r\n          }\r\n        }\r\n      }\r\n    }\r\n  },\r\n  \"components\": {\r\n    \"schemas\": {\r\n      \"UsageFactScope\": {\r\n        \"properties\": {\r\n          \"RepositoryId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"OwnerId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"OrganizationId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          }\r\n        },\r\n        \"required\": [\r\n          \"OwnerId\",\r\n          \"OrganizationId\",\r\n          \"RepositoryId\"\r\n        ],\r\n        \"type\": \"object\"\r\n      },\r\n      \"DirectoryVersionSizeObservation\": {\r\n        \"properties\": {\r\n          \"DeclaredLogicalBytes\": {\r\n            \"minimum\": 0,\r\n            \"format\": \"int64\",\r\n            \"type\": \"integer\"\r\n          },\r\n          \"EnumerationFinishedAt\": {\r\n            \"format\": \"date-time\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"Scope\": {\r\n            \"$ref\": \"#/components/schemas/UsageFactScope\"\r\n          },\r\n          \"DistinctContentCount\": {\r\n            \"minimum\": 0,\r\n            \"format\": \"int64\",\r\n            \"type\": \"integer\"\r\n          },\r\n          \"EnumerationStartedAt\": {\r\n            \"format\": \"date-time\",\r\n            \"type\": \"string\"\r\n          },\r\n          \"ObservationId\": {\r\n            \"format\": \"uuid\",\r\n            \"type\": \"string\"\r\n          }\r\n        },\r\n        \"required\": [\r\n          \"ObservationId\",\r\n          \"Scope\",\r\n          \"DeclaredLogicalBytes\",\r\n          \"DistinctContentCount\",\r\n          \"EnumerationStartedAt\",\r\n          \"EnumerationFinishedAt\"\r\n        ],\r\n        \"type\": \"object\"\r\n      }\r\n    }\r\n  }\r\n}\r\n",
+      "path": "generated/numeric-datetime.json"
+    },
+    {
+      "sha256": "204DC093E14B1F954D0931674A35ED8BB0D4D3BBC58BC83AAFE73517FF9D09C8",
+      "utf8": "{\n  \"name\": \"tooling\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\n    \"\": {\n      \"dependencies\": {\n        \"typescript\": \"^5.9.3\"\n      }\n    },\n    \"node_modules/typescript\": {\n      \"version\": \"5.9.3\",\n      \"resolved\": \"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz\",\n      \"integrity\": \"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==\",\n      \"license\": \"Apache-2.0\",\n      \"bin\": {\n        \"tsc\": \"bin/tsc\",\n        \"tsserver\": \"bin/tsserver\"\n      },\n      \"engines\": {\n        \"node\": \">=14.17\"\n      }\n    }\n  }\n}\n",
+      "path": "generated/tooling/package-lock.json"
+    },
+    {
+      "sha256": "20FEC08F4BD1140D56E95944A760ABA9F249B9C3A4B26DDC3388A4B59ADDF442",
+      "utf8": "/* tslint:disable */\n/* eslint-disable */\n/**\n * Disposable observation codec proof\n * No description provided (generated by Openapi Generator https://github.com/openapitools/openapi-generator)\n *\n * The version of the OpenAPI document: 0.0.0\n * \n *\n * NOTE: This class is auto generated by OpenAPI Generator (https://openapi-generator.tech).\n * https://openapi-generator.tech\n * Do not edit the class manually.\n */\n\nimport { mapValues } from '../runtime';\nimport type { UsageFactScope } from './UsageFactScope';\nimport {\n    UsageFactScopeFromJSON,\n    UsageFactScopeFromJSONTyped,\n    UsageFactScopeToJSON,\n    UsageFactScopeToJSONTyped,\n} from './UsageFactScope';\n\n/**\n * \n * @export\n * @interface DirectoryVersionSizeObservation\n */\nexport interface DirectoryVersionSizeObservation {\n    /**\n     * \n     * @type {string}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    declaredLogicalBytes: string;\n    /**\n     * \n     * @type {string}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    enumerationFinishedAt: string;\n    /**\n     * \n     * @type {UsageFactScope}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    scope: UsageFactScope;\n    /**\n     * \n     * @type {string}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    distinctContentCount: string;\n    /**\n     * \n     * @type {string}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    enumerationStartedAt: string;\n    /**\n     * \n     * @type {string}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    observationId: string;\n}\n\n/**\n * Check if a given object implements the DirectoryVersionSizeObservation interface.\n */\nexport function instanceOfDirectoryVersionSizeObservation(value: object): value is DirectoryVersionSizeObservation {\n    if (!('declaredLogicalBytes' in value) || value['declaredLogicalBytes'] === undefined) return false;\n    if (!('enumerationFinishedAt' in value) || value['enumerationFinishedAt'] === undefined) return false;\n    if (!('scope' in value) || value['scope'] === undefined) return false;\n    if (!('distinctContentCount' in value) || value['distinctContentCount'] === undefined) return false;\n    if (!('enumerationStartedAt' in value) || value['enumerationStartedAt'] === undefined) return false;\n    if (!('observationId' in value) || value['observationId'] === undefined) return false;\n    return true;\n}\n\nexport function DirectoryVersionSizeObservationFromJSON(json: any): DirectoryVersionSizeObservation {\n    return DirectoryVersionSizeObservationFromJSONTyped(json, false);\n}\n\nexport function DirectoryVersionSizeObservationFromJSONTyped(json: any, ignoreDiscriminator: boolean): DirectoryVersionSizeObservation {\n    if (json == null) {\n        return json;\n    }\n    return {\n        \n        'declaredLogicalBytes': json['DeclaredLogicalBytes'],\n        'enumerationFinishedAt': json['EnumerationFinishedAt'],\n        'scope': UsageFactScopeFromJSON(json['Scope']),\n        'distinctContentCount': json['DistinctContentCount'],\n        'enumerationStartedAt': json['EnumerationStartedAt'],\n        'observationId': json['ObservationId'],\n    };\n}\n\nexport function DirectoryVersionSizeObservationToJSON(json: any): DirectoryVersionSizeObservation {\n    return DirectoryVersionSizeObservationToJSONTyped(json, false);\n}\n\nexport function DirectoryVersionSizeObservationToJSONTyped(value?: DirectoryVersionSizeObservation | null, ignoreDiscriminator: boolean = false): any {\n    if (value == null) {\n        return value;\n    }\n\n    return {\n        \n        'DeclaredLogicalBytes': value['declaredLogicalBytes'],\n        'EnumerationFinishedAt': value['enumerationFinishedAt'],\n        'Scope': UsageFactScopeToJSON(value['scope']),\n        'DistinctContentCount': value['distinctContentCount'],\n        'EnumerationStartedAt': value['enumerationStartedAt'],\n        'ObservationId': value['observationId'],\n    };\n}\n\n",
+      "path": "generated/decimal-string/src/models/DirectoryVersionSizeObservation.ts"
+    },
+    {
+      "sha256": "0ADA904227D5D665898CC4A24AC42740D80B81B083CB8A217F292953115BE21B",
+      "utf8": "/* tslint:disable */\n/* eslint-disable */\n/**\n * Disposable observation codec proof\n * No description provided (generated by Openapi Generator https://github.com/openapitools/openapi-generator)\n *\n * The version of the OpenAPI document: 0.0.0\n * \n *\n * NOTE: This class is auto generated by OpenAPI Generator (https://openapi-generator.tech).\n * https://openapi-generator.tech\n * Do not edit the class manually.\n */\n\nimport { mapValues } from '../runtime';\n/**\n * \n * @export\n * @interface UsageFactScope\n */\nexport interface UsageFactScope {\n    /**\n     * \n     * @type {string}\n     * @memberof UsageFactScope\n     */\n    repositoryId: string;\n    /**\n     * \n     * @type {string}\n     * @memberof UsageFactScope\n     */\n    ownerId: string;\n    /**\n     * \n     * @type {string}\n     * @memberof UsageFactScope\n     */\n    organizationId: string;\n}\n\n/**\n * Check if a given object implements the UsageFactScope interface.\n */\nexport function instanceOfUsageFactScope(value: object): value is UsageFactScope {\n    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;\n    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;\n    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;\n    return true;\n}\n\nexport function UsageFactScopeFromJSON(json: any): UsageFactScope {\n    return UsageFactScopeFromJSONTyped(json, false);\n}\n\nexport function UsageFactScopeFromJSONTyped(json: any, ignoreDiscriminator: boolean): UsageFactScope {\n    if (json == null) {\n        return json;\n    }\n    return {\n        \n        'repositoryId': json['RepositoryId'],\n        'ownerId': json['OwnerId'],\n        'organizationId': json['OrganizationId'],\n    };\n}\n\nexport function UsageFactScopeToJSON(json: any): UsageFactScope {\n    return UsageFactScopeToJSONTyped(json, false);\n}\n\nexport function UsageFactScopeToJSONTyped(value?: UsageFactScope | null, ignoreDiscriminator: boolean = false): any {\n    if (value == null) {\n        return value;\n    }\n\n    return {\n        \n        'RepositoryId': value['repositoryId'],\n        'OwnerId': value['ownerId'],\n        'OrganizationId': value['organizationId'],\n    };\n}\n\n",
+      "path": "generated/decimal-string/src/models/UsageFactScope.ts"
+    },
+    {
+      "sha256": "A1A90DD1BD01ACE53167DA8239B8364FB518072B2ED5C7F6BDE1A53DED9255E8",
+      "utf8": "/* tslint:disable */\n/* eslint-disable */\n/**\n * Disposable observation codec proof\n * No description provided (generated by Openapi Generator https://github.com/openapitools/openapi-generator)\n *\n * The version of the OpenAPI document: 0.0.0\n * \n *\n * NOTE: This class is auto generated by OpenAPI Generator (https://openapi-generator.tech).\n * https://openapi-generator.tech\n * Do not edit the class manually.\n */\n\nimport { mapValues } from '../runtime';\nimport type { UsageFactScope } from './UsageFactScope';\nimport {\n    UsageFactScopeFromJSON,\n    UsageFactScopeFromJSONTyped,\n    UsageFactScopeToJSON,\n    UsageFactScopeToJSONTyped,\n} from './UsageFactScope';\n\n/**\n * \n * @export\n * @interface DirectoryVersionSizeObservation\n */\nexport interface DirectoryVersionSizeObservation {\n    /**\n     * \n     * @type {number}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    declaredLogicalBytes: number;\n    /**\n     * \n     * @type {Date}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    enumerationFinishedAt: Date;\n    /**\n     * \n     * @type {UsageFactScope}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    scope: UsageFactScope;\n    /**\n     * \n     * @type {number}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    distinctContentCount: number;\n    /**\n     * \n     * @type {Date}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    enumerationStartedAt: Date;\n    /**\n     * \n     * @type {string}\n     * @memberof DirectoryVersionSizeObservation\n     */\n    observationId: string;\n}\n\n/**\n * Check if a given object implements the DirectoryVersionSizeObservation interface.\n */\nexport function instanceOfDirectoryVersionSizeObservation(value: object): value is DirectoryVersionSizeObservation {\n    if (!('declaredLogicalBytes' in value) || value['declaredLogicalBytes'] === undefined) return false;\n    if (!('enumerationFinishedAt' in value) || value['enumerationFinishedAt'] === undefined) return false;\n    if (!('scope' in value) || value['scope'] === undefined) return false;\n    if (!('distinctContentCount' in value) || value['distinctContentCount'] === undefined) return false;\n    if (!('enumerationStartedAt' in value) || value['enumerationStartedAt'] === undefined) return false;\n    if (!('observationId' in value) || value['observationId'] === undefined) return false;\n    return true;\n}\n\nexport function DirectoryVersionSizeObservationFromJSON(json: any): DirectoryVersionSizeObservation {\n    return DirectoryVersionSizeObservationFromJSONTyped(json, false);\n}\n\nexport function DirectoryVersionSizeObservationFromJSONTyped(json: any, ignoreDiscriminator: boolean): DirectoryVersionSizeObservation {\n    if (json == null) {\n        return json;\n    }\n    return {\n        \n        'declaredLogicalBytes': json['DeclaredLogicalBytes'],\n        'enumerationFinishedAt': (new Date(json['EnumerationFinishedAt'])),\n        'scope': UsageFactScopeFromJSON(json['Scope']),\n        'distinctContentCount': json['DistinctContentCount'],\n        'enumerationStartedAt': (new Date(json['EnumerationStartedAt'])),\n        'observationId': json['ObservationId'],\n    };\n}\n\nexport function DirectoryVersionSizeObservationToJSON(json: any): DirectoryVersionSizeObservation {\n    return DirectoryVersionSizeObservationToJSONTyped(json, false);\n}\n\nexport function DirectoryVersionSizeObservationToJSONTyped(value?: DirectoryVersionSizeObservation | null, ignoreDiscriminator: boolean = false): any {\n    if (value == null) {\n        return value;\n    }\n\n    return {\n        \n        'DeclaredLogicalBytes': value['declaredLogicalBytes'],\n        'EnumerationFinishedAt': value['enumerationFinishedAt'].toISOString(),\n        'Scope': UsageFactScopeToJSON(value['scope']),\n        'DistinctContentCount': value['distinctContentCount'],\n        'EnumerationStartedAt': value['enumerationStartedAt'].toISOString(),\n        'ObservationId': value['observationId'],\n    };\n}\n\n",
+      "path": "generated/numeric-datetime/src/models/DirectoryVersionSizeObservation.ts"
+    },
+    {
+      "sha256": "0ADA904227D5D665898CC4A24AC42740D80B81B083CB8A217F292953115BE21B",
+      "utf8": "/* tslint:disable */\n/* eslint-disable */\n/**\n * Disposable observation codec proof\n * No description provided (generated by Openapi Generator https://github.com/openapitools/openapi-generator)\n *\n * The version of the OpenAPI document: 0.0.0\n * \n *\n * NOTE: This class is auto generated by OpenAPI Generator (https://openapi-generator.tech).\n * https://openapi-generator.tech\n * Do not edit the class manually.\n */\n\nimport { mapValues } from '../runtime';\n/**\n * \n * @export\n * @interface UsageFactScope\n */\nexport interface UsageFactScope {\n    /**\n     * \n     * @type {string}\n     * @memberof UsageFactScope\n     */\n    repositoryId: string;\n    /**\n     * \n     * @type {string}\n     * @memberof UsageFactScope\n     */\n    ownerId: string;\n    /**\n     * \n     * @type {string}\n     * @memberof UsageFactScope\n     */\n    organizationId: string;\n}\n\n/**\n * Check if a given object implements the UsageFactScope interface.\n */\nexport function instanceOfUsageFactScope(value: object): value is UsageFactScope {\n    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;\n    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;\n    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;\n    return true;\n}\n\nexport function UsageFactScopeFromJSON(json: any): UsageFactScope {\n    return UsageFactScopeFromJSONTyped(json, false);\n}\n\nexport function UsageFactScopeFromJSONTyped(json: any, ignoreDiscriminator: boolean): UsageFactScope {\n    if (json == null) {\n        return json;\n    }\n    return {\n        \n        'repositoryId': json['RepositoryId'],\n        'ownerId': json['OwnerId'],\n        'organizationId': json['OrganizationId'],\n    };\n}\n\nexport function UsageFactScopeToJSON(json: any): UsageFactScope {\n    return UsageFactScopeToJSONTyped(json, false);\n}\n\nexport function UsageFactScopeToJSONTyped(value?: UsageFactScope | null, ignoreDiscriminator: boolean = false): any {\n    if (value == null) {\n        return value;\n    }\n\n    return {\n        \n        'RepositoryId': value['repositoryId'],\n        'OwnerId': value['ownerId'],\n        'OrganizationId': value['organizationId'],\n    };\n}\n\n",
+      "path": "generated/numeric-datetime/src/models/UsageFactScope.ts"
+    }
+  ],
+  "priorSetupFailures": {
+    "permission": {
+      "sha256": "602617444D5CBAE6FCF4F1D7DCA06738C26E029FBD08F7AE5AB8830238DC0DD8",
+      "utf8": "\r\n\r\nReferences.fsx(2,1): error FS0078: Unable to find the file 'Azure.Core.Amqp.dll' in any of\r\n C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App\\10.0.11\r\n C:\\Program Files\\dotnet\\packs\\Microsoft.NETCore.App.Ref\\10.0.11\\ref\\net10.0\r\n C:/Source/Grace-worktrees/issue-1064-artifact-observation/src/Grace.Actors/bin/Release/net10.0\r\n C:\\Users\\scott\\.codex\\visualizations\\2026\\09\\07\\01a07acd-5979-7700-889f-51bc642202a5\\overnight\\owner-read-permission-experiment\r\n C:\\Program Files\\dotnet\\sdk\\10.0.400\\FSharp\\\r\n\r\n\r\n\r\nReferences.fsx(25,1): error FS0078: Unable to find the file 'Microsoft.AspNetCore.Authentication.Abstractions.dll' in any of\r\n C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App\\10.0.11\r\n C:\\Program Files\\dotnet\\packs\\Microsoft.NETCore.App.Ref\\10.0.11\\ref\\net10.0\r\n C:/Source/Grace-worktrees/issue-1064-artifact-observation/src/Grace.Server.Unit.Tests/bin/Release/net10.0\r\n C:\\Users\\scott\\.codex\\visualizations\\2026\\09\\07\\01a07acd-5979-7700-889f-51bc642202a5\\overnight\\owner-read-permission-experiment\r\n C:\\Program Files\\dotnet\\sdk\\10.0.400\\FSharp\\\r\n\r\n\r\n\r\nReferences.fsx(132,1): error FS0078: Unable to find the file 'System.Security.Permissions.dll' in any of\r\n C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App\\10.0.11\r\n C:\\Program Files\\dotnet\\packs\\Microsoft.NETCore.App.Ref\\10.0.11\\ref\\net10.0\r\n C:/Program Files/dotnet/shared/Microsoft.AspNetCore.App/10.0.11\r\n C:/Source/Grace-worktrees/issue-1064-artifact-observation/src/Grace.Server.Unit.Tests/bin/Release/net10.0\r\n C:\\Users\\scott\\.codex\\visualizations\\2026\\09\\07\\01a07acd-5979-7700-889f-51bc642202a5\\overnight\\owner-read-permission-experiment\r\n C:\\Program Files\\dotnet\\sdk\\10.0.400\\FSharp\\\r\n\r\n\r\n\r\nExperiment.fsx(53,85): error FS0001: This expression was expected to have type\r\n    'UsageFactScope'    \r\nbut here has type\r\n    'Scope'    \r\n\r\n\r\n\r\nExperiment.fsx(104,38): error FS0072: The type of this expression could not be inferred before accessing its members. Add a type annotation, e.g. (expr: SomeType), to constrain the type before this point.\r\n\r\n",
+      "path": "owner-read-permission-experiment/bootstrap-failure.log",
+      "disposition": "Missing transitive assemblies and two F# annotation errors before any cases ran; successful run uses full PR #1063 dependencies and existing-type annotations."
+    },
+    "freshReplay": "No bootstrap or case failures in the Issue #1066 fresh extraction.",
+    "codec": "Original README records an initial mistaken provider-loader attempt, stopped by absent emulator credentials before provider requests/mutations. No separate log was present in the original captured artifact inventory. The successful loader contains assembly references only."
+  },
+  "requirements": {
+    "OOR_R01": {
+      "remaining": "Hosted authentication before input resolution; GUID/name and SDK/CLI explicit-input validation.",
+      "experiment": "Unauthenticated no-evaluation/no-lookup case only"
+    },
+    "OOR_R02": {
+      "remaining": "Actual route, mapped request identity and actor assignment integration.",
+      "experiment": "Six actual-evaluator role cases plus initial permission failure"
+    },
+    "OOR_R03": {
+      "remaining": "Actual SQL/HTTP lookup mapping and error-body checks.",
+      "experiment": "Missing plus four modeled ID/scope mismatches"
+    },
+    "OOR_R04": {
+      "remaining": "Hosted real deletion/reassignment and old/new-owner permission behavior.",
+      "experiment": "Retained immutable row with no live repository dependency"
+    },
+    "OOR_R05": {
+      "remaining": "Deterministic actual lookup/assignment recheck integration.",
+      "experiment": "Two revocation boundaries, second permission failure, omitted-check negative and post-check limitation"
+    },
+    "OOR_R06": {
+      "remaining": "Actual HTTP envelope, F# SDK and admin-wire preservation.",
+      "experiment": "22 F# codec assertions plus native/generated exact-value controls"
+    },
+    "OOR_R07": {
+      "remaining": "Actual SQL/cancellation/disconnect/error mapping and unchanged row.",
+      "experiment": "Three failure, three cancellation and fresh-retry cases"
+    },
+    "OOR_R08": {
+      "remaining": "Owner method GET construction, validation, headers and response/error round trip.",
+      "experiment": "No SDK transport execution"
+    },
+    "OOR_R09": {
+      "remaining": "CLI exact JSON/select/human output, explicit options, metadata/schema/examples and errors.",
+      "experiment": "No CLI execution"
+    },
+    "OOR_R10": {
+      "remaining": "Full source/bundle/projection/manifest and matrix regeneration/current-output checks.",
+      "experiment": "Two fresh minimal generated projections/builds; three generated cases"
+    },
+    "OOR_R11": {
+      "remaining": "Hosted authenticated GraceClient.request case and package/example validation.",
+      "experiment": "No supported facade execution"
+    },
+    "OOR_R12": {
+      "remaining": "Production availability/help/docs updated with the later tracer.",
+      "experiment": "Selected contract and packaged evidence"
+    }
+  },
+  "sourcePreservation": "Issue #1066 owns only docs/design/Operations.OwnerObservationRead.md, docs/design/Operations.OwnerObservationRead-Experiment.json and the bounded docs/Operations.md link/status addition. Original external evidence is immutable. No source/generated/tracker mutation is part of this bundle."
+}

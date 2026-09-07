@@ -18,6 +18,8 @@ At source revision `9f54fe14626cd718af88890b731f8518f9b06e34`, main has the supp
 
 The current [usage contract](../src/Grace.Types/Usage.Types.fs) has only `RepositoryStorageBytesMinute`, normalizes timestamps to a minute, and rejects quantities less than or equal to zero. The [Operations data store](../src/Grace.Operations.Data/OperationsData.fs) deduplicates fact identities and adds accepted distinct quantities. Neither behavior establishes missing source coverage or turns repeated current measurements into elapsed storage usage. Leave these contracts unchanged for the diagnostic below.
 
+Owner-facing visibility remains unimplemented. [Issue #1066's owner observation read contract](design/Operations.OwnerObservationRead.md) is Plan-ready for one later public tracer: an existing DirectoryVersion observation read by known ID and recorded scope, using current OwnerAdmin permission and exact quantity/time strings. Its [reproducible codec and permission evidence](design/Operations.OwnerObservationRead-Experiment.json) establishes design feasibility; it adds no available API, SDK method or CLI command.
+
 ## Measurement boundary selected by Issue #1045
 
 The [experiment record](design/Operations.Measurement-Experiment.md) selects **logical bytes declared by surviving DirectoryVersion records during an observation** as the smallest useful next diagnostic. Its successful result means the enumeration finished and its observed declarations were valid. It does not establish an atomic snapshot, physical blob presence, all retained repository content, or a billable quantity.
