@@ -8,6 +8,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.ManifestContributionAccounting
+open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Library
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.UploadSession
@@ -3618,30 +3619,13 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(prepareResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prepareDiagnostics)
 
             let prepared =
-                (deserialize<GraceReturnValue<LibraryPreparedContentDto>> prepareBody)
+                (deserialize<GraceReturnValue<LibraryContentPreparationDto>> prepareBody)
                     .ReturnValue
 
-            let authorizedScope = RelativePath $"Library/{prepared.PreparedContentId:D}"
-
-            let uploadSessionId, storagePoolId =
-                use instructions = JsonDocument.Parse(prepared.UploadInstructions.Value)
-
-                let uploadSessionId =
-                    instructions
-                        .RootElement
-                        .GetProperty(nameof UploadSessionId)
-                        .GetGuid()
-
-                let storagePoolId =
-                    instructions
-                        .RootElement
-                        .GetProperty(nameof StoragePoolId)
-                        .GetString()
-                    |> StoragePoolId
-
-                uploadSessionId, storagePoolId
-
-            Assert.That(uploadSessionId, Is.EqualTo(prepared.PreparedContentId))
+            let authorizedScope = RelativePath prepared.AuthorizedScope
+            let uploadSessionId = prepared.UploadSessionId
+            let storagePoolId = prepared.StoragePoolId
+            Assert.That(authorizedScope, Is.EqualTo(RelativePath $"Library/{uploadSessionId:D}"))
             TestContext.Progress.WriteLine($"Library upload session {uploadSessionId} in repository {repositoryId}.")
 
             let manifest = manifestForStoragePool storagePoolId payload block
@@ -3673,8 +3657,8 @@ type StorageManifestUploadSessionRoutes() =
             submit.LibraryCatalogVersion <- configuredCatalog.Version
             submit.ChangeKind <- ChangeKind.CreateFile
             submit.ItemKind <- ItemKind.File
-            submit.PreparedContentId <- Nullable prepared.PreparedContentId
-            submit.CreationSlotExpectation <- Some { Parent = parent; Name = fileName; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = slot.State }
+            submit.UploadSessionId <- Nullable prepared.UploadSessionId
+            submit.CreationSlotExpectation <- Some { Parent = parent; Name = fileName; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
             submit.CorrelationId <- correlationId
 
             let submitAsync () =
@@ -3701,7 +3685,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let readAsync (receipt: LibraryOperationReceiptDto) =
                 task {
-                    let item = receipt.Item.Value
+                    let item = receipt.Change.Value.Item
                     let content = item.Content.Value
                     let prepareRead = Parameters.Library.PrepareLibraryContentReadParameters()
                     prepareRead.OwnerId <- ownerId
@@ -3709,13 +3693,14 @@ type StorageManifestUploadSessionRoutes() =
                     prepareRead.RepositoryId <- repositoryId
                     prepareRead.ItemId <- item.ItemId
                     prepareRead.ContentVersionId <- content.ContentVersionId
+                    prepareRead.ContentRevision <- item.ContentRevision.Value
                     prepareRead.CorrelationId <- correlationId
                     use! response = Client.PostAsync("/libraries/content/read", createJsonContent prepareRead)
                     let! body = response.Content.ReadAsStringAsync()
                     Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
 
                     let descriptor =
-                        (deserialize<GraceReturnValue<LibraryContentReadGrantDto>> body)
+                        (deserialize<GraceReturnValue<LibraryContentReadDto>> body)
                             .ReturnValue
 
                     use! download = Client.GetAsync(descriptor.DownloadPath)
@@ -3730,6 +3715,7 @@ type StorageManifestUploadSessionRoutes() =
             let! firstDescriptor = readAsync firstReceipt
             let state = HostState.Value
             let! before = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+            let! workflowsBefore = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
             let counterBefore: RepositoryContentCounterDto =
                 before
@@ -3737,15 +3723,36 @@ type StorageManifestUploadSessionRoutes() =
                     value.RepositoryId = Guid.Parse repositoryId
                     && value.ManifestAddress = manifest.ManifestAddress)
 
+            let workflowBefore: ManifestContributionWorkflowDto =
+                workflowsBefore
+                |> Array.find (fun value ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.StoragePoolId = manifest.StoragePoolId
+                    && value.ManifestAddress = manifest.ManifestAddress)
+
+            let expectedRanges =
+                manifest.Blocks
+                |> Seq.distinctBy (fun value -> value.Address)
+                |> Seq.map (fun value -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = value.Address })
+                |> Seq.toArray
+
             do! AspireTestHost.restartGraceServerAsync state "Library accepted-content replay"
             let! replayReceipt = submitAsync ()
             let! replayDescriptor = readAsync replayReceipt
             let! after = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+            let! workflowsAfter = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
             let counterAfter: RepositoryContentCounterDto =
                 after
                 |> Array.find (fun (value: RepositoryContentCounterDto) ->
                     value.RepositoryId = Guid.Parse repositoryId
+                    && value.ManifestAddress = manifest.ManifestAddress)
+
+            let workflowAfter: ManifestContributionWorkflowDto =
+                workflowsAfter
+                |> Array.find (fun value ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.StoragePoolId = manifest.StoragePoolId
                     && value.ManifestAddress = manifest.ManifestAddress)
 
             Assert.Multiple(
@@ -3754,8 +3761,20 @@ type StorageManifestUploadSessionRoutes() =
                     Assert.That(replayDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
                     Assert.That(counterBefore.Count, Is.EqualTo(1L))
                     Assert.That(counterBefore.PendingTrackedAdd, Is.EqualTo(None))
+                    Assert.That(workflowBefore.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
+                    Assert.That(workflowBefore.Ranges = expectedRanges, Is.True)
+
+                    Assert.That(
+                        (workflowBefore.CompletedRanges
+                         |> Array.map (fun value -> value.Range)) =
+                            expectedRanges,
+                        Is.True
+                    )
+
+                    Assert.That(workflowBefore.FailedRanges, Is.Empty)
                     Assert.That(counterAfter.Count, Is.EqualTo(counterBefore.Count))
                     Assert.That(counterAfter.Revision, Is.EqualTo(counterBefore.Revision))
-                    Assert.That(counterAfter.PendingTrackedAdd, Is.EqualTo(None)))
+                    Assert.That(counterAfter.PendingTrackedAdd, Is.EqualTo(None))
+                    Assert.That(workflowAfter, Is.EqualTo(workflowBefore)))
             )
         }

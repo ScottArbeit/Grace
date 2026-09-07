@@ -757,9 +757,18 @@ module Interfaces =
         /// Reads the current authoritative Library catalog.
         abstract member GetCatalog: correlationId: CorrelationId -> Task<LibraryCatalogDto>
 
-        /// Persists one catalog result, atomically applying an accepted exact-predecessor mutation.
-        abstract member SetCatalog:
-            requestHash: string -> result: LibraryCatalogChangeResultDto -> correlationId: CorrelationId -> Task<LibraryCatalogChangeResultDto>
+        /// Decides and persists one idempotent catalog add or remove after the caller supplies version-control emptiness evidence.
+        abstract member ChangeCatalog:
+            addLibrary: bool ->
+            expectedVersion: LibraryCatalogVersion ->
+            libraryPath: string ->
+            operationId: LibraryOperationId ->
+            requestHash: string ->
+            principalId: PrincipalId ->
+            authorization: LibraryWriteAuthorization ->
+            outgoingSystemEmpty: bool ->
+            correlationId: CorrelationId ->
+                Task<Result<LibraryCatalogChangeResultDto, string>>
 
         /// Classifies one normalized repository-relative path against the catalog state observed for this actor call.
         abstract member IsInLibrary: relativePath: string -> correlationId: CorrelationId -> Task<bool>
@@ -770,7 +779,7 @@ module Interfaces =
             principalId: PrincipalId ->
             authorization: LibraryWriteAuthorization ->
             correlationId: CorrelationId ->
-                Task<LibrarySubmitResult>
+                Task<Result<LibraryOperationReceiptDto, string>>
 
         /// Returns the exact durable operation receipt after repairing matching pending work.
         abstract member GetOperation: operationId: LibraryOperationId -> correlationId: CorrelationId -> Task<LibraryOperationReceiptDto option>
@@ -779,7 +788,25 @@ module Interfaces =
         abstract member GetItem: itemId: LibraryItemId -> correlationId: CorrelationId -> Task<LibraryItemDto option>
 
         /// Returns one current Library namespace slot after repairing pending work.
-        abstract member GetSlot: normalizedPath: string -> correlationId: CorrelationId -> Task<LibraryNamespaceSlotDto option>
+        abstract member GetSlot: parent: LibraryParentDto -> name: string -> correlationId: CorrelationId -> Task<LibraryNamespaceSlotDto>
+
+        /// Returns the immutable accepted change at one repository-bound public revision.
+        abstract member GetAcceptedChange: contentRevision: LibraryCursor -> correlationId: CorrelationId -> Task<LibraryChangeDto option>
+
+        /// Builds or reuses a manifest-last baseline and returns its first bounded page.
+        abstract member StartBootstrap: pageSize: int -> correlationId: CorrelationId -> Task<LibraryBootstrapPageDto>
+
+        /// Returns one later bounded page from an immutable published baseline.
+        abstract member ContinueBootstrap:
+            bootstrapId: LibraryBootstrapId ->
+            pageToken: LibraryPageToken ->
+            pageSize: int ->
+            correlationId: CorrelationId ->
+                Task<LibraryBootstrapPageDto option>
+
+        /// Returns committed accepted changes after one repository-bound cursor.
+        abstract member GetChanges:
+            afterCursor: LibraryCursor -> pageToken: LibraryPageToken option -> pageSize: int -> correlationId: CorrelationId -> Task<LibraryChangePageDto>
 
         /// Returns the retained immutable-content location for a current content identity.
         abstract member GetContentLocation:

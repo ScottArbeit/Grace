@@ -2271,22 +2271,6 @@ module Application =
                     new CosmosClient(cosmosConnectionString, options))
             |> ignore
 
-            services.AddSingleton<ILibraryStore>(
-                Func<IServiceProvider, ILibraryStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createStore client databaseName)
-            )
-            |> ignore
-
-            services.AddSingleton<ILibraryTransferStore>(
-                Func<IServiceProvider, ILibraryTransferStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createTransferStore client databaseName)
-            )
-            |> ignore
-
             let libraryTokenSecret = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.LibrariesTokenSecret)
 
             if String.IsNullOrWhiteSpace libraryTokenSecret then
@@ -2302,22 +2286,6 @@ module Application =
                 invalidOp "The library token secret must decode to at least 32 bytes."
 
             services.AddSingleton<byte array>(libraryTokenKey)
-            |> ignore
-
-            services.AddSingleton<ILibraryCursorCodec>(LibraryCoordinator.LibraryCursorCodec(libraryTokenKey))
-            |> ignore
-
-            services.AddSingleton<LibraryOpaqueTokenCodec>(LibraryOpaqueTokenCodec(libraryTokenKey))
-            |> ignore
-
-            services.AddSingleton<ILibraryCoordinator>(
-                Func<IServiceProvider, ILibraryCoordinator> (fun serviceProvider ->
-                    LibraryCoordinator.Coordinator(
-                        serviceProvider.GetRequiredService<ILibraryStore>(),
-                        serviceProvider.GetRequiredService<ILibraryCursorCodec>()
-                    )
-                    :> ILibraryCoordinator)
-            )
             |> ignore
 
             services.AddSingleton<IRepositoryCounterRecentResult> (fun serviceProvider ->

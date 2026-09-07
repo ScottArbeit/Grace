@@ -22,6 +22,7 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Caching.Memory
+open Microsoft.Extensions.Options
 open Orleans
 open Orleans.Clustering.AzureStorage
 open Orleans.Hosting
@@ -285,47 +286,32 @@ module Program =
             options.PartitionKeyLevelCount <- partitionKeyLevelCount
             options.IsResourceCreationEnabled <- false
 
-            options.ConfigureCosmosClient (fun (_serviceProvider: IServiceProvider) ->
-                let clientOptions = CosmosClientOptions()
-                clientOptions.ApplicationName <- "Grace.Server"
-                clientOptions.LimitToEndpoint <- false
-                clientOptions.UseSystemTextJsonSerializerWithOptions <- Grace.Shared.Constants.JsonSerializerOptions
-
-                if isLocalDebug
-                   && not
-                      <| AzureEnvironment.useManagedIdentityForCosmos then
-                    clientOptions.LimitToEndpoint <- true
-                    clientOptions.ConnectionMode <- ConnectionMode.Gateway
-                    clientOptions.EnableContentResponseOnWrite <- true
-                    clientOptions.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
-
-                    clientOptions.HttpClientFactory <-
-                        fun () ->
-                            let handler = new HttpClientHandler()
-                            handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                            new HttpClient(handler, disposeHandler = true)
-
-                let client =
-                    if AzureEnvironment.useManagedIdentity then
-                        let endpoint =
-                            AzureEnvironment.tryGetCosmosEndpointUri ()
-                            |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
-
-                        new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, clientOptions)
-                    else
-                        if String.IsNullOrWhiteSpace azureCosmosDBConnectionString then
-                            invalidOp "Cosmos DB connection string must be configured when managed identity is disabled."
-
-                        new CosmosClient(azureCosmosDBConnectionString, clientOptions)
-
+            options.ConfigureCosmosClient (fun (serviceProvider: IServiceProvider) ->
+                let client = serviceProvider.GetRequiredService<CosmosClient>()
                 waitForCosmosReady client options.DatabaseName options.ContainerName
                 ValueTask.FromResult(client))
+
+        /// Registers one parameterized document-id provider without creating a type per partition depth.
+        let registerLibraryDocumentProvider (siloBuilder: ISiloBuilder) name depth =
+            siloBuilder.Services.AddKeyedSingleton<IDocumentIdProvider>(
+                name,
+                Func<IServiceProvider, obj, IDocumentIdProvider> (fun serviceProvider _ ->
+                    LibraryPersistence.GraceDocumentIdProvider(serviceProvider.GetRequiredService<IOptions<ClusterOptions>>(), depth) :> IDocumentIdProvider)
+            )
+            |> ignore
 
         let hostBuilder = Host.CreateDefaultBuilder(args)
 
         hostBuilder
             .UseContentRoot(Directory.GetCurrentDirectory())
             .UseOrleans(fun siloBuilder ->
+                registerLibraryDocumentProvider siloBuilder LibraryPersistence.ControlStorageName 1
+                registerLibraryDocumentProvider siloBuilder LibraryPersistence.ChangesStorageName 2
+                registerLibraryDocumentProvider siloBuilder LibraryPersistence.CurrentStorageName 2
+                registerLibraryDocumentProvider siloBuilder LibraryPersistence.ReceiptsStorageName 3
+                registerLibraryDocumentProvider siloBuilder LibraryPersistence.HistoryStorageName 3
+                registerLibraryDocumentProvider siloBuilder LibraryPersistence.BaselinesStorageName 3
+
                 siloBuilder
                     .Configure<ClusterMembershipOptions>(fun (options: ClusterMembershipOptions) ->
                         options.DefunctSiloExpiration <- TimeSpan.FromMinutes(5.0)
@@ -426,27 +412,27 @@ module Program =
                                 ValueTask.FromResult(cosmosClient))),
                         typeof<GracePartitionKeyProvider>
                     )
-                    .AddCosmosGrainStorage<LibraryPersistence.LibraryControlDocumentIdProvider>(
+                    .AddCosmosGrainStorage(
                         LibraryPersistence.ControlStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.ControlContainerName 1 options
                     )
-                    .AddCosmosGrainStorage<LibraryPersistence.LibraryTwoLevelDocumentIdProvider>(
+                    .AddCosmosGrainStorage(
                         LibraryPersistence.ChangesStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.ChangesContainerName 2 options
                     )
-                    .AddCosmosGrainStorage<LibraryPersistence.LibraryTwoLevelDocumentIdProvider>(
+                    .AddCosmosGrainStorage(
                         LibraryPersistence.CurrentStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.CurrentContainerName 2 options
                     )
-                    .AddCosmosGrainStorage<LibraryPersistence.LibraryThreeLevelDocumentIdProvider>(
+                    .AddCosmosGrainStorage(
                         LibraryPersistence.ReceiptsStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.ReceiptsContainerName 3 options
                     )
-                    .AddCosmosGrainStorage<LibraryPersistence.LibraryThreeLevelDocumentIdProvider>(
+                    .AddCosmosGrainStorage(
                         LibraryPersistence.HistoryStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.HistoryContainerName 3 options
                     )
-                    .AddCosmosGrainStorage<LibraryPersistence.LibraryThreeLevelDocumentIdProvider>(
+                    .AddCosmosGrainStorage(
                         LibraryPersistence.BaselinesStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.BaselinesContainerName 3 options
                     )

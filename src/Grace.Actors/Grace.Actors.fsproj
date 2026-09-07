@@ -20,9 +20,12 @@
         <Compile Include="Extensions\MemoryCache.Extensions.Actor.fs" />
         <Compile Include="Constants.Actor.fs" />
         <Compile Include="Types.Actor.fs" />
+        <Compile Include="LibraryDecision.Actor.fs" />
+        <Compile Include="LibraryTransfer.Actor.fs" />
         <Compile Include="Interfaces.Actor.fs" />
         <Compile Include="LibraryRecords.Actor.fs" />
         <Compile Include="LibraryTokens.Actor.fs" />
+        <Compile Include="LibraryQueries.Actor.fs" />
         <Compile Include="ApprovalPolicySnapshotResolver.Actor.fs" />
         <Compile Include="Context.Actor.fs" />
         <Compile Include="PersonalAccessToken.Actor.fs" />

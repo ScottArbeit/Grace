@@ -56,19 +56,52 @@ module LibraryTokens =
     /// Encodes one committed repository position for public synchronization responses.
     let cursor key repositoryId epoch value = sign key "cursor" $"{repositoryId:D}|{epoch:D}|{value}"
 
+    /// Validates and parses one repository-bound public cursor.
+    let tryCursor key repositoryId token =
+        match tryVerify key "cursor" token with
+        | Some payload ->
+            match payload.Split('|', StringSplitOptions.None) with
+            | [| repository; epoch; value |] ->
+                match Guid.TryParse repository, Guid.TryParse epoch, Int64.TryParse value with
+                | (true, actualRepositoryId), (true, actualEpoch), (true, position) when actualRepositoryId = repositoryId -> Some(actualEpoch, position)
+                | _ -> None
+            | _ -> None
+        | None -> None
+
+    /// Encodes one expiring bootstrap or change-page continuation.
+    let page key purpose repositoryId value offset expiresUnixSeconds = sign key ("page:" + purpose) $"{repositoryId:D}|{value}|{offset}|{expiresUnixSeconds}"
+
+    /// Validates and parses one purpose-scoped page continuation.
+    let tryPage key purpose repositoryId nowUnixSeconds token =
+        match tryVerify key ("page:" + purpose) token with
+        | Some payload ->
+            let parts = payload.Split('|', StringSplitOptions.None)
+
+            if parts.Length = 4 then
+                match Guid.TryParse parts[0], Int32.TryParse parts[2], Int64.TryParse parts[3] with
+                | (true, actualRepositoryId), (true, offset), (true, expiresAt) when
+                    actualRepositoryId = repositoryId
+                    && expiresAt > nowUnixSeconds
+                    ->
+                    Some(parts[1], offset)
+                | _ -> None
+            else
+                None
+        | None -> None
+
     /// Encodes a short-lived retained-content descriptor without adding another durable grant lifecycle.
-    let contentRead key repositoryId itemId contentVersionId expiresUnixSeconds =
-        sign key "content" $"{repositoryId:D}|{itemId:D}|{contentVersionId:D}|{expiresUnixSeconds}"
+    let contentRead key repositoryId itemId contentVersionId contentRevision expiresUnixSeconds =
+        sign key "content" $"{repositoryId:D}|{itemId:D}|{contentVersionId:D}|{contentRevision}|{expiresUnixSeconds}"
 
     /// Validates and parses a retained-content descriptor at the supplied wall-clock boundary.
     let tryContentRead key nowUnixSeconds token =
         match tryVerify key "content" token with
         | Some payload ->
             match payload.Split('|', StringSplitOptions.None) with
-            | [| repository; item; content; expires |] ->
+            | [| repository; item; content; revision; expires |] ->
                 match Guid.TryParse repository, Guid.TryParse item, Guid.TryParse content, Int64.TryParse expires with
                 | (true, repositoryId), (true, itemId), (true, contentVersionId), (true, expiresAt) when expiresAt > nowUnixSeconds ->
-                    Some(repositoryId, itemId, contentVersionId)
+                    Some(repositoryId, itemId, contentVersionId, revision)
                 | _ -> None
             | _ -> None
         | None -> None

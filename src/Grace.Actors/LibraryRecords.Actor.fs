@@ -30,6 +30,24 @@ module LibraryRecords =
     [<Literal>]
     let BaselinesStorageName = "GraceLibraryBaselinesStorage"
 
+    [<Literal>]
+    let ControlContainerName = "grace-library-control"
+
+    [<Literal>]
+    let ChangesContainerName = "grace-library-changes"
+
+    [<Literal>]
+    let CurrentContainerName = "grace-library-current"
+
+    [<Literal>]
+    let ReceiptsContainerName = "grace-library-receipts"
+
+    [<Literal>]
+    let HistoryContainerName = "grace-library-history"
+
+    [<Literal>]
+    let BaselinesContainerName = "grace-library-baselines"
+
     /// Builds the provider key whose leading components form the configured hierarchical partition key.
     let key (components: string list) =
         if List.isEmpty components

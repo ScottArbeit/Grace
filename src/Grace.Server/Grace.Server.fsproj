@@ -84,7 +84,6 @@
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
 		<Compile Include="Library.Persistence.Server.fs" />
-		<Compile Include="Library.Coordinator.Server.fs" />
 		<Compile Include="AnnotationMaterialization.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
                 
