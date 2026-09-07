@@ -174,7 +174,8 @@ type DirectoryVersionSizeObservationHttpTests() =
             let output = IO.Path.Combine(TestContext.CurrentContext.WorkDirectory, "directory-version-observation-zero-response.json")
             IO.File.WriteAllText(output, zeroJson)
 
-            TestContext.Progress.WriteLine(
+            // NUnit's error channel remains visible for passing tests under the default CI console logger.
+            TestContext.Error.WriteLine(
                 "DIRECTORY_VERSION_OBSERVATION_HOSTED_JSON_BASE64:"
                 + Convert.ToBase64String(Text.Encoding.UTF8.GetBytes zeroJson)
             )

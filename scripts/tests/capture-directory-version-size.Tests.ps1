@@ -30,11 +30,13 @@ $script:transportFailure = $false
 
 # Requires malformed or failed responses to preserve the last saved diagnostic without staging residue.
 function Assert-PreservedFailure {
-    param([string] $Case)
+    param([string] $Case, [string] $ExpectedMessage)
     [IO.File]::WriteAllText($destination, 'previous-success')
     $failed = $false
-    try { Invoke-DirectoryVersionObservation $parameters } catch { $failed = $true }
+    $message = $null
+    try { Invoke-DirectoryVersionObservation $parameters } catch { $failed = $true; $message = $_.Exception.Message }
     if (-not $failed -or [IO.File]::ReadAllText($destination) -cne 'previous-success') { throw "Failed preservation: $Case" }
+    if ($ExpectedMessage -and $message -cne $ExpectedMessage) { throw "Unexpected failure guidance for ${Case}: $message" }
     if (@(Get-ChildItem $directory -Force -Filter '*.tmp').Count -ne 0) { throw "Unexpected staging output: $Case" }
     Write-Output "PASS: $Case preserves previous output"
 }
@@ -51,11 +53,14 @@ try {
     if ($script:lastMethod -ne 'Get' -or $script:lastUri.Query -notmatch 'OwnerId=') { throw 'Read request is malformed.' }
     $parameters.Mode = 'Capture'
     $script:transportFailure = $true
-    Assert-PreservedFailure 'transport failure'
+    Assert-PreservedFailure 'transport failure' "Grace Server request failed. Local output was not changed. The server may have committed the observation. Retry with the same ObservationId '$($parameters.ObservationId)'."
     $script:transportFailure = $false
     Write-Output 'PASS: capture and read preserve original zero and nine-digit JSON'
     $script:response.StatusCode = 503
-    Assert-PreservedFailure 'HTTP failure'
+    Assert-PreservedFailure 'HTTP 503 uncertain capture' "Grace Server returned HTTP 503. Local output was not changed. The server may have committed the observation. Retry with the same ObservationId '$($parameters.ObservationId)'."
+    $parameters.Mode = 'Read'
+    Assert-PreservedFailure 'HTTP 503 read' "Grace Server returned HTTP 503. Local output was not changed. Retry reading the same ObservationId '$($parameters.ObservationId)'."
+    $parameters.Mode = 'Capture'
     $script:response.StatusCode = 200
     foreach ($case in @('identity', 'nanoseconds', 'scope', 'negative', 'fraction', 'overflow', 'missing', 'window', 'invalid-json')) {
         $changed = $report | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable

@@ -98,8 +98,16 @@ function Invoke-DirectoryVersionObservation {
         $request.Method = 'Get'
         $request.Remove('Body')
     }
-    $response = Invoke-WebRequest @request
-    if ($response.StatusCode -ne 200) { throw "Grace Server returned HTTP $($response.StatusCode); no observation was saved." }
+    $retryAdvice = if ($mode -eq 'Capture') {
+        "The server may have committed the observation. Retry with the same ObservationId '$observationId'."
+    } else {
+        "Retry reading the same ObservationId '$observationId'."
+    }
+    try { $response = Invoke-WebRequest @request }
+    catch { throw "Grace Server request failed. Local output was not changed. $retryAdvice" }
+    if ($response.StatusCode -ne 200) {
+        throw "Grace Server returned HTTP $($response.StatusCode). Local output was not changed. $retryAdvice"
+    }
     Test-DirectoryVersionObservationResponse -Json $response.Content -Scope $scope -ObservationId $observationId
     $temporary = Join-Path $parent ".$([IO.Path]::GetFileName($destination)).$([guid]::NewGuid().ToString('N')).tmp"
     try {
