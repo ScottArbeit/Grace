@@ -1,9 +1,11 @@
 namespace Grace.Actors
 
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Types.Authorization
 open Grace.Types.Common
+open Grace.Types.Events
 open Grace.Types.Library
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.RepositoryContentCounter
@@ -36,6 +38,7 @@ type RepositoryLibraryActor
     let historyType = "Grace.Library.History.v2"
     let baselineShardType = "Grace.Library.BaselineShard.v2"
     let baselineManifestType = "Grace.Library.BaselineManifest.v2"
+    let failedEventType = "Grace.Library.FailedGraceEvent.v2"
 
     /// Builds a repository-scoped provider key.
     let key (repositoryId: RepositoryId) tail = LibraryRecords.key (repositoryId.ToString("D") :: tail)
@@ -105,6 +108,37 @@ type RepositoryLibraryActor
                     receipt.OperationId.ToString("D")
                 ])
             receipt
+
+    /// Returns the stable broker identity reused after ambiguous Library wake delivery.
+    let stableMessageId (repositoryId: RepositoryId) cursor = $"LibraryContentAvailable/{repositoryId:D}/{cursor:D20}"
+
+    /// Reads the one failure-only Library wake envelope retained for this repository.
+    let readFailedEvent repositoryId =
+        LibraryRecords.read<FailedGraceEventEnvelope>
+            services
+            LibraryRecords.ReceiptsStorageName
+            failedEventType
+            (key repositoryId [ "failed-event"; "single" ])
+
+    /// Retains the exact Library wake envelope after terminal transport failure.
+    let createFailedEvent repositoryId envelope =
+        LibraryRecords.createExact services LibraryRecords.ReceiptsStorageName failedEventType (key repositoryId [ "failed-event"; "single" ]) envelope
+
+    /// Clears the fixed failed-envelope slot through its last observed ETag.
+    let clearFailedEvent repositoryId =
+        task {
+            match! readFailedEvent repositoryId with
+            | Some (envelope, etag) ->
+                do!
+                    LibraryRecords.clear
+                        services
+                        LibraryRecords.ReceiptsStorageName
+                        failedEventType
+                        (key repositoryId [ "failed-event"; "single" ])
+                        etag
+                        envelope
+            | None -> ()
+        }
 
     /// Reads one current item projection.
     let readItem repositoryId (itemId: LibraryItemId) =
@@ -187,6 +221,48 @@ type RepositoryLibraryActor
                         (key repositoryId [ "slot"; slotKey ])
                         etag
                         { value with HistoryTailSegment = current.HistoryTailSegment }
+
+                return ()
+        }
+
+    /// Advances one current item's exact-key history pointer without replacing a newer item value.
+    let updateItemHistoryTail repositoryId itemId cursor =
+        task {
+            match! readItem repositoryId itemId with
+            | None -> return invalidOp "A Library history cursor references a missing current item."
+            | Some (current, _) when current.LastCursor < cursor -> return invalidOp "Library item history advanced ahead of its current projection."
+            | Some (current, _) when current.HistoryTailSegment = Some(historySegment cursor) -> return ()
+            | Some (current, etag) ->
+                let! _ =
+                    LibraryRecords.write
+                        services
+                        LibraryRecords.CurrentStorageName
+                        itemType
+                        (key repositoryId [ "item"; itemId.ToString("D") ])
+                        etag
+                        { current with HistoryTailSegment = Some(historySegment cursor) }
+
+                return ()
+        }
+
+    /// Advances one current slot's exact-key history pointer without replacing a newer slot value.
+    let updateSlotHistoryTail repositoryId (slot: LibraryNamespaceDto) cursor =
+        task {
+            match! readSlot repositoryId slot.Parent slot.Name with
+            | None -> return invalidOp "A Library history cursor references a missing current slot."
+            | Some (current, _) when current.LastCursor < cursor -> return invalidOp "Library slot history advanced ahead of its current projection."
+            | Some (current, _) when current.HistoryTailSegment = Some(historySegment cursor) -> return ()
+            | Some (current, etag) ->
+                let slotKey = LibraryDecision.slotKey slot.Parent slot.Name
+
+                let! _ =
+                    LibraryRecords.write
+                        services
+                        LibraryRecords.CurrentStorageName
+                        slotType
+                        (key repositoryId [ "slot"; slotKey ])
+                        etag
+                        { current with HistoryTailSegment = Some(historySegment cursor) }
 
                 return ()
         }
@@ -467,12 +543,15 @@ type RepositoryLibraryActor
 
             let! location =
                 task {
-                    match record.Change.Item.Content with
-                    | None -> return None
-                    | Some content ->
+                    match record.Change.ChangeKind, record.Change.Item.Content with
+                    | changeKind, Some content when
+                        changeKind = ChangeKind.CreateFile
+                        || changeKind = ChangeKind.UpdateContent
+                        ->
                         match! readContent repositoryId content.ContentVersionId with
                         | Some (value, _) -> return Some value
                         | None -> return invalidOp "Accepted Library content has no retained manifest."
+                    | _ -> return None
                 }
 
             match location with
@@ -645,13 +724,18 @@ type RepositoryLibraryActor
                     | None -> return invalidOp "Committed Library history references a missing change."
                     | Some (record, _) ->
                         do! appendHistory repositoryId $"item:{record.Change.Item.ItemId:D}" cursor
+                        do! updateItemHistoryTail repositoryId record.Change.Item.ItemId cursor
 
                         match record.PriorNamespace with
-                        | Some ns -> do! appendHistory repositoryId $"slot:{LibraryDecision.slotKey ns.Parent ns.Name}" cursor
+                        | Some ns ->
+                            do! appendHistory repositoryId $"slot:{LibraryDecision.slotKey ns.Parent ns.Name}" cursor
+                            do! updateSlotHistoryTail repositoryId ns cursor
                         | None -> ()
 
                         match record.Change.Item.Namespace with
-                        | Some ns -> do! appendHistory repositoryId $"slot:{LibraryDecision.slotKey ns.Parent ns.Name}" cursor
+                        | Some ns ->
+                            do! appendHistory repositoryId $"slot:{LibraryDecision.slotKey ns.Parent ns.Name}" cursor
+                            do! updateSlotHistoryTail repositoryId ns cursor
                         | None -> ()
 
                         let! _ = writeControl repositoryId etag { control with HistoryThrough = cursor }
@@ -664,6 +748,90 @@ type RepositoryLibraryActor
         task {
             try
                 do! drainHistory repositoryId
+            with
+            | _ -> ()
+        }
+
+    /// Reconstructs one deterministic content-free wake envelope from the permanent accepted-change journal.
+    let notificationEnvelope repositoryId (control: LibraryControlDocument) cursor =
+        task {
+            match! readChange repositoryId cursor with
+            | None -> return invalidOp "Committed Library notification progress references a missing change."
+            | Some (record, _) ->
+                let payload =
+                    LibraryContentAvailable.Create(
+                        repositoryId,
+                        control.Epoch.ToString("D"),
+                        LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch cursor,
+                        record.Change.LibraryCatalogVersion,
+                        record.Change.AcceptedAt,
+                        record.CorrelationId
+                    )
+
+                return
+                    tryCreateLibraryGraceEventEnvelope
+                        (stableMessageId repositoryId cursor)
+                        (GraceEvent.LibraryContentAvailableEvent payload)
+                        (EventMetadata.New record.CorrelationId "RepositoryLibraryActor")
+        }
+
+    /// Advances advisory Library wake delivery from NotifyThrough and stops at the first terminal transport failure.
+    let drainNotifications repositoryId =
+        task {
+            let mutable keepGoing = true
+
+            while keepGoing do
+                match! readControl repositoryId with
+                | None -> keepGoing <- false
+                | Some (control, etag) when control.Pending.IsSome -> keepGoing <- false
+                | Some (control, _) when control.NotifyThrough >= control.CommittedCursor ->
+                    do! clearFailedEvent repositoryId
+                    keepGoing <- false
+                | Some (control, etag) ->
+                    let cursor = control.NotifyThrough + 1L
+                    let expectedMessageId = stableMessageId repositoryId cursor
+                    let! retained = readFailedEvent repositoryId
+
+                    match retained with
+                    | Some (envelope, _) when envelope.MessageId <> expectedMessageId -> do! clearFailedEvent repositoryId
+                    | _ ->
+                        let! candidate =
+                            task {
+                                match retained with
+                                | Some (envelope, _) -> return Some envelope
+                                | None -> return! notificationEnvelope repositoryId control cursor
+                            }
+
+                        match candidate with
+                        | None ->
+                            let! _ = writeControl repositoryId etag { control with NotifyThrough = cursor }
+                            ()
+                        | Some envelope ->
+                            let! delivered =
+                                LibraryNotifications.attempt
+                                    (fun value -> task { do! sendGraceEventEnvelope value CancellationToken.None })
+                                    (fun () ->
+                                        task {
+                                            let! _ = writeControl repositoryId etag { control with NotifyThrough = cursor }
+                                            return ()
+                                        })
+                                    (fun value ->
+                                        task {
+                                            let! _ = createFailedEvent repositoryId value
+                                            return ()
+                                        })
+                                    (fun () -> clearFailedEvent repositoryId)
+                                    retained.IsSome
+                                    envelope
+
+                            if not delivered then keepGoing <- false
+        }
+
+    /// Attempts advisory wake delivery without making accepted changes or history depend on broker health.
+    let tryDrainNotifications repositoryId =
+        task {
+            try
+                do! drainNotifications repositoryId
             with
             | _ -> ()
         }
@@ -698,6 +866,7 @@ type RepositoryLibraryActor
             let! pendingEtag = writeControl repositoryId etag pendingControl
             let! result = completeItemPending repositoryId pendingEtag pendingControl record
             do! tryDrainHistory repositoryId
+            do! tryDrainNotifications repositoryId
             return result
         }
 
@@ -708,8 +877,7 @@ type RepositoryLibraryActor
                 if attempt >= 100000 then
                     return invalidOp "No bounded conflict-copy destination was available."
                 else
-                    let baseName = LibraryDecision.conflictName originalName operationId
-                    let candidate = if attempt = 0 then baseName else $"{baseName}.{attempt}"
+                    let candidate = LibraryDecision.conflictName originalName operationId attempt
                     let! slot = getSlot repositoryId parent candidate
 
                     if slot.OccupantItemId.IsNone then
@@ -936,6 +1104,15 @@ type RepositoryLibraryActor
                 return bootstrapId, durable
         }
 
+    override this.OnActivateAsync _ =
+        task {
+            let repositoryId = this.GetPrimaryKey()
+            do! repairPending repositoryId
+            do! tryDrainHistory repositoryId
+            do! tryDrainNotifications repositoryId
+        }
+        :> Task
+
     interface IRepositoryLibraryActor with
         member _.PrepareContent start correlationId =
             task {
@@ -1131,6 +1308,7 @@ type RepositoryLibraryActor
                 let operationId = LibraryDecision.operationId command
                 let requestHash = LibraryDecision.requestHash command
                 do! repairPending repositoryId
+                do! tryDrainNotifications repositoryId
 
                 match! readReceipt repositoryId operationId with
                 | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
@@ -1472,12 +1650,22 @@ type RepositoryLibraryActor
                                         let! destination = getSlot repositoryId destinationParent prior.Name
                                         let! destinationRecord = readSlot repositoryId destinationParent prior.Name
 
+                                        let! descendantPathsValid =
+                                            task {
+                                                if current.Item.ItemKind = ItemKind.Directory then
+                                                    let! items = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
+
+                                                    return LibraryDecision.movedDescendantPathsAreValid control.Catalog parentPath itemId prior.Name items
+                                                else
+                                                    return LibraryDecision.isInLibrary control.Catalog (parentPath + "/" + prior.Name)
+                                            }
+
                                         if cycle then
                                             return Error "A Library directory cannot move below itself."
                                         elif destination.OccupantItemId.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                             return Ok receipt
-                                        elif not (LibraryDecision.isInLibrary control.Catalog (parentPath + "/" + prior.Name)) then
+                                        elif not descendantPathsValid then
                                             let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
                                             return Ok receipt
                                         elif destinationRecord.IsNone
@@ -1869,6 +2057,7 @@ type RepositoryLibraryActor
                 let repositoryId = this.GetPrimaryKey()
                 do! repairPending repositoryId
                 do! tryDrainHistory repositoryId
+                do! tryDrainNotifications repositoryId
             }
             :> Task
 
@@ -1877,6 +2066,7 @@ type RepositoryLibraryActor
                 let repositoryId = this.GetPrimaryKey()
                 do! repairPending repositoryId
                 do! tryDrainHistory repositoryId
+                do! tryDrainNotifications repositoryId
 
                 match! readControl repositoryId with
                 | None ->

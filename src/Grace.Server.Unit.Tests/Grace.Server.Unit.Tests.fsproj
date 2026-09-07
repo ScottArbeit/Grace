@@ -53,6 +53,7 @@
     <Compile Include="PersonalAccessToken.Actor.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
     <Compile Include="Library.Serialization.Tests.fs" />
+    <Compile Include="Library.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />

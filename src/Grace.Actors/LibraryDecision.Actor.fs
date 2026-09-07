@@ -6,6 +6,7 @@ open Grace.Types.Library
 open System
 open System.Security.Cryptography
 open System.Text
+open System.Collections.Generic
 
 /// Makes deterministic Library decisions without reading storage or invoking actors.
 module LibraryDecision =
@@ -109,19 +110,89 @@ module LibraryDecision =
     /// Reports whether a normalized path belongs to a configured Library root.
     let isInLibrary catalog path = Library.configurationOwnsPath catalog path
 
-    /// Allocates the deterministic portable sibling used for a stale-content conflict copy.
-    let conflictName (name: string) operationId =
-        let extension = IO.Path.GetExtension name
-        let stem = IO.Path.GetFileNameWithoutExtension name
-        let suffix = ($".conflict-{operationId:N}")[0..18]
+    /// Retains the longest whole-rune prefix that fits one UTF-8 byte budget.
+    let private utf8Prefix maximumBytes (value: string) =
+        let builder = StringBuilder()
+        let mutable bytes = 0
+        let mutable keepGoing = true
+        use mutable enumerator = value.EnumerateRunes().GetEnumerator()
+
+        while keepGoing && enumerator.MoveNext() do
+            let text = enumerator.Current.ToString()
+            let count = Encoding.UTF8.GetByteCount text
+
+            if bytes + count <= maximumBytes then
+                builder.Append text |> ignore
+                bytes <- bytes + count
+            else
+                keepGoing <- false
+
+        builder.ToString()
+
+    /// Allocates one deterministic bounded sibling candidate for a stale-content conflict copy.
+    let conflictName (name: string) operationId attempt =
+        let baseSuffix = ($".conflict-{operationId:N}")[0..18]
+        let suffix = if attempt = 0 then baseSuffix else $"{baseSuffix}.{attempt}"
+        let originalExtension = IO.Path.GetExtension name
+
+        let extension =
+            if Encoding.UTF8.GetByteCount(suffix + originalExtension) < Library.MaximumSegmentBytes then
+                originalExtension
+            else
+                String.Empty
+
+        let stem =
+            if String.IsNullOrEmpty extension then
+                name
+            else
+                IO.Path.GetFileNameWithoutExtension name
 
         let maximumStemBytes =
             Library.MaximumSegmentBytes
             - Encoding.UTF8.GetByteCount(suffix + extension)
 
-        let mutable retained = stem
+        utf8Prefix maximumStemBytes stem
+        + suffix
+        + extension
 
-        while Encoding.UTF8.GetByteCount retained > maximumStemBytes do
-            retained <- retained.Substring(0, retained.Length - 1)
+    /// Checks every live descendant path against root ownership and the Product V1 path-byte bound after a directory move.
+    let movedDescendantPathsAreValid catalog destinationPath movingItemId movingName (documents: LibraryCurrentItemDocument array) =
+        let children = Dictionary<LibraryItemId, ResizeArray<LibraryItemDto>>()
 
-        retained + suffix + extension
+        documents
+        |> Array.choose (fun document ->
+            if document.Item.Tombstone.IsNone then
+                document.Item.Namespace
+                |> Option.map (fun ns -> ns, document.Item)
+            else
+                None)
+        |> Array.iter (fun (ns, item) ->
+            match ns.Parent.ItemId with
+            | Some parentId ->
+                match children.TryGetValue parentId with
+                | true, values -> values.Add item
+                | false, _ -> children.Add(parentId, ResizeArray [ item ])
+            | None -> ())
+
+        let rootPath = destinationPath + "/" + movingName
+        let pending = Stack<struct (LibraryItemId * string)>()
+        pending.Push(struct (movingItemId, rootPath))
+        let mutable valid = true
+
+        while valid && pending.Count > 0 do
+            let struct (parentId, parentPath) = pending.Pop()
+
+            match Library.normalizeRepositoryRelativePath parentPath with
+            | Error _ -> valid <- false
+            | Ok normalized when not (isInLibrary catalog normalized) -> valid <- false
+            | Ok normalized ->
+                match children.TryGetValue parentId with
+                | true, values ->
+                    values
+                    |> Seq.iter (fun item ->
+                        match item.Namespace with
+                        | Some ns -> pending.Push(struct (item.ItemId, normalized + "/" + ns.Name))
+                        | None -> ())
+                | false, _ -> ()
+
+        valid

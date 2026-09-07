@@ -2241,24 +2241,30 @@ module Application =
                     |> ignore)
             |> ignore
 
-            services.AddSingleton<CosmosClient> (fun serviceProvider ->
+            services.AddSingleton<CosmosClient> (fun _ ->
                 let cosmosConnectionString = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+                let debugEnvironment = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.DebugEnvironment)
+                let isLocal = String.Equals(debugEnvironment, "Local", StringComparison.OrdinalIgnoreCase)
+                let options = CosmosClientOptions()
+                options.ApplicationName <- "Grace.Server"
+                options.LimitToEndpoint <- false
+                options.UseSystemTextJsonSerializerWithOptions <- Constants.JsonSerializerOptions
 
-                let options =
-                    new CosmosClientOptions(
-                        ConnectionMode = ConnectionMode.Gateway,
-                        UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions,
-                        HttpClientFactory =
-                            (fun () ->
-                                let httpHandler = new HttpClientHandler()
-                                httpHandler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                                new HttpClient(httpHandler, disposeHandler = true)),
-                        LimitToEndpoint = true // prevents discovery probes that can trigger TLS issues on emulator
-                    )
+                if isLocal
+                   && not
+                      <| AzureEnvironment.useManagedIdentityForCosmos then
+                    options.LimitToEndpoint <- true
+                    options.ConnectionMode <- ConnectionMode.Gateway
+                    options.EnableContentResponseOnWrite <- true
+                    options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
 
-                options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
+                    options.HttpClientFactory <-
+                        fun () ->
+                            let httpHandler = new HttpClientHandler()
+                            httpHandler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                            new HttpClient(httpHandler, disposeHandler = true)
 
-                if AzureEnvironment.useManagedIdentity then
+                if AzureEnvironment.useManagedIdentityForCosmos then
                     let endpoint =
                         AzureEnvironment.tryGetCosmosEndpointUri ()
                         |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")

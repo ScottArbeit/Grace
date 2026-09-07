@@ -6,11 +6,23 @@ open Orleans
 open Orleans.Runtime
 open Orleans.Storage
 open System
+open System.Runtime.ExceptionServices
 open System.Text.Json
 open System.Threading.Tasks
 
 /// Reads and writes remote Library records through the six configured Orleans persistence purposes.
 module LibraryRecords =
+
+    /// Compares persisted values through the same stable JSON representation used by Grace storage.
+    let private valuesEqual<'T> (left: 'T) (right: 'T) =
+        let leftJson = JsonSerializer.Serialize<'T>(left, Constants.JsonSerializerOptions)
+        let rightJson = JsonSerializer.Serialize<'T>(right, Constants.JsonSerializerOptions)
+        String.Equals(leftJson, rightJson, StringComparison.Ordinal)
+
+    /// Rethrows the original storage exception after a recovery read cannot confirm its effect.
+    let private rethrow<'T> (exceptionInfo: ExceptionDispatchInfo) : 'T =
+        exceptionInfo.Throw()
+        Unchecked.defaultof<'T>
 
     [<Literal>]
     let ControlStorageName = "GraceLibraryControlStorage"
@@ -66,13 +78,45 @@ module LibraryRecords =
             return if state.RecordExists then Some(state.State, state.ETag) else None
         }
 
-    /// Writes one record with a caller-supplied ETag and leaves ambiguous-write recovery to an exact reread.
+    /// Writes one record with a fresh state wrapper and confirms an ambiguous successful write by exact reread.
     let write<'T> (services: IServiceProvider) storageName grainType recordKey etag value =
         task {
             let storage = services.GetRequiredKeyedService<IGrainStorage>(storageName)
             let state = GrainState<'T>(value, etag)
-            do! storage.WriteStateAsync(grainType, GrainId.Create(grainType, recordKey), state)
-            return state.ETag
+
+            try
+                do! storage.WriteStateAsync(grainType, GrainId.Create(grainType, recordKey), state)
+                return state.ETag
+            with
+            | ex ->
+                let original = ExceptionDispatchInfo.Capture(ex)
+
+                try
+                    match! read<'T> services storageName grainType recordKey with
+                    | Some (existing, recoveredEtag) when valuesEqual existing value -> return recoveredEtag
+                    | _ -> return rethrow original
+                with
+                | _ -> return rethrow original
+        }
+
+    /// Clears one record and accepts a missing recovery read as confirmation after an ambiguous response.
+    let clear<'T> (services: IServiceProvider) storageName grainType recordKey etag value =
+        task {
+            let storage = services.GetRequiredKeyedService<IGrainStorage>(storageName)
+            let state = GrainState<'T>(value, etag)
+
+            try
+                do! storage.ClearStateAsync(grainType, GrainId.Create(grainType, recordKey), state)
+            with
+            | ex ->
+                let original = ExceptionDispatchInfo.Capture(ex)
+
+                try
+                    match! read<'T> services storageName grainType recordKey with
+                    | None -> return ()
+                    | Some _ -> return rethrow original
+                with
+                | _ -> return rethrow original
         }
 
     /// Creates an immutable record or returns its existing value for deterministic replay comparison.
@@ -91,10 +135,7 @@ module LibraryRecords =
             match! create<'T> services storageName grainType recordKey value with
             | Choice1Of2 created -> return created
             | Choice2Of2 existing ->
-                let left = JsonSerializer.Serialize<'T>(existing, Constants.JsonSerializerOptions)
-                let right = JsonSerializer.Serialize<'T>(value, Constants.JsonSerializerOptions)
-
-                if String.Equals(left, right, StringComparison.Ordinal) then
+                if valuesEqual existing value then
                     return existing
                 else
                     return invalidOp $"Library record '{recordKey}' already contains a different value."

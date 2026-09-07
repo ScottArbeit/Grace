@@ -26,6 +26,7 @@
         <Compile Include="LibraryRecords.Actor.fs" />
         <Compile Include="LibraryTokens.Actor.fs" />
         <Compile Include="LibraryQueries.Actor.fs" />
+        <Compile Include="LibraryNotifications.Actor.fs" />
         <Compile Include="ApprovalPolicySnapshotResolver.Actor.fs" />
         <Compile Include="Context.Actor.fs" />
         <Compile Include="PersonalAccessToken.Actor.fs" />
