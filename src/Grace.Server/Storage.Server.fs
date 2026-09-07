@@ -1127,7 +1127,7 @@ module Storage =
                 events
                 |> Seq.tryPick (fun uploadSessionEvent ->
                     match uploadSessionEvent.Event with
-                    | UploadSessionEventType.Finalized (finalizeOperationId, manifestAddress) when finalizeOperationId = operationId -> Some manifestAddress
+                    | UploadSessionEventType.Finalized (finalizeOperationId, manifest) when finalizeOperationId = operationId -> Some manifest.ManifestAddress
                     | _ -> None)
 
             return operationAlreadyApplied, finalizedManifestAddress
@@ -1366,7 +1366,7 @@ module Storage =
                     return
                         Error(
                             GraceError.Create
-                                $"UploadSession must be active before issuing a ContentBlock upload URI; current state is {session.LifecycleState}."
+                                $"UploadSession {parameters.UploadSessionId} in repository {repositoryId} must be active before issuing a ContentBlock upload URI; current state is {session.LifecycleState}."
                                 correlationId
                         )
                 else
@@ -1782,6 +1782,7 @@ module Storage =
                                                     ChunkingSuiteId = parameters.ChunkingSuiteId
                                                     SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
                                                     OperationId = parameters.OperationId
+                                                    LibraryPreparation = None
                                                 }
 
                                         return! handleUploadSessionCommand context parameters command correlationId

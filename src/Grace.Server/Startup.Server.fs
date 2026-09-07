@@ -1,5 +1,7 @@
 namespace Grace.Server
 
+#nowarn "44"
+
 open Asp.Versioning
 open Asp.Versioning.ApiExplorer
 open Azure.Core
@@ -2191,7 +2193,18 @@ module Application =
             services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
             |> ignore
 
-            services.AddSingleton<ILibraryWriteAuthorizer, LibraryWriteAuthorizer>()
+            services.AddSingleton<Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>>>(
+                Func<IServiceProvider, Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>>> (fun serviceProvider ->
+                    let evaluator = serviceProvider.GetRequiredService<IGracePermissionEvaluator>()
+
+                    Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>> (fun repositoryId authorization _ ->
+                        evaluator.CheckAsync(
+                            authorization.Principals |> Array.toList,
+                            authorization.EffectiveClaims |> Set.ofArray,
+                            Operation.LibraryWrite,
+                            Resource.Repository(authorization.OwnerId, authorization.OrganizationId, repositoryId)
+                        )))
+            )
             |> ignore
 
             services.AddW3CLogging (fun options ->
@@ -2287,6 +2300,9 @@ module Application =
 
             if libraryTokenKey.Length < 32 then
                 invalidOp "The library token secret must decode to at least 32 bytes."
+
+            services.AddSingleton<byte array>(libraryTokenKey)
+            |> ignore
 
             services.AddSingleton<ILibraryCursorCodec>(LibraryCoordinator.LibraryCursorCodec(libraryTokenKey))
             |> ignore

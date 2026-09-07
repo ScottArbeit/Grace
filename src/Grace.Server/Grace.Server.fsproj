@@ -160,7 +160,7 @@
 		<PackageReference Include="Microsoft.OpenApi" Version="3.10.0" />
 		<PackageReference Include="Microsoft.Orleans.Clustering.AzureStorage" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.AzureStorage" Version="10.2.2" />
-		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="10.2.2" />
+		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="10.2.2-hpk.1" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Memory" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Redis" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="10.2.2" />

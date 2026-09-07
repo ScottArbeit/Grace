@@ -784,13 +784,21 @@ module Library =
     [<CLIMutable; GenerateSerializer>]
     type LibraryContentLocationDocument =
         {
+            [<Id(0u)>]
             id: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             RecordKind: string
+            [<Id(3u)>]
             RecordKey: string
+            [<Id(4u)>]
             SchemaVersion: int
+            [<Id(5u)>]
             Content: LibraryContentVersionDto
+            [<Id(6u)>]
             AuthorizedScope: string
+            [<Id(7u)>]
             Manifest: FileManifest
         }
 

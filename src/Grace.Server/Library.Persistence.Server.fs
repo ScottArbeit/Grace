@@ -4,7 +4,11 @@ open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Library
 open Microsoft.Azure.Cosmos
+open Microsoft.Extensions.Options
 open NodaTime
+open Orleans.Configuration
+open Orleans.Persistence.Cosmos
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Net
@@ -16,6 +20,24 @@ open System.Threading.Tasks
 
 /// Implements the six purpose-specific direct-Cosmos stores for remote Libraries.
 module LibraryPersistence =
+
+    [<Literal>]
+    let ControlStorageName = Grace.Actors.LibraryRecords.ControlStorageName
+
+    [<Literal>]
+    let ChangesStorageName = Grace.Actors.LibraryRecords.ChangesStorageName
+
+    [<Literal>]
+    let CurrentStorageName = Grace.Actors.LibraryRecords.CurrentStorageName
+
+    [<Literal>]
+    let ReceiptsStorageName = Grace.Actors.LibraryRecords.ReceiptsStorageName
+
+    [<Literal>]
+    let HistoryStorageName = Grace.Actors.LibraryRecords.HistoryStorageName
+
+    [<Literal>]
+    let BaselinesStorageName = Grace.Actors.LibraryRecords.BaselinesStorageName
 
     [<Literal>]
     let ControlContainerName = "grace-library-control"
@@ -34,6 +56,52 @@ module LibraryPersistence =
 
     [<Literal>]
     let BaselinesContainerName = "grace-library-baselines"
+
+    /// Maps a validated provider key to one Cosmos document and its ordered hierarchical partition components.
+    type GraceDocumentIdProvider(options: IOptions<ClusterOptions>, partitionKeyLevelCount: int) =
+        let defaultProvider = DefaultDocumentIdProvider(options)
+
+        do
+            if partitionKeyLevelCount < 1
+               || partitionKeyLevelCount > 3 then
+                invalidArg (nameof partitionKeyLevelCount) "Library Cosmos keys support one to three partition components."
+
+        /// Reads the partition components encoded at the start of the provider key.
+        member private _.PartitionValues(grainType: string, grainId: GrainId) =
+            let values =
+                grainId
+                    .Key
+                    .ToString()
+                    .Split('|', StringSplitOptions.None)
+
+            if values.Length < partitionKeyLevelCount
+               || values
+                  |> Array.take partitionKeyLevelCount
+                  |> Array.exists String.IsNullOrWhiteSpace then
+                invalidArg (nameof grainId) $"Library record '{grainType}' requires {partitionKeyLevelCount} non-empty partition components."
+
+            values |> Array.take partitionKeyLevelCount
+
+        interface IDocumentIdProvider with
+            member this.GetDocumentIdentifiers(grainType, grainId) =
+                let values = this.PartitionValues(grainType, grainId)
+                ValueTask<struct (string * string)>(struct (defaultProvider.GetId(grainType, grainId), values[0]))
+
+            member this.GetDocumentKey(grainType, grainId) =
+                let values = this.PartitionValues(grainType, grainId)
+                ValueTask<CosmosDocumentKey>(CosmosDocumentKey(defaultProvider.GetId(grainType, grainId), values :> IReadOnlyList<string>))
+
+    /// Maps Library control records to their repository partition.
+    type LibraryControlDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 1)
+
+    /// Maps Library journal and current records to their two-level partitions.
+    type LibraryTwoLevelDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 2)
+
+    /// Maps Library receipts, history, and baselines to their three-level partitions.
+    type LibraryThreeLevelDocumentIdProvider(options: IOptions<ClusterOptions>) =
+        inherit GraceDocumentIdProvider(options, 3)
 
     [<Literal>]
     let ChangeSegmentSize = 200L

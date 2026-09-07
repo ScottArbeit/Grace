@@ -11,6 +11,7 @@ open Grace.Shared.Validation.Library
 open Grace.Types.Common
 open Grace.Types.Repository
 open Grace.Types.Library
+open Grace.Types.UploadSession
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.SignalR
 open Microsoft.Extensions.DependencyInjection
@@ -507,31 +508,6 @@ module Library =
     /// Removes one exact-version Library.
     let RemoveLibrary: HttpHandler = changeLibrary false
 
-    /// Reconstructs the byte-equivalent upload-session start command persisted by a content preparation.
-    let internal preparedUploadSessionCommand (document: LibraryPreparedContentDocument) =
-        Grace.Types.UploadSession.UploadSessionCommand.Start
-            {
-                UploadSessionId = document.UploadSessionId
-                OwnerId = document.OwnerId
-                OrganizationId = document.OrganizationId
-                RepositoryId = document.RepositoryId
-                StoragePoolId = document.StoragePoolId
-                AuthorizedScope = document.AuthorizedScope
-                FileContentHash = document.Content.Blake3Hash
-                ExpectedSize = document.Content.Size
-                ChunkingSuiteId = RabinChunking.SuiteName
-                SamplingPolicySnapshot = document.SamplingPolicySnapshot
-                OperationId = $"Library-prepare:{document.OperationId:D}"
-            }
-
-    /// Starts or verifies the exact upload session described by one durable content preparation.
-    let private startPreparedUploadSession context (document: LibraryPreparedContentDocument) =
-        let correlationId = Services.getCorrelationId context
-        let uploadActor = UploadSession.CreateActorProxy document.UploadSessionId document.RepositoryId correlationId
-        let command = preparedUploadSessionCommand document
-
-        uploadActor.Handle command (Services.createMetadata context)
-
     /// Starts an existing immutable-content upload session bound to this repository, principal, operation, and descriptor.
     let PrepareContent: HttpHandler =
         fun _ context ->
@@ -546,51 +522,58 @@ module Library =
                    || parameters.Size <= 0L then
                     return! error StatusCodes.Status400BadRequest context "OperationId, lowercase hashes, and a positive size are required."
                 else
-                    let transferStore = service<ILibraryTransferStore> context
-                    let preparedId = LibraryCoordinator.deterministicGuid ids.RepositoryId parameters.OperationId "prepared-content"
+                    let uploadSessionId = Grace.Actors.LibraryDecision.deterministicGuid ids.RepositoryId parameters.OperationId "upload-session"
+                    let! repository = repositoryState context
 
-                    match! transferStore.ReadPreparedAsync(ids.RepositoryId, preparedId, context.RequestAborted) with
-                    | Some existing when
-                        existing.Document.OperationId
-                        <> parameters.OperationId
-                        || existing.Document.PrincipalId
-                           <> principalId context
-                        || existing.Document.Content.Blake3Hash
-                           <> parameters.Blake3Hash
-                        || existing.Document.Content.Sha256Hash
-                           <> parameters.Sha256Hash
-                        || existing.Document.Content.Size <> parameters.Size
-                        ->
-                        return! error StatusCodes.Status409Conflict context "The operation identity is already bound to another prepared descriptor."
-                    | Some existing ->
-                        match! startPreparedUploadSession context existing.Document with
-                        | Error actorError -> return! context |> Services.result400BadRequest actorError
-                        | Ok _ -> return! ok context existing.Document.Content
-                    | None ->
-                        let! repository = repositoryState context
+                    let expiresAt =
+                        SystemClock.Instance.GetCurrentInstant()
+                        + Duration.FromMinutes 15L
 
-                        let expiresAt =
-                            SystemClock.Instance.GetCurrentInstant()
-                            + Duration.FromMinutes 15L
+                    let authorizedScope = $"Library/{uploadSessionId:D}"
 
-                        let authorizedScope = $"Library/{preparedId:D}"
+                    let start =
+                        {
+                            UploadSessionId = uploadSessionId
+                            OwnerId = ids.OwnerId
+                            OrganizationId = ids.OrganizationId
+                            RepositoryId = ids.RepositoryId
+                            StoragePoolId = repository.StoragePoolId
+                            AuthorizedScope = authorizedScope
+                            FileContentHash = parameters.Blake3Hash
+                            ExpectedSize = parameters.Size
+                            ChunkingSuiteId = RabinChunking.SuiteName
+                            SamplingPolicySnapshot = JsonSerializer.Serialize(repository.ManifestEligibilityPolicy, Constants.JsonSerializerOptions)
+                            OperationId = $"Library-prepare:{parameters.OperationId:D}"
+                            LibraryPreparation =
+                                Some
+                                    {
+                                        OperationId = parameters.OperationId
+                                        PrincipalId = principalId context
+                                        ExpectedSha256 = parameters.Sha256Hash
+                                        ExpiresAt = expiresAt
+                                    }
+                        }
 
-                        let uploadInstructions =
-                            JsonSerializer.Serialize(
-                                {|
-                                    UploadSessionId = preparedId
-                                    AuthorizedScope = authorizedScope
-                                    StoragePoolId = repository.StoragePoolId
-                                    StartPath = "/storage/startManifestUploadSession"
-                                    UploadPath = "/storage/getContentBlockUploadUri"
-                                    FinalizePath = "/storage/finalizeManifestUpload"
-                                |},
-                                Constants.JsonSerializerOptions
-                            )
+                    let! _ = (LibraryActor ids.RepositoryId).PrepareContent start correlationId
 
-                        let prepared =
+                    let uploadInstructions =
+                        JsonSerializer.Serialize(
+                            {|
+                                UploadSessionId = uploadSessionId
+                                AuthorizedScope = authorizedScope
+                                StoragePoolId = repository.StoragePoolId
+                                StartPath = "/storage/startManifestUploadSession"
+                                UploadPath = "/storage/getContentBlockUploadUri"
+                                FinalizePath = "/storage/finalizeManifestUpload"
+                            |},
+                            Constants.JsonSerializerOptions
+                        )
+
+                    return!
+                        ok
+                            context
                             {
-                                PreparedContentId = preparedId
+                                PreparedContentId = uploadSessionId
                                 Blake3Hash = parameters.Blake3Hash
                                 Sha256Hash = parameters.Sha256Hash
                                 Size = parameters.Size
@@ -598,34 +581,6 @@ module Library =
                                 UploadInstructions = Some uploadInstructions
                                 ExpiresAt = expiresAt
                             }
-
-                        let samplingPolicySnapshot = JsonSerializer.Serialize(repository.ManifestEligibilityPolicy, Constants.JsonSerializerOptions)
-
-                        let preparedDocument =
-                            {
-                                id = $"prepared:{preparedId:D}"
-                                RepositoryId = ids.RepositoryId
-                                RecordKind = "prepared"
-                                RecordKey = $"prepared:{preparedId:D}"
-                                SchemaVersion = 1
-                                PreparedContentId = preparedId
-                                OperationId = parameters.OperationId
-                                PrincipalId = principalId context
-                                OwnerId = ids.OwnerId
-                                OrganizationId = ids.OrganizationId
-                                Content = prepared
-                                UploadSessionId = preparedId
-                                AuthorizedScope = authorizedScope
-                                StoragePoolId = repository.StoragePoolId
-                                SamplingPolicySnapshot = samplingPolicySnapshot
-                                FinalizedManifest = None
-                            }
-
-                        do! transferStore.CreatePreparedAsync(preparedDocument, context.RequestAborted)
-
-                        match! startPreparedUploadSession context preparedDocument with
-                        | Error actorError -> return! context |> Services.result400BadRequest actorError
-                        | Ok _ -> return! ok context prepared
             }
 
     /// Submits one validated change through the bounded repository actor.
@@ -638,53 +593,50 @@ module Library =
                 match validateChangeShape parameters with
                 | Error message -> return! error StatusCodes.Status400BadRequest context message
                 | Ok () ->
-                    match! resolvePreparedContent context ids.RepositoryId parameters.OperationId parameters.PreparedContentId with
-                    | Error message -> return! error StatusCodes.Status410Gone context message
-                    | Ok (preparedContent, preparedExpiresAt) ->
-                        let command =
-                            {
-                                RepositoryId = ids.RepositoryId
-                                OperationId = parameters.OperationId
-                                RequestHash = changeRequestHash ids.RepositoryId parameters
-                                LibraryCatalogVersion = parameters.LibraryCatalogVersion
-                                ChangeKind = parameters.ChangeKind
-                                ItemKind = parameters.ItemKind
-                                ItemId = if parameters.ItemId.HasValue then Some parameters.ItemId.Value else None
-                                NamespacePrecondition = parameters.NamespacePrecondition
-                                ContentPrecondition = parameters.ContentPrecondition
-                                CreationSlotExpectation = parameters.CreationSlotExpectation
-                                DestinationParent = parameters.DestinationParent
-                                DestinationName = Option.ofObj parameters.DestinationName
-                                PreparedContentId =
-                                    if parameters.PreparedContentId.HasValue then
-                                        Some parameters.PreparedContentId.Value
-                                    else
-                                        None
-                                PreparedContent = preparedContent
-                                PreparedContentExpiresAt = preparedExpiresAt
-                            }
+                    let command =
+                        {
+                            RepositoryId = ids.RepositoryId
+                            OperationId = parameters.OperationId
+                            RequestHash = changeRequestHash ids.RepositoryId parameters
+                            LibraryCatalogVersion = parameters.LibraryCatalogVersion
+                            ChangeKind = parameters.ChangeKind
+                            ItemKind = parameters.ItemKind
+                            ItemId = if parameters.ItemId.HasValue then Some parameters.ItemId.Value else None
+                            NamespacePrecondition = parameters.NamespacePrecondition
+                            ContentPrecondition = parameters.ContentPrecondition
+                            CreationSlotExpectation = parameters.CreationSlotExpectation
+                            DestinationParent = parameters.DestinationParent
+                            DestinationName = Option.ofObj parameters.DestinationName
+                            PreparedContentId =
+                                if parameters.PreparedContentId.HasValue then
+                                    Some parameters.PreparedContentId.Value
+                                else
+                                    None
+                            PreparedContent = None
+                            PreparedContentExpiresAt = None
+                        }
 
-                        let actor = LibraryActor ids.RepositoryId
+                    let actor = LibraryActor ids.RepositoryId
 
-                        let authorization =
-                            {
-                                OwnerId = ids.OwnerId
-                                OrganizationId = ids.OrganizationId
-                                Principals =
-                                    PrincipalMapper.getPrincipals context.User
-                                    |> List.toArray
-                                EffectiveClaims =
-                                    PrincipalMapper.getEffectiveClaims context.User
-                                    |> Set.toArray
-                            }
+                    let authorization =
+                        {
+                            OwnerId = ids.OwnerId
+                            OrganizationId = ids.OrganizationId
+                            Principals =
+                                PrincipalMapper.getPrincipals context.User
+                                |> List.toArray
+                            EffectiveClaims =
+                                PrincipalMapper.getEffectiveClaims context.User
+                                |> Set.toArray
+                        }
 
-                        let! submitResult = actor.Submit command (principalId context) authorization (Services.getCorrelationId context)
+                    let! submitResult = actor.Submit command (principalId context) authorization (Services.getCorrelationId context)
 
-                        match submitResult.Receipt, submitResult.ForbiddenReason with
-                        | Some receipt, None ->
-                            do! tryNotifyLibraryContentAvailable context ids.RepositoryId receipt
-                            return! ok context receipt
-                        | _ -> return! error StatusCodes.Status403Forbidden context "Forbidden."
+                    match submitResult.Receipt, submitResult.ForbiddenReason with
+                    | Some receipt, None ->
+                        do! tryNotifyLibraryContentAvailable context ids.RepositoryId receipt
+                        return! ok context receipt
+                    | _ -> return! error StatusCodes.Status403Forbidden context "Forbidden."
             }
 
     /// Reads one deterministic operation receipt after repository authorization.
@@ -693,16 +645,11 @@ module Library =
             task {
                 let ids = Services.getGraceIds context
                 let! parameters = context.BindJsonAsync<GetLibraryOperationParameters>()
-                let store = service<ILibraryStore> context
 
-                do!
-                    (LibraryActor ids.RepositoryId)
-                        .Repair(Services.getCorrelationId context)
-
-                match! store.ReadReceiptAsync(ids.RepositoryId, parameters.OperationId, context.RequestAborted) with
+                match! (LibraryActor ids.RepositoryId).GetOperation parameters.OperationId (Services.getCorrelationId context) with
                 | None -> return! Services.result404NotFound context
-                | Some receipt when receipt.Receipt.PrincipalId <> principalId context -> return! Services.result404NotFound context
-                | Some receipt -> return! ok context receipt.Receipt
+                | Some receipt when receipt.PrincipalId <> principalId context -> return! Services.result404NotFound context
+                | Some receipt -> return! ok context receipt
             }
 
     /// Reads one current Library item after authorization and repair.
@@ -712,14 +659,8 @@ module Library =
                 let ids = Services.getGraceIds context
                 let! parameters = context.BindJsonAsync<GetLibraryItemParameters>()
 
-                let! _ =
-                    LibraryActor ids.RepositoryId
-                    |> fun actor -> actor.GetStatus(Services.getCorrelationId context)
-
-                let store = service<ILibraryStore> context
-
-                match! store.ReadItemAsync(ids.RepositoryId, parameters.ItemId, context.RequestAborted) with
-                | Some item -> return! ok context item.Item
+                match! (LibraryActor ids.RepositoryId).GetItem parameters.ItemId (Services.getCorrelationId context) with
+                | Some item -> return! ok context item
                 | None -> return! Services.result404NotFound context
             }
 
@@ -729,7 +670,6 @@ module Library =
             task {
                 let ids = Services.getGraceIds context
                 let! parameters = context.BindJsonAsync<GetLibraryNamespaceSlotParameters>()
-                let store = service<ILibraryStore> context
 
                 match parameters.Parent, normalizeName parameters.Name with
                 | None, _
@@ -745,10 +685,10 @@ module Library =
                             }
                         | "item", None, Some parentId ->
                             task {
-                                match! store.ReadItemAsync(ids.RepositoryId, parentId, context.RequestAborted) with
+                                match! (LibraryActor ids.RepositoryId).GetItem parentId (Services.getCorrelationId context) with
                                 | Some item ->
                                     return
-                                        item.Item.Namespace
+                                        item.Namespace
                                         |> Option.map (fun value -> value.NormalizedPath)
                                 | None -> return None
                             }
@@ -764,8 +704,8 @@ module Library =
                         match normalizedPath with
                         | None -> return! error StatusCodes.Status400BadRequest context "The namespace path is invalid."
                         | Some path ->
-                            match! store.ReadSlotAsync(ids.RepositoryId, path, context.RequestAborted) with
-                            | Some slot -> return! ok context slot.Slot
+                            match! (LibraryActor ids.RepositoryId).GetSlot path (Services.getCorrelationId context) with
+                            | Some slot -> return! ok context slot
                             | None ->
                                 return!
                                     ok
@@ -1062,131 +1002,99 @@ module Library =
                                 }
             }
 
-    /// Creates one principal-bound, one-use grant after current item and retained content checks.
+    /// Creates a short-lived signed read descriptor after current item and retained content checks.
     let PrepareContentRead: HttpHandler =
         fun _ context ->
             task {
                 let ids = Services.getGraceIds context
                 let! parameters = context.BindJsonAsync<PrepareLibraryContentReadParameters>()
-                let store = service<ILibraryStore> context
-                let transferStore = service<ILibraryTransferStore> context
+                let actor = LibraryActor ids.RepositoryId
 
-                do!
-                    (LibraryActor ids.RepositoryId)
-                        .Repair(Services.getCorrelationId context)
-
-                match! store.ReadItemAsync(ids.RepositoryId, parameters.ItemId, context.RequestAborted) with
+                match! actor.GetItem parameters.ItemId (Services.getCorrelationId context) with
                 | None -> return! Services.result404NotFound context
                 | Some item when
-                    item.Item.State <> "live"
-                    || item.Item.Content
+                    item.State <> "live"
+                    || item.Content
                        |> Option.forall (fun content ->
                            content.ContentVersionId
                            <> parameters.ContentVersionId)
                     ->
                     return! Services.result404NotFound context
                 | Some item ->
-                    match! transferStore.ReadContentLocationAsync(ids.RepositoryId, parameters.ContentVersionId, context.RequestAborted) with
+                    match! actor.GetContentLocation parameters.ContentVersionId (Services.getCorrelationId context) with
                     | None -> return! Services.result404NotFound context
                     | Some location ->
-                        let grantId = Guid.NewGuid()
-
                         let expiresAt =
                             SystemClock.Instance.GetCurrentInstant()
                             + Duration.FromSeconds 60L
 
-                        let tokenCodec = service<LibraryOpaqueTokenCodec> context
-
-                        let token = tokenCodec.Encode(ReadGrantTokenKind, ids.RepositoryId, grantId.ToString("D"), 0, expiresAt)
-
-                        do!
-                            transferStore.CreateReadGrantAsync(
-                                {
-                                    id = $"grant:{grantId:D}"
-                                    RepositoryId = ids.RepositoryId
-                                    RecordKind = "grant"
-                                    RecordKey = $"grant:{grantId:D}"
-                                    SchemaVersion = 1
-                                    GrantId = grantId
-                                    PrincipalId = principalId context
-                                    ItemId = item.Item.ItemId
-                                    Content = location.Content
-                                    AuthorizedScope = location.AuthorizedScope
-                                    Manifest = location.Manifest
-                                    ExpiresAt = expiresAt
-                                    ConsumedAt = None
-                                },
-                                context.RequestAborted
-                            )
+                        let token =
+                            Grace.Actors.LibraryTokens.contentRead
+                                (service<byte array> context)
+                                ids.RepositoryId
+                                item.ItemId
+                                location.Content.ContentVersionId
+                                (expiresAt.ToDateTimeOffset().ToUnixTimeSeconds())
 
                         return! ok context { GrantId = token; DownloadPath = $"/libraries/content/{token}"; Content = location.Content; ExpiresAt = expiresAt }
             }
 
-    /// Redeems one opaque grant once and streams exact verified immutable bytes.
+    /// Validates one signed retained-content descriptor and streams exact immutable bytes.
     let DownloadContent (token: string) : HttpHandler =
         fun _ context ->
             task {
-                let tokenCodec = service<LibraryOpaqueTokenCodec> context
                 let now = SystemClock.Instance.GetCurrentInstant()
 
-                match tokenCodec.TryDecode(ReadGrantTokenKind, token, now) with
+                match Grace.Actors.LibraryTokens.tryContentRead (service<byte array> context) (now.ToDateTimeOffset().ToUnixTimeSeconds()) token with
                 | None -> return! Services.result404NotFound context
-                | Some payload ->
-                    match Guid.TryParse payload.Value with
-                    | false, _ -> return! Services.result404NotFound context
-                    | true, grantId ->
-                        let transferStore = service<ILibraryTransferStore> context
+                | Some (repositoryId, itemId, contentVersionId) ->
+                    let actor = LibraryActor repositoryId
+                    let! currentItem = actor.GetItem itemId (Services.getCorrelationId context)
+                    let! contentLocation = actor.GetContentLocation contentVersionId (Services.getCorrelationId context)
 
-                        match! transferStore.ReadReadGrantAsync(payload.RepositoryId, grantId, context.RequestAborted) with
-                        | None -> return! Services.result404NotFound context
-                        | Some grant when
-                            grant.Document.ExpiresAt <= now
-                            || grant.Document.ConsumedAt.IsSome
-                            ->
-                            return! Services.result404NotFound context
-                        | Some grant ->
-                            let consumed = { grant.Document with ConsumedAt = Some now }
+                    match currentItem, contentLocation with
+                    | Some item, Some location when
+                        item.Content
+                        |> Option.exists (fun content -> content.ContentVersionId = contentVersionId)
+                        ->
+                        let repositoryActor = Repository.CreateActorProxy Guid.Empty repositoryId (Services.getCorrelationId context)
 
-                            match! transferStore.ConsumeReadGrantAsync(consumed, grant.ETag, context.RequestAborted) with
-                            | PreconditionFailed -> return! Services.result404NotFound context
-                            | Replaced _ ->
-                                let repositoryActor = Repository.CreateActorProxy Guid.Empty payload.RepositoryId (Services.getCorrelationId context)
+                        let! repository = repositoryActor.Get(Services.getCorrelationId context)
 
-                                let! repository = repositoryActor.Get(Services.getCorrelationId context)
+                        let fileVersion =
+                            FileVersion.CreateWithHashes
+                                (RelativePath $"Library/{location.Content.ContentVersionId:D}")
+                                (Sha256Hash location.Content.Sha256Hash)
+                                (Blake3Hash location.Content.Blake3Hash)
+                                String.Empty
+                                true
+                                location.Content.Size
 
-                                let fileVersion =
-                                    FileVersion.CreateWithHashes
-                                        (RelativePath $"Library/{grant.Document.Content.ContentVersionId:D}")
-                                        (Sha256Hash grant.Document.Content.Sha256Hash)
-                                        (Blake3Hash grant.Document.Content.Blake3Hash)
-                                        String.Empty
-                                        true
-                                        grant.Document.Content.Size
+                        fileVersion.ContentReference <- FileContentReference.FileManifest location.Manifest
 
-                                fileVersion.ContentReference <- FileContentReference.FileManifest grant.Document.Manifest
+                        match!
+                            NormalFileMaterialization.materializeBytes
+                                repository
+                                location.AuthorizedScope
+                                fileVersion
+                                (Services.getCorrelationId context)
+                                context.RequestAborted
+                            with
+                        | Error _ -> return! Services.result404NotFound context
+                        | Ok bytes ->
+                            context.Response.ContentLength <- int64 bytes.Length
+                            context.Response.Headers.ETag <- $"\"{location.Content.Blake3Hash}\""
+                            context.Response.Headers[ "X-Content-BLAKE3" ] <- location.Content.Blake3Hash
+                            context.Response.Headers[ "X-Content-SHA256" ] <- location.Content.Sha256Hash
+                            context.Response.ContentType <- "application/octet-stream"
 
-                                match!
-                                    NormalFileMaterialization.materializeBytes
-                                        repository
-                                        grant.Document.AuthorizedScope
-                                        fileVersion
-                                        (Services.getCorrelationId context)
-                                        context.RequestAborted
-                                    with
-                                | Error _ -> return! Services.result404NotFound context
-                                | Ok bytes ->
-                                    context.Response.ContentLength <- int64 bytes.Length
-                                    context.Response.Headers.ETag <- $"\"{grant.Document.Content.Blake3Hash}\""
-                                    context.Response.Headers[ "X-Content-BLAKE3" ] <- grant.Document.Content.Blake3Hash
-                                    context.Response.Headers[ "X-Content-SHA256" ] <- grant.Document.Content.Sha256Hash
-                                    context.Response.ContentType <- "application/octet-stream"
+                            do!
+                                context
+                                    .Response
+                                    .Body
+                                    .WriteAsync(bytes, context.RequestAborted)
+                                    .AsTask()
 
-                                    do!
-                                        context
-                                            .Response
-                                            .Body
-                                            .WriteAsync(bytes, context.RequestAborted)
-                                            .AsTask()
-
-                                    return Some context
+                            return Some context
+                    | _ -> return! Services.result404NotFound context
             }

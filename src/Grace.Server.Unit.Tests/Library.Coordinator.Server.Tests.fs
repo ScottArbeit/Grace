@@ -697,27 +697,6 @@ type LibraryCoordinatorTests() =
             )
         }
 
-    /// Verifies a revoked permission gate exits before the coordinator can create any durable Library effect.
-    [<Test>]
-    member _.RevokedLibraryWritePermissionPreventsReservationAndReceipt() =
-        task {
-            let _, control = pendingFixture ()
-            let mutable submitCount = 0
-
-            let authorize () = Task.FromResult(Denied "revoked")
-
-            let submit () =
-                submitCount <- submitCount + 1
-                Task.FromResult control.Pending.Value.Receipt
-
-            let! result = RepositoryLibrary.submitWhenAuthorized authorize submit
-
-            Assert.That(result.Receipt, Is.EqualTo(None))
-            Assert.That(result.ForbiddenReason, Is.EqualTo(Some "revoked"))
-
-            Assert.That(submitCount, Is.Zero)
-        }
-
     /// Verifies exact repository catalog initialization retries preserve the same empty actor-owned catalog.
     [<Test>]
     member _.InitialCatalogExactRetryIsIdempotent() =
@@ -853,59 +832,3 @@ type LibraryCoordinatorTests() =
                     ))
             )
         }
-
-    /// Verifies an exact prepared-content retry reconstructs and invokes the same upload-session start identity.
-    [<Test>]
-    member _.PreparedContentRetryResumesExactUploadSession() =
-        let repositoryId = Guid.NewGuid()
-        let operationId = Guid.NewGuid()
-        let preparedId = Guid.NewGuid()
-        let now = Instant.FromUtc(2026, 8, 28, 13, 0)
-
-        let document =
-            {
-                id = $"prepared:{preparedId:D}"
-                RepositoryId = repositoryId
-                RecordKind = "prepared"
-                RecordKey = $"prepared:{preparedId:D}"
-                SchemaVersion = 1
-                PreparedContentId = preparedId
-                OperationId = operationId
-                PrincipalId = "principal"
-                OwnerId = Guid.NewGuid()
-                OrganizationId = Guid.NewGuid()
-                Content =
-                    {
-                        PreparedContentId = preparedId
-                        Blake3Hash = String.replicate 64 "a"
-                        Sha256Hash = String.replicate 64 "b"
-                        Size = 42L
-                        UploadRequired = true
-                        UploadInstructions = None
-                        ExpiresAt = now + Duration.FromMinutes 15L
-                    }
-                UploadSessionId = preparedId
-                AuthorizedScope = $"Library/{preparedId:D}"
-                StoragePoolId = StoragePoolId $"pool-{Guid.NewGuid():N}"
-                SamplingPolicySnapshot = "{\"minimumSampleCount\":1}"
-                FinalizedManifest = None
-            }
-
-        let firstAttempt = Library.preparedUploadSessionCommand document
-        let exactRetry = Library.preparedUploadSessionCommand document
-        let sourcePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Library.Server.fs"))
-        let source = File.ReadAllText sourcePath
-
-        Assert.That(exactRetry, Is.EqualTo(firstAttempt))
-        Assert.That(source, Does.Contain("startPreparedUploadSession context existing.Document"))
-
-        match exactRetry with
-        | UploadSessionCommand.Start command ->
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(command.UploadSessionId, Is.EqualTo(preparedId))
-                    Assert.That(command.RepositoryId, Is.EqualTo(repositoryId))
-                    Assert.That(command.OperationId, Is.EqualTo($"Library-prepare:{operationId:D}"))
-                    Assert.That(command.SamplingPolicySnapshot, Is.EqualTo(document.SamplingPolicySnapshot)))
-            )
-        | _ -> Assert.Fail("Prepared content must reconstruct an upload-session Start command.")

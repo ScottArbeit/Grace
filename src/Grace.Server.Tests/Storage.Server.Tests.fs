@@ -8,10 +8,14 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.ManifestContributionAccounting
+open Grace.Types.Library
+open Grace.Types.RepositoryContentCounter
 open Grace.Types.UploadSession
 open Grace.Types.Common
+open Microsoft.Azure.Cosmos
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.IO
 open System.Net
 open System.Net.Http
@@ -19,6 +23,38 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Net.Http.Headers
+
+/// Reads persisted actor snapshots needed by the Library restart scenario.
+module private LibraryActorSnapshots =
+    /// Reads snapshots for one actor state name from the shared actor container.
+    let read<'T> (state: TestHostState) grainType =
+        task {
+            use client = AspireTestHost.createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            use iterator = container.GetItemQueryIterator<Dictionary<string, obj>>(QueryDefinition("SELECT * FROM c"))
+            let snapshots = ResizeArray<'T>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                for document in page do
+                    let tryElement name =
+                        match document.TryGetValue name with
+                        | true, (:? JsonElement as value) -> Some value
+                        | _ -> None
+
+                    let storedType =
+                        tryElement "GrainType"
+                        |> Option.bind (fun value -> if value.ValueKind = JsonValueKind.String then Some(value.GetString()) else None)
+                        |> Option.defaultValue String.Empty
+
+                    if storedType.Equals(grainType, StringComparison.Ordinal) then
+                        match tryElement "State" with
+                        | Some value -> snapshots.Add(JsonSerializer.Deserialize<'T>(value.GetRawText(), Constants.JsonSerializerOptions))
+                        | None -> ()
+
+            return snapshots.ToArray()
+        }
 
 /// Groups shared helpers for storage placement test helpers.
 module private StoragePlacementTestHelpers =
@@ -1354,7 +1390,10 @@ type StorageManifestUploadSessionRoutes() =
             register.LogicalLength <- logicalLength
             register.ExpectedPayloadLength <- int64 block.Payload.Length
 
-            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+            let! registered = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            Assert.That(registered.ReturnValue.Session.UploadSessionId, Is.EqualTo(sessionId))
+            Assert.That(registered.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.UploadingBlocks))
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
@@ -1364,7 +1403,18 @@ type StorageManifestUploadSessionRoutes() =
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
-            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let! uploadUriDiagnostics =
+                task {
+                    if uploadUriResponse.StatusCode = HttpStatusCode.OK then
+                        return uploadUriBody
+                    else
+                        let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
+                        let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                        return $"{uploadUriBody}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
+                }
+
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriDiagnostics)
 
             let uploadUri = Uri uploadUriBody
             let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
@@ -3482,4 +3532,230 @@ type StorageManifestUploadSessionRoutes() =
 
             let! stagingExists = contentBlockExistsAtPlacement uploadUri stagingPlacement
             Assert.That(stagingExists, Is.False)
+        }
+
+    /// Verifies Library acceptance, retained-byte reads, and operation replay across a full server restart.
+    [<Test>]
+    member _.LibraryUploadAcceptReadAndRestartReplayUseOneTrackedManifestReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let operationId = Guid.NewGuid()
+            let libraryPath = $"LibraryRestart{Guid.NewGuid():N}"
+            let fileName = "restart.bin"
+            let payload = pseudoRandomBytes 220000
+            Guid.NewGuid().ToByteArray().CopyTo(payload, 0)
+            let block = encodeBlock payload
+
+            let getCatalog = Parameters.Library.GetLibraryCatalogParameters()
+            getCatalog.OwnerId <- ownerId
+            getCatalog.OrganizationId <- organizationId
+            getCatalog.RepositoryId <- repositoryId
+            getCatalog.CorrelationId <- correlationId
+            use! catalogResponse = Client.PostAsync("/libraries/catalog/get", createJsonContent getCatalog)
+            let! catalogBody = catalogResponse.Content.ReadAsStringAsync()
+            Assert.That(catalogResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), catalogBody)
+
+            let catalog =
+                (deserialize<GraceReturnValue<LibraryCatalogDto>> catalogBody)
+                    .ReturnValue
+
+            let addLibrary = Parameters.Library.AddLibraryParameters()
+            addLibrary.OwnerId <- ownerId
+            addLibrary.OrganizationId <- organizationId
+            addLibrary.RepositoryId <- repositoryId
+            addLibrary.ExpectedVersion <- catalog.Version
+            addLibrary.LibraryPath <- libraryPath
+            addLibrary.OperationId <- Guid.NewGuid()
+            addLibrary.CorrelationId <- correlationId
+            use! addResponse = Client.PostAsync("/libraries/add", createJsonContent addLibrary)
+            let! addBody = addResponse.Content.ReadAsStringAsync()
+            Assert.That(addResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), addBody)
+
+            let configuredCatalog =
+                (deserialize<GraceReturnValue<LibraryCatalogChangeResultDto>> addBody)
+                    .ReturnValue
+                    .LibraryCatalog
+
+            let parent = { Kind = "root"; LibraryPath = Some libraryPath; ItemId = None }
+            let getSlot = Parameters.Library.GetLibraryNamespaceSlotParameters()
+            getSlot.OwnerId <- ownerId
+            getSlot.OrganizationId <- organizationId
+            getSlot.RepositoryId <- repositoryId
+            getSlot.Parent <- Some parent
+            getSlot.Name <- fileName
+            getSlot.CorrelationId <- correlationId
+            use! slotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent getSlot)
+            let! slotBody = slotResponse.Content.ReadAsStringAsync()
+            Assert.That(slotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), slotBody)
+
+            let slot =
+                (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> slotBody)
+                    .ReturnValue
+
+            let prepare = Parameters.Library.PrepareLibraryContentParameters()
+            prepare.OwnerId <- ownerId
+            prepare.OrganizationId <- organizationId
+            prepare.RepositoryId <- repositoryId
+            prepare.OperationId <- operationId
+            prepare.Blake3Hash <- BranchServerTestHelpers.blake3Hex payload
+            prepare.Sha256Hash <- BranchServerTestHelpers.sha256Hex payload
+            prepare.Size <- int64 payload.Length
+            prepare.CorrelationId <- correlationId
+            use! prepareResponse = Client.PostAsync("/libraries/content/prepare", createJsonContent prepare)
+            let! prepareBody = prepareResponse.Content.ReadAsStringAsync()
+
+            let! prepareDiagnostics =
+                task {
+                    if prepareResponse.StatusCode = HttpStatusCode.OK then
+                        return prepareBody
+                    else
+                        let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
+                        let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                        return $"{prepareBody}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
+                }
+
+            Assert.That(prepareResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prepareDiagnostics)
+
+            let prepared =
+                (deserialize<GraceReturnValue<LibraryPreparedContentDto>> prepareBody)
+                    .ReturnValue
+
+            let authorizedScope = RelativePath $"Library/{prepared.PreparedContentId:D}"
+
+            let uploadSessionId, storagePoolId =
+                use instructions = JsonDocument.Parse(prepared.UploadInstructions.Value)
+
+                let uploadSessionId =
+                    instructions
+                        .RootElement
+                        .GetProperty(nameof UploadSessionId)
+                        .GetGuid()
+
+                let storagePoolId =
+                    instructions
+                        .RootElement
+                        .GetProperty(nameof StoragePoolId)
+                        .GetString()
+                    |> StoragePoolId
+
+                uploadSessionId, storagePoolId
+
+            Assert.That(uploadSessionId, Is.EqualTo(prepared.PreparedContentId))
+            TestContext.Progress.WriteLine($"Library upload session {uploadSessionId} in repository {repositoryId}.")
+
+            let manifest = manifestForStoragePool storagePoolId payload block
+
+            let! registered =
+                confirmUploadedBlock
+                    repositoryId
+                    correlationId
+                    uploadSessionId
+                    authorizedScope
+                    block
+                    0L
+                    (int64 payload.Length)
+                    "library-restart-register"
+                    "library-restart-confirm"
+
+            Assert.That(registered.ReturnValue.Session.UploadSessionId, Is.EqualTo(uploadSessionId))
+            Assert.That(registered.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.UploadingBlocks))
+
+            let! finalized = finalizeManifestUpload repositoryId correlationId uploadSessionId authorizedScope "library-restart-finalize" manifest
+            Assert.That(finalized.ReturnValue.Session.LibraryPreparation, Is.Not.EqualTo(None))
+            Assert.That(finalized.ReturnValue.Session.FinalizedManifest, Is.EqualTo(Some manifest))
+
+            let submit = Parameters.Library.SubmitLibraryChangeParameters()
+            submit.OwnerId <- ownerId
+            submit.OrganizationId <- organizationId
+            submit.RepositoryId <- repositoryId
+            submit.OperationId <- operationId
+            submit.LibraryCatalogVersion <- configuredCatalog.Version
+            submit.ChangeKind <- ChangeKind.CreateFile
+            submit.ItemKind <- ItemKind.File
+            submit.PreparedContentId <- Nullable prepared.PreparedContentId
+            submit.CreationSlotExpectation <- Some { Parent = parent; Name = fileName; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = slot.State }
+            submit.CorrelationId <- correlationId
+
+            let submitAsync () =
+                task {
+                    use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent submit)
+                    let! body = response.Content.ReadAsStringAsync()
+
+                    let! diagnostics =
+                        task {
+                            if response.StatusCode = HttpStatusCode.OK then
+                                return body
+                            else
+                                let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
+                                let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                                return $"{body}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
+                        }
+
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), diagnostics)
+
+                    return
+                        (deserialize<GraceReturnValue<LibraryOperationReceiptDto>> body)
+                            .ReturnValue
+                }
+
+            let readAsync (receipt: LibraryOperationReceiptDto) =
+                task {
+                    let item = receipt.Item.Value
+                    let content = item.Content.Value
+                    let prepareRead = Parameters.Library.PrepareLibraryContentReadParameters()
+                    prepareRead.OwnerId <- ownerId
+                    prepareRead.OrganizationId <- organizationId
+                    prepareRead.RepositoryId <- repositoryId
+                    prepareRead.ItemId <- item.ItemId
+                    prepareRead.ContentVersionId <- content.ContentVersionId
+                    prepareRead.CorrelationId <- correlationId
+                    use! response = Client.PostAsync("/libraries/content/read", createJsonContent prepareRead)
+                    let! body = response.Content.ReadAsStringAsync()
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+                    let descriptor =
+                        (deserialize<GraceReturnValue<LibraryContentReadGrantDto>> body)
+                            .ReturnValue
+
+                    use! download = Client.GetAsync(descriptor.DownloadPath)
+                    let! bytes = download.Content.ReadAsByteArrayAsync()
+                    Assert.That(download.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+                    Assert.That(Convert.ToHexString(bytes), Is.EqualTo(Convert.ToHexString(payload)))
+                    return descriptor
+                }
+
+            let! firstReceipt = submitAsync ()
+            Assert.That(firstReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+            let! firstDescriptor = readAsync firstReceipt
+            let state = HostState.Value
+            let! before = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+
+            let counterBefore: RepositoryContentCounterDto =
+                before
+                |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.ManifestAddress = manifest.ManifestAddress)
+
+            do! AspireTestHost.restartGraceServerAsync state "Library accepted-content replay"
+            let! replayReceipt = submitAsync ()
+            let! replayDescriptor = readAsync replayReceipt
+            let! after = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+
+            let counterAfter: RepositoryContentCounterDto =
+                after
+                |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.ManifestAddress = manifest.ManifestAddress)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(replayReceipt, Is.EqualTo(firstReceipt))
+                    Assert.That(replayDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
+                    Assert.That(counterBefore.Count, Is.EqualTo(1L))
+                    Assert.That(counterBefore.PendingTrackedAdd, Is.EqualTo(None))
+                    Assert.That(counterAfter.Count, Is.EqualTo(counterBefore.Count))
+                    Assert.That(counterAfter.Revision, Is.EqualTo(counterBefore.Revision))
+                    Assert.That(counterAfter.PendingTrackedAdd, Is.EqualTo(None)))
+            )
         }

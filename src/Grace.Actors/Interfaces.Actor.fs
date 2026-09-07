@@ -748,6 +748,9 @@ module Interfaces =
     type IRepositoryLibraryActor =
         inherit IGrainWithGuidKey
 
+        /// Starts or replays the repository-bound upload session used by one Library content operation.
+        abstract member PrepareContent: start: StartUploadSession -> correlationId: CorrelationId -> Task<UploadSessionDto>
+
         /// Creates the initial empty catalog from immutable repository creation facts when control state is absent.
         abstract member InitializeCatalog: libraryCatalog: LibraryCatalogDto -> correlationId: CorrelationId -> Task
 
@@ -768,6 +771,19 @@ module Interfaces =
             authorization: LibraryWriteAuthorization ->
             correlationId: CorrelationId ->
                 Task<LibrarySubmitResult>
+
+        /// Returns the exact durable operation receipt after repairing matching pending work.
+        abstract member GetOperation: operationId: LibraryOperationId -> correlationId: CorrelationId -> Task<LibraryOperationReceiptDto option>
+
+        /// Returns one current Library item projection after repairing pending work.
+        abstract member GetItem: itemId: LibraryItemId -> correlationId: CorrelationId -> Task<LibraryItemDto option>
+
+        /// Returns one current Library namespace slot after repairing pending work.
+        abstract member GetSlot: normalizedPath: string -> correlationId: CorrelationId -> Task<LibraryNamespaceSlotDto option>
+
+        /// Returns the retained immutable-content location for a current content identity.
+        abstract member GetContentLocation:
+            contentVersionId: LibraryContentVersionId -> correlationId: CorrelationId -> Task<LibraryContentLocationDocument option>
 
         /// Repairs any pending accepted operation without admitting another command.
         abstract member Repair: correlationId: CorrelationId -> Task
@@ -813,6 +829,19 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Adds one reference whose exact transition remains replayable until its dependent workflow and receipt complete.
+        abstract member AddTrackedReference:
+            operationId: RepositoryContentCounterOperationId ->
+            repositoryId: RepositoryId ->
+            storagePoolId: StoragePoolId ->
+            manifestAddress: ManifestAddress ->
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Releases the tracked add identity after its dependent workflow and receipt are durable.
+        abstract member CompleteTrackedReference:
+            operationId: RepositoryContentCounterOperationId -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
         /// Atomically replaces a proven positive logical count without emitting physical contribution intents.
         abstract member ReconcilePositiveCount:
