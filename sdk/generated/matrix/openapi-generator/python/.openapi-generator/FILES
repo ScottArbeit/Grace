@@ -210,7 +210,10 @@ docs/OrganizationType.md
 docs/OrganizationsApi.md
 docs/OutboundUrlSafety.md
 docs/OwnerCommandReturnValue.md
+docs/OwnerDirectoryVersionObservation.md
+docs/OwnerDirectoryVersionObservationScope.md
 docs/OwnerDto.md
+docs/OwnerObservationReturnValue.md
 docs/OwnerParameters.md
 docs/OwnerReturnValue.md
 docs/OwnerType.md
@@ -536,7 +539,10 @@ grace_generated_openapi_probe/models/organization_return_value.py
 grace_generated_openapi_probe/models/organization_type.py
 grace_generated_openapi_probe/models/outbound_url_safety.py
 grace_generated_openapi_probe/models/owner_command_return_value.py
+grace_generated_openapi_probe/models/owner_directory_version_observation.py
+grace_generated_openapi_probe/models/owner_directory_version_observation_scope.py
 grace_generated_openapi_probe/models/owner_dto.py
+grace_generated_openapi_probe/models/owner_observation_return_value.py
 grace_generated_openapi_probe/models/owner_parameters.py
 grace_generated_openapi_probe/models/owner_return_value.py
 grace_generated_openapi_probe/models/owner_type.py
@@ -854,7 +860,10 @@ test/test_organization_type.py
 test/test_organizations_api.py
 test/test_outbound_url_safety.py
 test/test_owner_command_return_value.py
+test/test_owner_directory_version_observation.py
+test/test_owner_directory_version_observation_scope.py
 test/test_owner_dto.py
+test/test_owner_observation_return_value.py
 test/test_owner_parameters.py
 test/test_owner_return_value.py
 test/test_owner_type.py

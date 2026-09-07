@@ -7,6 +7,7 @@ All URIs are relative to *http://localhost:5000*
 | [**createOwner**](OwnersApi.md#createowner) | **POST** /owner/create | Create an owner. |
 | [**deleteOwner**](OwnersApi.md#deleteowner) | **POST** /owner/delete | Delete an owner. |
 | [**getOwner**](OwnersApi.md#getowner) | **POST** /owner/get | Get an owner. |
+| [**getOwnerDirectoryVersionObservation**](OwnersApi.md#getownerdirectoryversionobservation) | **GET** /owner/usage/directory-version-observations/{observationId} | Read retained DirectoryVersion declarations. |
 | [**listOwnerOrganizations**](OwnersApi.md#listownerorganizations) | **POST** /owner/listOrganizations | List the organizations for an owner. |
 | [**setOwnerDescription**](OwnersApi.md#setownerdescription) | **POST** /owner/setDescription | Set the owner\&#39;s description. |
 | [**setOwnerName**](OwnersApi.md#setownername) | **POST** /owner/setName | Set the name of an owner. |
@@ -231,6 +232,91 @@ example().catch(console.error);
 | **200** | OK |  -  |
 | **400** | Bad Request |  -  |
 | **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## getOwnerDirectoryVersionObservation
+
+> OwnerObservationReturnValue getOwnerDirectoryVersionObservation(observationId, ownerId, organizationId, repositoryId)
+
+Read retained DirectoryVersion declarations.
+
+Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  OwnersApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { GetOwnerDirectoryVersionObservationRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new OwnersApi(config);
+
+  const body = {
+    // string | Nonempty known observation GUID.
+    observationId: 38400000-8cf0-11bd-b23e-10b96e4ef00d,
+    // string | Nonempty recorded owner GUID.
+    ownerId: 38400000-8cf0-11bd-b23e-10b96e4ef00d,
+    // string | Nonempty recorded organization GUID.
+    organizationId: 38400000-8cf0-11bd-b23e-10b96e4ef00d,
+    // string | Nonempty recorded repository GUID, retained after deletion or transfer.
+    repositoryId: 38400000-8cf0-11bd-b23e-10b96e4ef00d,
+  } satisfies GetOwnerDirectoryVersionObservationRequest;
+
+  try {
+    const data = await api.getOwnerDirectoryVersionObservation(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **observationId** | `string` | Nonempty known observation GUID. | [Defaults to `undefined`] |
+| **ownerId** | `string` | Nonempty recorded owner GUID. | [Defaults to `undefined`] |
+| **organizationId** | `string` | Nonempty recorded organization GUID. | [Defaults to `undefined`] |
+| **repositoryId** | `string` | Nonempty recorded repository GUID, retained after deletion or transfer. | [Defaults to `undefined`] |
+
+### Return type
+
+[**OwnerObservationReturnValue**](OwnerObservationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | Immutable retained declarations with exact decimal and UTC strings. |  -  |
+| **400** | Bad Request |  -  |
+| **401** | Authentication required before input resolution. |  -  |
+| **403** | Permission denied or evaluation failed. No observation is disclosed. |  -  |
+| **404** | Observation missing or scope conflict. No stored values are disclosed. |  -  |
+| **503** | Read failed or was cancelled before publication. Retry repeats the read and permission checks. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 

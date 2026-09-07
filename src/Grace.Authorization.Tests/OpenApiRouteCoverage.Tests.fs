@@ -64,12 +64,12 @@ type OpenApiRouteCoverageTests() =
             if matchItem.Success then Some matchItem.Groups["path"].Value else None)
         |> Set.ofArray
 
-    /// Maps the one public Giraffe routef placeholder to its named OpenAPI path parameter.
+    /// Maps public Giraffe routef placeholders to its named OpenAPI path parameter.
     let openApiComparablePath path =
-        if path = "/libraries/content/%s" then
-            "/libraries/content/{readToken}"
-        else
-            path
+        match path with
+        | "/libraries/content/%s" -> "/libraries/content/{readToken}"
+        | "/owner/usage/directory-version-observations/%s" -> "/owner/usage/directory-version-observations/{observationId}"
+        | _ -> path
 
     /// Asserts bundled schema is unique.
     let assertBundledSchemaIsUnique artifactPath schemaName =

@@ -53,6 +53,13 @@ do not add total scan or wrapper deadlines. SQL per-command behavior and short a
 A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
 Source identity belongs to each route/table; matching GUIDs across the three sources do not identify a combined observation.
 
+## Owner observation reads
+
+`GET /owner/usage/directory-version-observations/{observationId}` uses explicit historical scope, with no body metadata
+or current-entity lookup. Keep authentication before parsing, OwnerAdmin checks before and after SQL, and cancellation
+before publication. Its local JSON options write exact decimal quantities as strings; shared/admin JSON remains numeric.
+The read does not capture, modify or aggregate observations. Hosted tests retain actual HTTP payloads for client replay.
+
 ## Artifact declaration diagnostic
 
 `POST /admin/artifact-size/diagnose` requires SystemAdmin before parsing and reuses explicit three-ID repository

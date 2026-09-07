@@ -18,7 +18,33 @@ At source revision `9f54fe14626cd718af88890b731f8518f9b06e34`, main has the supp
 
 The current [usage contract](../src/Grace.Types/Usage.Types.fs) has only `RepositoryStorageBytesMinute`, normalizes timestamps to a minute, and rejects quantities less than or equal to zero. The [Operations data store](../src/Grace.Operations.Data/OperationsData.fs) deduplicates fact identities and adds accepted distinct quantities. Neither behavior establishes missing source coverage or turns repeated current measurements into elapsed storage usage. Leave these contracts unchanged for the diagnostic below.
 
-Owner-facing visibility remains unimplemented. [Issue #1066's owner observation read contract](design/Operations.OwnerObservationRead.md) is Plan-ready for one later public tracer: an existing DirectoryVersion observation read by known ID and recorded scope, using current OwnerAdmin permission and exact quantity/time strings. Its [reproducible codec and permission evidence](design/Operations.OwnerObservationRead-Experiment.json) establishes design feasibility; it adds no available API, SDK method or CLI command.
+The owner observation read introduced by [Issue #1068](https://github.com/ScottArbeit/Grace/issues/1068) implements [the selected read contract](design/Operations.OwnerObservationRead.md): read a retained DirectoryVersion observation by known ID and recorded scope, using current OwnerAdmin permission and exact quantity/time strings. The [codec and permission experiments](design/Operations.OwnerObservationRead-Experiment.json) remain design evidence; route and client tests cover the implementation.
+
+## Owner reading of retained declarations
+
+An operator supplies the known observation ID and its recorded OwnerId, OrganizationId and RepositoryId. An OwnerAdmin on that recorded owner can read it through `GET /owner/usage/directory-version-observations/{observationId}` with the three scope IDs as query parameters. Existing SystemAdmin and SystemOperator inheritance also applies. OwnerReader or RepositoryAdmin alone does not grant access.
+
+All four IDs must be explicit nonempty GUIDs. Names and current-configuration fallback are unsupported. The recorded scope remains valid after repository deletion or reassignment; a new repository owner does not acquire the old owner's observation. Permission is evaluated before SQL and again after the read. Revocation detected at the second check denies disclosure; the interval between that check and delivery is accepted.
+
+The Grace success envelope contains the existing observation. `DeclaredLogicalBytes` and `DistinctContentCount` are decimal strings from `"0"` through `"9223372036854775807"`; both enumeration timestamps retain their original UTC fractional digits, including nanoseconds. Zero is a completed reading. These are retained metadata declarations, not complete repository storage, physical coverage, an elapsed interval or a charge. Do not sum different observation sources as disjoint totals. Listing and latest-reading discovery remain unavailable.
+
+PowerShell:
+
+```powershell
+grace owner get-directory-version-observation --observation-id $observationId --owner-id $ownerId --organization-id $organizationId --repository-id $repositoryId --output Json
+grace owner get-directory-version-observation --observation-id $observationId --owner-id $ownerId --organization-id $organizationId --repository-id $repositoryId --select DeclaredLogicalBytes
+```
+
+bash / zsh:
+
+```bash
+grace owner get-directory-version-observation --observation-id "$observationId" --owner-id "$ownerId" --organization-id "$organizationId" --repository-id "$repositoryId" --output Json
+grace owner get-directory-version-observation --observation-id "$observationId" --owner-id "$ownerId" --organization-id "$organizationId" --repository-id "$repositoryId" --select DeclaredLogicalBytes
+```
+
+The F# SDK exposes `Owner.GetDirectoryVersionObservation(observationId, GetRepositoryParameters(...))` and reconstructs the original int64/Instant values. The CLI keeps strings in JSON, selection and examples, and prints complete values in human output. The supported [TypeScript Node facade](../sdk/typescript/grace/README.md) uses its existing generic GET request; preserve strings instead of converting to JavaScript `number` or `Date`.
+
+Unauthenticated requests return 401 before parsing. Invalid selectors return 400; permission denial or evaluation failure returns 403; missing or conflicting scope returns 404 without stored values. A failed or cancelled read returns 503 while the connection can respond. Retrying performs a fresh read and permission checks with no write to resolve. Existing internal capture/read routes and their numeric JSON remain unchanged.
 
 ## Measurement boundary selected by Issue #1045
 

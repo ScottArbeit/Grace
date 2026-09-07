@@ -159,3 +159,25 @@ deduplication, resumable upload/download, offline watch behavior, or hosted stor
 This package is a TypeScript Node facade with Tier 1 API request support, Tier 2 simple whole-file transfer helpers, and
 Tier 3 Grace Protocol v1 vector support. Its Tier 4 local integration scope is limited to sanitized local progress
 milestones for the Tier 2 whole-file facade transfer helpers.
+
+## Read a retained DirectoryVersion observation
+
+Use the supported generic Node request with a known observation ID and all three recorded scope IDs. Current OwnerAdmin
+permission on the recorded owner is required, including existing system-role inheritance. Historical scope survives repository
+deletion or reassignment; names and current-repository defaults do not apply.
+
+```typescript
+const response = await grace.request<{ ReturnValue: { DeclaredLogicalBytes: string } }>({
+  method: "GET",
+  path: `/owner/usage/directory-version-observations/${observationId}`,
+  query: { OwnerId: ownerId, OrganizationId: organizationId, RepositoryId: repositoryId },
+});
+const observation = response.body.ReturnValue;
+// Keep decimal strings for JSON. BigInt supports local exact arithmetic if needed.
+const declaredBytes = BigInt(observation.DeclaredLogicalBytes);
+```
+
+The response quantities are exact decimal strings, including `"0"` and `"9223372036854775807"`. Enumeration timestamps retain
+up to nine fractional-second digits. Keep these strings; JavaScript `number` and `Date` can lose precision. The source describes
+retained metadata declarations, not complete storage, elapsed usage or a charge. Listing/latest selection and other observation
+sources are outside this route. Standard facade errors carry 400, 401, 403, 404 or 503 outcomes without an observation.

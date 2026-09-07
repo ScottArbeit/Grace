@@ -7,6 +7,7 @@ Method | HTTP request | Description
 [**create_owner**](OwnersApi.md#create_owner) | **POST** /owner/create | Create an owner.
 [**delete_owner**](OwnersApi.md#delete_owner) | **POST** /owner/delete | Delete an owner.
 [**get_owner**](OwnersApi.md#get_owner) | **POST** /owner/get | Get an owner.
+[**get_owner_directory_version_observation**](OwnersApi.md#get_owner_directory_version_observation) | **GET** /owner/usage/directory-version-observations/{observationId} | Read retained DirectoryVersion declarations.
 [**list_owner_organizations**](OwnersApi.md#list_owner_organizations) | **POST** /owner/listOrganizations | List the organizations for an owner.
 [**set_owner_description**](OwnersApi.md#set_owner_description) | **POST** /owner/setDescription | Set the owner's description.
 [**set_owner_name**](OwnersApi.md#set_owner_name) | **POST** /owner/setName | Set the name of an owner.
@@ -101,6 +102,39 @@ Name | Type | Description  | Required | Notes
 ### HTTP request headers
 
 - **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_owner_directory_version_observation
+
+> models::OwnerObservationReturnValue get_owner_directory_version_observation(observation_id, owner_id, organization_id, repository_id)
+Read retained DirectoryVersion declarations.
+
+Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**observation_id** | **uuid::Uuid** | Nonempty known observation GUID. | [required] |
+**owner_id** | **uuid::Uuid** | Nonempty recorded owner GUID. | [required] |
+**organization_id** | **uuid::Uuid** | Nonempty recorded organization GUID. | [required] |
+**repository_id** | **uuid::Uuid** | Nonempty recorded repository GUID, retained after deletion or transfer. | [required] |
+
+### Return type
+
+[**models::OwnerObservationReturnValue**](OwnerObservationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

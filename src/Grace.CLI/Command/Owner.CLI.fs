@@ -29,6 +29,61 @@ open Grace.CLI.Services
 /// Groups the owner command parser, handlers, and output helpers.
 module Owner =
 
+    /// Defines an explicit historical selector with no current-configuration default.
+    let private observationOption name description = new Option<Guid>(name, Required = true, Arity = ArgumentArity.ExactlyOne, Description = description)
+
+    let private observationIdOption = observationOption "--observation-id" "Known retained DirectoryVersion observation ID."
+    let private observationOwnerOption = observationOption "--owner-id" "Recorded owner ID."
+    let private observationOrganizationOption = observationOption "--organization-id" "Recorded organization ID."
+    let private observationRepositoryOption = observationOption "--repository-id" "Recorded repository ID."
+
+    /// Preserves the HTTP representation through the common CLI renderer and --select.
+    let internal observationOutput (value: GraceReturnValue<Grace.Types.UsageObservation.DirectoryVersionSizeObservation>) =
+        let options = System.Text.Json.JsonSerializerOptions(Constants.JsonSerializerOptions)
+
+        options.NumberHandling <-
+            options.NumberHandling
+            ||| System.Text.Json.Serialization.JsonNumberHandling.WriteAsString
+
+        {
+            ReturnValue = System.Text.Json.JsonSerializer.SerializeToElement(value.ReturnValue, options)
+            EventTime = value.EventTime
+            CorrelationId = value.CorrelationId
+            Properties = value.Properties
+        }
+
+    /// Reads retained metadata declarations using four explicit IDs and current recorded-owner permission.
+    type GetDirectoryVersionObservation() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Invokes the SDK without resolving selectors from current configuration.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let parameters =
+                    Parameters.Repository.GetRepositoryParameters(
+                        OwnerId = string (parseResult.GetValue observationOwnerOption),
+                        OrganizationId = string (parseResult.GetValue observationOrganizationOption),
+                        RepositoryId = string (parseResult.GetValue observationRepositoryOption),
+                        CorrelationId = getCorrelationId parseResult
+                    )
+
+                let! result = Grace.SDK.Owner.GetDirectoryVersionObservation(parseResult.GetValue observationIdOption, parameters)
+
+                match result with
+                | Ok value when
+                    hasOutput parseResult
+                    && not (hasSelect parseResult)
+                    ->
+                    AnsiConsole.WriteLine("Retained DirectoryVersion metadata declarations, not complete storage or a charge.")
+                    AnsiConsole.WriteLine((observationOutput value).ReturnValue.GetRawText())
+                | _ -> ()
+
+                return
+                    result
+                    |> Result.map observationOutput
+                    |> renderOutput parseResult
+            }
+
     /// Marks a configuration write failure so owner commands can preserve their existing error result shape without stack output.
     exception private ConfigurationWriteFailure of exn
 
@@ -572,6 +627,20 @@ module Owner =
 
         // Create main command and aliases, if any.`
         let ownerCommand = new Command("owner", Description = "Create, change, or delete owner-level information.")
+
+        let observationCommand =
+            new Command(
+                "get-directory-version-observation",
+                Description =
+                    "Read retained DirectoryVersion metadata declarations, not complete storage or a charge. Requires permission on the recorded owner."
+            )
+            |> addOption observationIdOption
+            |> addOption observationOwnerOption
+            |> addOption observationOrganizationOption
+            |> addOption observationRepositoryOption
+
+        observationCommand.Action <- new GetDirectoryVersionObservation()
+        ownerCommand.Subcommands.Add observationCommand
 
         // Add subcommands.
         let ownerCreateCommand =

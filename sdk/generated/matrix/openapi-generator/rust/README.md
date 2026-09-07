@@ -133,6 +133,7 @@ Class | Method | HTTP request | Description
 *OwnersApi* | [**create_owner**](docs/OwnersApi.md#create_owner) | **POST** /owner/create | Create an owner.
 *OwnersApi* | [**delete_owner**](docs/OwnersApi.md#delete_owner) | **POST** /owner/delete | Delete an owner.
 *OwnersApi* | [**get_owner**](docs/OwnersApi.md#get_owner) | **POST** /owner/get | Get an owner.
+*OwnersApi* | [**get_owner_directory_version_observation**](docs/OwnersApi.md#get_owner_directory_version_observation) | **GET** /owner/usage/directory-version-observations/{observationId} | Read retained DirectoryVersion declarations.
 *OwnersApi* | [**list_owner_organizations**](docs/OwnersApi.md#list_owner_organizations) | **POST** /owner/listOrganizations | List the organizations for an owner.
 *OwnersApi* | [**set_owner_description**](docs/OwnersApi.md#set_owner_description) | **POST** /owner/setDescription | Set the owner's description.
 *OwnersApi* | [**set_owner_name**](docs/OwnersApi.md#set_owner_name) | **POST** /owner/setName | Set the name of an owner.
@@ -372,7 +373,10 @@ Class | Method | HTTP request | Description
  - [OrganizationType](docs/OrganizationType.md)
  - [OutboundUrlSafety](docs/OutboundUrlSafety.md)
  - [OwnerCommandReturnValue](docs/OwnerCommandReturnValue.md)
+ - [OwnerDirectoryVersionObservation](docs/OwnerDirectoryVersionObservation.md)
+ - [OwnerDirectoryVersionObservationScope](docs/OwnerDirectoryVersionObservationScope.md)
  - [OwnerDto](docs/OwnerDto.md)
+ - [OwnerObservationReturnValue](docs/OwnerObservationReturnValue.md)
  - [OwnerParameters](docs/OwnerParameters.md)
  - [OwnerReturnValue](docs/OwnerReturnValue.md)
  - [OwnerType](docs/OwnerType.md)

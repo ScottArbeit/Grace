@@ -1,3 +1,56 @@
+  /owner/usage/directory-version-observations/{observationId}:
+    get:
+      tags: [Owners]
+      operationId: GetOwnerDirectoryVersionObservation
+      summary: Read retained DirectoryVersion declarations.
+      description: Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+      parameters:
+        - name: observationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Nonempty known observation GUID.
+        - name: OwnerId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Nonempty recorded owner GUID.
+        - name: OrganizationId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Nonempty recorded organization GUID.
+        - name: RepositoryId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Nonempty recorded repository GUID, retained after deletion or transfer.
+      responses:
+        '200':
+          description: Immutable retained declarations with exact decimal and UTC strings.
+          content:
+            application/json:
+              schema:
+                $ref: './Owner.Components.OpenAPI.yaml#/OwnerObservationReturnValue'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401':
+          description: Authentication required before input resolution.
+        '403':
+          description: Permission denied or evaluation failed. No observation is disclosed.
+        '404':
+          description: Observation missing or scope conflict. No stored values are disclosed.
+          content:
+            application/json:
+              schema:
+                $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+        '503':
+          description: Read failed or was cancelled before publication. Retry repeats the read and permission checks.
+          content:
+            application/json:
+              schema:
+                $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+
   /owner/create:
     post:
       tags:
