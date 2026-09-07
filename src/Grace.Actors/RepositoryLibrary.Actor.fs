@@ -386,7 +386,7 @@ type RepositoryLibraryActor
                || manifest.FileContentHash <> upload.FileContentHash then
                 invalidOp "The completed upload does not match this Library operation."
 
-            let content =
+            let proposedContent =
                 {
                     ContentVersionId = LibraryDecision.contentVersionId upload.FileContentHash
                     Blake3Hash = upload.FileContentHash
@@ -395,22 +395,30 @@ type RepositoryLibraryActor
                     CreatedAt = now
                 }
 
-            let location = { SchemaVersion = 1; Content = content; AuthorizedScope = upload.AuthorizedScope; Manifest = manifest }
+            match! readContent repositoryId proposedContent.ContentVersionId with
+            | Some (existing, _) when
+                existing.Content.Blake3Hash = proposedContent.Blake3Hash
+                && existing.Content.Sha256Hash = proposedContent.Sha256Hash
+                && existing.Content.Size = proposedContent.Size
+                && existing.Manifest = manifest
+                ->
+                return existing
+            | Some _ -> return invalidOp "A Library content identity already refers to different immutable bytes."
+            | None ->
+                let location = { SchemaVersion = 1; Content = proposedContent; AuthorizedScope = upload.AuthorizedScope; Manifest = manifest }
 
-            let! durable =
-                LibraryRecords.createExact
-                    services
-                    LibraryRecords.CurrentStorageName
-                    contentType
-                    (key
-                        repositoryId
-                        [
-                            "content"
-                            content.ContentVersionId.ToString("D")
-                        ])
-                    location
-
-            return durable
+                return!
+                    LibraryRecords.createExact
+                        services
+                        LibraryRecords.CurrentStorageName
+                        contentType
+                        (key
+                            repositoryId
+                            [
+                                "content"
+                                proposedContent.ContentVersionId.ToString("D")
+                            ])
+                        location
         }
 
     /// Completes the permanent tracked-manifest contribution and verifies its persisted workflow result.

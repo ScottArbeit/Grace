@@ -3686,7 +3686,7 @@ type StorageManifestUploadSessionRoutes() =
                             .ReturnValue
                 }
 
-            let readAsync (receipt: LibraryOperationReceiptDto) =
+            let readAsync (receipt: LibraryOperationReceiptDto) (expectedPayload: byte array) =
                 task {
                     let item = receipt.Change.Value.Item
                     let content = item.Content.Value
@@ -3709,13 +3709,130 @@ type StorageManifestUploadSessionRoutes() =
                     use! download = Client.GetAsync(descriptor.DownloadPath)
                     let! bytes = download.Content.ReadAsByteArrayAsync()
                     Assert.That(download.StatusCode, Is.EqualTo(HttpStatusCode.OK))
-                    Assert.That(Convert.ToHexString(bytes), Is.EqualTo(Convert.ToHexString(payload)))
+                    Assert.That(Convert.ToHexString(bytes), Is.EqualTo(Convert.ToHexString(expectedPayload)))
                     return descriptor
+                }
+
+            let prepareUploadedContent (contentOperationId: Guid) (contentPayload: byte array) =
+                task {
+                    let contentBlock = encodeBlock contentPayload
+                    let prepareContent = Parameters.Library.PrepareLibraryContentParameters()
+                    prepareContent.OwnerId <- ownerId
+                    prepareContent.OrganizationId <- organizationId
+                    prepareContent.RepositoryId <- repositoryId
+                    prepareContent.OperationId <- contentOperationId
+                    prepareContent.Blake3Hash <- BranchServerTestHelpers.blake3Hex contentPayload
+                    prepareContent.Sha256Hash <- BranchServerTestHelpers.sha256Hex contentPayload
+                    prepareContent.Size <- int64 contentPayload.Length
+                    prepareContent.CorrelationId <- correlationId
+                    use! prepareContentResponse = Client.PostAsync("/libraries/content/prepare", createJsonContent prepareContent)
+                    let! prepareContentBody = prepareContentResponse.Content.ReadAsStringAsync()
+                    Assert.That(prepareContentResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prepareContentBody)
+
+                    let preparedContent =
+                        (deserialize<GraceReturnValue<LibraryContentPreparationDto>> prepareContentBody)
+                            .ReturnValue
+
+                    let contentScope = RelativePath preparedContent.AuthorizedScope
+                    let contentManifest = manifestForStoragePool preparedContent.StoragePoolId contentPayload contentBlock
+
+                    let! _ =
+                        confirmUploadedBlock
+                            repositoryId
+                            correlationId
+                            preparedContent.UploadSessionId
+                            contentScope
+                            contentBlock
+                            0L
+                            (int64 contentPayload.Length)
+                            $"library-{contentOperationId:N}-register"
+                            $"library-{contentOperationId:N}-confirm"
+
+                    let! finalizedContent =
+                        finalizeManifestUpload
+                            repositoryId
+                            correlationId
+                            preparedContent.UploadSessionId
+                            contentScope
+                            $"library-{contentOperationId:N}-finalize"
+                            contentManifest
+
+                    Assert.That(finalizedContent.ReturnValue.Session.FinalizedManifest, Is.EqualTo(Some contentManifest))
+                    return preparedContent, contentManifest
                 }
 
             let! firstReceipt = submitAsync submit
             Assert.That(firstReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
-            let! firstDescriptor = readAsync firstReceipt
+            let! firstDescriptor = readAsync firstReceipt payload
+
+            let yPayload = pseudoRandomBytes 220000
+            Guid.NewGuid().ToByteArray().CopyTo(yPayload, 0)
+            let updateYOperationId = Guid.NewGuid()
+            let! preparedY, manifestY = prepareUploadedContent updateYOperationId yPayload
+
+            let updateY = Parameters.Library.SubmitLibraryChangeParameters()
+            updateY.OwnerId <- ownerId
+            updateY.OrganizationId <- organizationId
+            updateY.RepositoryId <- repositoryId
+            updateY.OperationId <- updateYOperationId
+            updateY.LibraryCatalogVersion <- configuredCatalog.Version
+            updateY.ChangeKind <- ChangeKind.UpdateContent
+            updateY.ItemKind <- ItemKind.File
+            updateY.ItemId <- Nullable firstReceipt.Change.Value.Item.ItemId
+
+            updateY.NamespacePrecondition <-
+                Some
+                    {
+                        ItemId = firstReceipt.Change.Value.Item.ItemId
+                        ExpectedNamespaceVersion = firstReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                    }
+
+            updateY.ContentPrecondition <-
+                Some
+                    {
+                        ItemId = firstReceipt.Change.Value.Item.ItemId
+                        ExpectedContentVersionId = firstReceipt.Change.Value.Item.Content.Value.ContentVersionId
+                        ExpectedContentRevision = firstReceipt.Change.Value.Item.ContentRevision.Value
+                    }
+
+            updateY.UploadSessionId <- Nullable preparedY.UploadSessionId
+            updateY.CorrelationId <- correlationId
+            let! updateYReceipt = submitAsync updateY
+            let! yDescriptor = readAsync updateYReceipt yPayload
+
+            let updateXOperationId = Guid.NewGuid()
+            let! preparedXAgain, manifestXAgain = prepareUploadedContent updateXOperationId payload
+            Assert.That(manifestXAgain, Is.EqualTo(manifest))
+
+            let updateX = Parameters.Library.SubmitLibraryChangeParameters()
+            updateX.OwnerId <- ownerId
+            updateX.OrganizationId <- organizationId
+            updateX.RepositoryId <- repositoryId
+            updateX.OperationId <- updateXOperationId
+            updateX.LibraryCatalogVersion <- configuredCatalog.Version
+            updateX.ChangeKind <- ChangeKind.UpdateContent
+            updateX.ItemKind <- ItemKind.File
+            updateX.ItemId <- Nullable updateYReceipt.Change.Value.Item.ItemId
+
+            updateX.NamespacePrecondition <-
+                Some
+                    {
+                        ItemId = updateYReceipt.Change.Value.Item.ItemId
+                        ExpectedNamespaceVersion = updateYReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                    }
+
+            updateX.ContentPrecondition <-
+                Some
+                    {
+                        ItemId = updateYReceipt.Change.Value.Item.ItemId
+                        ExpectedContentVersionId = updateYReceipt.Change.Value.Item.Content.Value.ContentVersionId
+                        ExpectedContentRevision = updateYReceipt.Change.Value.Item.ContentRevision.Value
+                    }
+
+            updateX.UploadSessionId <- Nullable preparedXAgain.UploadSessionId
+            updateX.CorrelationId <- correlationId
+            let! updateXReceipt = submitAsync updateX
+            let! secondXDescriptor = readAsync updateXReceipt payload
 
             let rename = Parameters.Library.SubmitLibraryChangeParameters()
             rename.OwnerId <- ownerId
@@ -3725,20 +3842,50 @@ type StorageManifestUploadSessionRoutes() =
             rename.LibraryCatalogVersion <- configuredCatalog.Version
             rename.ChangeKind <- ChangeKind.Rename
             rename.ItemKind <- ItemKind.File
-            rename.ItemId <- Nullable firstReceipt.Change.Value.Item.ItemId
+            rename.ItemId <- Nullable updateXReceipt.Change.Value.Item.ItemId
 
             rename.NamespacePrecondition <-
                 Some
                     {
-                        ItemId = firstReceipt.Change.Value.Item.ItemId
-                        ExpectedNamespaceVersion = firstReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                        ItemId = updateXReceipt.Change.Value.Item.ItemId
+                        ExpectedNamespaceVersion = updateXReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
                     }
 
             rename.DestinationName <- "renamed.bin"
             rename.CorrelationId <- correlationId
             let! renameReceipt = submitAsync rename
             Assert.That(renameReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
-            let! historicalDescriptor = readAsync firstReceipt
+
+            let delete = Parameters.Library.SubmitLibraryChangeParameters()
+            delete.OwnerId <- ownerId
+            delete.OrganizationId <- organizationId
+            delete.RepositoryId <- repositoryId
+            delete.OperationId <- Guid.NewGuid()
+            delete.LibraryCatalogVersion <- configuredCatalog.Version
+            delete.ChangeKind <- ChangeKind.Delete
+            delete.ItemKind <- ItemKind.File
+            delete.ItemId <- Nullable renameReceipt.Change.Value.Item.ItemId
+
+            delete.NamespacePrecondition <-
+                Some
+                    {
+                        ItemId = renameReceipt.Change.Value.Item.ItemId
+                        ExpectedNamespaceVersion = renameReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                    }
+
+            delete.ContentPrecondition <-
+                Some
+                    {
+                        ItemId = renameReceipt.Change.Value.Item.ItemId
+                        ExpectedContentVersionId = renameReceipt.Change.Value.Item.Content.Value.ContentVersionId
+                        ExpectedContentRevision = renameReceipt.Change.Value.Item.ContentRevision.Value
+                    }
+
+            delete.CorrelationId <- correlationId
+            let! deleteReceipt = submitAsync delete
+            let! historicalDescriptor = readAsync firstReceipt payload
+            let! historicalYDescriptor = readAsync updateYReceipt yPayload
+            let! historicalSecondXDescriptor = readAsync updateXReceipt payload
 
             let bootstrap = Parameters.Library.StartLibraryBootstrapParameters()
             bootstrap.OwnerId <- ownerId
@@ -3795,7 +3942,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let itemHistoryBefore =
                 historiesBefore
-                |> Array.find (fun value -> value.Cursors = [| 1L; 2L |])
+                |> Array.find (fun value -> value.Cursors = [| 1L; 2L; 3L; 4L; 5L |])
 
             let baselineManifestBefore =
                 baselineManifestsBefore
@@ -3809,12 +3956,25 @@ type StorageManifestUploadSessionRoutes() =
                     value.RepositoryId = Guid.Parse repositoryId
                     && value.ManifestAddress = manifest.ManifestAddress)
 
-            let workflowBefore: ManifestContributionWorkflowDto =
+            let counterYBefore: RepositoryContentCounterDto =
+                before
+                |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.ManifestAddress = manifestY.ManifestAddress)
+
+            let workflowsXBefore: ManifestContributionWorkflowDto array =
                 workflowsBefore
-                |> Array.find (fun value ->
+                |> Array.filter (fun value ->
                     value.RepositoryId = Guid.Parse repositoryId
                     && value.StoragePoolId = manifest.StoragePoolId
                     && value.ManifestAddress = manifest.ManifestAddress)
+
+            let workflowYBefore: ManifestContributionWorkflowDto =
+                workflowsBefore
+                |> Array.find (fun value ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.StoragePoolId = manifestY.StoragePoolId
+                    && value.ManifestAddress = manifestY.ManifestAddress)
 
             let expectedRanges =
                 manifest.Blocks
@@ -3822,9 +3982,15 @@ type StorageManifestUploadSessionRoutes() =
                 |> Seq.map (fun value -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = value.Address })
                 |> Seq.toArray
 
+            let expectedRangesY =
+                manifestY.Blocks
+                |> Seq.distinctBy (fun value -> value.Address)
+                |> Seq.map (fun value -> { StoragePoolId = manifestY.StoragePoolId; ContentBlockAddress = value.Address })
+                |> Seq.toArray
+
             do! AspireTestHost.restartGraceServerAsync state "Library accepted-content replay"
             let! replayReceipt = submitAsync submit
-            let! replayDescriptor = readAsync replayReceipt
+            let! replayDescriptor = readAsync replayReceipt payload
             let! after = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
             let! workflowsAfter = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
@@ -3842,33 +4008,57 @@ type StorageManifestUploadSessionRoutes() =
                     value.RepositoryId = Guid.Parse repositoryId
                     && value.ManifestAddress = manifest.ManifestAddress)
 
-            let workflowAfter: ManifestContributionWorkflowDto =
+            let counterYAfter: RepositoryContentCounterDto =
+                after
+                |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.ManifestAddress = manifestY.ManifestAddress)
+
+            let workflowsXAfter: ManifestContributionWorkflowDto array =
                 workflowsAfter
-                |> Array.find (fun value ->
+                |> Array.filter (fun value ->
                     value.RepositoryId = Guid.Parse repositoryId
                     && value.StoragePoolId = manifest.StoragePoolId
                     && value.ManifestAddress = manifest.ManifestAddress)
+
+            let workflowYAfter: ManifestContributionWorkflowDto =
+                workflowsAfter
+                |> Array.find (fun value ->
+                    value.RepositoryId = Guid.Parse repositoryId
+                    && value.StoragePoolId = manifestY.StoragePoolId
+                    && value.ManifestAddress = manifestY.ManifestAddress)
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(replayReceipt, Is.EqualTo(firstReceipt))
                     Assert.That(replayDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
                     Assert.That(historicalDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
+                    Assert.That(historicalYDescriptor.Content, Is.EqualTo(yDescriptor.Content))
+                    Assert.That(historicalSecondXDescriptor.Content, Is.EqualTo(secondXDescriptor.Content))
+                    Assert.That(updateXReceipt.Change.Value.Item.Content, Is.EqualTo(firstReceipt.Change.Value.Item.Content))
+                    Assert.That(updateYReceipt.Change.Value.Item.Content, Is.Not.EqualTo(firstReceipt.Change.Value.Item.Content))
+
+                    Assert.That(updateYReceipt.Change.Value.Item.ContentRevision, Is.Not.EqualTo(firstReceipt.Change.Value.Item.ContentRevision))
+
+                    Assert.That(updateXReceipt.Change.Value.Item.ContentRevision, Is.Not.EqualTo(updateYReceipt.Change.Value.Item.ContentRevision))
+
                     Assert.That(renameReceipt.Change.Value.Item.Namespace.Value.Name, Is.EqualTo("renamed.bin"))
-                    Assert.That(renameReceipt.Change.Value.Item.ContentRevision, Is.EqualTo(firstReceipt.Change.Value.Item.ContentRevision))
-                    Assert.That(bootstrapPage.BoundaryCursor, Is.EqualTo(renameReceipt.Change.Value.Item.LastChangeCursor))
+                    Assert.That(renameReceipt.Change.Value.Item.ContentRevision, Is.EqualTo(updateXReceipt.Change.Value.Item.ContentRevision))
+                    Assert.That(deleteReceipt.Change.Value.Item.Tombstone.IsSome, Is.True)
+                    Assert.That(deleteReceipt.Change.Value.Item.Content, Is.EqualTo(None))
+                    Assert.That(bootstrapPage.BoundaryCursor, Is.EqualTo(deleteReceipt.Change.Value.Item.LastChangeCursor))
                     Assert.That(bootstrapPage.Items.Length, Is.EqualTo(1))
-                    Assert.That(bootstrapPage.Items[0], Is.EqualTo(renameReceipt.Change.Value.Item))
+                    Assert.That(bootstrapPage.Items[0], Is.EqualTo(deleteReceipt.Change.Value.Item))
                     Assert.That(bootstrapPage.NextPageToken, Is.EqualTo(None))
                     Assert.That(repositoryStatus.State, Is.EqualTo("ready"))
                     Assert.That(repositoryStatus.IsCaughtUp, Is.True)
                     Assert.That(repositoryStatus.ProjectionLagCount, Is.EqualTo(0L))
-                    Assert.That(controlBefore.CommittedCursor, Is.EqualTo(2L))
+                    Assert.That(controlBefore.CommittedCursor, Is.EqualTo(5L))
                     Assert.That(controlBefore.HistoryThrough, Is.EqualTo(controlBefore.CommittedCursor))
                     Assert.That(controlBefore.NotifyThrough, Is.EqualTo(controlBefore.CommittedCursor))
                     Assert.That(controlBefore.Pending, Is.EqualTo(None))
                     Assert.That(currentItemBefore.HistoryTailSegment, Is.EqualTo(Some "00000000000000000000"))
-                    Assert.That(itemHistoryBefore.Cursors, Is.EqualTo(box [| 1L; 2L |]))
+                    Assert.That(itemHistoryBefore.Cursors, Is.EqualTo(box [| 1L; 2L; 3L; 4L; 5L |]))
 
                     Assert.That(
                         currentSlotsBefore
@@ -3887,23 +4077,48 @@ type StorageManifestUploadSessionRoutes() =
                         Is.EqualTo(1)
                     )
 
-                    Assert.That(counterBefore.Count, Is.EqualTo(1L))
+                    Assert.That(counterBefore.Count, Is.EqualTo(2L))
                     Assert.That(counterBefore.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(workflowBefore.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
-                    Assert.That(workflowBefore.Ranges = expectedRanges, Is.True)
+                    Assert.That(counterYBefore.Count, Is.EqualTo(1L))
+                    Assert.That(counterYBefore.PendingTrackedAdd, Is.EqualTo(None))
+                    Assert.That(workflowsXBefore, Has.Length.EqualTo(1))
 
                     Assert.That(
-                        (workflowBefore.CompletedRanges
-                         |> Array.map (fun value -> value.Range)) =
-                            expectedRanges,
+                        workflowsXBefore
+                        |> Array.forall (fun value ->
+                            value.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+                            && value.Ranges = expectedRanges
+                            && (value.CompletedRanges
+                                |> Array.map (fun progress -> progress.Range)) = expectedRanges
+                            && value.CounterRevision = counterBefore.Revision
+                            && Array.isEmpty value.FailedRanges),
                         Is.True
                     )
 
-                    Assert.That(workflowBefore.FailedRanges, Is.Empty)
+                    Assert.That(workflowYBefore.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
+                    Assert.That(workflowYBefore.Ranges = expectedRangesY, Is.True)
+
+                    Assert.That(
+                        (workflowYBefore.CompletedRanges
+                         |> Array.map (fun value -> value.Range)) =
+                            expectedRangesY,
+                        Is.True
+                    )
+
+                    Assert.That(workflowYBefore.FailedRanges, Is.Empty)
                     Assert.That(counterAfter.Count, Is.EqualTo(counterBefore.Count))
                     Assert.That(counterAfter.Revision, Is.EqualTo(counterBefore.Revision))
                     Assert.That(counterAfter.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(workflowAfter, Is.EqualTo(workflowBefore))
+                    Assert.That(counterYAfter, Is.EqualTo(counterYBefore))
+                    Assert.That(workflowsXAfter.Length, Is.EqualTo(workflowsXBefore.Length))
+
+                    Assert.That(
+                        workflowsXAfter
+                        |> Array.forall (fun value -> workflowsXBefore |> Array.contains value),
+                        Is.True
+                    )
+
+                    Assert.That(workflowYAfter, Is.EqualTo(workflowYBefore))
                     Assert.That(controlAfter, Is.EqualTo(controlBefore))
                     Assert.That(failedEventsAfter, Is.Empty))
             )
