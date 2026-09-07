@@ -1,0 +1,245 @@
+{
+  "Issue": 1064,
+  "Verdict": "Applicable unchanged algorithm; recorded before production edits",
+  "Base": "25f14402b785ac7143afbd892fa2b8e4a8d6fcf8",
+  "Evidence": "Operations.DirectoryVersionObservation-Preflight.json",
+  "SourceBundle": "1056-preflight/preflight.zip",
+  "SourceBundleSHA256": "241F28A4DB1BB380D7E43EB1BEACAE25C61AA3D723931A0BFE925F912AA93EC0",
+  "CapturedControls": 25,
+  "CapturedRows": 7,
+  "Mapping": {
+    "Bytes": "DeclaredArtifactBytes bigint nonnegative",
+    "Table": "ops.ArtifactSizeObservation",
+    "Window": "Same ExtendedIso varchar(40) preserving up to nine fractional digits",
+    "Identity": "Same GUID key and scope columns",
+    "Count": "DistinctArtifactCount bigint nonnegative"
+  },
+  "UnchangedSequence": [
+    "SQL lookup before repository or source access; matching stored row returns immediately",
+    "Current repository scope and nondeleted check; bounded retained source read; repository recheck",
+    "Short Serializable transaction; ID lookup WITH (UPDLOCK,HOLDLOCK)",
+    "Compare all scope IDs; conflicting scope returns no stored payload",
+    "Insert only when absent; read complete stored row; commit; return stored winner",
+    "No SQL lock spans collection; first committed reading retains quantities and entire window"
+  ],
+  "FailureAndRetry": "Before commit rollback leaves absent state. Discarded acknowledgment may leave a complete row. Fresh same-ID retry resolves it; cancellation never promises rollback to the caller.",
+  "Chronology": "Initial SQL controls preceded the predecessor first draft. Complete source packaging and extracted replay followed it. This issue reuses those captured results and does not claim a new replay.",
+  "Limits": [
+    "No process kill, power loss, network partition, load or arbitrary corruption claim",
+    "No transaction spans SQL and repository/Cosmos; retained enumeration is non-atomic",
+    "Source-specific production Data checks remain required after implementation",
+    "Actual hosted acceptance runs in isolated GitHub Validate; local shared Aspire is excluded",
+    "DebugAzure has no new runtime change or deployment claim"
+  ],
+  "RecordedAtUtc": "2026-09-07T09:08:44.8115186-07:00",
+  "CleanCheckpoint": true,
+  "ReviewedSourceHashes": [
+    {
+      "Path": "src/Grace.Operations.Data/DirectoryVersionSizeObservation.fs",
+      "SHA256": "74F1F7FFE33362378DF829E5717DD8EDE7D9B16FB502E71A7ACECEECD127EE18"
+    },
+    {
+      "Path": "src/Grace.Operations.Data/TextContentSizeObservation.fs",
+      "SHA256": "2C63FBB8102AB0BDFF41743BEF0E625E095035E3F18B7ABD40B10548D6C5BFD3"
+    },
+    {
+      "Path": "src/Grace.Server/TextContentSizeObservation.Server.fs",
+      "SHA256": "CCC4A322508FE6195765B4D9C5346004501A2085CD7B363860560743AAC40B4F"
+    },
+    {
+      "Path": "src/Grace.Server/ArtifactSizeDiagnosis.Server.fs",
+      "SHA256": "71DE9F778B6EA8AD8C158DA65A22AE988A5DB6859271B37AD9C04EFBD9F59306"
+    },
+    {
+      "Path": "docs/design/Operations.DirectoryVersionObservation-Preflight.json",
+      "SHA256": "DFF6EAA4B96C1A6063A326E315AF0A10822A1632AF2418DBDCBE070837E5ABF1"
+    },
+    {
+      "Path": "docs/design/Operations.TextContentObservation-Applicability.json",
+      "SHA256": "25B3C57CACDCBD997D57A2735645DD757EE955AAAEFA50EF44725D209429BCFC"
+    },
+    {
+      "Path": "scripts/capture-text-content-size.ps1",
+      "SHA256": "D43E0A42D094A2AEB5A5113ED48016832D58CDCA49C7C48DAC16B640D8E2BBB4"
+    }
+  ],
+  "VerifiedCapturedSources": [
+    {
+      "File": "captured-rows.json",
+      "Hash": "69514CE543392BC60AFB014ED8DE77803A5B724A45607939C7B16F7955EDAF71"
+    },
+    {
+      "File": "dependencies.json",
+      "Hash": "5F0CF92D29C7DFC240A4DACE504587673DDCDEBF49BE42B9D57820B7975B9BBA"
+    },
+    {
+      "File": "Experiment.fsproj",
+      "Hash": "9CD351E19736D3815153A10D60EA59FA53DDCA168178A38801A5CFE1E3BCEE26"
+    },
+    {
+      "File": "global.json",
+      "Hash": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0"
+    },
+    {
+      "File": "Program.fs",
+      "Hash": "E6DF8B600D07FE49DE9F681C9BC9D7D4E4B3EBBF5E969CE1F73A14BE8A634EA4"
+    },
+    {
+      "File": "results.json",
+      "Hash": "165DEFEEDCCBFA66AF5798621F5839F04F20968F0EFFB4A30312B49DB03892F6"
+    }
+  ],
+  "Applicability": "Compared both current reviewed Data stores, capture orchestration, and unchanged Artifact diagnostic. Only source-specific names change; locking, absent-or-complete state, scope binding, full Instant text, commit order and retry behavior are unchanged. No production edits precede this checkpoint.",
+  "ProductionDataVerification": {
+    "Result": "Passed 21 actual source-specific Data controls",
+    "Controls": [
+      "setup source-specific DirectoryVersion row with same GUID",
+      "setup source-specific TextContent row with same GUID",
+      "production initially absent read",
+      "production concurrent callers return same winner",
+      "winner is one full completed candidate",
+      "fresh production lookup preserves winner",
+      "changed reading cannot replace winner",
+      "production zero preserves precise window",
+      "production missing read",
+      "scope dimension 0 returns no acceptance payload",
+      "scope dimension 0 returns no lookup payload",
+      "scope dimension 1 returns no acceptance payload",
+      "scope dimension 1 returns no lookup payload",
+      "scope dimension 2 returns no acceptance payload",
+      "scope dimension 2 returns no lookup payload",
+      "production cancellation propagated",
+      "cancelled acceptance leaves no row",
+      "independent SQL exact winner and zero rows",
+      "independent raw aggregate DirectoryVersion TextContent counts unchanged",
+      "same GUID Artifact capture preserves exact TextContent row",
+      "same GUID Artifact capture preserves exact DirectoryVersion row"
+    ],
+    "CapturedRows": [
+      {
+        "ObservationId": "02f7ae95-865a-49af-a8e0-bb1a6bb05bd6",
+        "Scope": {
+          "OwnerId": "c36d980c-86cc-4558-bcd2-d89213c0801c",
+          "OrganizationId": "cc6e799b-b7d5-4740-b5ba-3219c83dde70",
+          "RepositoryId": "5bb1c0e9-9786-46b6-acf7-cd63a1c9f5ab"
+        },
+        "DeclaredArtifactBytes": 71,
+        "DistinctArtifactCount": 2,
+        "EnumerationStartedAt": "2026-09-07T01:02:03.123456789Z",
+        "EnumerationFinishedAt": "2026-09-07T01:02:03.12345679Z"
+      },
+      {
+        "ObservationId": "9c94eea6-93c3-484c-88d5-e75d8d3f3077",
+        "Scope": {
+          "OwnerId": "c36d980c-86cc-4558-bcd2-d89213c0801c",
+          "OrganizationId": "cc6e799b-b7d5-4740-b5ba-3219c83dde70",
+          "RepositoryId": "5bb1c0e9-9786-46b6-acf7-cd63a1c9f5ab"
+        },
+        "DeclaredArtifactBytes": 0,
+        "DistinctArtifactCount": 0,
+        "EnumerationStartedAt": "2026-09-07T01:02:03.123456789Z",
+        "EnumerationFinishedAt": "2026-09-07T01:02:03.12345679Z"
+      }
+    ],
+    "Source": "artifact-observation-evidence/ProductionCheck.fs",
+    "SourceSHA256": "013592230D563B53B5A2812B3DA040939ED95A349229EBB02678DA72BB72F028",
+    "Project": "artifact-observation-evidence/ProductionCheck.fsproj",
+    "ProjectSHA256": "94855A706684D2FD52153190FE07452B73924C2ECDB8D1D9000F7DE5B940EBE2",
+    "ResultSHA256": "E47B3F7A275349A06BEB9EE85EA2FFDF3232FD1F7064564B143EF977FD3F89D4",
+    "CapturedRowsSHA256": "029DBC0A19AAA174BC280EE0B2DD5EBFACCDED949DF8AF516F886C723760A9D6",
+    "ProductionDataSHA256": "CFE6671CB9E2DA99AEEEB4B428807AE4FA96584D2B5CB00FA8D573DC86F885FE",
+    "SQLImageSHA256": "ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89",
+    "Fixture": "grace-ops-artifact-observation-sql",
+    "Port": "127.0.0.1:14342",
+    "Meaning": "Real final Artifact Data functions behind a SQL range lock gate. Both callers return one complete winner; fresh same-ID retry preserves it. Independently read raw, aggregate, DirectoryVersion and TextContent counts remain 0,0,1,1. Matching GUIDs preserve both existing source rows."
+  },
+  "LocalVerification": {
+    "ServerUnitBuild": "Release, zero warnings and errors",
+    "ObservationAndDiagnosticUnitTests": 128,
+    "Operator": "Windows capture/read, zero, full Int64, nanoseconds, both foreign sources, uncertainty guidance and actual locked destination preservation passed",
+    "Markdown": "Three actual files linted, zero errors",
+    "Pending": "Final-head GitHub Validate hosted acceptance and root Windows replay/publication of the emitted actual envelope; independent R1 and Shape review",
+    "TypesTests": 6,
+    "AuthorizationAndRouteRegistryTests": 27,
+    "HostedProject": "Release build passed with zero warnings and errors; execution reserved for isolated GitHub Validate"
+  },
+  "FixtureDisposition": "Stopped and retained after checks; no unowned container stopped or removed.",
+  "FinalSourceHashes": [
+    {
+      "Path": "docs/Operations.md",
+      "SHA256": "719090F167182EAC3AE49166F35DF88C87D4BBE8AE04D86BEF0A3EE368E2B20D"
+    },
+    {
+      "Path": "README.md",
+      "SHA256": "B3DD0FBE9014D5CDD2B3442C52BA8CA5B3DA6C6C711895682C485C6FA64539B3"
+    },
+    {
+      "Path": "scripts/capture-artifact-size.ps1",
+      "SHA256": "19A958683E470539B5F98782EA30F996380769EE3DC46B3B19EF1A374518D86B"
+    },
+    {
+      "Path": "scripts/tests/capture-artifact-size.Tests.ps1",
+      "SHA256": "7B3BF32C81353DE7251139E40DFB9715737EC459C87F71707FCB7CEAD0F623E9"
+    },
+    {
+      "Path": "src/Grace.Operations.Data/ArtifactSizeObservation.fs",
+      "SHA256": "CFE6671CB9E2DA99AEEEB4B428807AE4FA96584D2B5CB00FA8D573DC86F885FE"
+    },
+    {
+      "Path": "src/Grace.Operations.Data/Grace.Operations.Data.fsproj",
+      "SHA256": "B6EA92F224371301E56283D67974B89A479274F31B70039BCA492443ED2B5844"
+    },
+    {
+      "Path": "src/Grace.Operations.Data/OperationsData.fs",
+      "SHA256": "3B680390CCB54B0734DFA409F1EC009879AE7DB2EBC2A70D7092BD5EF7FFA368"
+    },
+    {
+      "Path": "src/Grace.Server.Tests/ArtifactSizeObservation.Server.Tests.fs",
+      "SHA256": "74A4594A1E983C054FE0963C0F1D2223DF2E0E1D46D6095CF2FA7ED055926898"
+    },
+    {
+      "Path": "src/Grace.Server.Tests/Grace.Server.Tests.fsproj",
+      "SHA256": "FAD7C770CA03BAECB584E64E80D48140CAA4B9A16787E67AD99F9B077F097D80"
+    },
+    {
+      "Path": "src/Grace.Server.Unit.Tests/ArtifactSizeObservation.Server.Tests.fs",
+      "SHA256": "FE08F32B2C08EE77C430725ABE2E30F8D9A797097100260605F218FD534BBD59"
+    },
+    {
+      "Path": "src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj",
+      "SHA256": "73C9B018FE11059222D90E1E40AA287E1A83C4DFB7780027F127D679D7DF117D"
+    },
+    {
+      "Path": "src/Grace.Server/AGENTS.md",
+      "SHA256": "0A6D6B2BF171A748C45AB7525CE8479D69E7F6BD2840EB20EE5E31F731C3730A"
+    },
+    {
+      "Path": "src/Grace.Server/ArtifactSizeObservation.Server.fs",
+      "SHA256": "F5413766272EBBAE7E7CD2EE6D9E91A58DC97437881B571F449CA54B370D1F58"
+    },
+    {
+      "Path": "src/Grace.Server/Grace.Server.fsproj",
+      "SHA256": "101BAD905FB0A00DF1682F00D1475E98D924FB2D230B6E02CC9F11F7AECD8F1C"
+    },
+    {
+      "Path": "src/Grace.Server/Security/EndpointAuthorizationManifest.Server.fs",
+      "SHA256": "43107ED36974F3E4E85AFD5E1F6B11848A581FDBB995A70BDD32AE48047746BD"
+    },
+    {
+      "Path": "src/Grace.Server/Startup.Server.fs",
+      "SHA256": "CB322D8D41430CDD88727CE80BA7FEC26F3AC9AA704EEB0E5349F385FDB8324F"
+    },
+    {
+      "Path": "src/Grace.Types.Tests/UsageObservation.Types.Tests.fs",
+      "SHA256": "F547EF65B1EB37C7B808D04094E38ED25C08A563EE1412371BE00E0312450E9C"
+    },
+    {
+      "Path": "src/Grace.Types/UsageObservation.Types.fs",
+      "SHA256": "5A75AA3E479D2BE503AC257CAC7850B472E0FD8BD681C85A7227C532E3BC903C"
+    },
+    {
+      "Path": "src/OpenAPI/RouteClassification.json",
+      "SHA256": "A9A785E1AD8EAFCDCBC78B21E6982D84FD3A7EC01C42253C4D421F3B4C7A4F5C"
+    }
+  ]
+}
