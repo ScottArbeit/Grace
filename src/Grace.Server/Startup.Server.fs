@@ -1959,6 +1959,7 @@ module Application =
                     "/admin"
                     [
                         POST [ route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersionSizeDiagnosis.Diagnose)
+                               route "/text-content-size/diagnose" (composeHandlers requireSystemAdmin TextContentSizeDiagnosis.Diagnose)
                                route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
                                route "/manifest-contribution/repair" (composeHandlers requireSystemAdmin ManifestContributionRepair.Repair)
 #if DEBUG

@@ -20,6 +20,7 @@
         { "method": "GET", "path": "/metrics" },
         { "method": "GET", "path": "/notifications" },
         { "method": "POST", "path": "/admin/directory-version-size/diagnose" },
+        { "method": "POST", "path": "/admin/text-content-size/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/repair" }
       ]

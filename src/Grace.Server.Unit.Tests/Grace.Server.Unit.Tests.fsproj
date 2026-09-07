@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="TestCommon.fs" />
     <Compile Include="DirectoryVersionSizeDiagnosis.Server.Tests.fs" />
+    <Compile Include="TextContentSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="CosmosWarmup.Server.Tests.fs" />
     <Compile Include="AuthMapping.Unit.Tests.fs" />
     <Compile Include="Authorization.Unit.Tests.fs" />
