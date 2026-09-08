@@ -1958,7 +1958,7 @@ module Application =
                 subRoute
                     "/admin"
                     [
-                        POST [ route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersionSizeDiagnosis.Diagnose)
+                        POST [ route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersion.DiagnoseSize)
                                route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
                                route "/manifest-contribution/repair" (composeHandlers requireSystemAdmin ManifestContributionRepair.Repair)
 #if DEBUG

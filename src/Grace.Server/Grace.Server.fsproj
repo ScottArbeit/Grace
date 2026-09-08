@@ -110,7 +110,6 @@
                 <Compile Include="ManifestContributionAccounting.Server.fs" />
                 <Compile Include="ManifestContributionDiagnosis.Server.fs" />
                 <Compile Include="ManifestContributionRepair.Server.fs" />
-		<Compile Include="DirectoryVersionSizeDiagnosis.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Cache.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
