@@ -173,4 +173,6 @@ The Aspire local topology generates this value for the development run and provi
 
 ## Deferred capabilities
 
+The next accepted slice is an explicit same-parent rename of one synchronized nonempty file through `grace library rename <path> <new-name>`. Its [design and experiment](Libraries.Design.md#explicit-file-rename-accepted-next-slice) are Plan-ready; this command is not yet implemented. Current incoming-rename support does not establish automatic recognition of a local Explorer rename.
+
 Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.
