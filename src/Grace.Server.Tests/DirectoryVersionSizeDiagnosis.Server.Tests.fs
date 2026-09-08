@@ -6,7 +6,7 @@ open System.Net
 open System.Net.Http
 open System.Text.Json
 open System.Text.Json.Nodes
-open Grace.Server.DirectoryVersionSizeDiagnosis
+open Grace.Server.DirectoryVersion
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities

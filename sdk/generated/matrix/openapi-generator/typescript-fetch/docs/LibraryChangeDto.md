@@ -6,17 +6,12 @@
 
 Name | Type
 ------------ | -------------
-`cursor` | string
 `operationId` | string
 `changeKind` | [LibraryChangeKind](LibraryChangeKind.md)
-`itemId` | string
-`itemKind` | [LibraryItemKind](LibraryItemKind.md)
 `acceptedAt` | Date
 `acceptedBy` | string
 `libraryCatalogVersion` | string
-`namespace` | [LibraryNamespaceDto](LibraryNamespaceDto.md)
-`content` | [LibraryContentVersionDto](LibraryContentVersionDto.md)
-`tombstone` | [LibraryTombstoneDto](LibraryTombstoneDto.md)
+`item` | [LibraryItemDto](LibraryItemDto.md)
 `conflict` | [LibraryConflictProvenanceDto](LibraryConflictProvenanceDto.md)
 
 ## Example
@@ -26,17 +21,12 @@ import type { LibraryChangeDto } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
-  "cursor": null,
   "operationId": null,
   "changeKind": null,
-  "itemId": null,
-  "itemKind": null,
   "acceptedAt": null,
   "acceptedBy": null,
   "libraryCatalogVersion": null,
-  "namespace": null,
-  "content": null,
-  "tombstone": null,
+  "item": null,
   "conflict": null,
 } satisfies LibraryChangeDto
 

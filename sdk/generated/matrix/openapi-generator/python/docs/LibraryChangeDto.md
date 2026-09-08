@@ -5,17 +5,12 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**cursor** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **operation_id** | **UUID** |  | 
 **change_kind** | [**LibraryChangeKind**](LibraryChangeKind.md) |  | 
-**item_id** | **UUID** |  | 
-**item_kind** | [**LibraryItemKind**](LibraryItemKind.md) |  | 
 **accepted_at** | **datetime** |  | 
 **accepted_by** | **str** |  | 
 **library_catalog_version** | **UUID** |  | 
-**namespace** | [**LibraryNamespaceDto**](LibraryNamespaceDto.md) |  | 
-**content** | [**LibraryContentVersionDto**](LibraryContentVersionDto.md) |  | 
-**tombstone** | [**LibraryTombstoneDto**](LibraryTombstoneDto.md) |  | 
+**item** | [**LibraryItemDto**](LibraryItemDto.md) |  | 
 **conflict** | [**LibraryConflictProvenanceDto**](LibraryConflictProvenanceDto.md) |  | 
 
 ## Example

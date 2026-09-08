@@ -24,7 +24,7 @@ Name | Type
 `creationSlotExpectation` | [LibraryCreationSlotExpectationDto](LibraryCreationSlotExpectationDto.md)
 `destinationParent` | [LibraryParentDto](LibraryParentDto.md)
 `destinationName` | string
-`preparedContentId` | string
+`uploadSessionId` | string
 
 ## Example
 
@@ -51,7 +51,7 @@ const example = {
   "creationSlotExpectation": null,
   "destinationParent": null,
   "destinationName": null,
-  "preparedContentId": null,
+  "uploadSessionId": null,
 } satisfies SubmitLibraryChangeParameters
 
 console.log(example)

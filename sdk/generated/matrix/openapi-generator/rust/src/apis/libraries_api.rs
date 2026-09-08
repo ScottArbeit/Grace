@@ -258,11 +258,11 @@ pub async fn continue_library_bootstrap(configuration: &configuration::Configura
     }
 }
 
-pub async fn download_library_content(configuration: &configuration::Configuration, grant_id: &str) -> Result<reqwest::Response, Error<DownloadLibraryContentError>> {
+pub async fn download_library_content(configuration: &configuration::Configuration, read_token: &str) -> Result<reqwest::Response, Error<DownloadLibraryContentError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_path_grant_id = grant_id;
+    let p_path_read_token = read_token;
 
-    let uri_str = format!("{}/libraries/content/{grantId}", configuration.base_path, grantId=crate::apis::urlencode(p_path_grant_id));
+    let uri_str = format!("{}/libraries/content/{readToken}", configuration.base_path, readToken=crate::apis::urlencode(p_path_read_token));
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
@@ -563,7 +563,7 @@ pub async fn list_libraries(configuration: &configuration::Configuration, list_l
     }
 }
 
-pub async fn prepare_library_content(configuration: &configuration::Configuration, prepare_library_content_parameters: models::PrepareLibraryContentParameters) -> Result<models::LibraryPreparedContentReturnValue, Error<PrepareLibraryContentError>> {
+pub async fn prepare_library_content(configuration: &configuration::Configuration, prepare_library_content_parameters: models::PrepareLibraryContentParameters) -> Result<models::LibraryContentPreparationReturnValue, Error<PrepareLibraryContentError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_prepare_library_content_parameters = prepare_library_content_parameters;
 
@@ -593,8 +593,8 @@ pub async fn prepare_library_content(configuration: &configuration::Configuratio
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::LibraryPreparedContentReturnValue`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::LibraryPreparedContentReturnValue`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::LibraryContentPreparationReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::LibraryContentPreparationReturnValue`")))),
         }
     } else {
         let content = resp.text().await?;
@@ -603,7 +603,7 @@ pub async fn prepare_library_content(configuration: &configuration::Configuratio
     }
 }
 
-pub async fn prepare_library_content_read(configuration: &configuration::Configuration, prepare_library_content_read_parameters: models::PrepareLibraryContentReadParameters) -> Result<models::LibraryContentReadGrantReturnValue, Error<PrepareLibraryContentReadError>> {
+pub async fn prepare_library_content_read(configuration: &configuration::Configuration, prepare_library_content_read_parameters: models::PrepareLibraryContentReadParameters) -> Result<models::LibraryContentReadReturnValue, Error<PrepareLibraryContentReadError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_prepare_library_content_read_parameters = prepare_library_content_read_parameters;
 
@@ -633,8 +633,8 @@ pub async fn prepare_library_content_read(configuration: &configuration::Configu
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::LibraryContentReadGrantReturnValue`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::LibraryContentReadGrantReturnValue`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::LibraryContentReadReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::LibraryContentReadReturnValue`")))),
         }
     } else {
         let content = resp.text().await?;

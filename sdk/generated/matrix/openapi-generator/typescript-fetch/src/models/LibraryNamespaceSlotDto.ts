@@ -44,19 +44,7 @@ export interface LibraryNamespaceSlotDto {
      * @type {string}
      * @memberof LibraryNamespaceSlotDto
      */
-    normalizedPath: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryNamespaceSlotDto
-     */
     slotVersion: string;
-    /**
-     * 
-     * @type {LibraryNamespaceSlotDtoStateEnum}
-     * @memberof LibraryNamespaceSlotDto
-     */
-    state: LibraryNamespaceSlotDtoStateEnum;
     /**
      * 
      * @type {string}
@@ -65,26 +53,13 @@ export interface LibraryNamespaceSlotDto {
     occupantItemId: string;
 }
 
-
-/**
- * @export
- */
-export const LibraryNamespaceSlotDtoStateEnum = {
-    Occupied: 'occupied',
-    Vacant: 'vacant'
-} as const;
-export type LibraryNamespaceSlotDtoStateEnum = typeof LibraryNamespaceSlotDtoStateEnum[keyof typeof LibraryNamespaceSlotDtoStateEnum];
-
-
 /**
  * Check if a given object implements the LibraryNamespaceSlotDto interface.
  */
 export function instanceOfLibraryNamespaceSlotDto(value: object): value is LibraryNamespaceSlotDto {
     if (!('parent' in value) || value['parent'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
-    if (!('normalizedPath' in value) || value['normalizedPath'] === undefined) return false;
     if (!('slotVersion' in value) || value['slotVersion'] === undefined) return false;
-    if (!('state' in value) || value['state'] === undefined) return false;
     if (!('occupantItemId' in value) || value['occupantItemId'] === undefined) return false;
     return true;
 }
@@ -101,9 +76,7 @@ export function LibraryNamespaceSlotDtoFromJSONTyped(json: any, ignoreDiscrimina
         
         'parent': LibraryParentDtoFromJSON(json['Parent']),
         'name': json['Name'],
-        'normalizedPath': json['NormalizedPath'],
         'slotVersion': json['SlotVersion'],
-        'state': json['State'],
         'occupantItemId': json['OccupantItemId'],
     };
 }
@@ -121,9 +94,7 @@ export function LibraryNamespaceSlotDtoToJSONTyped(value?: LibraryNamespaceSlotD
         
         'Parent': LibraryParentDtoToJSON(value['parent']),
         'Name': value['name'],
-        'NormalizedPath': value['normalizedPath'],
         'SlotVersion': value['slotVersion'],
-        'State': value['state'],
         'OccupantItemId': value['occupantItemId'],
     };
 }

@@ -79,6 +79,12 @@ export interface PrepareLibraryContentReadParameters {
      * @memberof PrepareLibraryContentReadParameters
      */
     contentVersionId: string;
+    /**
+     * Opaque repository cursor. Clients must not parse or compare its contents.
+     * @type {string}
+     * @memberof PrepareLibraryContentReadParameters
+     */
+    contentRevision: string;
 }
 
 /**
@@ -87,6 +93,7 @@ export interface PrepareLibraryContentReadParameters {
 export function instanceOfPrepareLibraryContentReadParameters(value: object): value is PrepareLibraryContentReadParameters {
     if (!('itemId' in value) || value['itemId'] === undefined) return false;
     if (!('contentVersionId' in value) || value['contentVersionId'] === undefined) return false;
+    if (!('contentRevision' in value) || value['contentRevision'] === undefined) return false;
     return true;
 }
 
@@ -110,6 +117,7 @@ export function PrepareLibraryContentReadParametersFromJSONTyped(json: any, igno
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'itemId': json['ItemId'],
         'contentVersionId': json['ContentVersionId'],
+        'contentRevision': json['ContentRevision'],
     };
 }
 
@@ -134,6 +142,7 @@ export function PrepareLibraryContentReadParametersToJSONTyped(value?: PrepareLi
         'RepositoryName': value['repositoryName'],
         'ItemId': value['itemId'],
         'ContentVersionId': value['contentVersionId'],
+        'ContentRevision': value['contentRevision'],
     };
 }
 

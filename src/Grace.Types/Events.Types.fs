@@ -14,6 +14,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Validation
 open Grace.Types.Artifact
 open Grace.Types.Webhooks
+open Grace.Types.Library
 
 /// Contains events helpers.
 module Events =
@@ -36,6 +37,7 @@ module Events =
         | ValidationResultEvent of Validation.ValidationResultEvent
         | ArtifactEvent of Artifact.ArtifactEvent
         | ApprovalRequestEvent of Webhooks.ApprovalRequestEvent
+        | LibraryContentAvailableEvent of LibraryContentAvailable
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<GraceEvent>()
@@ -58,3 +60,4 @@ module Events =
             | ValidationResultEvent e -> serialize e
             | ArtifactEvent e -> serialize e
             | ApprovalRequestEvent e -> serialize e
+            | LibraryContentAvailableEvent e -> serialize e

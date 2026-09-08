@@ -2164,6 +2164,17 @@ module AspireTestHost =
     /// Creates a permissive local Cosmos client for integration assertions against the Aspire emulator.
     let createCosmosClient (state: TestHostState) = new CosmosClient(state.CosmosConnectionString, createLocalCosmosClientOptions ())
 
+    /// Returns the exact clustering settings injected into the running Grace.Server test resource.
+    let getOrleansClientConfigurationAsync (state: TestHostState) =
+        task {
+            let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
+
+            return
+                requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureStorageConnectionString env,
+                requireEnv graceServerResourceName Constants.EnvironmentVariables.OrleansClusterId env,
+                requireEnv graceServerResourceName Constants.EnvironmentVariables.OrleansServiceId env
+        }
+
     /// Resolves the live Azure Storage connection configured for a running Aspire test host.
     let getAzureStorageConnectionStringAsync (state: TestHostState) =
         task {

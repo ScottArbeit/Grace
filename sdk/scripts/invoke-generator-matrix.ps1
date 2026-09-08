@@ -261,12 +261,12 @@ export function TypedReferenceApiDtoToJSONTyped(value?: TypedReferenceApiDto | n
     $pythonUnionWithUuid = $pythonUnion.Replace("import json`nimport pprint", "import json`nimport pprint`nfrom uuid import UUID")
     if ($pythonUnionWithUuid -eq $pythonUnion) { throw "Python typed Reference UUID import post-generation anchor was not found: $pythonUnionPath" }
     $pythonUnion = $pythonUnionWithUuid
-    $pythonUnionNeedle = @'
+    $pythonUnionNeedle = (@'
         match = 0
 
         # deserialize data into ReferenceApiDto
-'@
-    $pythonUnionReplacement = @'
+'@) -replace "`r`n", "`n"
+    $pythonUnionReplacement = (@'
         match = 0
 
         raw_value = json.loads(json_str)
@@ -284,7 +284,7 @@ export function TypedReferenceApiDtoToJSONTyped(value?: TypedReferenceApiDto | n
             return instance
 
         # deserialize data into ReferenceApiDto
-'@
+'@) -replace "`r`n", "`n"
     $updatedPythonUnion = $pythonUnion.Replace($pythonUnionNeedle, $pythonUnionReplacement)
     if ($updatedPythonUnion -eq $pythonUnion) { throw "Python typed Reference dispatch post-generation anchor was not found: $pythonUnionPath" }
     [System.IO.File]::WriteAllText($pythonUnionPath, $updatedPythonUnion, $utf8)

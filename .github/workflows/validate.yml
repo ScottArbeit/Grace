@@ -13,6 +13,10 @@ concurrency:
   group: validate-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   full:
     runs-on: ubuntu-latest
@@ -27,6 +31,8 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore NuGet packages
+        env:
+          NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
         run: dotnet restore "src/Grace.slnx"
       - name: Pre-pull Aspire images and build the solution
         shell: bash

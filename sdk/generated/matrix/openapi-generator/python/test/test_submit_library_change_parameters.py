@@ -54,7 +54,8 @@ class TestSubmitLibraryChangeParameters(unittest.TestCase):
                     expected_namespace_version = '', ),
                 content_precondition = grace_generated_openapi_probe.models.library_content_precondition_dto.LibraryContentPreconditionDto(
                     item_id = '', 
-                    expected_content_version_id = '', ),
+                    expected_content_version_id = '', 
+                    expected_content_revision = '0', ),
                 creation_slot_expectation = grace_generated_openapi_probe.models.library_creation_slot_expectation_dto.LibraryCreationSlotExpectationDto(
                     parent = grace_generated_openapi_probe.models.library_parent_dto.LibraryParentDto(
                         kind = 'root', 
@@ -68,7 +69,7 @@ class TestSubmitLibraryChangeParameters(unittest.TestCase):
                     library_path = '', 
                     item_id = null, ),
                 destination_name = '',
-                prepared_content_id = ''
+                upload_session_id = ''
             )
         else:
             return SubmitLibraryChangeParameters(

@@ -13,35 +13,21 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LibraryConflictProvenanceDto {
-    #[serde(rename = "SourceOperationId")]
-    pub source_operation_id: uuid::Uuid,
-    #[serde(rename = "SourceItemId")]
-    pub source_item_id: uuid::Uuid,
-    #[serde(rename = "CanonicalItemId")]
-    pub canonical_item_id: uuid::Uuid,
-    #[serde(rename = "ConflictItemId")]
-    pub conflict_item_id: uuid::Uuid,
-    #[serde(rename = "ConflictPath")]
-    pub conflict_path: String,
-    #[serde(rename = "AcceptedAt")]
-    pub accepted_at: chrono::DateTime<chrono::FixedOffset>,
-    #[serde(rename = "SourceContentVersionId")]
-    pub source_content_version_id: uuid::Uuid,
+    #[serde(rename = "OriginalItemId")]
+    pub original_item_id: uuid::Uuid,
     #[serde(rename = "BaseContentVersionId")]
     pub base_content_version_id: uuid::Uuid,
+    /// Opaque repository cursor. Clients must not parse or compare its contents.
+    #[serde(rename = "BaseContentRevision")]
+    pub base_content_revision: String,
 }
 
 impl LibraryConflictProvenanceDto {
-    pub fn new(source_operation_id: uuid::Uuid, source_item_id: uuid::Uuid, canonical_item_id: uuid::Uuid, conflict_item_id: uuid::Uuid, conflict_path: String, accepted_at: chrono::DateTime<chrono::FixedOffset>, source_content_version_id: uuid::Uuid, base_content_version_id: uuid::Uuid) -> LibraryConflictProvenanceDto {
+    pub fn new(original_item_id: uuid::Uuid, base_content_version_id: uuid::Uuid, base_content_revision: String) -> LibraryConflictProvenanceDto {
         LibraryConflictProvenanceDto {
-            source_operation_id,
-            source_item_id,
-            canonical_item_id,
-            conflict_item_id,
-            conflict_path,
-            accepted_at,
-            source_content_version_id,
+            original_item_id,
             base_content_version_id,
+            base_content_revision,
         }
     }
 }

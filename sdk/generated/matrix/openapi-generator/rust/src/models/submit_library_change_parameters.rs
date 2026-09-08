@@ -51,8 +51,8 @@ pub struct SubmitLibraryChangeParameters {
     pub destination_parent: Option<Box<models::LibraryParentDto>>,
     #[serde(rename = "DestinationName", skip_serializing_if = "Option::is_none")]
     pub destination_name: Option<String>,
-    #[serde(rename = "PreparedContentId", skip_serializing_if = "Option::is_none")]
-    pub prepared_content_id: Option<uuid::Uuid>,
+    #[serde(rename = "UploadSessionId", skip_serializing_if = "Option::is_none")]
+    pub upload_session_id: Option<uuid::Uuid>,
 }
 
 impl SubmitLibraryChangeParameters {
@@ -76,7 +76,7 @@ impl SubmitLibraryChangeParameters {
             creation_slot_expectation: None,
             destination_parent: None,
             destination_name: None,
-            prepared_content_id: None,
+            upload_session_id: None,
         }
     }
 }

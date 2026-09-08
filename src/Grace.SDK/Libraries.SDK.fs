@@ -52,11 +52,11 @@ type Libraries() =
 
     /// Prepares exact immutable bytes for a later Library change.
     static member public PrepareContent(parameters: PrepareLibraryContentParameters) =
-        postServer<PrepareLibraryContentParameters, LibraryPreparedContentDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/prepare")
+        postServer<PrepareLibraryContentParameters, LibraryContentPreparationDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/prepare")
 
-    /// Creates one principal-bound, one-use read grant for retained Library bytes.
+    /// Creates one short-lived read descriptor for an accepted retained content revision.
     static member public PrepareContentRead(parameters: PrepareLibraryContentReadParameters) =
-        postServer<PrepareLibraryContentReadParameters, LibraryContentReadGrantDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/read")
+        postServer<PrepareLibraryContentReadParameters, LibraryContentReadDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/read")
 
     /// Reads one current Library item after repository authorization.
     static member public GetItem(parameters: GetLibraryItemParameters) =
@@ -70,11 +70,11 @@ type Libraries() =
     static member public GetStatus(parameters: GetLibraryStatusParameters) =
         postServer<GetLibraryStatusParameters, LibraryRepositoryStatusDto> (parameters |> ensureCorrelationIdIsSet, "libraries/status/get")
 
-    /// Redeems one authorized read grant and returns its exact immutable bytes.
-    static member public DownloadContent(grantId: string, correlationId: string) : Task<GraceResult<byte array>> =
+    /// Downloads exact immutable bytes through one signed token until its fixed expiry.
+    static member public DownloadContent(readToken: string, correlationId: string) : Task<GraceResult<byte array>> =
         task {
             let correlationId = ensureNonEmptyCorrelationId correlationId
-            let route = $"libraries/content/{Uri.EscapeDataString grantId}"
+            let route = $"libraries/content/{Uri.EscapeDataString readToken}"
 
             try
                 use httpClient = ClientIdentity.getHttpClient correlationId

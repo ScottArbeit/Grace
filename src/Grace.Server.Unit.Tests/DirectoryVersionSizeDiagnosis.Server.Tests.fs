@@ -8,7 +8,7 @@ open System.Threading.Tasks
 open System.Text.Json
 open System.Text.Json.Nodes
 open Grace.Actors.Services
-open Grace.Server.DirectoryVersionSizeDiagnosis
+open Grace.Server.DirectoryVersion
 open Grace.Shared
 open Grace.Shared.Parameters.Repository
 open Grace.Shared.Utilities
@@ -17,7 +17,7 @@ open Grace.Types.DirectoryVersion
 open Grace.Types.Usage
 open NUnit.Framework
 
-/// Exercises bounded declaration aggregation independently of Cosmos and HTTP hosting.
+/// Exercises declaration aggregation independently of Cosmos and HTTP hosting.
 [<Parallelizable(ParallelScope.All)>]
 type DirectoryVersionSizeDiagnosisTests() =
     let scope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
@@ -55,21 +55,28 @@ type DirectoryVersionSizeDiagnosisTests() =
         result.State <- deserialize<DirectoryVersionEvent array> (serialize events)
         result
 
-    /// Delivers finite pages through the production aggregation seam.
+    /// Delivers finite pages through the production aggregation seam and reconstructs the server response.
     let enumerate (pages: DirectoryVersionEventValue array array) =
-        let mutable index = 0
+        task {
+            let mutable index = 0
 
-        enumerateWith
-            (fun _ ->
-                let page = pages[index]
-                index <- index + 1
-                Task.FromResult(page, index < pages.Length))
-            scope
-            "diagnostic-test"
-            CancellationToken.None
+            let! total, count, started, finished =
+                enumerateDirectoryVersionSizeWith
+                    Grace.Actors.DirectoryVersion.validateManifestBackedFileForSaveBoundary
+                    (fun _ ->
+                        let page = pages[index]
+                        index <- index + 1
+                        Task.FromResult(page, index < pages.Length))
+                    scope
+                    "diagnostic-test"
+                    CancellationToken.None
+
+            return
+                { Scope = scope; DeclaredLogicalBytes = total; DistinctContentCount = count; EnumerationStartedAt = started; EnumerationFinishedAt = finished }
+        }
 
     /// Verifies failure cannot escape as a successful diagnostic containing a quantity.
-    let expectFailure (operation: unit -> Task<DirectoryVersionSizeDiagnostic>) =
+    let expectFailure (operation: unit -> Task<'T>) =
         task {
             let! result =
                 task {
@@ -81,7 +88,7 @@ type DirectoryVersionSizeDiagnosisTests() =
                 }
 
             match result with
-            | Choice1Of2 value -> Assert.Fail($"Unexpected success: {value.DeclaredLogicalBytes} bytes")
+            | Choice1Of2 value -> Assert.Fail($"Unexpected success: {value}")
             | Choice2Of2 _ -> ()
         }
 
@@ -176,32 +183,62 @@ type DirectoryVersionSizeDiagnosisTests() =
             do! expectFailure (fun () -> enumerate [| [| candidate |] |])
         }
 
-    /// Caps pages, documents, and direct references without returning a truncated quantity.
-    [<TestCase("pages")>]
-    [<TestCase("documents")>]
-    [<TestCase("references")>]
-    member _.``work bounds fail without partial success``(kind: string) =
+    /// Exhausts realistic batches past each former limit while repeated files still deduplicate across versions.
+    [<TestCase("pages", 33, 1, 1)>]
+    [<TestCase("documents", 10001, 1, 256)>]
+    [<TestCase("references", 1000, 101, 256)>]
+    member _.``enumeration completes beyond former work limits``(kind: string, documents: int, filesPerDirectory: int, batchSize: int) =
         task {
-            let pages =
-                match kind with
-                | "pages" -> Array.init 33 (fun _ -> [||])
-                | "documents" -> [| Array.init 10001 (fun _ -> row []) |]
-                | _ ->
-                    [|
-                        [|
-                            row (Seq.init 100001 (fun _ -> file "same" 0L))
-                        |]
-                    |]
+            let files = Array.init filesPerDirectory (fun i -> file $"file-{i}.txt" 1L)
 
-            do! expectFailure (fun () -> enumerate pages)
+            let pages =
+                Array.init documents (fun _ -> row files)
+                |> Array.chunkBySize batchSize
+
+            let! result = enumerate pages
+            Assert.That(result.DeclaredLogicalBytes, Is.EqualTo(int64 filesPerDirectory), kind)
+            Assert.That(result.DistinctContentCount, Is.EqualTo(int64 filesPerDirectory), kind)
         }
 
-    /// Allows exhaustion exactly at the page boundary.
-    [<Test>]
-    member _.``last allowed page may exhaust successfully``() =
+    /// Unsupported providers fail before acquiring any Cosmos dependency.
+    [<TestCase("MongoDB")>]
+    [<TestCase("Unknown")>]
+    member _.``unsupported provider does not access Cosmos``(kind: string) =
         task {
-            let! result = enumerate (Array.init 32 (fun _ -> [||]))
-            Assert.That(result.DeclaredLogicalBytes, Is.Zero)
+            let provider =
+                if kind = "MongoDB" then
+                    ActorStateStorageProvider.MongoDB
+                else
+                    ActorStateStorageProvider.Unknown
+
+            let mutable accessed = false
+
+            /// Records forbidden container acquisition without touching a real provider.
+            let getContainer () =
+                accessed <- true
+                failwith "Cosmos must not be accessed"
+
+            let! error =
+                task {
+                    try
+                        let! _ =
+                            readDirectoryVersionSizeWith
+                                provider
+                                getContainer
+                                Grace.Actors.DirectoryVersion.validateManifestBackedFileForSaveBoundary
+                                scope
+                                "provider-test"
+                                CancellationToken.None
+
+                        return None
+                    with
+                    | error -> return Some error
+                }
+
+            Assert.That(accessed, Is.False)
+            Assert.That(error.IsSome, Is.True)
+            Assert.That(error.Value, Is.TypeOf<NotSupportedException>())
+            Assert.That(error.Value.Message, Does.Contain "configured actor state storage provider")
         }
 
     /// Rejects dependency failure and cancellation after an already observed page.
@@ -212,22 +249,30 @@ type DirectoryVersionSizeDiagnosisTests() =
             use token = new CancellationTokenSource()
             let mutable reads = 0
 
-            /// Fails the second page after the first page has contributed a valid declaration.
-            let read _ =
+            /// Cancels at exhaustion or fails the second page after a valid first page has accumulated.
+            let read (cancellation: CancellationToken) =
                 task {
+                    Assert.That(cancellation, Is.EqualTo token.Token)
                     reads <- reads + 1
 
                     if reads = 1 then
                         return [| row [ file "a" 10L ] |], true
+                    else if cancel then
+                        token.Cancel()
+                        return [||], false
                     else
-                        if cancel then
-                            token.Cancel()
-                            token.Token.ThrowIfCancellationRequested()
-
                         return raise (IOException "provider failure")
                 }
 
-            do! expectFailure (fun () -> enumerateWith read scope "diagnostic-test" token.Token)
+            do!
+                expectFailure (fun () ->
+                    enumerateDirectoryVersionSizeWith
+                        Grace.Actors.DirectoryVersion.validateManifestBackedFileForSaveBoundary
+                        read
+                        scope
+                        "diagnostic-test"
+                        token.Token)
+
             Assert.That(reads, Is.EqualTo 2)
         }
 
@@ -259,7 +304,14 @@ type DirectoryVersionSizeDiagnosisTests() =
         let target = if field = "Files" || field = "CreatedAt" then created else files[0]
         Assert.That(target.AsObject().Remove field, Is.True)
         use document = JsonDocument.Parse(node.ToJsonString())
-        let error = Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument document.RootElement |> ignore))
+
+        let error =
+            Assert.Throws<InvalidDataException>(
+                Action (fun () ->
+                    decodeDirectoryVersionSizeDocument document.RootElement
+                    |> ignore)
+            )
+
         Assert.That(error.Message, Does.Contain field)
 
     /// Honors Grace's real zero encoding without accepting null, fractional, or malformed declared lengths.
@@ -283,7 +335,7 @@ type DirectoryVersionSizeDiagnosisTests() =
 
             let! result =
                 enumerate [| [|
-                                 decodeDocument document.RootElement
+                                 decodeDirectoryVersionSizeDocument document.RootElement
                              |] |]
 
             Assert.That(result.DeclaredLogicalBytes, Is.Zero)
@@ -305,7 +357,14 @@ type DirectoryVersionSizeDiagnosisTests() =
                 let file = files[0]
                 file["Size"] <- JsonNode.Parse invalid
                 use malformed = JsonDocument.Parse(node.ToJsonString())
-                let error = Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument malformed.RootElement |> ignore))
+
+                let error =
+                    Assert.Throws<InvalidDataException>(
+                        Action (fun () ->
+                            decodeDirectoryVersionSizeDocument malformed.RootElement
+                            |> ignore)
+                    )
+
                 Assert.That(error.Message, Does.Contain "Size"))
         }
 
@@ -319,7 +378,14 @@ type DirectoryVersionSizeDiagnosisTests() =
         let created = event["created"]
         created["OwnerId"] <- JsonValue.Create("invalid")
         use document = JsonDocument.Parse(node.ToJsonString())
-        let error = Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument document.RootElement |> ignore))
+
+        let error =
+            Assert.Throws<InvalidDataException>(
+                Action (fun () ->
+                    decodeDirectoryVersionSizeDocument document.RootElement
+                    |> ignore)
+            )
+
         Assert.That(error.Message, Does.Contain "source could not be decoded")
 
     /// Accepts explicit IDs and rejects missing IDs or names before a source call can occur.
@@ -328,9 +394,20 @@ type DirectoryVersionSizeDiagnosisTests() =
         let parameters =
             GetRepositoryParameters(OwnerId = string scope.OwnerId, OrganizationId = string scope.OrganizationId, RepositoryId = string scope.RepositoryId)
 
-        Assert.That(validateParameters parameters, Is.EqualTo(Ok scope: Result<UsageFactScope, string>))
+        Assert.That(validateSizeDiagnosticParameters parameters, Is.EqualTo(Ok scope: Result<UsageFactScope, string>))
         parameters.RepositoryName <- "ignored-name"
-        Assert.That(validateParameters parameters |> Result.isError, Is.True)
+
+        Assert.That(
+            validateSizeDiagnosticParameters parameters
+            |> Result.isError,
+            Is.True
+        )
+
         parameters.RepositoryName <- ""
         parameters.OwnerId <- string Guid.Empty
-        Assert.That(validateParameters parameters |> Result.isError, Is.True)
+
+        Assert.That(
+            validateSizeDiagnosticParameters parameters
+            |> Result.isError,
+            Is.True
+        )

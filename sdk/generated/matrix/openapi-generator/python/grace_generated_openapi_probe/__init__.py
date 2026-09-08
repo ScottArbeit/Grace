@@ -199,8 +199,10 @@ __all__ = [
     "LibraryConflictProvenanceDto",
     "LibraryContentAvailable",
     "LibraryContentPreconditionDto",
-    "LibraryContentReadGrantDto",
-    "LibraryContentReadGrantReturnValue",
+    "LibraryContentPreparationDto",
+    "LibraryContentPreparationReturnValue",
+    "LibraryContentReadDto",
+    "LibraryContentReadReturnValue",
     "LibraryContentVersionDto",
     "LibraryCreationSlotExpectationDto",
     "LibraryItemDto",
@@ -215,8 +217,6 @@ __all__ = [
     "LibraryOutcomeKind",
     "LibraryParameters",
     "LibraryParentDto",
-    "LibraryPreparedContentDto",
-    "LibraryPreparedContentReturnValue",
     "LibraryRebaselineDto",
     "LibraryRejectionReason",
     "LibraryRepositoryStatusDto",
@@ -529,8 +529,10 @@ from grace_generated_openapi_probe.models.library_change_page_return_value impor
 from grace_generated_openapi_probe.models.library_conflict_provenance_dto import LibraryConflictProvenanceDto as LibraryConflictProvenanceDto
 from grace_generated_openapi_probe.models.library_content_available import LibraryContentAvailable as LibraryContentAvailable
 from grace_generated_openapi_probe.models.library_content_precondition_dto import LibraryContentPreconditionDto as LibraryContentPreconditionDto
-from grace_generated_openapi_probe.models.library_content_read_grant_dto import LibraryContentReadGrantDto as LibraryContentReadGrantDto
-from grace_generated_openapi_probe.models.library_content_read_grant_return_value import LibraryContentReadGrantReturnValue as LibraryContentReadGrantReturnValue
+from grace_generated_openapi_probe.models.library_content_preparation_dto import LibraryContentPreparationDto as LibraryContentPreparationDto
+from grace_generated_openapi_probe.models.library_content_preparation_return_value import LibraryContentPreparationReturnValue as LibraryContentPreparationReturnValue
+from grace_generated_openapi_probe.models.library_content_read_dto import LibraryContentReadDto as LibraryContentReadDto
+from grace_generated_openapi_probe.models.library_content_read_return_value import LibraryContentReadReturnValue as LibraryContentReadReturnValue
 from grace_generated_openapi_probe.models.library_content_version_dto import LibraryContentVersionDto as LibraryContentVersionDto
 from grace_generated_openapi_probe.models.library_creation_slot_expectation_dto import LibraryCreationSlotExpectationDto as LibraryCreationSlotExpectationDto
 from grace_generated_openapi_probe.models.library_item_dto import LibraryItemDto as LibraryItemDto
@@ -545,8 +547,6 @@ from grace_generated_openapi_probe.models.library_operation_receipt_return_value
 from grace_generated_openapi_probe.models.library_outcome_kind import LibraryOutcomeKind as LibraryOutcomeKind
 from grace_generated_openapi_probe.models.library_parameters import LibraryParameters as LibraryParameters
 from grace_generated_openapi_probe.models.library_parent_dto import LibraryParentDto as LibraryParentDto
-from grace_generated_openapi_probe.models.library_prepared_content_dto import LibraryPreparedContentDto as LibraryPreparedContentDto
-from grace_generated_openapi_probe.models.library_prepared_content_return_value import LibraryPreparedContentReturnValue as LibraryPreparedContentReturnValue
 from grace_generated_openapi_probe.models.library_rebaseline_dto import LibraryRebaselineDto as LibraryRebaselineDto
 from grace_generated_openapi_probe.models.library_rejection_reason import LibraryRejectionReason as LibraryRejectionReason
 from grace_generated_openapi_probe.models.library_repository_status_dto import LibraryRepositoryStatusDto as LibraryRepositoryStatusDto

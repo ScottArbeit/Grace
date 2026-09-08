@@ -16,6 +16,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Net
+open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -94,25 +95,39 @@ type ManifestContributionRepairAspireTests() =
         task {
             let! state = AspireTestHost.startAsync testUserId
             let repositoryId = repositoryIds[2]
-            let branchId = repositoryDefaultBranchIds[2]
-            let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let storagePoolId = $"repair-witness-{Guid.NewGuid():N}"
+            let manifestAddress = ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes $"repair-witness-{Guid.NewGuid():N}")
 
             let diagnosisRequest =
-                {| ReferenceId = String.Empty
-                   DirectoryVersionId = $"{branch.LatestReference.DirectoryId}"
-                   RepositoryId = repositoryId
-                   StoragePoolId = String.Empty
-                   ManifestAddress = String.Empty
-                   RepositoryContentCounterOperationId = String.Empty
-                   MaxRelationships = 100 |}
+                {|
+                    ReferenceId = String.Empty
+                    DirectoryVersionId = String.Empty
+                    RepositoryId = repositoryId
+                    StoragePoolId = storagePoolId
+                    ManifestAddress = manifestAddress
+                    RepositoryContentCounterOperationId = String.Empty
+                    MaxRelationships = 100
+                |}
 
             let! diagnosisResponse = state.Client.PostAsync("/admin/manifest-contribution/diagnose", createJsonContent diagnosisRequest)
 
             let! diagnosisJson = diagnosisResponse.Content.ReadAsStringAsync()
             Assert.That(diagnosisResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), diagnosisJson)
             use diagnosisDocument = JsonDocument.Parse diagnosisJson
-            let diagnosisSha = diagnosisDocument.RootElement.GetProperty("ReportSha256").GetString()
-            Assert.That(diagnosisDocument.RootElement.GetProperty("Outcome").GetString(), Is.EqualTo("incompleteRetain"))
+
+            let diagnosisSha =
+                diagnosisDocument
+                    .RootElement
+                    .GetProperty("ReportSha256")
+                    .GetString()
+
+            Assert.That(
+                diagnosisDocument
+                    .RootElement
+                    .GetProperty("Outcome")
+                    .GetString(),
+                Is.EqualTo("incompleteRetain")
+            )
 
             let wrongHashRequest = {| ReportJson = diagnosisJson; ExpectedReportSha256 = String.replicate 64 "0"; Execute = false |}
 
@@ -138,10 +153,35 @@ type ManifestContributionRepairAspireTests() =
             let executeRoot = execute.RootElement
             Assert.That(dryRoot.GetProperty("Execute").GetBoolean(), Is.False)
             Assert.That(executeRoot.GetProperty("Execute").GetBoolean(), Is.True)
-            Assert.That(dryRoot.GetProperty("ProposedActions").GetArrayLength(), Is.Zero)
-            Assert.That(executeRoot.GetProperty("ProposedActions").GetArrayLength(), Is.Zero)
-            Assert.That(dryRoot.GetProperty("AppliedActions").GetArrayLength(), Is.Zero)
-            Assert.That(executeRoot.GetProperty("AppliedActions").GetArrayLength(), Is.Zero)
+
+            Assert.That(
+                dryRoot
+                    .GetProperty("ProposedActions")
+                    .GetArrayLength(),
+                Is.Zero
+            )
+
+            Assert.That(
+                executeRoot
+                    .GetProperty("ProposedActions")
+                    .GetArrayLength(),
+                Is.Zero
+            )
+
+            Assert.That(
+                dryRoot
+                    .GetProperty("AppliedActions")
+                    .GetArrayLength(),
+                Is.Zero
+            )
+
+            Assert.That(
+                executeRoot
+                    .GetProperty("AppliedActions")
+                    .GetArrayLength(),
+                Is.Zero
+            )
+
             Assert.That(dryRoot.GetProperty("Outcome").GetString(), Is.EqualTo("incompleteRetain"))
             Assert.That(executeRoot.GetProperty("Outcome").GetString(), Is.EqualTo("incompleteRetain"))
         }
@@ -218,7 +258,7 @@ type ManifestContributionAccountingAspireTests() =
                     match graceEvent with
                     | GraceEvent.ReferenceEvent referenceEvent ->
                         match referenceEvent.Event with
-                        | ReferenceEventType.Created(createdReferenceId, _, _, _, _, _, _, _, _, _, _) -> createdReferenceId = referenceId
+                        | ReferenceEventType.Created (createdReferenceId, _, _, _, _, _, _, _, _, _, _) -> createdReferenceId = referenceId
                         | _ -> false
                     | _ -> false)
 
@@ -231,7 +271,7 @@ type ManifestContributionAccountingAspireTests() =
                     Assert.That(envelope.CorrelationId, Is.EqualTo(referenceEvent.Metadata.CorrelationId))
 
                     match referenceEvent.Event with
-                    | ReferenceEventType.Created(_, _, _, _, _, _, _, _, referenceType, _, _) ->
+                    | ReferenceEventType.Created (_, _, _, _, _, _, _, _, referenceType, _, _) ->
                         Assert.That(referenceType, Is.EqualTo(ReferenceType.Commit))
                         referenceEvent.Metadata.Timestamp
                     | _ ->
@@ -251,16 +291,20 @@ type ManifestContributionAccountingAspireTests() =
                 AspireTestHost.waitForExactRelationshipAsync
                     state
                     (ExactRelationship.DirectoryVersionManifest
-                        { RepositoryId = Guid.Parse repositoryId
-                          StoragePoolId = manifest.StoragePoolId
-                          ManifestAddress = manifest.ManifestAddress
-                          DirectoryVersionId = shared.DirectoryVersionId })
+                        {
+                            RepositoryId = Guid.Parse repositoryId
+                            StoragePoolId = manifest.StoragePoolId
+                            ManifestAddress = manifest.ManifestAddress
+                            DirectoryVersionId = shared.DirectoryVersionId
+                        })
 
             let expectedEdges =
-                [| root.DirectoryVersionId, left.DirectoryVersionId
-                   root.DirectoryVersionId, right.DirectoryVersionId
-                   left.DirectoryVersionId, shared.DirectoryVersionId
-                   right.DirectoryVersionId, shared.DirectoryVersionId |]
+                [|
+                    root.DirectoryVersionId, left.DirectoryVersionId
+                    root.DirectoryVersionId, right.DirectoryVersionId
+                    left.DirectoryVersionId, shared.DirectoryVersionId
+                    right.DirectoryVersionId, shared.DirectoryVersionId
+                |]
 
             let mutable edgeIndex = 0
 
@@ -271,9 +315,11 @@ type ManifestContributionAccountingAspireTests() =
                     AspireTestHost.waitForExactRelationshipAsync
                         state
                         (ExactRelationship.ParentChild
-                            { RepositoryId = Guid.Parse repositoryId
-                              ParentDirectoryVersionId = parentDirectoryVersionId
-                              ChildDirectoryVersionId = childDirectoryVersionId })
+                            {
+                                RepositoryId = Guid.Parse repositoryId
+                                ParentDirectoryVersionId = parentDirectoryVersionId
+                                ChildDirectoryVersionId = childDirectoryVersionId
+                            })
 
                 edgeIndex <- edgeIndex + 1
 
