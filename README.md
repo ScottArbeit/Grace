@@ -39,6 +39,8 @@ It ships with a promotion queue - Grace doesn't do merges, it does promotions - 
 
 Use `grace library add <path>` or `grace library remove <path>` to change configured Library roots. The CLI obtains the current catalog version and creates an operation ID unless you supply explicit values for a controlled request or exact retry.
 
+Use `grace library rename <path> <new-name>` to rename one clean synchronized nonempty file within its existing parent. The command retains its generated request across retry and reports local completion only after accepted changes have been applied in order.
+
 Grace is a modern, fast, powerful centralized version control system. It's made up of a web API, with a CLI (and soon a GUI).
 
 Grace is written primarily in **F#**, and uses:

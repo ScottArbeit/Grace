@@ -270,6 +270,155 @@ module internal LibrarySynchronization =
                 invalidOp "Library catalog or applied predecessor changed; synchronization has stopped before local effects."
         }
 
+    /// Reports the selected rename separately from unrelated synchronization progress.
+    [<CLIMutable>]
+    type RenameResult = { OperationId: Guid; SourcePath: string; TargetPath: string; Outcome: string; Reason: string option }
+
+    /// Selects one clean materialized file under root exclusion, or resumes its unchanged durable namespace intent.
+    let internal selectRenameWith afterIntent (configuration: GraceConfiguration) sourcePath newName =
+        let source =
+            normalizeRepositoryRelativePath sourcePath
+            |> Result.defaultWith invalidOp
+
+        let name =
+            normalizeName newName
+            |> Result.defaultWith invalidOp
+
+        let current = state configuration
+        let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
+
+        let matching =
+            operations
+            |> Array.tryFindBack (fun operation ->
+                operation.Rename
+                && pathsEqual operation.SourcePath source
+                && operation.Name = name)
+
+        match matching with
+        | Some operation when not operation.Terminal -> operation
+        | Some operation when
+            operation.Receipt
+            |> Option.exists (fun receipt -> receipt.Outcome = OutcomeKind.Rejected)
+            ->
+            operation
+        | Some operation when not (File.Exists(fullPath configuration source)) -> operation
+        | _ ->
+            if current.Baseline.IsSome
+               || current.State <> "current"
+               || operations
+                  |> Array.exists (fun operation -> not operation.Terminal) then
+                invalidOp "Library rename requires completed onboarding and no incompatible pending work. Resume the existing operation first."
+
+            let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+
+            let item =
+                items
+                |> Array.tryFind (fun item ->
+                    item.Tombstone.IsNone
+                    && pathsEqual (itemPath items item) source)
+                |> Option.defaultWith (fun () -> invalidOp "Library rename requires a materialized file.")
+
+            if item.ItemKind <> ItemKind.File
+               || item.Content.IsNone then
+                invalidOp "Library rename accepts files only."
+
+            let ns = item.Namespace.Value
+
+            if pathsEqual ns.Name name then
+                invalidOp "Library rename requires a different normalized name; case-only renames are excluded."
+
+            let target = parentPath items ns.Parent + "/" + name
+            let sourceFull = fullPath configuration source
+            let targetFull = fullPath configuration target
+            let mutable parent = Path.GetDirectoryName(sourceFull)
+
+            let root =
+                Path
+                    .GetFullPath(configuration.RootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar)
+
+            while parent.Length >= root.Length do
+                if
+                    not (Directory.Exists(parent))
+                    || File
+                        .GetAttributes(parent)
+                        .HasFlag(FileAttributes.ReparsePoint)
+                then
+                    invalidOp "Library rename requires ordinary materialized directories."
+
+                parent <- Path.GetDirectoryName(parent)
+
+            let actual = LibraryFilesystem.stableRead sourceFull
+
+            if actual.Size <= 0L
+               || Some $"{actual.Blake3Hash}:{actual.Sha256Hash}:{actual.Size}"
+                  <> (item.Content |> Option.map contentFingerprint) then
+                invalidOp "Library rename requires a clean synchronized nonempty file."
+
+            if File.Exists(targetFull)
+               || Directory.Exists(targetFull)
+               || items
+                  |> Array.exists (fun candidate ->
+                      candidate.Tombstone.IsNone
+                      && pathsEqual (itemPath items candidate) target) then
+                invalidOp "Library rename destination must be absent in the same parent."
+
+            let operation =
+                {
+                    OperationId = Guid.NewGuid()
+                    Direction = "local"
+                    Rename = true
+                    Receipt = None
+                    SourcePath = source
+                    SourceBytes = None
+                    MaterializedBase = Some item
+                    OriginatingCreateId = None
+                    Parent = ns.Parent
+                    Name = name
+                    ItemKind = ItemKind.File
+                    RequestJson = None
+                    Uploaded = false
+                    Accepted = None
+                    BaselineItem = None
+                    Prepared = false
+                    ExpectedCatalogVersion = current.Catalog.Version
+                    ExpectedCursor = current.AppliedCursor
+                    ExpectedAncestry = ancestry items item
+                    ExpectedTarget = None
+                    TargetPath = target
+                    Terminal = false
+                    EchoPending = false
+                    CreatedAtTicks = DateTime.UtcNow.Ticks
+                }
+
+            insertOperation configuration.GraceStatusFile configuration.RepositoryId operation
+            afterIntent ()
+            operation
+
+    /// Distinguishes server rejection, unresolved receipt, accepted obstruction, and completed local filenames.
+    let internal renameResult (operation: PendingOperation) reason =
+        let outcome =
+            if operation.Terminal && operation.Accepted.IsSome then
+                "completed"
+            elif operation.Receipt
+                 |> Option.exists (fun receipt -> receipt.Outcome = "rejected") then
+                "rejected"
+            elif operation.Accepted.IsSome then
+                "acceptedButObstructed"
+            else
+                "ambiguous"
+
+        {
+            OperationId = operation.OperationId
+            SourcePath = operation.SourcePath
+            TargetPath = operation.TargetPath
+            Outcome = outcome
+            Reason =
+                operation.Receipt
+                |> Option.bind (fun receipt -> receipt.ReasonCode)
+                |> Option.orElse reason
+        }
+
     /// Captures all observable saved files whose parent is materialized, before incoming metadata can replace their base.
     let internal captureSaved (configuration: GraceConfiguration) =
         let current = state configuration
@@ -471,6 +620,8 @@ module internal LibrarySynchronization =
                             {
                                 OperationId = Guid.NewGuid()
                                 Direction = "local"
+                                Rename = false
+                                Receipt = None
                                 SourcePath = relative
                                 SourceBytes = bytes
                                 MaterializedBase = prior
@@ -499,7 +650,7 @@ module internal LibrarySynchronization =
 
         captured
 
-    /// Freezes and submits one saved request; initial-create successors resolve only from their exact terminal originating create.
+    /// Freezes saved content or an explicit namespace intent; create successors resolve only from their exact terminal originating create.
     let private submitLocal (configuration: GraceConfiguration) correlationId (operation: PendingOperation) =
         task {
             let mutable operation = operation
@@ -549,6 +700,11 @@ module internal LibrarySynchronization =
                             request.ItemKind <- operation.ItemKind
 
                             match prior with
+                            | Some item when operation.Rename ->
+                                request.ChangeKind <- ChangeKind.Rename
+                                request.ItemId <- Nullable(item.ItemId)
+                                request.NamespacePrecondition <- Some { ItemId = item.ItemId; ExpectedNamespaceVersion = item.Namespace.Value.NamespaceVersion }
+                                request.DestinationName <- operation.Name
                             | Some item ->
                                 request.ChangeKind <- ChangeKind.UpdateContent
                                 request.ItemId <- Nullable(item.ItemId)
@@ -625,24 +781,36 @@ module internal LibrarySynchronization =
                     match toChangeCommand configuration.RepositoryId request with
                     | LibraryChangeCommand.CreateFile (_, hash, _, _, _)
                     | LibraryChangeCommand.CreateDirectory (_, hash, _, _)
-                    | LibraryChangeCommand.UpdateContent (_, hash, _, _, _, _, _) -> hash
+                    | LibraryChangeCommand.UpdateContent (_, hash, _, _, _, _, _)
+                    | LibraryChangeCommand.Rename (_, hash, _, _, _, _) -> hash
                     | _ -> invalidOp "Unexpected local Library request kind."
 
                 if receipt.OperationId <> operation.OperationId
                    || receipt.RequestHash <> expectedHash then
                     invalidOp "Library receipt does not match the frozen request."
 
-                let accepted =
-                    receipt.Change
-                    |> Option.defaultWith (fun () ->
-                        invalidOp $"Library submission returned {receipt.Outcome}: {receipt.ReasonCode}. Saved bytes remain pending.")
+                let received = { operation with Receipt = Some receipt; Accepted = receipt.Change }
+                updateOperation configuration.GraceStatusFile configuration.RepositoryId operation received
 
-                updateOperation configuration.GraceStatusFile configuration.RepositoryId operation { operation with Accepted = Some accepted }
+                match receipt.Change with
+                | Some _ -> ()
+                | None when operation.Rename && receipt.Outcome = "rejected" ->
+                    retireRejectedRename configuration.GraceStatusFile configuration.RepositoryId received
+                    invalidOp "Library rename was rejected; its receipt is retained and no local change was applied."
+                | None -> invalidOp $"Library submission returned {receipt.Outcome}: {receipt.ReasonCode}. Saved input remains pending."
         }
 
     /// Applies one ordered accepted result after saving any newer local bytes and rechecking exact local preconditions.
-    let internal applyChangeWith afterPublication (configuration: GraceConfiguration) correlationId (expected: RepositoryState) (change: LibraryChangeDto) =
+    let internal applyChangeWithCancellation
+        afterPublication
+        (cancellationToken: CancellationToken)
+        (configuration: GraceConfiguration)
+        correlationId
+        (expected: RepositoryState)
+        (change: LibraryChangeDto)
+        =
         task {
+            cancellationToken.ThrowIfCancellationRequested()
             do! checkCatalog configuration correlationId expected
             captureSaved configuration |> ignore
             let items = readItems configuration.GraceStatusFile configuration.RepositoryId
@@ -677,6 +845,8 @@ module internal LibrarySynchronization =
                     {
                         OperationId = change.OperationId
                         Direction = "remote"
+                        Rename = false
+                        Receipt = None
                         SourcePath = priorPath
                         SourceBytes = None
                         MaterializedBase = previous
@@ -778,6 +948,8 @@ module internal LibrarySynchronization =
 
                 /// Rejects changed durable authority or physical ancestry immediately before filesystem effects and completion.
                 let revalidate () =
+                    cancellationToken.ThrowIfCancellationRequested()
+
                     if state configuration <> expected
                        || expected.Catalog.Version
                           <> operation.ExpectedCatalogVersion
@@ -981,13 +1153,18 @@ module internal LibrarySynchronization =
                 complete configuration.GraceStatusFile expected operation
         }
 
+    /// Keeps the existing deterministic interruption seam for callers without a cancellation request.
+    let internal applyChangeWith afterPublication configuration correlationId expected change =
+        applyChangeWithCancellation afterPublication CancellationToken.None configuration correlationId expected change
+
     /// Pulls contiguous changes; an empty HasMore page remains incomplete and is retried by a later run.
-    let private pull configuration correlationId =
+    let private pull configuration correlationId (cancellationToken: CancellationToken) =
         task {
             let mutable continuePages = true
             let mutable caughtUp = false
 
             while continuePages do
+                cancellationToken.ThrowIfCancellationRequested()
                 let before = state configuration
                 do! checkCatalog configuration correlationId before
                 let parameters = scoped configuration correlationId (GetLibraryChangesParameters())
@@ -1003,7 +1180,7 @@ module internal LibrarySynchronization =
                 let mutable index = 0
 
                 while index < page.Changes.Length do
-                    do! applyChangeWith ignore configuration correlationId (state configuration) page.Changes[index]
+                    do! applyChangeWithCancellation ignore cancellationToken configuration correlationId (state configuration) page.Changes[index]
                     index <- index + 1
 
                 if (state configuration).AppliedCursor
@@ -1056,6 +1233,7 @@ module internal LibrarySynchronization =
                     let mutable index = 0
 
                     while index < pending.Length do
+                        cancellationToken.ThrowIfCancellationRequested()
                         let operation = pending[index]
 
                         let originReady =
@@ -1073,7 +1251,8 @@ module internal LibrarySynchronization =
 
                         index <- index + 1
 
-                    let! completePull = pull configuration correlationId
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let! completePull = pull configuration correlationId cancellationToken
                     caughtUp <- completePull
 
                     if completePull
@@ -1119,4 +1298,41 @@ module internal LibrarySynchronization =
                 return! run configuration correlationId cancellationToken
             else
                 return selected
+        }
+
+    /// Persists an explicit rename before submission and resumes it through genuine ordered synchronization.
+    let rename (configuration: GraceConfiguration) correlationId sourcePath newName cancellationToken =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                invalidOp "Library rename requires Windows 11."
+
+            let! selected =
+                task {
+                    let scope =
+                        WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                        |> Result.defaultWith invalidOp
+
+                    use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+                    do! initialize configuration.GraceStatusFile
+                    do! checkCatalog configuration correlationId (state configuration)
+                    return selectRenameWith ignore configuration sourcePath newName
+                }
+
+            if selected.Terminal then
+                return renameResult selected None
+            else
+                let! reason =
+                    task {
+                        try
+                            let! _ = run configuration correlationId cancellationToken
+                            return None
+                        with
+                        | ex -> return Some ex.Message
+                    }
+
+                let persisted =
+                    readOperations configuration.GraceStatusFile configuration.RepositoryId
+                    |> Array.find (fun operation -> operation.OperationId = selected.OperationId)
+
+                return renameResult persisted reason
         }

@@ -14,6 +14,22 @@ open System.Threading.Tasks
 [<NonParallelizable>]
 module LibraryCommandTests =
 
+    /// Keeps human output explicit about rejection, unknown acceptance, incomplete accepted application and finished filenames.
+    [<TestCase("completed", "completed");
+      TestCase("rejected", "rejected");
+      TestCase("ambiguous", "ambiguous");
+      TestCase("acceptedButObstructed", "local application is incomplete")>]
+    let ``rename human output distinguishes every retained outcome`` outcome expected =
+        let result: LibrarySynchronization.RenameResult =
+            { OperationId = Guid.NewGuid(); SourcePath = "Library/a.txt"; TargetPath = "Library/b.txt"; Outcome = outcome; Reason = Some "detail" }
+
+        let message = LibraryCommand.renameMessage result
+        Assert.That(message, Does.Contain(expected))
+        Assert.That(message, Does.Contain("detail"))
+
+        if outcome <> "completed" then
+            Assert.That(message, Does.Not.Contain("completed:"))
+
     /// Supplies fixed repository scope independent of the current working copy.
     let private ownerId = Guid.Parse "a866eac9-c4aa-496b-aef7-851cc9dbe059"
     let private organizationId = Guid.Parse "d9be512f-c4a0-48d7-ae24-9e383dfeab1f"

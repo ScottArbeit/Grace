@@ -171,6 +171,41 @@ export grace__libraries__token_secret="$(openssl rand -base64 32)"
 
 The Aspire local topology generates this value for the development run and provisions the six Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
 
+## Rename a synchronized file
+
+Use `grace library rename <path> <new-name>` in the configured Windows working copy after onboarding and synchronization have completed. The source must be a clean materialized nonempty file and the destination must be absent in the same parent. Grace derives the item and namespace version and retains one generated operation ID; this command takes no internal IDs or version options.
+
+PowerShell:
+
+```powershell
+grace library rename Library/design/notes.txt overview.txt
+grace library rename Library/design/notes.txt overview.txt --output Json
+```
+
+bash / zsh:
+
+```bash
+grace library rename Library/design/notes.txt overview.txt
+grace library rename Library/design/notes.txt overview.txt --output Json
+```
+
+The shell examples describe the same Windows-only client. Directory rename, cross-parent moves, case-only or normalized-equivalent names, dirty or empty sources, reparse paths, and incompatible pending work are excluded.
+
+Grace saves the selected intent and exact namespace-only request before submission. It changes filenames only after server acceptance and ordered application of preceding changes. Compatible remote content edits keep their order and content history. Restart with the same source and name resumes the original request; another name cannot replace pending work.
+
+Human output and `cli-json-v1` data distinguish four outcomes:
+
+| Outcome | Meaning and next action |
+| --- | --- |
+| `completed` | The accepted rename and local completion committed. The item keeps its identity at the new name. Exit code is zero. |
+| `rejected` | The server definitively rejected the request. The command retained its receipt/reason and changed no local filename, item or applied cursor. Later `grace library sync run` can apply unrelated or competing accepted changes. |
+| `ambiguous` | Acceptance is unresolved, including cancellation or a lost response. Rerun the same command to resume the retained operation. |
+| `acceptedButObstructed` | The server accepted, but local application is incomplete. Preserve and resolve the reported obstruction, then rerun the same command. |
+
+All incomplete or rejected outcomes return a nonzero exit code. Saved edits at either path retain their existing materialized content revision. Empty files and obstructions remain protected. Rejected saved-content operations retain their bytes and pending request; only a definitively rejected unprepared rename retires without an application effect.
+
 ## Deferred capabilities
+
+Explicit same-parent file rename follows the [accepted design and experiment](Libraries.Design.md#explicit-file-rename-accepted-next-slice). Automatic recognition of a local Explorer rename remains deferred.
 
 Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.

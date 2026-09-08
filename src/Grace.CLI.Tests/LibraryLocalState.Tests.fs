@@ -85,6 +85,8 @@ module LibraryLocalStateTests =
             {
                 OperationId = change.OperationId
                 Direction = "local"
+                Rename = false
+                Receipt = None
                 SourcePath = "Library/item.bin"
                 SourceBytes = Some bytes
                 MaterializedBase = None
@@ -108,6 +110,344 @@ module LibraryLocalStateTests =
             }
 
         state, pending
+
+    /// Creates actual materialized SQLite state and clean Windows bytes for explicit rename admission.
+    let private renameCopy () =
+        task {
+            let root, db = location ()
+
+            Directory.CreateDirectory(Path.Combine(root, "Library"))
+            |> ignore
+
+            let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
+            configuration.RootDirectory <- root
+            configuration.GraceStatusFile <- db
+            do! initialize db
+            let initial, first = prepared ()
+            configuration.RepositoryId <- initial.RepositoryId
+            enable db initial
+            insertOperation db initial.RepositoryId first
+            File.WriteAllBytes(Path.Combine(root, first.SourcePath), first.SourceBytes.Value)
+            complete db initial first
+            setState db (readRepository db initial.RepositoryId).Value "current"
+            return configuration, (readRepository db initial.RepositoryId).Value, first.Accepted.Value.Item
+        }
+
+    /// Retains one selected ID across interruption without changing files or replacing it with another requested name.
+    [<Test>]
+    let ``explicit rename intent survives interruption and exact same invocation resumes`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, item = renameCopy ()
+
+            throws<OperationCanceledException> (fun () ->
+                LibrarySynchronization.selectRenameWith (fun () -> raise (OperationCanceledException())) configuration "Library/item.bin" "ne\u0301w.bin"
+                |> ignore)
+
+            let selected = LibrarySynchronization.selectRenameWith ignore configuration "Library\\item.bin" "n\u00e9w.bin"
+            Assert.That(selected.Rename, Is.True)
+
+            Assert.That(
+                selected.RequestJson.IsNone
+                && selected.SourceBytes.IsNone
+                && not selected.Uploaded,
+                Is.True
+            )
+
+            Assert.That(selected.MaterializedBase, Is.EqualTo(Some item))
+            Assert.That(selected.Name, Is.EqualTo("n\u00e9w.bin"))
+
+            throws<InvalidOperationException> (fun () ->
+                LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" "other.bin"
+                |> ignore)
+
+            let resumed = LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" "n\u00e9w.bin"
+            Assert.That(serialize resumed, Is.EqualTo(serialize selected))
+            Assert.That(readRepository configuration.GraceStatusFile before.RepositoryId, Is.EqualTo(Some before))
+            Assert.That(File.Exists(Path.Combine(configuration.RootDirectory, "Library/item.bin")), Is.True)
+            Assert.That(File.Exists(Path.Combine(configuration.RootDirectory, selected.TargetPath)), Is.False)
+        }
+
+    /// Observes an interrupted rename after root exclusion is released, suppressing exact publication while capturing real saved and untracked bytes.
+    [<Test>]
+    let ``prepared rename publication is not uploaded and positive saved observations remain capturable`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, item = renameCopy ()
+            let selected = LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" "new.bin"
+
+            let change =
+                {
+                    OperationId = selected.OperationId
+                    ChangeKind = ChangeKind.Rename
+                    AcceptedAt = getCurrentInstant ()
+                    AcceptedBy = "test"
+                    LibraryCatalogVersion = before.Catalog.Version
+                    Item =
+                        { item with
+                            Namespace = Some { item.Namespace.Value with Name = "new.bin"; NamespaceVersion = Guid.NewGuid() }
+                            LastChangeCursor = "rename-after"
+                        }
+                    Conflict = None
+                }
+
+            let prepared = { selected with Accepted = Some change; Prepared = true; EchoPending = true }
+            let source = Path.Combine(configuration.RootDirectory, "Library/item.bin")
+            let destination = Path.Combine(configuration.RootDirectory, "Library/new.bin")
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                |> Result.defaultWith invalidOp
+
+            do!
+                task {
+                    use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope Threading.CancellationToken.None
+                    updateOperation configuration.GraceStatusFile before.RepositoryId selected prepared
+                    File.Copy(source, destination)
+                }
+
+            do! LibrarySynchronization.classifyWatchObservations configuration [| destination |] Threading.CancellationToken.None
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
+
+            Assert.That(
+                (readOperations configuration.GraceStatusFile before.RepositoryId
+                 |> Array.find (fun operation -> operation.OperationId = selected.OperationId))
+                    .EchoPending,
+                Is.True
+            )
+
+            File.WriteAllText(destination, "saved positive target")
+            File.WriteAllText(Path.Combine(configuration.RootDirectory, "Library/untracked.bin"), "positive untracked")
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+
+            let saved =
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.filter (fun operation -> not operation.Terminal && not operation.Rename)
+
+            Assert.That(saved.Length, Is.EqualTo(2))
+
+            Assert.That(
+                (saved
+                 |> Array.find (fun operation -> operation.SourcePath.EndsWith("new.bin")))
+                    .MaterializedBase,
+                Is.EqualTo(Some item)
+            )
+
+            Assert.That(
+                (saved
+                 |> Array.find (fun operation -> operation.SourcePath.EndsWith("untracked.bin")))
+                    .MaterializedBase
+                    .IsNone,
+                Is.True
+            )
+
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
+            Assert.That(readRepository configuration.GraceStatusFile before.RepositoryId, Is.EqualTo(Some before))
+        }
+
+    /// Rejects unsupported file states before a durable namespace operation can exist.
+    [<TestCase("dirty");
+      TestCase("zero");
+      TestCase("absent");
+      TestCase("directory");
+      TestCase("occupied");
+      TestCase("case");
+      TestCase("cross-parent");
+      TestCase("catalog");
+      TestCase("reparse")>]
+    let ``explicit rename admission preserves unsupported sources and destinations`` obstruction =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let path = Path.Combine(configuration.RootDirectory, "Library/item.bin")
+            let mutable name = "new.bin"
+
+            match obstruction with
+            | "dirty" -> File.WriteAllText(path, "new saved bytes")
+            | "zero" -> File.WriteAllBytes(path, [||])
+            | "absent" -> File.Delete(path)
+            | "directory" ->
+                File.Delete(path)
+                Directory.CreateDirectory(path) |> ignore
+            | "occupied" -> File.WriteAllText(Path.Combine(configuration.RootDirectory, "Library/new.bin"), "occupied")
+            | "case" -> name <- "ITEM.BIN"
+            | "cross-parent" -> name <- "other/new.bin"
+            | "catalog" -> setState configuration.GraceStatusFile before "blocked"
+            | "reparse" ->
+                let link = Path.Combine(configuration.RootDirectory, "Library")
+                let destination = Path.Combine(configuration.RootDirectory, "junction-target")
+                Directory.Move(link, destination)
+                let start = Diagnostics.ProcessStartInfo("pwsh", UseShellExecute = false, CreateNoWindow = true)
+                start.Environment[ "GRACE_REPARSE_TEST_LINK" ] <- link
+                start.Environment[ "GRACE_REPARSE_TEST_TARGET" ] <- destination
+
+                [|
+                    "-NoProfile"
+                    "-NonInteractive"
+                    "-Command"
+                    "New-Item -ItemType Junction -Path $env:GRACE_REPARSE_TEST_LINK -Target $env:GRACE_REPARSE_TEST_TARGET | Out-Null"
+                |]
+                |> Array.iter start.ArgumentList.Add
+
+                use junctionProcess = Diagnostics.Process.Start(start)
+                junctionProcess.WaitForExit()
+                Assert.That(junctionProcess.ExitCode, Is.Zero)
+            | _ -> invalidOp "Unknown admission case."
+
+            let previous = readOperations configuration.GraceStatusFile before.RepositoryId
+
+            Assert.That(
+                Action (fun () ->
+                    LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" name
+                    |> ignore),
+                Throws.Exception
+            )
+
+            Assert.That(readOperations configuration.GraceStatusFile before.RepositoryId, Is.EqualTo<PendingOperation>(previous))
+        }
+
+    /// Separates all four command outcomes while retiring only receipt-backed unprepared namespace work.
+    [<Test>]
+    let ``rename rejection retirement retains receipt without item cursor or echo effects`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let db = configuration.GraceStatusFile
+            let selected = LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" "new.bin"
+            let request = { selected with RequestJson = Some "frozen namespace request" }
+            updateOperation db before.RepositoryId selected request
+
+            let receipt =
+                {
+                    OperationId = selected.OperationId
+                    RequestHash = "exact hash"
+                    Outcome = "rejected"
+                    Change = None
+                    ReasonCode = Some "NamespaceVersionMismatch"
+                    CurrentLibraryCatalog = None
+                    Rebaseline = None
+                }
+
+            let rejected = { request with Receipt = Some receipt }
+            updateOperation db before.RepositoryId request rejected
+            let items = readItems db before.RepositoryId
+            use connection = openConnection db
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "CREATE TRIGGER fail_rename_retirement BEFORE UPDATE OF terminal ON library_operations BEGIN SELECT RAISE(ABORT, 'retirement interrupted'); END;"
+
+            command.ExecuteNonQuery() |> ignore
+            throws<SqliteException> (fun () -> retireRejectedRename db before.RepositoryId rejected)
+
+            Assert.That(
+                readOperations db before.RepositoryId
+                |> Array.find (fun operation -> operation.OperationId = selected.OperationId),
+                Is.EqualTo(rejected)
+            )
+
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
+            command.CommandText <- "DROP TRIGGER fail_rename_retirement;"
+            command.ExecuteNonQuery() |> ignore
+            retireRejectedRename db before.RepositoryId rejected
+
+            let terminal =
+                readOperations db before.RepositoryId
+                |> Array.find (fun operation -> operation.OperationId = selected.OperationId)
+
+            Assert.That(terminal.Terminal && not terminal.EchoPending, Is.True)
+            Assert.That(terminal.Receipt, Is.EqualTo(Some receipt))
+            Assert.That(readItems db before.RepositoryId, Is.EqualTo<LibraryItemDto>(items))
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
+
+            Assert.That(
+                (LibrarySynchronization.renameResult terminal None)
+                    .Outcome,
+                Is.EqualTo("rejected")
+            )
+
+            Assert.That(
+                (LibrarySynchronization.renameResult selected None)
+                    .Outcome,
+                Is.EqualTo("ambiguous")
+            )
+
+            let _, accepted = prepared ()
+
+            Assert.That(
+                (LibrarySynchronization.renameResult { selected with Accepted = accepted.Accepted } None)
+                    .Outcome,
+                Is.EqualTo("acceptedButObstructed")
+            )
+
+            Assert.That(
+                (LibrarySynchronization.renameResult { selected with Accepted = accepted.Accepted; Terminal = true } None)
+                    .Outcome,
+                Is.EqualTo("completed")
+            )
+
+            throws<InvalidOperationException> (fun () -> retireRejectedRename db before.RepositoryId rejected)
+            pruneClassified db before.RepositoryId 0
+
+            Assert.That(
+                readOperations db before.RepositoryId
+                |> Array.exists (fun operation -> operation.OperationId = selected.OperationId),
+                Is.False
+            )
+
+            let saved = { rejected with OperationId = Guid.NewGuid(); Rename = false; SourceBytes = Some [| 1uy |]; Receipt = None }
+            insertOperation db before.RepositoryId saved
+            throws<InvalidOperationException> (fun () -> retireRejectedRename db before.RepositoryId saved)
+
+            Assert.That(
+                readOperations db before.RepositoryId
+                |> Array.find (fun operation -> operation.OperationId = saved.OperationId),
+                Is.EqualTo(saved)
+            )
+        }
+
+    /// Rolls back completion if repository or operation records change between the item write and progress commit.
+    [<TestCase("repository"); TestCase("operation")>]
+    let ``completion exact record changes roll back item operation and cursor`` changed =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let state, pending = prepared ()
+            enable db state
+            insertOperation db state.RepositoryId pending
+
+            throws<InvalidOperationException> (fun () ->
+                completeWith
+                    (fun connection transaction ->
+                        use command = connection.CreateCommand()
+                        command.Transaction <- transaction
+
+                        command.CommandText <-
+                            if changed = "repository" then
+                                "UPDATE library_repository_state SET lifecycle_state='changed';"
+                            else
+                                "UPDATE library_operations SET operation_json=$changed;"
+
+                        command.Parameters.AddWithValue("$changed", serialize { pending with EchoPending = true })
+                        |> ignore
+
+                        command.ExecuteNonQuery() |> ignore)
+                    db
+                    state
+                    pending)
+
+            Assert.That(readItems db state.RepositoryId, Is.Empty)
+            Assert.That(readRepository db state.RepositoryId, Is.EqualTo(Some state))
+            Assert.That(readOperations db state.RepositoryId, Is.EqualTo<PendingOperation>([| pending |]))
+        }
 
     /// Verifies the active Library connection, exact table count, and rollback after a real transaction statement fails.
     [<Test>]

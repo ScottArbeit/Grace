@@ -583,7 +583,7 @@ module GraceCommand =
     let private libraryHelpSections =
         [
             { Heading = "Configure Libraries"; CommandNames = [ "list"; "get"; "add"; "remove" ] }
-            { Heading = "Synchronize files"; CommandNames = [ "sync" ] }
+            { Heading = "Synchronize files"; CommandNames = [ "sync"; "rename" ] }
         ]
 
     let private branchHelpSections =

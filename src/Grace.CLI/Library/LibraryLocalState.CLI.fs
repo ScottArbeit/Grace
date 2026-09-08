@@ -26,12 +26,14 @@ module internal LibraryLocalState =
             Baseline: BaselineSelection option
         }
 
-    /// Retains immutable saved input and the exact request/result needed to resume one Library operation.
+    /// Retains saved input or a selected namespace intent and the exact request/receipt needed to resume one Library operation.
     [<CLIMutable>]
     type PendingOperation =
         {
             OperationId: Guid
             Direction: string
+            Rename: bool
+            Receipt: LibraryOperationReceiptDto option
             SourcePath: string
             SourceBytes: byte array option
             MaterializedBase: LibraryItemDto option
@@ -296,6 +298,8 @@ module internal LibraryLocalState =
                 {
                     OperationId = Guid.NewGuid()
                     Direction = "baseline"
+                    Rename = false
+                    Receipt = None
                     SourcePath = ""
                     SourceBytes = None
                     MaterializedBase = None
@@ -501,6 +505,9 @@ module internal LibraryLocalState =
     let updateOperation dbPath (repositoryId: Guid) (expected: PendingOperation) (updated: PendingOperation) =
         if expected.OperationId <> updated.OperationId
            || expected.Direction <> updated.Direction
+           || expected.Rename <> updated.Rename
+           || (expected.Receipt.IsSome
+               && expected.Receipt <> updated.Receipt)
            || expected.SourcePath <> updated.SourcePath
            || expected.Parent <> updated.Parent
            || expected.Name <> updated.Name
@@ -537,6 +544,47 @@ module internal LibraryLocalState =
 
         if changed <> 1 then
             invalidOp "Library pending operation changed before persistence."
+
+    /// Retires only an unprepared namespace intent with an exact definitive rejection, preserving its receipt and all materialized state.
+    let retireRejectedRename dbPath (repositoryId: Guid) (operation: PendingOperation) =
+        if
+            not operation.Rename
+            || operation.Direction <> "local"
+            || operation.Prepared
+            || operation.Terminal
+            || operation.SourceBytes.IsSome
+            || operation.Uploaded
+            || operation.Accepted.IsSome
+            || operation.EchoPending
+            || operation.RequestJson.IsNone
+            || not
+                (
+                    operation.Receipt
+                    |> Option.exists (fun receipt ->
+                        receipt.OperationId = operation.OperationId
+                        && receipt.Outcome = "rejected"
+                        && receipt.Change.IsNone)
+                )
+        then
+            invalidOp "Only a definitively rejected unprepared Library rename can retire."
+
+        use connection = openConnection dbPath
+        let terminal = { operation with Terminal = true }
+
+        let changed =
+            execute
+                connection
+                None
+                "UPDATE library_operations SET terminal=1,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
+                [
+                    "$repository", box (repositoryId.ToString("D"))
+                    "$operation", box (operation.OperationId.ToString("D"))
+                    "$json", box (serialize terminal)
+                    "$expected", box (serialize operation)
+                ]
+
+        if changed <> 1 then
+            invalidOp "Library rejected rename changed before retirement."
 
     /// Retains a completed page's continuation, including an empty visibility gap, without advancing applied progress.
     let recordPage dbPath (expected: RepositoryState) nextPageToken =
@@ -677,15 +725,22 @@ module internal LibraryLocalState =
 
         // Once any item commits, restart uses its applied cursor rather than replaying the previous page.
         // A fully applied page subsequently checkpoints its next token, including an empty HasMore page.
-        execute
-            connection
-            (Some transaction)
-            "UPDATE library_repository_state SET applied_cursor=$cursor,next_page_token=NULL,lifecycle_state='catchingUp' WHERE repository_id=$repository;"
-            [
-                "$cursor", box change.Item.LastChangeCursor
-                "$repository", box (expected.RepositoryId.ToString("D"))
-            ]
-        |> ignore
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected then
+            invalidOp "Library repository changed during completion."
+
+        let advanced =
+            execute
+                connection
+                (Some transaction)
+                "UPDATE library_repository_state SET applied_cursor=$cursor,next_page_token=NULL,lifecycle_state='catchingUp' WHERE repository_id=$repository;"
+                [
+                    "$cursor", box change.Item.LastChangeCursor
+                    "$repository", box (expected.RepositoryId.ToString("D"))
+                ]
+
+        if advanced <> 1 then
+            invalidOp "Library repository disappeared during completion."
 
         transaction.Commit()
 

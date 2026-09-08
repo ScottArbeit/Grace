@@ -11,6 +11,52 @@ open System
 [<Parallelizable(ParallelScope.All)>]
 module LibraryCliParsingTests =
 
+    /// Accepts only the explicit file and same-parent name gesture, without caller-supplied operation or version identities.
+    [<Test>]
+    let ``library rename accepts two positional arguments and rejects internal identities`` () =
+        let args =
+            [|
+                "library"
+                "rename"
+                "Library/nested/file.txt"
+                "new.txt"
+            |]
+
+        Assert.That(GraceCommand.rootCommand.Parse(args).Errors.Count, Is.Zero)
+
+        Assert.That(
+            GraceCommand
+                .rootCommand
+                .Parse(
+                    [|
+                        "library"
+                        "rename"
+                        "Library/file.txt"
+                    |]
+                )
+                .Errors
+                .Count,
+            Is.GreaterThan(0)
+        )
+
+        for option in
+            [|
+                "--operation-id"
+                "--expected-version"
+                "--item-id"
+                "--repository-id"
+            |] do
+            Assert.That(
+                GraceCommand
+                    .rootCommand
+                    .Parse(
+                        Array.append args [| option; string (Guid.NewGuid()) |]
+                    )
+                    .Errors
+                    .Count,
+                Is.GreaterThan(0)
+            )
+
     /// Keeps the synchronization capability budget confined to enable, run, and status.
     [<Test>]
     let ``library synchronization accepts exact verbs and repository locators`` () =
