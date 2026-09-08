@@ -41,6 +41,9 @@ module LibrarySynchronizationWindowsServerTests =
         let manifestCallbackLock = obj ()
         let mutable afterNextManifestUpload: (unit -> unit) option = None
         let mutable afterNextContentRead: (unit -> unit) option = None
+        let mutable afterNextBootstrap: (unit -> Task) option = None
+        let mutable beforeNextChangesGet: (unit -> unit) option = None
+        let mutable singleItemBootstrapPages = false
         let mutable gapPage: byte array option = None
         let mutable injectGap = 0
         let pageTokens = ConcurrentQueue<string>()
@@ -99,6 +102,20 @@ module LibrarySynchronizationWindowsServerTests =
 
                 let path = context.Request.Path.Value
 
+                if singleItemBootstrapPages
+                   && (path = "/libraries/bootstrap/start"
+                       || path = "/libraries/bootstrap/continue") then
+                    let! json = forward.Content.ReadAsStringAsync()
+
+                    if path = "/libraries/bootstrap/start" then
+                        let request = deserialize<Parameters.Library.StartLibraryBootstrapParameters> json
+                        request.PageSize <- 1
+                        forward.Content <- createJsonContent request
+                    else
+                        let request = deserialize<Parameters.Library.ContinueLibraryBootstrapParameters> json
+                        request.PageSize <- 1
+                        forward.Content <- createJsonContent request
+
                 if path = "/libraries/changes/submit" then
                     Interlocked.Increment(&submitRequestCount)
                     |> ignore
@@ -107,6 +124,13 @@ module LibrarySynchronizationWindowsServerTests =
                 let mutable replayGap = false
 
                 if path = "/libraries/changes/get" then
+                    let callback =
+                        lock manifestCallbackLock (fun () ->
+                            let next = beforeNextChangesGet in
+                            beforeNextChangesGet <- None
+                            next)
+
+                    callback |> Option.iter (fun action -> action ())
                     let! requestJson = forward.Content.ReadAsStringAsync()
                     let request = deserialize<Parameters.Library.GetLibraryChangesParameters> requestJson
                     requestedCursor <- request.AfterCursor
@@ -120,6 +144,18 @@ module LibrarySynchronizationWindowsServerTests =
                 requestTrace.Enqueue($"{DateTime.UtcNow:O} response {int response.StatusCode} {tracePath}")
                 let! receivedBytes = response.Content.ReadAsByteArrayAsync()
                 let mutable bytes = receivedBytes
+
+                if response.IsSuccessStatusCode
+                   && path = "/libraries/bootstrap/start" then
+                    let callback =
+                        lock manifestCallbackLock (fun () ->
+                            let next = afterNextBootstrap in
+                            afterNextBootstrap <- None
+                            next)
+
+                    match callback with
+                    | Some action -> do! action ()
+                    | None -> ()
 
                 if response.IsSuccessStatusCode
                    && path = "/libraries/changes/get" then
@@ -198,6 +234,12 @@ module LibrarySynchronizationWindowsServerTests =
         member _.AfterNextManifestUpload(action) = lock manifestCallbackLock (fun () -> afterNextManifestUpload <- Some action)
         /// Saves a local edit after the server has prepared a real exact-revision content read.
         member _.AfterNextContentRead(action) = lock manifestCallbackLock (fun () -> afterNextContentRead <- Some action)
+        /// Accepts a real remote edit after an immutable baseline was selected and before its first page reaches the joining copy.
+        member _.AfterNextBootstrap(action) = lock manifestCallbackLock (fun () -> afterNextBootstrap <- Some action)
+        /// Observes the installed baseline immediately before the joining copy asks for later accepted changes.
+        member _.BeforeNextChangesGet(action) = lock manifestCallbackLock (fun () -> beforeNextChangesGet <- Some action)
+        /// Exercises the actual server's immutable continuation route with one item per page.
+        member _.UseSingleItemBootstrapPages() = singleItemBootstrapPages <- true
         /// Simulates one empty visibility page while retaining its real two-change response behind an opaque fixture continuation.
         member _.InjectEmptyVisibilityPage() = Interlocked.Exchange(&injectGap, 1) |> ignore
         /// Exposes received continuation values for restart assertions, without interpreting server cursors.
@@ -464,6 +506,111 @@ module LibrarySynchronizationWindowsServerTests =
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "enable")
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "enable")
             return copyA, copyB, repositoryId, proxy
+        }
+
+    /// Joins an already populated Library through real commands, installs retained revisions, then catches up and restarts without publication.
+    [<Test>]
+    let ``populated A and new B install selected baseline then later accepted edit without duplicate publication on restart`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let root = Path.Combine(Path.GetTempPath(), $"grace-library-populated-{Guid.NewGuid():N}")
+            let copyA, copyB = Path.Combine(root, "A"), Path.Combine(root, "B")
+            Directory.CreateDirectory(copyA) |> ignore
+            Directory.CreateDirectory(copyB) |> ignore
+            let! repositoryId = createRepositoryAsync ()
+            do! addLibraryAsync repositoryId
+            use proxy = new AuthenticatedProxy(graceServerBaseAddress, testUserId)
+            configureWorkingCopy copyA repositoryId proxy.BaseAddress
+            configureWorkingCopy copyB repositoryId proxy.BaseAddress
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "enable")
+            let nestedA = Directory.CreateDirectory(Path.Combine(copyA, "Library", "one", "two"))
+            let pathA = Path.Combine(nestedA.FullName, "selected.txt")
+            let pathB = Path.Combine(copyB, "Library", "one", "two", "selected.txt")
+            File.WriteAllText(pathA, "selected retained baseline bytes")
+            File.WriteAllBytes(Path.Combine(copyA, "Library", "other.bin"), [| 0uy; 255uy; 7uy |])
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let selected = Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
+
+            let selectedCursor =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+                    .AppliedCursor
+
+            Assert.That(selected.Length, Is.EqualTo(4))
+            let mutable installedSelectionObserved = false
+            let mutable submissionsAfterEdit = 0
+            let mutable uploadsAfterEdit = 0
+            proxy.UseSingleItemBootstrapPages()
+
+            proxy.AfterNextBootstrap (fun () ->
+                task {
+                    File.WriteAllText(pathA, "later accepted bytes after baseline selection")
+                    let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+                    submissionsAfterEdit <- proxy.SubmitRequestCount
+                    uploadsAfterEdit <- proxy.ManifestUploadCount
+
+                    proxy.BeforeNextChangesGet (fun () ->
+                        Assert.That(File.ReadAllText(pathB), Is.EqualTo("selected retained baseline bytes"))
+
+                        let installed =
+                            Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                            |> Array.sortBy (fun item -> item.ItemId)
+
+                        Assert.That(installed, Is.EqualTo(box (selected |> Array.sortBy (fun item -> item.ItemId))))
+
+                        let state =
+                            (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                                .Value
+
+                        Assert.That(state.AppliedCursor, Is.EqualTo(selectedCursor))
+                        Assert.That(state.Baseline.Value.Applied, Is.True)
+
+                        Assert.That(
+                            Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                            |> Array.forall (fun op ->
+                                op.Direction = "baseline"
+                                && op.Terminal
+                                && op.Accepted.IsNone),
+                            Is.True
+                        )
+
+                        installedSelectionObserved <- true)
+                })
+
+            let! enabled = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "enable")
+            Assert.That(installedSelectionObserved, Is.True)
+            Assert.That(enabled, Does.Contain("current"))
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("later accepted bytes after baseline selection"))
+            Assert.That(File.ReadAllBytes(Path.Combine(copyB, "Library", "other.bin")), Is.EqualTo(box [| 0uy; 255uy; 7uy |]))
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(submissionsAfterEdit))
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(uploadsAfterEdit))
+            let beforeA, beforeB = File.GetLastWriteTimeUtc(pathA), File.GetLastWriteTimeUtc(pathB)
+            let otherA = File.GetLastWriteTimeUtc(Path.Combine(copyA, "Library", "other.bin"))
+            let otherB = File.GetLastWriteTimeUtc(Path.Combine(copyB, "Library", "other.bin"))
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "enable")
+            Assert.That(File.GetLastWriteTimeUtc(pathA), Is.EqualTo(beforeA))
+            Assert.That(File.GetLastWriteTimeUtc(pathB), Is.EqualTo(beforeB))
+            Assert.That(File.GetLastWriteTimeUtc(Path.Combine(copyA, "Library", "other.bin")), Is.EqualTo(otherA))
+            Assert.That(File.GetLastWriteTimeUtc(Path.Combine(copyB, "Library", "other.bin")), Is.EqualTo(otherB))
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(submissionsAfterEdit))
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(uploadsAfterEdit))
+
+            let stateA =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+
+            let stateB =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+
+            Assert.That(stateB.AppliedCursor, Is.EqualTo(stateA.AppliedCursor))
+            Assert.That(stateB.Baseline.IsNone, Is.True)
+            Assert.That(stateB.State, Is.EqualTo("current"))
+            TestContext.Progress.WriteLine($"Populated Library copies: {root}")
         }
 
     /// Excludes empty observations without losing presence, the original edit base, or a previously captured positive request.

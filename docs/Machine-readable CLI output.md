@@ -201,7 +201,7 @@ The `library` command group uses the same result envelope as other JSON-ready co
 
 - `library get <path>` and `library list` return the persisted `LibraryCatalogDto`.
 - `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
-- `library sync enable`, `library sync run`, and `library sync status` return `Enabled`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, `AppliedCursor`, and `PendingOperationCount`. State is `disabled`, `catchingUp`, `current`, or `blocked`; the cursor records verified, atomically completed local application. These commands support `--schema`, `--examples`, and `--select` through the same registry.
+- `library sync enable`, `library sync run`, and `library sync status` return `Enabled`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, `AppliedCursor`, and `PendingOperationCount`. State is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent until all required baseline work is verified and its boundary commits; received pages never count as completed application. Pending count includes unfinished baseline items. Initial catch-up remains gated from saved-file capture until its complete pull. These commands support `--schema`, `--examples`, and `--select` through the same registry.
 
 Catalog changes require a positional Library path, `--expected-version`, and `--operation-id`. Automation must inspect
 `ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process

@@ -44,6 +44,7 @@
 		<Compile Include="Command\Repository.CLI.fs" />
 		<Compile Include="Command\LibraryFilesystem.Windows.CLI.fs" />
 		<Compile Include="Command\LibraryManifestUpload.CLI.fs" />
+		<Compile Include="Command\LibraryBaseline.CLI.fs" />
 		<Compile Include="Command\LibrarySynchronization.CLI.fs" />
 		<Compile Include="Command\Library.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />

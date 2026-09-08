@@ -1,0 +1,1139 @@
+{
+  "SourceMain": "68c421a52372e1e7484f98a2cf00ce9cc0e0562f",
+  "Question": "Can complete baseline acquisition then installation resume within the existing three local responsibilities?",
+  "Verdict": "proven",
+  "Total": 46,
+  "Passed": 46,
+  "OS": "Microsoft Windows NT 10.0.26340.0",
+  "PowerShell": "7.6.5",
+  "SQLite": "3.51.1",
+  "RunRoot": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z",
+  "HarnessPath": "C:/Source/Grace-baseline-experiment-1037/Run.ps1",
+  "HarnessSha256": "1B19AE55F815A62458E3658A40B01FEED8979C64A7C1B9B8A01714460BB2B8EF",
+  "RawResultsPath": "C:/Source/Grace-baseline-experiment-1037/results.json",
+  "RawResultsSha256": "2D5F699866E2D0A8CD251A14A5ECE4993813C7B839182A125F9D29D4717289EC",
+  "Real": [
+    "Windows NTFS filesystem effects",
+    "native SQLite WAL FULL transactions"
+  ],
+  "Modeled": [
+    "remote metadata and retained content",
+    "catalog changes",
+    "token expiry",
+    "accepted-change feed",
+    "Watch callbacks"
+  ],
+  "Cases": [
+    {
+      "Name": "unordered-pages-tombstone-catchup",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\unordered-pages-tombstone-catchup",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\unordered-pages-tombstone-catchup\\snapshot-after-page-0.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01",
+        "publish:accepted-op-11"
+      ],
+      "FinalState": {
+        "Applied": "C11",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-selection",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-selection",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-selection\\snapshot-before-selection.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-selection",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-selection",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-selection\\snapshot-after-selection.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-page-0",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-page-0",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-page-0\\snapshot-before-page-0.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-inside-page-0",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-inside-page-0",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-inside-page-0\\snapshot-inside-page-0.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-page-0",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-page-0",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-page-0\\snapshot-after-page-0.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-page-1",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-page-1",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-page-1\\snapshot-before-page-1.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-page-1",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-page-1",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-page-1\\snapshot-after-page-1.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-page-2",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-page-2",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-page-2\\snapshot-before-page-2.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-page-2",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-page-2",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-page-2\\snapshot-after-page-2.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-pending-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-pending-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-pending-03\\snapshot-before-pending-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-pending-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-pending-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-pending-03\\snapshot-after-pending-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-stage-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-stage-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-stage-03\\snapshot-before-stage-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-stage-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-stage-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-stage-03\\snapshot-after-stage-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-publish-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-publish-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-publish-03\\snapshot-before-publish-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-publish-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-publish-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-publish-03\\snapshot-after-publish-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-item-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-item-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-item-03\\snapshot-before-item-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-inside-item-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-inside-item-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-inside-item-03\\snapshot-inside-item-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-item-03",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-item-03",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-item-03\\snapshot-after-item-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-directory-99",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-directory-99",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-directory-99\\snapshot-before-directory-99.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-directory-99",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-directory-99",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-directory-99\\snapshot-after-directory-99.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-directory-98",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-directory-98",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-directory-98\\snapshot-before-directory-98.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-directory-98",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-directory-98",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-directory-98\\snapshot-after-directory-98.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-publish-01",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-publish-01",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-publish-01\\snapshot-before-publish-01.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-publish-01",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-publish-01",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-publish-01\\snapshot-after-publish-01.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-item-01",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-item-01",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-item-01\\snapshot-before-item-01.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-item-01",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-item-01",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-item-01\\snapshot-after-item-01.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-before-boundary",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-boundary",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-before-boundary\\snapshot-before-boundary.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "restart-after-boundary",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-boundary",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\restart-after-boundary\\snapshot-after-boundary.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "expired-incomplete-restarts-before-effects",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\expired-incomplete-restarts-before-effects",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\expired-incomplete-restarts-before-effects\\snapshot-after-page-0.json"
+      ],
+      "Effects": [
+        "publish:baseline-2:03",
+        "mkdir:baseline-2:99",
+        "mkdir:baseline-2:98",
+        "publish:baseline-2:01"
+      ],
+      "FinalState": {
+        "Applied": "B20",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B20",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-2",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "expired-complete-reuses-exact-selection",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\expired-complete-reuses-exact-selection",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\expired-complete-reuses-exact-selection\\snapshot-after-page-2.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "before-publication-catalog",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\before-publication-catalog",
+      "SnapshotCount": 0,
+      "Snapshots": [],
+      "Effects": [],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "before-publication-obstruction",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\before-publication-obstruction",
+      "SnapshotCount": 0,
+      "Snapshots": [],
+      "Effects": [],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "before-publication-zero",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\before-publication-zero",
+      "SnapshotCount": 0,
+      "Snapshots": [],
+      "Effects": [],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "catalog-change-after-one-installed-file",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\catalog-change-after-one-installed-file",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\catalog-change-after-one-installed-file\\snapshot-after-item-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03"
+      ],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "completed-file-edited-before-boundary",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\completed-file-edited-before-boundary",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\completed-file-edited-before-boundary\\snapshot-before-boundary.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01"
+      ],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "watch-current-positive-control",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\watch-current-positive-control",
+      "SnapshotCount": 0,
+      "Snapshots": [],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98",
+        "publish:baseline-1:01",
+        "watch:capture",
+        "watch:submit"
+      ],
+      "FinalState": {
+        "Applied": "B10",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "catalog-change-during-acquisition",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\catalog-change-during-acquisition",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\catalog-change-during-acquisition\\snapshot-after-page-0.json"
+      ],
+      "Effects": [],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "acquiring",
+        "NextPage": 1,
+        "Complete": false,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "before-expiry-reset",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\before-expiry-reset",
+      "SnapshotCount": 2,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\before-expiry-reset\\snapshot-after-page-0.json",
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\before-expiry-reset\\snapshot-before-expiry-reset.json"
+      ],
+      "Effects": [
+        "publish:baseline-2:03",
+        "mkdir:baseline-2:99",
+        "mkdir:baseline-2:98",
+        "publish:baseline-2:01"
+      ],
+      "FinalState": {
+        "Applied": "B20",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B20",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-2",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "inside-expiry-reset",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\inside-expiry-reset",
+      "SnapshotCount": 2,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\inside-expiry-reset\\snapshot-after-page-0.json",
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\inside-expiry-reset\\snapshot-inside-expiry-reset.json"
+      ],
+      "Effects": [
+        "publish:baseline-2:03",
+        "mkdir:baseline-2:99",
+        "mkdir:baseline-2:98",
+        "publish:baseline-2:01"
+      ],
+      "FinalState": {
+        "Applied": "B20",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B20",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-2",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "after-expiry-reset",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\after-expiry-reset",
+      "SnapshotCount": 2,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\after-expiry-reset\\snapshot-after-expiry-reset.json",
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\after-expiry-reset\\snapshot-after-page-0.json"
+      ],
+      "Effects": [
+        "publish:baseline-2:03",
+        "mkdir:baseline-2:99",
+        "mkdir:baseline-2:98",
+        "publish:baseline-2:01"
+      ],
+      "FinalState": {
+        "Applied": "B20",
+        "Phase": "current",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B20",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-2",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "new-parent-file",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\new-parent-file",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\new-parent-file\\snapshot-after-item-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03"
+      ],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "new-parent-nonempty-directory",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\new-parent-nonempty-directory",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\new-parent-nonempty-directory\\snapshot-after-item-03.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03"
+      ],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "prepared-directory-gains-local-child",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\prepared-directory-gains-local-child",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\prepared-directory-gains-local-child\\snapshot-after-directory-99.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99"
+      ],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "materialized-parent-replaced-with-file",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\materialized-parent-replaced-with-file",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\materialized-parent-replaced-with-file\\snapshot-after-item-98.json"
+      ],
+      "Effects": [
+        "publish:baseline-1:03",
+        "mkdir:baseline-1:99",
+        "mkdir:baseline-1:98"
+      ],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "installing",
+        "NextPage": null,
+        "Complete": true,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    },
+    {
+      "Name": "expired-token-with-changed-catalog-aborts",
+      "Passed": true,
+      "Directory": "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\expired-token-with-changed-catalog-aborts",
+      "SnapshotCount": 1,
+      "Snapshots": [
+        "C:\\Source\\Grace-baseline-experiment-1037\\run-20260908T1845291388038Z\\expired-token-with-changed-catalog-aborts\\snapshot-after-page-0.json"
+      ],
+      "Effects": [],
+      "FinalState": {
+        "Applied": null,
+        "Phase": "acquiring",
+        "NextPage": 1,
+        "Complete": false,
+        "Boundary": "B10",
+        "Catalog": "catalog-1",
+        "Bootstrap": "baseline-1",
+        "Epoch": "epoch-1"
+      }
+    }
+  ]
+}

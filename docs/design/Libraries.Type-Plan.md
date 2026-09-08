@@ -4,7 +4,18 @@ Status: accepted 2026-09-06; the Issue #1042 server replacement is merged throug
 
 Use [Libraries design](../Libraries.Design.md) for behavior and storage rules. This inventory contains 58 Remove, 56 Change, 55 Keep and 4 Stay removed entries. Shared types predating Libraries require stronger caller and benefit evidence before changing them. Each new declaration beyond this plan must explain the behavior and ownership it supports.
 
-Issue #1039's local file-input boundary excludes zero-byte saves before pending creation or upload preparation. Empty files remain present and protected, while existing pending operations retain positive source bytes, original edit bases and submitted requests. Partial file-rename observations resolve through their exact prepared operation; removing changed old-path bytes requires the matching already-accepted positive saved content. These behaviors use the existing three-table records without an additional type or lifecycle.
+Issue #1039 delivered its Windows client in PR #1070. Its local file-input boundary excludes zero-byte saves before pending creation or upload preparation. Empty files remain present and protected, while existing pending operations retain positive source bytes, original edit bases and submitted requests. Partial file-rename observations resolve through their exact prepared operation; removing changed old-path bytes requires the matching already-accepted positive saved content.
+
+Issue #1071 adds only initial populated-Library onboarding. The accepted [baseline experiment](Libraries.Baseline-Experiment.md) establishes the sequence within those same three table responsibilities. The following additions extend the historical inventory without changing remote contracts or adding an independent owner.
+
+| Local declaration | Purpose, placement and lifetime |
+| --- | --- |
+| `LibraryLocalState.BaselineSelection` | Embedded in the repository row while acquiring metadata, installing and performing the first complete catch-up. Retains bootstrap identity, boundary and separate metadata/applied flags. Cleared after that catch-up. |
+| `RepositoryState.Baseline` and `PendingOperation.BaselineItem` | Selection stays with repository progress; selected item metadata stays in operation work, separate from genuine `Accepted` changes. Materialized items appear only after verified effects. Completed baseline operations use existing echo classification and bounded pruning after onboarding. |
+| `LibraryBaseline` module | Functional acquisition, live-parent ordering, installation and boundary checks. Uses the existing root lease and filesystem publication mechanics. No actor, table or background service. |
+| `LibraryBaseline.Remote` | Invocation-local functions for existing catalog/bootstrap/retained-read routes, also used by deterministic production-orchestration tests. Contains no durable state or independent lifecycle. |
+
+The `acquiringBaseline` and `installingBaseline` status values distinguish selected metadata from installed content. Applied cursor is absent before boundary completion. Watch and explicit run gate saved-file capture through the first complete accepted-change catch-up. No fake `LibraryChangeDto`, new retention behavior, schema compatibility layer, or automatic participating-copy rebaseline is introduced.
 
 | Existing declaration | Decision | Accepted change and reason |
 | --- | --- | --- |

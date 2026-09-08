@@ -8,6 +8,10 @@ open Microsoft.Data.Sqlite
 /// Stores Library participation, materialized ancestry, and pending operations in the existing local database.
 module internal LibraryLocalState =
 
+    /// Retains one immutable onboarding selection through metadata acquisition, installation and its first catch-up.
+    [<CLIMutable>]
+    type BaselineSelection = { BootstrapId: Guid; BoundaryCursor: string; MetadataComplete: bool; Applied: bool }
+
     /// Owns this copy's participation and complete bounded catalog; its cursor describes completed local application.
     [<CLIMutable>]
     type RepositoryState =
@@ -19,6 +23,7 @@ module internal LibraryLocalState =
             AppliedCursor: string
             NextPageToken: string option
             State: string
+            Baseline: BaselineSelection option
         }
 
     /// Retains immutable saved input and the exact request/result needed to resume one Library operation.
@@ -37,6 +42,7 @@ module internal LibraryLocalState =
             RequestJson: string option
             Uploaded: bool
             Accepted: LibraryChangeDto option
+            BaselineItem: LibraryItemDto option
             Prepared: bool
             ExpectedCatalogVersion: Guid
             ExpectedCursor: string
@@ -82,9 +88,9 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "CREATE TABLE IF NOT EXISTS library_repository_state(repository_id TEXT PRIMARY KEY,working_copy_id TEXT NOT NULL,catalog_json TEXT NOT NULL,cursor_epoch TEXT NOT NULL,applied_cursor TEXT NOT NULL,next_page_token TEXT NULL,lifecycle_state TEXT NOT NULL);
+                "CREATE TABLE IF NOT EXISTS library_repository_state(repository_id TEXT PRIMARY KEY,working_copy_id TEXT NOT NULL,catalog_json TEXT NOT NULL,cursor_epoch TEXT NOT NULL,applied_cursor TEXT NOT NULL,next_page_token TEXT NULL,lifecycle_state TEXT NOT NULL,baseline_json TEXT NULL);
                  CREATE TABLE IF NOT EXISTS library_items(repository_id TEXT NOT NULL,item_id TEXT NOT NULL,item_json TEXT NOT NULL,PRIMARY KEY(repository_id,item_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
-                 CREATE TABLE IF NOT EXISTS library_operations(repository_id TEXT NOT NULL,operation_id TEXT NOT NULL,direction TEXT NOT NULL CHECK(direction IN ('local','remote')),terminal INTEGER NOT NULL CHECK(terminal IN (0,1)),echo_pending INTEGER NOT NULL CHECK(echo_pending IN (0,1)),created_at_ticks INTEGER NOT NULL,operation_json TEXT NOT NULL,PRIMARY KEY(repository_id,operation_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
+                 CREATE TABLE IF NOT EXISTS library_operations(repository_id TEXT NOT NULL,operation_id TEXT NOT NULL,direction TEXT NOT NULL CHECK(direction IN ('local','remote','baseline')),terminal INTEGER NOT NULL CHECK(terminal IN (0,1)),echo_pending INTEGER NOT NULL CHECK(echo_pending IN (0,1)),created_at_ticks INTEGER NOT NULL,operation_json TEXT NOT NULL,PRIMARY KEY(repository_id,operation_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE INDEX IF NOT EXISTS ix_library_operations_pending ON library_operations(repository_id,terminal,created_at_ticks);"
                 []
             |> ignore
@@ -98,7 +104,7 @@ module internal LibraryLocalState =
         |> Option.iter (fun value -> command.Transaction <- value)
 
         command.CommandText <-
-            "SELECT working_copy_id,catalog_json,cursor_epoch,applied_cursor,lifecycle_state,next_page_token FROM library_repository_state WHERE repository_id=$repository;"
+            "SELECT working_copy_id,catalog_json,cursor_epoch,applied_cursor,lifecycle_state,next_page_token,baseline_json FROM library_repository_state WHERE repository_id=$repository;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
         |> ignore
@@ -115,6 +121,11 @@ module internal LibraryLocalState =
                     AppliedCursor = reader.GetString(3)
                     State = reader.GetString(4)
                     NextPageToken = if reader.IsDBNull(5) then None else Some(reader.GetString(5))
+                    Baseline =
+                        if reader.IsDBNull(6) then
+                            None
+                        else
+                            Some(deserialize<BaselineSelection> (reader.GetString(6)))
                 }
         else
             None
@@ -124,14 +135,12 @@ module internal LibraryLocalState =
         use connection = openConnection dbPath
         readRepositoryWith connection None repositoryId
 
-    /// Enables a previously disabled copy at a verified empty immutable baseline.
-    let enable dbPath (state: RepositoryState) =
-        use connection = openConnection dbPath
-
+    /// Inserts participation on the caller's transaction so baseline selection and its first page commit together.
+    let private enableWith connection transaction (state: RepositoryState) =
         execute
             connection
-            None
-            "INSERT INTO library_repository_state(repository_id,working_copy_id,catalog_json,cursor_epoch,applied_cursor,next_page_token,lifecycle_state) VALUES($repository,$copy,$catalog,$epoch,$cursor,$next,$state);"
+            transaction
+            "INSERT INTO library_repository_state(repository_id,working_copy_id,catalog_json,cursor_epoch,applied_cursor,next_page_token,lifecycle_state,baseline_json) VALUES($repository,$copy,$catalog,$epoch,$cursor,$next,$state,$baseline);"
             [
                 "$repository", box (state.RepositoryId.ToString("D"))
                 "$copy", box (state.WorkingCopyId.ToString("D"))
@@ -143,8 +152,17 @@ module internal LibraryLocalState =
                  |> Option.map box
                  |> Option.defaultValue (box DBNull.Value))
                 "$state", box state.State
+                "$baseline",
+                (state.Baseline
+                 |> Option.map (serialize >> box)
+                 |> Option.defaultValue (box DBNull.Value))
             ]
         |> ignore
+
+    /// Inserts a participation record for an already verified starting boundary.
+    let enable dbPath state =
+        use connection = openConnection dbPath
+        enableWith connection None state
 
     /// Loads materialized items only; incoming accepted responses do not update this table.
     let readItems dbPath (repositoryId: Guid) =
@@ -188,15 +206,279 @@ module internal LibraryLocalState =
         use connection = openConnection dbPath
         readOperationsWith connection None repositoryId
 
+    /// Replaces onboarding progress under a transaction whose caller has checked the exact previous repository record.
+    let private writeBaselineState connection transaction (state: RepositoryState) =
+        execute
+            connection
+            (Some transaction)
+            "UPDATE library_repository_state SET cursor_epoch=$epoch,applied_cursor=$cursor,next_page_token=$next,lifecycle_state=$state,baseline_json=$baseline WHERE repository_id=$repository;"
+            [
+                "$repository", box (state.RepositoryId.ToString("D"))
+                "$epoch", box state.CursorEpoch
+                "$cursor", box state.AppliedCursor
+                "$next",
+                (state.NextPageToken
+                 |> Option.map box
+                 |> Option.defaultValue (box DBNull.Value))
+                "$state", box state.State
+                "$baseline",
+                (state.Baseline
+                 |> Option.map (serialize >> box)
+                 |> Option.defaultValue (box DBNull.Value))
+            ]
+        |> ignore
+
+    /// Saves selected metadata and its continuation atomically; an expired incomplete selection can be replaced before effects.
+    let saveBaselinePageWith afterItems dbPath (expected: RepositoryState option) (selected: RepositoryState) (page: LibraryBootstrapPageDto) restart =
+        let baseline =
+            selected.Baseline
+            |> Option.defaultWith (fun () -> invalidOp "Baseline selection is missing.")
+
+        if baseline.BootstrapId <> page.BootstrapId
+           || baseline.BoundaryCursor <> page.BoundaryCursor
+           || selected.Catalog <> page.LibraryCatalog
+           || selected.CursorEpoch <> page.CursorEpoch
+           || baseline.Applied
+           || baseline.MetadataComplete then
+            invalidOp "Baseline page does not match the selected metadata."
+
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if readRepositoryWith connection (Some transaction) selected.RepositoryId
+           <> expected then
+            invalidOp "Baseline selection changed before page persistence."
+
+        match expected with
+        | None -> enableWith connection (Some transaction) selected
+        | Some previous ->
+            let prior =
+                previous.Baseline
+                |> Option.defaultWith (fun () -> invalidOp "Participating copies cannot acquire another baseline.")
+
+            if prior.MetadataComplete
+               || prior.Applied
+               || previous.AppliedCursor <> ""
+               || previous.Catalog <> selected.Catalog then
+                invalidOp "Only an uninstalled incomplete baseline can continue or restart acquisition."
+
+            if not restart && (previous <> selected) then
+                invalidOp "Continuation cannot replace its selection."
+
+            if restart then
+                let operations = readOperationsWith connection (Some transaction) selected.RepositoryId
+
+                if operations
+                   |> Array.exists (fun op ->
+                       op.Direction <> "baseline"
+                       || op.Prepared
+                       || op.Terminal) then
+                    invalidOp "Baseline reset cannot discard installed or prepared work."
+
+                execute
+                    connection
+                    (Some transaction)
+                    "DELETE FROM library_operations WHERE repository_id=$repository;"
+                    [
+                        "$repository", box (selected.RepositoryId.ToString("D"))
+                    ]
+                |> ignore
+
+        page.Items
+        |> Array.iter (fun item ->
+            let ns =
+                item.Namespace
+                |> Option.orElseWith (fun () ->
+                    item.Tombstone
+                    |> Option.map (fun value -> value.LastNamespace))
+
+            let op =
+                {
+                    OperationId = Guid.NewGuid()
+                    Direction = "baseline"
+                    SourcePath = ""
+                    SourceBytes = None
+                    MaterializedBase = None
+                    OriginatingCreateId = None
+                    Parent = ns.Value.Parent
+                    Name = ns.Value.Name
+                    ItemKind = item.ItemKind
+                    RequestJson = None
+                    Uploaded = false
+                    Accepted = None
+                    BaselineItem = Some item
+                    Prepared = false
+                    ExpectedCatalogVersion = selected.Catalog.Version
+                    ExpectedCursor = ""
+                    ExpectedAncestry = [||]
+                    ExpectedTarget = None
+                    TargetPath = ""
+                    Terminal = false
+                    EchoPending = false
+                    CreatedAtTicks = DateTime.UtcNow.Ticks
+                }
+
+            execute
+                connection
+                (Some transaction)
+                "INSERT INTO library_operations(repository_id,operation_id,direction,terminal,echo_pending,created_at_ticks,operation_json) VALUES($repository,$operation,'baseline',0,0,$created,$json);"
+                [
+                    "$repository", box (selected.RepositoryId.ToString("D"))
+                    "$operation", box (op.OperationId.ToString("D"))
+                    "$created", box op.CreatedAtTicks
+                    "$json", box (serialize op)
+                ]
+            |> ignore)
+
+        afterItems connection transaction
+
+        writeBaselineState
+            connection
+            transaction
+            { selected with
+                NextPageToken = page.NextPageToken
+                State = if page.NextPageToken.IsSome then "acquiringBaseline" else "installingBaseline"
+                Baseline = Some { baseline with MetadataComplete = page.NextPageToken.IsNone }
+            }
+
+        transaction.Commit()
+
+    /// Persists one immutable page without injected SQLite interruption.
+    let saveBaselinePage dbPath expected selected page restart = saveBaselinePageWith (fun _ _ -> ()) dbPath expected selected page restart
+
+    /// Commits one verified baseline effect without advancing the accepted-change cursor.
+    let completeBaselineItemWith afterItem dbPath (expected: RepositoryState) (operation: PendingOperation) =
+        let baseline = expected.Baseline |> Option.get
+        let item = operation.BaselineItem |> Option.get
+
+        if not baseline.MetadataComplete
+           || baseline.Applied
+           || expected.AppliedCursor <> ""
+           || operation.Direction <> "baseline"
+           || not operation.Prepared
+           || operation.Terminal
+           || operation.Accepted.IsSome
+           || operation.ExpectedCatalogVersion
+              <> expected.Catalog.Version
+           || operation.ExpectedCursor <> expected.AppliedCursor then
+            invalidOp "Baseline item is not prepared for this selection."
+
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected then
+            invalidOp "Baseline changed before item completion."
+
+        if item.Tombstone.IsNone then
+            execute
+                connection
+                (Some transaction)
+                "INSERT INTO library_items(repository_id,item_id,item_json) VALUES($repository,$item,$json);"
+                [
+                    "$repository", box (expected.RepositoryId.ToString("D"))
+                    "$item", box (item.ItemId.ToString("D"))
+                    "$json", box (serialize item)
+                ]
+            |> ignore
+
+        afterItem connection transaction
+        let terminal = { operation with Terminal = true }
+
+        let changed =
+            execute
+                connection
+                (Some transaction)
+                "UPDATE library_operations SET terminal=1,echo_pending=$echo,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
+                [
+                    "$repository", box (expected.RepositoryId.ToString("D"))
+                    "$operation", box (operation.OperationId.ToString("D"))
+                    "$echo", box (if terminal.EchoPending then 1 else 0)
+                    "$json", box (serialize terminal)
+                    "$expected", box (serialize operation)
+                ]
+
+        if changed <> 1 then
+            invalidOp "Baseline exact operation changed before item completion."
+
+        transaction.Commit()
+
+    /// Completes a baseline item after the installer verifies its filesystem result.
+    let completeBaselineItem dbPath expected operation = completeBaselineItemWith (fun _ _ -> ()) dbPath expected operation
+
+    /// Makes the selected boundary applied only after the installer rechecks every completed item and the catalog.
+    let completeBaselineWith beforeCommit dbPath (expected: RepositoryState) (operations: PendingOperation array) =
+        let baseline = expected.Baseline |> Option.get
+
+        if not baseline.MetadataComplete
+           || baseline.Applied
+           || expected.AppliedCursor <> ""
+           || operations
+              |> Array.exists (fun op -> op.Direction <> "baseline" || not op.Terminal) then
+            invalidOp "Baseline still has incomplete work."
+
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected
+           || readOperationsWith connection (Some transaction) expected.RepositoryId
+              <> operations then
+            invalidOp "Baseline work changed before boundary completion."
+
+        writeBaselineState
+            connection
+            transaction
+            { expected with
+                AppliedCursor = baseline.BoundaryCursor
+                NextPageToken = None
+                State = "catchingUp"
+                Baseline = Some { baseline with Applied = true }
+            }
+
+        beforeCommit connection transaction
+        transaction.Commit()
+
+    /// Commits the verified baseline boundary without injected interruption.
+    let completeBaseline dbPath expected operations = completeBaselineWith (fun _ _ -> ()) dbPath expected operations
+
+    /// Releases initial capture only after a complete genuine accepted-change pull following baseline installation.
+    let finishOnboarding dbPath (expected: RepositoryState) =
+        if
+            not
+                (
+                    expected.Baseline
+                    |> Option.exists (fun value -> value.Applied)
+                )
+        then
+            invalidOp "Baseline boundary has not been applied."
+
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected then
+            invalidOp "Onboarding progress changed."
+
+        writeBaselineState connection transaction { expected with Baseline = None; State = "current" }
+        transaction.Commit()
+
     /// Describes the observable result of one completed file, directory or deletion.
-    let private echoFingerprint (change: LibraryChangeDto) =
-        if change.Item.Tombstone.IsSome then
+    let private echoFingerprint (item: LibraryItemDto) =
+        if item.Tombstone.IsSome then
             None
-        elif change.Item.ItemKind = ItemKind.Directory then
+        elif item.ItemKind = ItemKind.Directory then
             Some "directory"
         else
-            change.Item.Content
+            item.Content
             |> Option.map (fun content -> $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}")
+
+    /// Selects actual result metadata without representing baseline work as a server-accepted change.
+    let operationItem (operation: PendingOperation) =
+        operation.BaselineItem
+        |> Option.orElseWith (fun () ->
+            operation.Accepted
+            |> Option.map (fun change -> change.Item))
 
     /// Inserts immutable saved input before upload or incoming filesystem effects.
     let insertOperation dbPath (repositoryId: Guid) (operation: PendingOperation) =
@@ -229,6 +511,7 @@ module internal LibraryLocalState =
                && expected.Accepted <> updated.Accepted)
            || (expected.Uploaded && not updated.Uploaded)
            || expected.SourceBytes <> updated.SourceBytes
+           || expected.BaselineItem <> updated.BaselineItem
            || expected.MaterializedBase
               <> updated.MaterializedBase
            || expected.OriginatingCreateId
@@ -342,7 +625,8 @@ module internal LibraryLocalState =
                 prior.Terminal
                 && prior.EchoPending
                 && (String.Equals(prior.TargetPath, operation.TargetPath, StringComparison.OrdinalIgnoreCase)
-                    || prior.Accepted.Value.Item.ItemId = change.Item.ItemId
+                    || (operationItem prior
+                        |> Option.exists (fun item -> item.ItemId = change.Item.ItemId))
                     || (change.Item.ItemKind = ItemKind.Directory
                         && not (String.Equals(operation.SourcePath, operation.TargetPath, StringComparison.OrdinalIgnoreCase))
                         && prior.TargetPath.StartsWith(operation.SourcePath + "/", StringComparison.OrdinalIgnoreCase))))
@@ -351,7 +635,7 @@ module internal LibraryLocalState =
             priorEchoes
             |> Array.exists (fun prior ->
                 String.Equals(prior.TargetPath, operation.TargetPath, StringComparison.OrdinalIgnoreCase)
-                && echoFingerprint prior.Accepted.Value = echoFingerprint change)
+                && (operationItem prior |> Option.map echoFingerprint) = Some(echoFingerprint change.Item))
 
         priorEchoes
         |> Array.iter (fun prior ->
@@ -416,8 +700,8 @@ module internal LibraryLocalState =
                 operation.Terminal
                 && operation.EchoPending
                 && String.Equals(operation.TargetPath, relativePath, StringComparison.OrdinalIgnoreCase)
-                && operation.Accepted
-                   |> Option.exists (fun change -> echoFingerprint change = fingerprint))
+                && operationItem operation
+                   |> Option.exists (fun item -> echoFingerprint item = fingerprint))
 
         match matches with
         | [| operation |] ->
@@ -460,8 +744,12 @@ module internal LibraryLocalState =
         |> Array.filter (fun operation ->
             not operation.EchoPending
             && not (origins.Contains operation.OperationId)
-            && operation.Accepted.Value.Item.LastChangeCursor
-               <> current.AppliedCursor)
+            && (operation.BaselineItem.IsNone
+                || current.Baseline.IsNone)
+            && (operation.Accepted
+                |> Option.forall (fun change ->
+                    change.Item.LastChangeCursor
+                    <> current.AppliedCursor)))
         |> Array.iter (fun operation ->
             execute
                 connection
