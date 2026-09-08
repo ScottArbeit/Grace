@@ -163,10 +163,13 @@ module internal LibraryLocalState =
 
         items.ToArray()
 
-    /// Loads operations in capture order, preserving separate saved sources even when content repeats.
-    let readOperations dbPath (repositoryId: Guid) =
-        use connection = openConnection dbPath
+    /// Loads operation facts on the caller's connection, including the active completion transaction when supplied.
+    let private readOperationsWith (connection: SqliteConnection) transaction (repositoryId: Guid) =
         use command = connection.CreateCommand()
+
+        transaction
+        |> Option.iter (fun value -> command.Transaction <- value)
+
         command.CommandText <- "SELECT operation_json FROM library_operations WHERE repository_id=$repository ORDER BY created_at_ticks,operation_id;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
@@ -179,6 +182,21 @@ module internal LibraryLocalState =
             operations.Add(deserialize<PendingOperation> (reader.GetString(0)))
 
         operations.ToArray()
+
+    /// Loads operations in capture order, preserving separate saved sources even when content repeats.
+    let readOperations dbPath repositoryId =
+        use connection = openConnection dbPath
+        readOperationsWith connection None repositoryId
+
+    /// Describes the observable result of one completed file, directory or deletion.
+    let private echoFingerprint (change: LibraryChangeDto) =
+        if change.Item.Tombstone.IsSome then
+            None
+        elif change.Item.ItemKind = ItemKind.Directory then
+            Some "directory"
+        else
+            change.Item.Content
+            |> Option.map (fun content -> $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}")
 
     /// Inserts immutable saved input before upload or incoming filesystem effects.
     let insertOperation dbPath (repositoryId: Guid) (operation: PendingOperation) =
@@ -315,7 +333,47 @@ module internal LibraryLocalState =
         |> ignore
 
         afterItem connection transaction
-        let terminal = { operation with Terminal = true }
+
+        // This completion follows the verified filesystem effects. Older echoes for replaced placements
+        // cannot become observable again merely because Watch coalesced several callbacks into one path.
+        let priorEchoes =
+            readOperationsWith connection (Some transaction) expected.RepositoryId
+            |> Array.filter (fun prior ->
+                prior.Terminal
+                && prior.EchoPending
+                && (String.Equals(prior.TargetPath, operation.TargetPath, StringComparison.OrdinalIgnoreCase)
+                    || prior.Accepted.Value.Item.ItemId = change.Item.ItemId
+                    || (change.Item.ItemKind = ItemKind.Directory
+                        && not (String.Equals(operation.SourcePath, operation.TargetPath, StringComparison.OrdinalIgnoreCase))
+                        && prior.TargetPath.StartsWith(operation.SourcePath + "/", StringComparison.OrdinalIgnoreCase))))
+
+        let observablePriorEcho =
+            priorEchoes
+            |> Array.exists (fun prior ->
+                String.Equals(prior.TargetPath, operation.TargetPath, StringComparison.OrdinalIgnoreCase)
+                && echoFingerprint prior.Accepted.Value = echoFingerprint change)
+
+        priorEchoes
+        |> Array.iter (fun prior ->
+            let retired = { prior with EchoPending = false }
+
+            let changed =
+                execute
+                    connection
+                    (Some transaction)
+                    "UPDATE library_operations SET echo_pending=0,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=1 AND echo_pending=1 AND operation_json=$expected;"
+                    [
+                        "$repository", box (expected.RepositoryId.ToString("D"))
+                        "$operation", box (prior.OperationId.ToString("D"))
+                        "$json", box (serialize retired)
+                        "$expected", box (serialize prior)
+                    ]
+
+            if changed <> 1 then
+                invalidOp "Library publication echo changed before completion.")
+
+        // A completion that needs no rewrite can inherit an earlier matching publication's unobserved echo.
+        let terminal = { operation with Terminal = true; EchoPending = operation.EchoPending || observablePriorEcho }
 
         let completed =
             execute
@@ -350,7 +408,7 @@ module internal LibraryLocalState =
     /// Completes one verified application without injected transaction failures.
     let complete dbPath state operation = completeWith (fun _ _ -> ()) dbPath state operation
 
-    /// Consumes one unambiguous completed publication echo while preserving repeated-byte ambiguity.
+    /// Consumes the observable completed publication once; completion has already retired superseded echoes.
     let consumeEcho dbPath repositoryId relativePath fingerprint =
         let matches =
             readOperations dbPath repositoryId
@@ -359,17 +417,7 @@ module internal LibraryLocalState =
                 && operation.EchoPending
                 && String.Equals(operation.TargetPath, relativePath, StringComparison.OrdinalIgnoreCase)
                 && operation.Accepted
-                   |> Option.exists (fun change ->
-                       let expected =
-                           if change.Item.Tombstone.IsSome then
-                               None
-                           elif change.Item.ItemKind = ItemKind.Directory then
-                               Some "directory"
-                           else
-                               change.Item.Content
-                               |> Option.map (fun content -> $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}")
-
-                       expected = fingerprint))
+                   |> Option.exists (fun change -> echoFingerprint change = fingerprint))
 
         match matches with
         | [| operation |] ->

@@ -257,7 +257,7 @@ module internal LibrarySynchronization =
         }
 
     /// Captures all observable saved files whose parent is materialized, before incoming metadata can replace their base.
-    let private captureSaved (configuration: GraceConfiguration) =
+    let internal captureSaved (configuration: GraceConfiguration) =
         let current = state configuration
         let items = readItems configuration.GraceStatusFile configuration.RepositoryId
         let mutable operations = readOperations configuration.GraceStatusFile configuration.RepositoryId

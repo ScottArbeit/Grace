@@ -151,12 +151,6 @@ export grace__libraries__token_secret="$(openssl rand -base64 32)"
 
 The Aspire local topology generates this value for the development run and provisions the six Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
 
-## Deferred local behavior
+## Deferred capabilities
 
-Local synchronization arrives in a later issue. Until then:
-
-- Watch does not subscribe to or apply Library change pages.
-- Working Directory Update never publishes Library content into configured Libraries.
-- No local database records Library cursors, baselines, or item state.
-- No foreground or background command copies files into or out of Libraries.
-- The Library catalog remains remote repository state, not per-working-copy configuration.
+Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.
