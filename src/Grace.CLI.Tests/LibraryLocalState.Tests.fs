@@ -45,6 +45,7 @@ module LibraryLocalStateTests =
                 AppliedCursor = "opaque-before"
                 NextPageToken = None
                 State = "catchingUp"
+                Baseline = None
             }
 
         let bytes = [| 0uy; 127uy; 255uy |]
@@ -94,6 +95,7 @@ module LibraryLocalStateTests =
                 RequestJson = Some "exact-submitted-request"
                 Uploaded = true
                 Accepted = Some change
+                BaselineItem = None
                 Prepared = true
                 ExpectedCatalogVersion = state.Catalog.Version
                 ExpectedCursor = state.AppliedCursor

@@ -107,12 +107,12 @@ module LibraryCliParsingTests =
                 .Count
             |> should be (greaterThan 0)
 
-    /// Verifies root changes reject missing exact-version, path, or operation identity inputs during parsing.
+    /// Verifies root changes still require a path while concurrency options can be omitted.
     [<Test>]
-    let ``library catalog changes require every concurrency input`` () =
+    let ``library catalog changes require a path`` () =
         for arguments in
             [|
-                [| "library"; "add"; "shared/docs" |]
+                [| "library"; "add" |]
                 [|
                     "library"
                     "add"
@@ -122,7 +122,6 @@ module LibraryCliParsingTests =
                 [|
                     "library"
                     "remove"
-                    "shared/docs"
                     "--expected-version"
                     Guid.NewGuid().ToString()
                 |]
@@ -135,6 +134,40 @@ module LibraryCliParsingTests =
                 .Errors
                 .Count
             |> should be (greaterThan 0)
+
+    /// Allows ordinary commands with only their path and keeps malformed or missing option values as parser errors.
+    [<TestCase("add")>]
+    [<TestCase("remove")>]
+    let ``catalog command optional GUID values remain distinguishable from invalid input`` verb =
+        let arguments = [| "library"; verb; "shared/docs" |]
+
+        GraceCommand
+            .rootCommand
+            .Parse(
+                arguments
+            )
+            .Errors
+            .Count
+        |> should equal 0
+
+        for option in
+            [|
+                "--expected-version"
+                "--operation-id"
+            |] do
+            for values in
+                [|
+                    [| option |]
+                    [| option; "not-a-guid" |]
+                |] do
+                GraceCommand
+                    .rootCommand
+                    .Parse(
+                        Array.append arguments values
+                    )
+                    .Errors
+                    .Count
+                |> should be (greaterThan 0)
 
     /// Verifies the typed SDK exposes every accepted remote route without local participation commands.
     [<Test>]

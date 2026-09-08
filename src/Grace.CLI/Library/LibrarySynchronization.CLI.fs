@@ -150,13 +150,64 @@ module internal LibrarySynchronization =
                         State = current.State
                         LibraryCatalogVersion = Some current.Catalog.Version
                         CursorEpoch = Some current.CursorEpoch
-                        AppliedCursor = Some current.AppliedCursor
+                        AppliedCursor = if current.AppliedCursor = "" then None else Some current.AppliedCursor
                         PendingOperationCount = count
                     }
         }
 
-    /// Enables one Windows copy from the immutable empty baseline, keeping existing participation unchanged on retry.
-    let enable (configuration: GraceConfiguration) correlationId cancellationToken =
+    /// Binds baseline acquisition to existing SDK routes and retained immutable content reads.
+    let private baselineRemote configuration correlationId : LibraryBaseline.Remote =
+        {
+            Catalog =
+                fun () ->
+                    task {
+                        let! result = Libraries.GetCatalog(scoped configuration correlationId (GetLibraryCatalogParameters()))
+                        return value result
+                    }
+            Start =
+                fun () ->
+                    task {
+                        let! result = Libraries.StartBootstrap(scoped configuration correlationId (StartLibraryBootstrapParameters()))
+                        return value result
+                    }
+            Continue =
+                fun id token ->
+                    task {
+                        let parameters = scoped configuration correlationId (ContinueLibraryBootstrapParameters())
+                        parameters.BootstrapId <- id
+                        parameters.PageToken <- token
+                        let! result = Libraries.ContinueBootstrap parameters
+
+                        match result with
+                        | Error error when
+                            (match error.Properties.TryGetValue "StatusCode" with
+                             | true, status -> string status = "Gone"
+                             | _ -> false)
+                            ->
+                            return None
+                        | _ -> return Some(value result)
+                    }
+            Read =
+                fun item ->
+                    task {
+                        let parameters = scoped configuration correlationId (PrepareLibraryContentReadParameters())
+                        parameters.ItemId <- item.ItemId
+                        parameters.ContentVersionId <- item.Content.Value.ContentVersionId
+                        parameters.ContentRevision <- item.ContentRevision.Value
+                        let! result = Libraries.PrepareContentRead parameters
+                        let grant = value result
+                        let prefix = "/libraries/content/"
+
+                        if not (grant.DownloadPath.StartsWith(prefix, StringComparison.Ordinal)) then
+                            invalidOp "Library read descriptor has an unexpected route."
+
+                        let! result = Libraries.DownloadContent(Uri.UnescapeDataString(grant.DownloadPath.Substring(prefix.Length)), correlationId)
+                        return value result
+                    }
+        }
+
+    /// Selects a baseline only for a fresh empty local Library root, preserving existing participation on retry.
+    let private enableParticipation (configuration: GraceConfiguration) correlationId cancellationToken =
         task {
             if not (OperatingSystem.IsWindows()) then
                 invalidOp "Library synchronization requires Windows 11."
@@ -170,44 +221,7 @@ module internal LibrarySynchronization =
 
             if (readRepository configuration.GraceStatusFile configuration.RepositoryId)
                 .IsNone then
-                let! result = Libraries.StartBootstrap(scoped configuration correlationId (StartLibraryBootstrapParameters()))
-                let page = value result
-
-                if page.LibraryCatalog.RepositoryId
-                   <> configuration.RepositoryId
-                   || page.LibraryCatalog.Libraries.Length <> 1
-                   || page.Items.Length <> 0
-                   || page.NextPageToken.IsSome then
-                    invalidOp "This tracer requires one initially empty Library baseline."
-
-                let root = fullPath configuration page.LibraryCatalog.Libraries[0]
-
-                if
-                    Directory.Exists(root)
-                    && Directory.EnumerateFileSystemEntries(root)
-                       |> Seq.isEmpty
-                       |> not
-                then
-                    invalidOp "Enable synchronization before adding files to the initially empty Library."
-
-                let! catalogResult = Libraries.GetCatalog(scoped configuration correlationId (GetLibraryCatalogParameters()))
-
-                if value catalogResult <> page.LibraryCatalog then
-                    invalidOp "Library catalog changed before the empty baseline was enabled."
-
-                Directory.CreateDirectory(root) |> ignore
-
-                LibraryLocalState.enable
-                    configuration.GraceStatusFile
-                    {
-                        RepositoryId = configuration.RepositoryId
-                        WorkingCopyId = Guid.NewGuid()
-                        Catalog = page.LibraryCatalog
-                        CursorEpoch = page.CursorEpoch
-                        AppliedCursor = page.BoundaryCursor
-                        NextPageToken = None
-                        State = "current"
-                    }
+                do! LibraryBaseline.startWith ignore (baselineRemote configuration correlationId) configuration
 
             return! status configuration
         }
@@ -298,7 +312,7 @@ module internal LibrarySynchronization =
                 (pathItems
                  |> Array.find (fun current -> current.ItemId = item.ItemId))
 
-        for libraryRoot in current.Catalog.Libraries do
+        for libraryRoot in (if current.Baseline.IsSome then [||] else current.Catalog.Libraries) do
             let root = fullPath configuration libraryRoot
 
             if not (Directory.Exists(root)) then
@@ -467,6 +481,7 @@ module internal LibrarySynchronization =
                                 RequestJson = None
                                 Uploaded = false
                                 Accepted = None
+                                BaselineItem = None
                                 Prepared = false
                                 ExpectedCatalogVersion = current.Catalog.Version
                                 ExpectedCursor = current.AppliedCursor
@@ -678,6 +693,7 @@ module internal LibrarySynchronization =
                         RequestJson = None
                         Uploaded = false
                         Accepted = Some change
+                        BaselineItem = None
                         Prepared = false
                         ExpectedCatalogVersion = expected.Catalog.Version
                         ExpectedCursor = expected.AppliedCursor
@@ -1020,9 +1036,14 @@ module internal LibrarySynchronization =
             use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
             do! initialize configuration.GraceStatusFile
             let original = state configuration
-            setState configuration.GraceStatusFile original "catchingUp"
+
+            if original.Baseline.IsNone then
+                setState configuration.GraceStatusFile original "catchingUp"
 
             try
+                if (state configuration).Baseline.IsSome then
+                    do! LibraryBaseline.resumeWith ignore (baselineRemote configuration correlationId) configuration cancellationToken
+
                 let mutable again = true
                 let mutable caughtUp = false
 
@@ -1054,6 +1075,11 @@ module internal LibrarySynchronization =
 
                     let! completePull = pull configuration correlationId
                     caughtUp <- completePull
+
+                    if completePull
+                       && (state configuration).Baseline.IsSome then
+                        finishOnboarding configuration.GraceStatusFile (state configuration)
+
                     let captured = captureSaved configuration
 
                     let remaining =
@@ -1082,4 +1108,15 @@ module internal LibrarySynchronization =
             | ex ->
                 setState configuration.GraceStatusFile (state configuration) "blocked"
                 return raise ex
+        }
+
+    /// Enables or resumes populated-Library onboarding, then catches up through genuine accepted changes.
+    let enable configuration correlationId cancellationToken =
+        task {
+            let! selected = enableParticipation configuration correlationId cancellationToken
+
+            if (state configuration).Baseline.IsSome then
+                return! run configuration correlationId cancellationToken
+            else
+                return selected
         }

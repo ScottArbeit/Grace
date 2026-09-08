@@ -24,8 +24,12 @@ module LibraryCommand =
     /// Defines options shared by the Library handlers.
     module private Options =
         let libraryPath = Argument<string>("path", Description = "Repository-relative Library path.")
-        let expectedVersion = Option<Guid>("--expected-version", Required = true, Description = "Exact current Library catalog version <Guid>.")
-        let operationId = Option<Guid>("--operation-id", Required = true, Description = "Idempotent Library operation identity <Guid>.")
+
+        let expectedVersion =
+            Option<Guid>("--expected-version", Required = false, Description = "Exact Library catalog version <Guid>; reads the current version when omitted.")
+
+        let operationId =
+            Option<Guid>("--operation-id", Required = false, Description = "Library operation identity <Guid>; creates a new identity when omitted.")
 
         let ownerId =
             Option<OwnerId>(OptionName.OwnerId, Required = false, Description = "Repository owner ID <Guid>.", DefaultValueFactory = (fun _ -> OwnerId.Empty))
@@ -100,15 +104,44 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
-    /// Sends one exact-version root add or remove operation through the remote SDK.
-    let private changeLibraryHandler addLibrary (parseResult: ParseResult) : Task<GraceResult<LibraryCatalogChangeResultDto>> =
+    /// Sends one catalog mutation using explicit inputs or one lookup and one invocation-local operation identity.
+    let internal changeLibraryHandlerWith
+        (newOperationId: unit -> Guid)
+        (getCatalog: GetLibraryCatalogParameters -> Task<GraceResult<LibraryCatalogDto>>)
+        (add: AddLibraryParameters -> Task<GraceResult<LibraryCatalogChangeResultDto>>)
+        (remove: RemoveLibraryParameters -> Task<GraceResult<LibraryCatalogChangeResultDto>>)
+        addLibrary
+        (parseResult: ParseResult)
+        : Task<GraceResult<LibraryCatalogChangeResultDto>>
+        =
         task {
             try
-                let expectedVersion = parseResult.GetValue Options.expectedVersion
                 let libraryPath = parseResult.GetValue Options.libraryPath
-                let operationId = parseResult.GetValue Options.operationId
+                let operationResult = parseResult.GetResult Options.operationId
 
-                if addLibrary then
+                let operationId =
+                    if isNull operationResult || operationResult.Implicit then
+                        newOperationId ()
+                    else
+                        parseResult.GetValue Options.operationId
+
+                let! version =
+                    task {
+                        let versionResult = parseResult.GetResult Options.expectedVersion
+
+                        if isNull versionResult || versionResult.Implicit then
+                            let! catalog = getCatalog (applyScope (GetLibraryCatalogParameters()) parseResult)
+
+                            return
+                                catalog
+                                |> Result.map (fun result -> result.ReturnValue.Version)
+                        else
+                            return Ok(parseResult.GetValue Options.expectedVersion)
+                    }
+
+                match version with
+                | Error error -> return Error error
+                | Ok expectedVersion when addLibrary ->
                     let parameters =
                         AddLibraryParameters()
                         |> fun value -> applyScope value parseResult
@@ -116,8 +149,8 @@ module LibraryCommand =
                     parameters.ExpectedVersion <- expectedVersion
                     parameters.LibraryPath <- libraryPath
                     parameters.OperationId <- operationId
-                    return! Libraries.AddLibrary parameters
-                else
+                    return! add parameters
+                | Ok expectedVersion ->
                     let parameters =
                         RemoveLibraryParameters()
                         |> fun value -> applyScope value parseResult
@@ -125,10 +158,14 @@ module LibraryCommand =
                     parameters.ExpectedVersion <- expectedVersion
                     parameters.LibraryPath <- libraryPath
                     parameters.OperationId <- operationId
-                    return! Libraries.RemoveLibrary parameters
+                    return! remove parameters
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
+
+    /// Uses the ordinary SDK once for lookup when needed and once for the requested catalog mutation, without retries.
+    let private changeLibraryHandler addLibrary parseResult =
+        changeLibraryHandlerWith Guid.NewGuid Libraries.GetCatalog Libraries.AddLibrary Libraries.RemoveLibrary addLibrary parseResult
 
     /// Dispatches `grace library get <path>` and renders the standard Grace result envelope.
     type GetLibrary() =

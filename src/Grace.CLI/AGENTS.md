@@ -46,6 +46,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 ## Recent Patterns
 
 - `grace library sync enable/run/status` owns Windows Library participation in exactly three tables in the existing local database. Keep its frozen requests, materialized edit bases, filesystem guards, and completion transaction in the Library modules. Library work shares root exclusion with WDU but must never create a WDU completion. Watch consumes `LibraryContentAvailable.v1` only as a pull hint.
+- Populated-Library onboarding acquires complete metadata before effects. Repository state retains its baseline selection, operations retain baseline items separately from accepted changes, and materialized items appear only after verified effects. Commit the baseline boundary separately after all required work; gate capture through initial catch-up. Keep incomplete-token restart restricted to an unchanged catalog and empty local root. There is no migration contract for old development-only Library schemas.
 - Library synchronization excludes zero-byte input before creating pending operations or preparing uploads. Empty files remain present and protected; retain already-captured positive sources and exact submitted requests. A file rename may remove changed source bytes only against their exact already-accepted pending content. Preserve `ItemTombstoned` rejection and saved input after deletion.
 - `grace history` commands operate without requiring a repo `graceconfig.json`.
   Avoid `Configuration.Current()` in history-related flows.
@@ -73,6 +74,9 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
   `dotnet build --configuration Release` stays green.
 
 ## Command Modules (`Grace.CLI.Command`)
+
+- Keep Library support modules in `Library/`: local state, filesystem mechanics, manifest upload, baseline acquisition and synchronization. `Command/Library.CLI.fs` remains the command entry point. Preserve module names and explicit F# compile order when moving files.
+- Library add/remove optionally read one catalog version and generate one operation ID when omitted. Explicit values bypass their defaults, including invalid values handled by existing validation. Preserve lookup errors and stale mutation results without retries or durable command state.
 
 - Parameter classes usually derive from `ParameterBase()`. Keep them
   lightweight and validated at construction.
