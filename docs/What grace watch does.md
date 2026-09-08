@@ -6,17 +6,11 @@ One of the most important pieces of Grace is `grace watch`. `grace watch` is a b
 
 Most Grace users will be programmers, and we're a more technical audience. We know that background processes can be used in ways that are helpful, harmful, or just wasteful. As someone asking you to run a background process, I have a special responsibility to be transparent with you about what `grace watch` does if you allow it to run. (Which you totally should.) I want you to have complete confidence that running `grace watch` is safe and trustworthy.
 
-## Libraries are remote-only
+## Library synchronization
 
-Product V1 Libraries do not add a fourth local caller to Working Directory Update. Configuring a
-Library changes repository path ownership: Save and Reference reject it, while Branch and Working Directory
-Update exclude that root and its descendants using exact path-segment matching. Watch continues to replay only the
-accepted Reference events and version-controlled paths described below; it cannot publish Library paths through
-those server boundaries.
+Configured Library paths stay outside ordinary Watch Save and Reference processing, including when local participation is disabled. On an enabled Windows copy, the existing Watch timer invokes the same finite operation as `grace library sync run`. It captures stable nonempty saved files, submits frozen requests, pulls ordered changes, and completes local application through the three Library tables. Empty files are excluded from pending input and upload, remain present, and cannot be overwritten or deleted by incoming synchronization. Previously captured positive input remains durable after truncation to zero.
 
-The server's library wake belongs to authorized remote SDK clients. `grace watch` does not subscribe to
-it, materialize Library bytes, write Library metadata to local SQLite, or publish Library files. Those
-local behaviors remain deferred.
+Library publication uses the shared working-root exclusion and its own completion transaction. It adds no WDU caller or completion. Each completed application retires superseded publication echoes while preserving evidence for the observable result. Watch classifies that result only after matching its path and complete content, so coalesced callbacks do not retain obsolete operation history indefinitely. Watch registers for `LibraryContentAvailable.v1`, coalesces hints for its repository, and pulls on the next timer pass. The hint's cursor never advances local progress. Periodic pulls recover from lost hints, and reconnect registers the subscription again. A changed catalog stops Watch before its next ordinary processing pass; restart after resolving the policy change.
 
 ## No dark patterns
 

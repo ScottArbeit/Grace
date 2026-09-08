@@ -1,8 +1,10 @@
 # Library type plan
 
-Status: accepted 2026-09-06 and implemented by the Issue #1042 replacement candidate. The inventory applies to the source reviewed at PR #1043 head `6399d4db015085a1185eb7e367a8d24ece6ddbaa`, including the inherited Library work from Issue #1038. Exact prior identifiers remain in the table for lookup.
+Status: accepted 2026-09-06; the Issue #1042 server replacement is merged through PR #1053. The inventory applies to the source reviewed at PR #1043 head `6399d4db015085a1185eb7e367a8d24ece6ddbaa`, including the inherited Library work from Issue #1038. Exact prior identifiers remain in the table for lookup.
 
 Use [Libraries design](../Libraries.Design.md) for behavior and storage rules. This inventory contains 58 Remove, 56 Change, 55 Keep and 4 Stay removed entries. Shared types predating Libraries require stronger caller and benefit evidence before changing them. Each new declaration beyond this plan must explain the behavior and ownership it supports.
+
+Issue #1039's local file-input boundary excludes zero-byte saves before pending creation or upload preparation. Empty files remain present and protected, while existing pending operations retain positive source bytes, original edit bases and submitted requests. Partial file-rename observations resolve through their exact prepared operation; removing changed old-path bytes requires the matching already-accepted positive saved content. These behaviors use the existing three-table records without an additional type or lifecycle.
 
 | Existing declaration | Decision | Accepted change and reason |
 | --- | --- | --- |

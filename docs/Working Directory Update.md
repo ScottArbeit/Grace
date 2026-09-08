@@ -37,8 +37,7 @@ Configured Libraries and their descendants are excluded from version-control pla
 verification using exact path-segment matching. A Library named `shared` owns `shared` and `shared/design.md`, but not
 `shared-old`. The current `RepositoryLibraryActor.IsInLibrary` result can become stale after it returns, so existing WDU
 stale-authority checks remain authoritative. This boundary does not add another Working Directory Update caller,
-selection, completion, or publication path. Product V1 Libraries remain remote-only and do not write local SQLite or
-the filesystem.
+selection or completion. Windows Library synchronization reuses the shared root exclusion and same-volume publication mechanics, then completes its own item/terminal-operation/cursor transaction in the three Library tables. WDU targets, callers, rows, and completion remain unchanged.
 
 ## 2. Accepted decisions
 

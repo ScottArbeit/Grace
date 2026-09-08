@@ -1,16 +1,16 @@
 # Libraries design
 
-Status: Design accepted by Scott on 2026-09-06. Issue #1042 implements the remote replacement; focused validation and independent review remain before delivery.
+Status: Design accepted by Scott on 2026-09-06, with zero-byte local file exclusion accepted on 2026-09-07. Issue #1042 is complete: [PR #1053](https://github.com/ScottArbeit/Grace/pull/1053), reviewed at `c58dfbe0ab5cf27bd4d351f7af8355628d3eb1f3`, merged as `63b07c60de9e1fb4429f7855882febe0ed39f0a5`. Issue #1039 implements the Windows client against that merged contract.
 
 Quality: Product V1. This document is the maintained Library design for [Epic #1037](https://github.com/ScottArbeit/Grace/issues/1037). It replaces the implementation instructions in revision 0.32 and the old Issue #1042 repair scope. The supplied revision 0.32 files remain historical source material, unchanged in Downloads. The HTML review remains the detailed assessment of the older code.
 
 ## Outcome and delivery
 
-An authorized participant edits ordinary files in a repository-owned Library. Grace transfers accepted bytes and changes between participating working copies without creating Saves, References, DirectoryVersions or WorkItem Attachments.
+An authorized participant edits ordinary nonempty files in a repository-owned Library. Grace transfers accepted bytes and changes between participating working copies without creating Saves, References, DirectoryVersions or WorkItem Attachments. Local zero-byte files are excluded before pending input or upload preparation; they remain present and protected from incoming overwrite or deletion. Previously captured nonempty input remains durable after a later zero-length save.
 
 One configured repository-relative root is one Library. A repository owns a sorted catalog of at most 128 non-overlapping roots. Adding a root requires an empty outgoing version-control namespace; removing it requires an empty Library namespace. A catalog change changes path ownership, never imports or moves files.
 
-The next user-visible slice remains two authorized Windows 11 working copies, one initially empty Library, create in A, edit in B, then restart both without another logical change or filesystem rewrite. Issue #1042 replaces the remote model. Issue #1039 adapts the existing client after the server replacement is reviewed and merged.
+The current user-visible slice is two authorized Windows 11 working copies, one initially empty Library, create in A, edit in B, then restart both without another logical change or filesystem rewrite. Scott authorized dependent Issue #1039 work before the server merge. That client work now continues toward a separate mainline PR; its own review and merge approval remain required.
 
 Later epic work covers participation/offline behavior, broader namespace competition and ownership transitions, and Linux/macOS conformance. Public history browsing, restore, diff, search, AI assistance, Cache, placeholders and on-demand hydration remain deferred. No new WDU caller, database, general locking service, migration layer or alternative platform state machine is included.
 
@@ -31,6 +31,8 @@ All replacement choices in the report are accepted, including compact item/slot 
 - Use the [type plan](design/Libraries.Type-Plan.md) to apply the 173 reviewed dispositions. The counts are an inventory, not a quota.
 
 ## Evidence and implementation status
+
+The following table records the historical inputs to the accepted redesign on 2026-09-06. The current server delivery is PR #1053, identified above; the older PRs remain preserved source material.
 
 | Evidence | Revision and treatment |
 | --- | --- |
@@ -67,7 +69,7 @@ Before moving a directory, walk the destination’s parent chain and reject a mo
 
 For a stale-content conflict, compute a deterministic candidate sibling name, read that exact slot, and try deterministic numbered alternatives while occupied. Select and persist the winning name and new item ID in Pending before any projection writes. A user-created filename may collide with the first candidate. Retries reuse the selected result; they never reallocate a different sibling after acceptance.
 
-Current evidence: [conflict allocation](https://github.com/ScottArbeit/Grace/blob/6399d4db015085a1185eb7e367a8d24ece6ddbaa/src/Grace.Server/Library.Coordinator.Server.fs#L791) has no occupancy read for its generated name; [rename/move](https://github.com/ScottArbeit/Grace/blob/6399d4db015085a1185eb7e367a8d24ece6ddbaa/src/Grace.Server/Library.Coordinator.Server.fs#L830) changes only the selected item's stored path; [slot projection](https://github.com/ScottArbeit/Grace/blob/6399d4db015085a1185eb7e367a8d24ece6ddbaa/src/Grace.Server/Library.Coordinator.Server.fs#L284) hashes that path. The accepted parent/name model replaces these inherited behaviors.
+Historical review evidence: [conflict allocation](https://github.com/ScottArbeit/Grace/blob/6399d4db015085a1185eb7e367a8d24ece6ddbaa/src/Grace.Server/Library.Coordinator.Server.fs#L791) had no occupancy read for its generated name; [rename/move](https://github.com/ScottArbeit/Grace/blob/6399d4db015085a1185eb7e367a8d24ece6ddbaa/src/Grace.Server/Library.Coordinator.Server.fs#L830) changed only the selected item's stored path; [slot projection](https://github.com/ScottArbeit/Grace/blob/6399d4db015085a1185eb7e367a8d24ece6ddbaa/src/Grace.Server/Library.Coordinator.Server.fs#L284) hashed that path. The accepted parent/name model replaces these inherited behaviors.
 
 ## Keep useful public distinctions; remove nested copies
 
@@ -227,6 +229,8 @@ A watcher cannot see unsaved editor memory. If disk X is unchanged while Alice h
 **Accepted local schema:** keep the existing shared root exclusion and WDU mechanics; do not add Library as a fourth Branch/Watch/Connect target. Use three Library-owned tables in the later client slice: repository state (including the complete bounded catalog), materialized item ancestry, and durable pending/terminal operations. Fold the `libraries` table into repository state, fetch fresh slot expectations when a local operation needs them instead of persisting a mirror of every vacant server slot, and keep compact conflict provenance on the ordinary conflict item/its pending operation rather than a permanent `library_conflicts` workflow table. This accepted three-table design replaces revision 0.32's six-table design. PR #1044 still implements the older schema and must be adapted.
 
 Keep three kinds of local data: repository progress and participation; each item’s last materialized base; and operations with their frozen source bytes, expected target, server result and recovery details. Once the filesystem change has been checked, one SQLite transaction may update the item and advance the cursor. Save the pending operation before touching files. Keep the predecessor and catalog checks, restart handling and bounded retention of completed operations. If the user edits again during an upload, preserve that edit separately; do not change the operation already submitted.
+
+For an incoming file rename, changed old-path bytes may be removed only when those exact nonempty bytes are already accepted and retained by an existing local operation. Reread that operation and the source immediately before removal. A distinct save at the prepared destination keeps the original item and materialized revision; it does not become an unrelated create. If the server deleted the item before its local edit was submitted, retain the `ItemTombstoned` rejection, saved source and exact request without resurrection. An excluded zero-byte source or target prevents the affected filesystem change and cursor completion.
 
 ## Validation matrix
 
