@@ -17,47 +17,31 @@ pub struct LibraryItemDto {
     pub item_id: uuid::Uuid,
     #[serde(rename = "ItemKind")]
     pub item_kind: models::LibraryItemKind,
-    #[serde(rename = "State")]
-    pub state: State,
     /// Opaque repository cursor. Clients must not parse or compare its contents.
     #[serde(rename = "LastChangeCursor")]
     pub last_change_cursor: String,
-    #[serde(rename = "LibraryCatalogVersion")]
-    pub library_catalog_version: uuid::Uuid,
     #[serde(rename = "Namespace")]
     pub namespace: Box<models::LibraryNamespaceDto>,
     #[serde(rename = "Content")]
     pub content: Box<models::LibraryContentVersionDto>,
+    /// Opaque repository cursor. Clients must not parse or compare its contents.
+    #[serde(rename = "ContentRevision")]
+    pub content_revision: String,
     #[serde(rename = "Tombstone")]
     pub tombstone: Box<models::LibraryTombstoneDto>,
 }
 
 impl LibraryItemDto {
-    pub fn new(item_id: uuid::Uuid, item_kind: models::LibraryItemKind, state: State, last_change_cursor: String, library_catalog_version: uuid::Uuid, namespace: models::LibraryNamespaceDto, content: models::LibraryContentVersionDto, tombstone: models::LibraryTombstoneDto) -> LibraryItemDto {
+    pub fn new(item_id: uuid::Uuid, item_kind: models::LibraryItemKind, last_change_cursor: String, namespace: models::LibraryNamespaceDto, content: models::LibraryContentVersionDto, content_revision: String, tombstone: models::LibraryTombstoneDto) -> LibraryItemDto {
         LibraryItemDto {
             item_id,
             item_kind,
-            state,
             last_change_cursor,
-            library_catalog_version,
             namespace: Box::new(namespace),
             content: Box::new(content),
+            content_revision,
             tombstone: Box::new(tombstone),
         }
-    }
-}
-/// 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum State {
-    #[serde(rename = "live")]
-    Live,
-    #[serde(rename = "tombstoned")]
-    Tombstoned,
-}
-
-impl Default for State {
-    fn default() -> State {
-        Self::Live
     }
 }
 

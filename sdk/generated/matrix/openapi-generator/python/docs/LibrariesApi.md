@@ -6,7 +6,7 @@ Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**add_library**](LibrariesApi.md#add_library) | **POST** /libraries/add | Add one empty normalized Library under an exact configuration version.
 [**continue_library_bootstrap**](LibrariesApi.md#continue_library_bootstrap) | **POST** /libraries/bootstrap/continue | Continue one immutable bootstrap baseline page sequence.
-[**download_library_content**](LibrariesApi.md#download_library_content) | **GET** /libraries/content/{grantId} | Redeem one authorized short-lived immutable-content read grant.
+[**download_library_content**](LibrariesApi.md#download_library_content) | **GET** /libraries/content/{readToken} | Download authorized immutable content through a signed token until expiry.
 [**get_library_catalog**](LibrariesApi.md#get_library_catalog) | **POST** /libraries/catalog/get | Get the persisted Library configuration.
 [**get_library_changes**](LibrariesApi.md#get_library_changes) | **POST** /libraries/changes/get | Read repository-ordered accepted Library changes after an opaque cursor.
 [**get_library_item**](LibrariesApi.md#get_library_item) | **POST** /libraries/items/get | Get one current Library item.
@@ -15,7 +15,7 @@ Method | HTTP request | Description
 [**get_library_status**](LibrariesApi.md#get_library_status) | **POST** /libraries/status/get | Get content-free Library repository status.
 [**list_libraries**](LibrariesApi.md#list_libraries) | **POST** /libraries/list | List the sorted Libraries and their exact configuration version.
 [**prepare_library_content**](LibrariesApi.md#prepare_library_content) | **POST** /libraries/content/prepare | Prepare exact immutable bytes for a later Library change.
-[**prepare_library_content_read**](LibrariesApi.md#prepare_library_content_read) | **POST** /libraries/content/read | Prepare a one-use read grant for an authorized retained content version.
+[**prepare_library_content_read**](LibrariesApi.md#prepare_library_content_read) | **POST** /libraries/content/read | Prepare a signed read URL for an authorized retained content version until expiry.
 [**remove_library**](LibrariesApi.md#remove_library) | **POST** /libraries/remove | Remove one empty normalized Library under an exact configuration version.
 [**start_library_bootstrap**](LibrariesApi.md#start_library_bootstrap) | **POST** /libraries/bootstrap/start | Start a bounded bootstrap from the current immutable baseline.
 [**submit_library_change**](LibrariesApi.md#submit_library_change) | **POST** /libraries/changes/submit | Submit one exact idempotent Library namespace or content change.
@@ -185,9 +185,9 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **download_library_content**
-> bytes download_library_content(grant_id)
+> bytes download_library_content(read_token)
 
-Redeem one authorized short-lived immutable-content read grant.
+Download authorized immutable content through a signed token until expiry.
 
 ### Example
 
@@ -208,11 +208,11 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.LibrariesApi(api_client)
-    grant_id = 'grant_id_example' # str | 
+    read_token = 'read_token_example' # str | 
 
     try:
-        # Redeem one authorized short-lived immutable-content read grant.
-        api_response = api_instance.download_library_content(grant_id)
+        # Download authorized immutable content through a signed token until expiry.
+        api_response = api_instance.download_library_content(read_token)
         print("The response of LibrariesApi->download_library_content:\n")
         pprint(api_response)
     except Exception as e:
@@ -226,7 +226,7 @@ with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **grant_id** | **str**|  | 
+ **read_token** | **str**|  | 
 
 ### Return type
 
@@ -245,7 +245,7 @@ No authorization required
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Exact immutable bytes authorized by the one-use grant. |  -  |
+**200** | Exact immutable bytes authorized by the signed token. |  -  |
 **400** | Bad Request |  -  |
 **403** | Forbidden |  -  |
 **404** | Not Found |  -  |
@@ -817,7 +817,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **prepare_library_content**
-> LibraryPreparedContentReturnValue prepare_library_content(prepare_library_content_parameters)
+> LibraryContentPreparationReturnValue prepare_library_content(prepare_library_content_parameters)
 
 Prepare exact immutable bytes for a later Library change.
 
@@ -827,7 +827,7 @@ Prepare exact immutable bytes for a later Library change.
 
 ```python
 import grace_generated_openapi_probe
-from grace_generated_openapi_probe.models.library_prepared_content_return_value import LibraryPreparedContentReturnValue
+from grace_generated_openapi_probe.models.library_content_preparation_return_value import LibraryContentPreparationReturnValue
 from grace_generated_openapi_probe.models.prepare_library_content_parameters import PrepareLibraryContentParameters
 from grace_generated_openapi_probe.rest import ApiException
 from pprint import pprint
@@ -874,7 +874,7 @@ Name | Type | Description  | Notes
 
 ### Return type
 
-[**LibraryPreparedContentReturnValue**](LibraryPreparedContentReturnValue.md)
+[**LibraryContentPreparationReturnValue**](LibraryContentPreparationReturnValue.md)
 
 ### Authorization
 
@@ -898,9 +898,9 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **prepare_library_content_read**
-> LibraryContentReadGrantReturnValue prepare_library_content_read(prepare_library_content_read_parameters)
+> LibraryContentReadReturnValue prepare_library_content_read(prepare_library_content_read_parameters)
 
-Prepare a one-use read grant for an authorized retained content version.
+Prepare a signed read URL for an authorized retained content version until expiry.
 
 ### Example
 
@@ -908,7 +908,7 @@ Prepare a one-use read grant for an authorized retained content version.
 
 ```python
 import grace_generated_openapi_probe
-from grace_generated_openapi_probe.models.library_content_read_grant_return_value import LibraryContentReadGrantReturnValue
+from grace_generated_openapi_probe.models.library_content_read_return_value import LibraryContentReadReturnValue
 from grace_generated_openapi_probe.models.prepare_library_content_read_parameters import PrepareLibraryContentReadParameters
 from grace_generated_openapi_probe.rest import ApiException
 from pprint import pprint
@@ -936,7 +936,7 @@ with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     prepare_library_content_read_parameters = grace_generated_openapi_probe.PrepareLibraryContentReadParameters() # PrepareLibraryContentReadParameters | 
 
     try:
-        # Prepare a one-use read grant for an authorized retained content version.
+        # Prepare a signed read URL for an authorized retained content version until expiry.
         api_response = api_instance.prepare_library_content_read(prepare_library_content_read_parameters)
         print("The response of LibrariesApi->prepare_library_content_read:\n")
         pprint(api_response)
@@ -955,7 +955,7 @@ Name | Type | Description  | Notes
 
 ### Return type
 
-[**LibraryContentReadGrantReturnValue**](LibraryContentReadGrantReturnValue.md)
+[**LibraryContentReadReturnValue**](LibraryContentReadReturnValue.md)
 
 ### Authorization
 
@@ -970,7 +970,7 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | One-use authorized immutable-content read grant. |  -  |
+**200** | Signed immutable-content read URL that remains valid until its fixed expiry. |  -  |
 **400** | Bad Request |  -  |
 **403** | Forbidden |  -  |
 **404** | Not Found |  -  |

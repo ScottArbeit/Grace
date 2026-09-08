@@ -22,6 +22,7 @@ open Grace.Shared.Constants
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Events
+open Grace.Types.Library
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -313,6 +314,60 @@ module Services =
                 ServiceBusClient(settings.ConnectionString)
 
     let private serviceBusSender = lazy (serviceBusClient.Value.CreateSender(pubSubSettings.AzureServiceBus.Value.TopicName))
+
+    let private exactServiceBusSenders = ConcurrentDictionary<string, ServiceBusSender>(StringComparer.Ordinal)
+
+    /// Builds the immutable transport envelope shared by the first Library wake send and any retry.
+    let createGraceEventEnvelope topicName messageId (graceEvent: GraceEvent) (metadata: EventMetadata) =
+        let properties = Dictionary<string, string>(StringComparer.Ordinal)
+        properties["graceEventType"] <- getDiscriminatedUnionFullName graceEvent
+
+        metadata.Properties
+        |> Seq.sortBy (fun property -> property.Key)
+        |> Seq.iter (fun property -> properties[property.Key] <- property.Value)
+
+        {
+            TopicName = topicName
+            MessageId = messageId
+            Body = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
+            ContentType = "application/json"
+            Subject = "GraceEvent"
+            CorrelationId = metadata.CorrelationId
+            ApplicationProperties = properties
+        }
+
+    /// Rehydrates the exact Service Bus message retained after a terminal Library wake failure.
+    let createServiceBusMessage (envelope: FailedGraceEventEnvelope) =
+        let message = ServiceBusMessage(BinaryData envelope.Body)
+        message.ContentType <- envelope.ContentType
+        message.Subject <- envelope.Subject
+        message.CorrelationId <- envelope.CorrelationId
+        message.MessageId <- envelope.MessageId
+
+        for property in envelope.ApplicationProperties do
+            message.ApplicationProperties[ property.Key ] <- property.Value
+
+        message
+
+    /// Creates a Library wake envelope only when Azure Service Bus is the configured transport.
+    let tryCreateLibraryGraceEventEnvelope messageId graceEvent metadata =
+        match pubSubSettings.System, pubSubSettings.AzureServiceBus with
+        | GracePubSubSystem.AzureServiceBus, Some settings -> Some(createGraceEventEnvelope settings.TopicName messageId graceEvent metadata)
+        | GracePubSubSystem.AzureServiceBus, None ->
+            log.LogWarning("Azure Service Bus is selected without settings; the Library wake cannot be sent.")
+            None
+        | GracePubSubSystem.UnknownPubSubProvider, _ -> None
+        | otherSystem, _ ->
+            log.LogWarning("Grace pub-sub system {System} cannot send Library wakes.", getDiscriminatedUnionCaseName otherSystem)
+            None
+
+    /// Sends one exact retained Library wake using Azure Service Bus retry policy before surfacing terminal failure.
+    let sendGraceEventEnvelope (envelope: FailedGraceEventEnvelope) cancellationToken =
+        task {
+            let sender = exactServiceBusSenders.GetOrAdd(envelope.TopicName, (fun topicName -> serviceBusClient.Value.CreateSender topicName))
+            do! sender.SendMessageAsync(createServiceBusMessage envelope, cancellationToken)
+        }
+        :> Task
 
     /// Publishes a GraceEvent to the configured pub-sub system.
     let publishGraceEvent (graceEvent: GraceEvent) (metadata: EventMetadata) =

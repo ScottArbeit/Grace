@@ -7,9 +7,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **parent** | [**LibraryParentDto**](LibraryParentDto.md) |  | 
 **name** | **str** |  | 
-**normalized_path** | **str** |  | 
 **namespace_version** | **UUID** |  | 
-**slot_version** | **UUID** |  | 
 
 ## Example
 

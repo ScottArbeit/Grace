@@ -23,7 +23,7 @@ Name | Type | Description | Notes
 **creation_slot_expectation** | [**LibraryCreationSlotExpectationDto**](LibraryCreationSlotExpectationDto.md) |  | [optional] 
 **destination_parent** | [**LibraryParentDto**](LibraryParentDto.md) |  | [optional] 
 **destination_name** | **str** |  | [optional] 
-**prepared_content_id** | **UUID** |  | [optional] 
+**upload_session_id** | **UUID** |  | [optional] 
 
 ## Example
 

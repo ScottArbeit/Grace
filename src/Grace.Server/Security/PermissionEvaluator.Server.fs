@@ -6,7 +6,6 @@ open Grace.Shared.Authorization
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
 open Grace.Types.Common
-open Grace.Types.Library
 open System
 open System.Threading.Tasks
 
@@ -68,16 +67,3 @@ type GracePermissionEvaluator
                 with
                 | ex -> return Denied $"Authorization evaluation failed: {ex.Message}"
             }
-
-/// Reuses Grace's current permission evaluator at the RepositoryLibraryActor reservation boundary.
-type LibraryWriteAuthorizer(evaluator: IGracePermissionEvaluator) =
-
-    interface ILibraryWriteAuthorizer with
-
-        member _.CheckAsync(repositoryId, authorization, _cancellationToken) =
-            evaluator.CheckAsync(
-                authorization.Principals |> Array.toList,
-                authorization.EffectiveClaims |> Set.ofArray,
-                Operation.LibraryWrite,
-                Resource.Repository(authorization.OwnerId, authorization.OrganizationId, repositoryId)
-            )

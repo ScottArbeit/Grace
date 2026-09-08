@@ -18,7 +18,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
 from uuid import UUID
 from grace_generated_openapi_probe.models.library_parent_dto import LibraryParentDto
@@ -32,18 +32,9 @@ class LibraryNamespaceSlotDto(BaseModel):
     """ # noqa: E501
     parent: LibraryParentDto = Field(alias="Parent")
     name: StrictStr = Field(alias="Name")
-    normalized_path: StrictStr = Field(alias="NormalizedPath")
     slot_version: UUID = Field(alias="SlotVersion")
-    state: StrictStr = Field(alias="State")
     occupant_item_id: UUID = Field(alias="OccupantItemId")
-    __properties: ClassVar[List[str]] = ["Parent", "Name", "NormalizedPath", "SlotVersion", "State", "OccupantItemId"]
-
-    @field_validator('state')
-    def state_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['occupied', 'vacant']):
-            raise ValueError("must be one of enum values ('occupied', 'vacant')")
-        return value
+    __properties: ClassVar[List[str]] = ["Parent", "Name", "SlotVersion", "OccupantItemId"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -101,9 +92,7 @@ class LibraryNamespaceSlotDto(BaseModel):
         _obj = cls.model_validate({
             "Parent": LibraryParentDto.from_dict(obj["Parent"]) if obj.get("Parent") is not None else None,
             "Name": obj.get("Name"),
-            "NormalizedPath": obj.get("NormalizedPath"),
             "SlotVersion": obj.get("SlotVersion"),
-            "State": obj.get("State"),
             "OccupantItemId": obj.get("OccupantItemId")
         })
         return _obj

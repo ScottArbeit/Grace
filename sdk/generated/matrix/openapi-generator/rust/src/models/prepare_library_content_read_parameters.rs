@@ -35,10 +35,13 @@ pub struct PrepareLibraryContentReadParameters {
     pub item_id: uuid::Uuid,
     #[serde(rename = "ContentVersionId")]
     pub content_version_id: uuid::Uuid,
+    /// Opaque repository cursor. Clients must not parse or compare its contents.
+    #[serde(rename = "ContentRevision")]
+    pub content_revision: String,
 }
 
 impl PrepareLibraryContentReadParameters {
-    pub fn new(item_id: uuid::Uuid, content_version_id: uuid::Uuid) -> PrepareLibraryContentReadParameters {
+    pub fn new(item_id: uuid::Uuid, content_version_id: uuid::Uuid, content_revision: String) -> PrepareLibraryContentReadParameters {
         PrepareLibraryContentReadParameters {
             correlation_id: None,
             principal: None,
@@ -50,6 +53,7 @@ impl PrepareLibraryContentReadParameters {
             repository_name: None,
             item_id,
             content_version_id,
+            content_revision,
         }
     }
 }

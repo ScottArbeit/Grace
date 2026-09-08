@@ -1,5 +1,7 @@
 namespace Grace.Server
 
+#nowarn "44"
+
 open Asp.Versioning
 open Asp.Versioning.ApiExplorer
 open Azure.Core
@@ -2191,7 +2193,18 @@ module Application =
             services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
             |> ignore
 
-            services.AddSingleton<ILibraryWriteAuthorizer, LibraryWriteAuthorizer>()
+            services.AddSingleton<Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>>>(
+                Func<IServiceProvider, Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>>> (fun serviceProvider ->
+                    let evaluator = serviceProvider.GetRequiredService<IGracePermissionEvaluator>()
+
+                    Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>> (fun repositoryId authorization _ ->
+                        evaluator.CheckAsync(
+                            authorization.Principals |> Array.toList,
+                            authorization.EffectiveClaims |> Set.ofArray,
+                            Operation.LibraryWrite,
+                            Resource.Repository(authorization.OwnerId, authorization.OrganizationId, repositoryId)
+                        )))
+            )
             |> ignore
 
             services.AddW3CLogging (fun options ->
@@ -2228,24 +2241,30 @@ module Application =
                     |> ignore)
             |> ignore
 
-            services.AddSingleton<CosmosClient> (fun serviceProvider ->
+            services.AddSingleton<CosmosClient> (fun _ ->
                 let cosmosConnectionString = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+                let debugEnvironment = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.DebugEnvironment)
+                let isLocal = String.Equals(debugEnvironment, "Local", StringComparison.OrdinalIgnoreCase)
+                let options = CosmosClientOptions()
+                options.ApplicationName <- "Grace.Server"
+                options.LimitToEndpoint <- false
+                options.UseSystemTextJsonSerializerWithOptions <- Constants.JsonSerializerOptions
 
-                let options =
-                    new CosmosClientOptions(
-                        ConnectionMode = ConnectionMode.Gateway,
-                        UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions,
-                        HttpClientFactory =
-                            (fun () ->
-                                let httpHandler = new HttpClientHandler()
-                                httpHandler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                                new HttpClient(httpHandler, disposeHandler = true)),
-                        LimitToEndpoint = true // prevents discovery probes that can trigger TLS issues on emulator
-                    )
+                if isLocal
+                   && not
+                      <| AzureEnvironment.useManagedIdentityForCosmos then
+                    options.LimitToEndpoint <- true
+                    options.ConnectionMode <- ConnectionMode.Gateway
+                    options.EnableContentResponseOnWrite <- true
+                    options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
 
-                options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
+                    options.HttpClientFactory <-
+                        fun () ->
+                            let httpHandler = new HttpClientHandler()
+                            httpHandler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                            new HttpClient(httpHandler, disposeHandler = true)
 
-                if AzureEnvironment.useManagedIdentity then
+                if AzureEnvironment.useManagedIdentityForCosmos then
                     let endpoint =
                         AzureEnvironment.tryGetCosmosEndpointUri ()
                         |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
@@ -2256,22 +2275,6 @@ module Application =
                         invalidOp "Azure Cosmos DB connection string is required when managed identity is disabled."
 
                     new CosmosClient(cosmosConnectionString, options))
-            |> ignore
-
-            services.AddSingleton<ILibraryStore>(
-                Func<IServiceProvider, ILibraryStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createStore client databaseName)
-            )
-            |> ignore
-
-            services.AddSingleton<ILibraryTransferStore>(
-                Func<IServiceProvider, ILibraryTransferStore> (fun serviceProvider ->
-                    let client = serviceProvider.GetRequiredService<CosmosClient>()
-                    let databaseName = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBDatabaseName)
-                    LibraryPersistence.createTransferStore client databaseName)
-            )
             |> ignore
 
             let libraryTokenSecret = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.LibrariesTokenSecret)
@@ -2288,20 +2291,7 @@ module Application =
             if libraryTokenKey.Length < 32 then
                 invalidOp "The library token secret must decode to at least 32 bytes."
 
-            services.AddSingleton<ILibraryCursorCodec>(LibraryCoordinator.LibraryCursorCodec(libraryTokenKey))
-            |> ignore
-
-            services.AddSingleton<LibraryOpaqueTokenCodec>(LibraryOpaqueTokenCodec(libraryTokenKey))
-            |> ignore
-
-            services.AddSingleton<ILibraryCoordinator>(
-                Func<IServiceProvider, ILibraryCoordinator> (fun serviceProvider ->
-                    LibraryCoordinator.Coordinator(
-                        serviceProvider.GetRequiredService<ILibraryStore>(),
-                        serviceProvider.GetRequiredService<ILibraryCursorCodec>()
-                    )
-                    :> ILibraryCoordinator)
-            )
+            services.AddSingleton<byte array>(libraryTokenKey)
             |> ignore
 
             services.AddSingleton<IRepositoryCounterRecentResult> (fun serviceProvider ->

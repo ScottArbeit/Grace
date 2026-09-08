@@ -13,7 +13,7 @@ open System.Runtime.Serialization
 module ManifestContributionWorkflow =
 
     /// Represents manifest contribution direction.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type ManifestContributionDirection =
         | Increment
         | Decrement
@@ -22,7 +22,7 @@ module ManifestContributionWorkflow =
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionDirection>()
 
     /// Represents manifest contribution workflow lifecycle state.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type ManifestContributionWorkflowLifecycleState =
         | NotStarted
         | InProgress
@@ -178,24 +178,43 @@ module ManifestContributionWorkflow =
 
     /// Represents the manifest contribution workflow event contract.
     [<GenerateSerializer>]
-    type ManifestContributionWorkflowEvent = { Event: ManifestContributionWorkflowEventType; Metadata: EventMetadata }
+    type ManifestContributionWorkflowEvent =
+        {
+            [<Id(0u)>]
+            Event: ManifestContributionWorkflowEventType
+            [<Id(1u)>]
+            Metadata: EventMetadata
+        }
 
     /// Represents manifest contribution workflow dto.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowDto =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             StoragePoolId: StoragePoolId
+            [<Id(3u)>]
             ManifestAddress: ManifestAddress
+            [<Id(4u)>]
             Direction: ManifestContributionDirection
+            [<Id(5u)>]
             Ranges: ManifestContributionWorkflowRange array
+            [<Id(6u)>]
             CompletedRanges: ManifestContributionWorkflowRangeProgress array
+            [<Id(7u)>]
             FailedRanges: ManifestContributionWorkflowRangeFailure array
+            [<Id(8u)>]
             LifecycleState: ManifestContributionWorkflowLifecycleState
+            [<Id(9u)>]
             StartOperationId: ManifestContributionWorkflowOperationId option
+            [<Id(10u)>]
             LastOperationId: ManifestContributionWorkflowOperationId option
+            [<Id(11u)>]
             CounterRevision: int64
+            [<Id(12u)>]
             Revision: int64
         }
 
@@ -284,10 +303,16 @@ module ManifestContributionWorkflow =
     [<GenerateSerializer>]
     type ManifestContributionWorkflowDecision =
         {
+            [<Id(0u)>]
             Workflow: ManifestContributionWorkflowDto
+            [<Id(1u)>]
             OperationId: ManifestContributionWorkflowOperationId
+            [<Id(2u)>]
             Events: ManifestContributionWorkflowEvent list
+            [<Id(3u)>]
             Intents: ManifestContributionWorkflowIntent list
+            [<Id(4u)>]
             WasIdempotentReplay: bool
+            [<Id(5u)>]
             Message: string
         }

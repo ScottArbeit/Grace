@@ -47,9 +47,7 @@ class TestLibraryNamespaceSlotReturnValue(unittest.TestCase):
                         library_path = '', 
                         item_id = null, ), 
                     name = '', 
-                    normalized_path = '', 
                     slot_version = '', 
-                    state = 'occupied', 
                     occupant_item_id = null, )
             )
         else:

@@ -124,7 +124,7 @@ type LibraryTypesTests() =
 
         let createFile = change ChangeKind.CreateFile ItemKind.File
         createFile.CreationSlotExpectation <- Some slot
-        createFile.PreparedContentId <- Nullable(Guid.NewGuid())
+        createFile.UploadSessionId <- Nullable(Guid.NewGuid())
 
         let deleteDirectory = change ChangeKind.Delete ItemKind.Directory
         deleteDirectory.ItemId <- Nullable(Guid.NewGuid())

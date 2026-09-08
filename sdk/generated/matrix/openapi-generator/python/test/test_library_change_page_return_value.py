@@ -46,17 +46,19 @@ class TestLibraryChangePageReturnValue(unittest.TestCase):
                     cursor_epoch = '0', 
                     changes = [
                         grace_generated_openapi_probe.models.library_change_dto.LibraryChangeDto(
-                            cursor = '0', 
                             operation_id = '', 
                             change_kind = 'createFile', 
-                            item_id = '', 
-                            item_kind = 'file', 
                             accepted_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
                             accepted_by = '', 
                             library_catalog_version = '', 
-                            namespace = null, 
-                            content = null, 
-                            tombstone = null, 
+                            item = grace_generated_openapi_probe.models.library_item_dto.LibraryItemDto(
+                                item_id = '', 
+                                item_kind = 'file', 
+                                last_change_cursor = '0', 
+                                namespace = null, 
+                                content = null, 
+                                content_revision = null, 
+                                tombstone = null, ), 
                             conflict = null, )
                         ], 
                     last_cursor = '0', 

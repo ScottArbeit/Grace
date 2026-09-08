@@ -36,22 +36,30 @@ class TestLibraryTombstoneDto(unittest.TestCase):
         model = LibraryTombstoneDto()
         if include_optional:
             return LibraryTombstoneDto(
-                item_id = '',
-                item_kind = 'file',
                 deleted_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 deleted_by = '',
                 delete_cursor = '0',
-                last_namespace_version = '',
+                last_namespace = grace_generated_openapi_probe.models.library_namespace_dto.LibraryNamespaceDto(
+                    parent = grace_generated_openapi_probe.models.library_parent_dto.LibraryParentDto(
+                        kind = 'root', 
+                        library_path = '', 
+                        item_id = null, ), 
+                    name = '', 
+                    namespace_version = '', ),
                 last_content_version_id = ''
             )
         else:
             return LibraryTombstoneDto(
-                item_id = '',
-                item_kind = 'file',
                 deleted_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 deleted_by = '',
                 delete_cursor = '0',
-                last_namespace_version = '',
+                last_namespace = grace_generated_openapi_probe.models.library_namespace_dto.LibraryNamespaceDto(
+                    parent = grace_generated_openapi_probe.models.library_parent_dto.LibraryParentDto(
+                        kind = 'root', 
+                        library_path = '', 
+                        item_id = null, ), 
+                    name = '', 
+                    namespace_version = '', ),
                 last_content_version_id = '',
         )
         """

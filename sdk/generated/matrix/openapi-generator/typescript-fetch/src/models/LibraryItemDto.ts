@@ -61,23 +61,11 @@ export interface LibraryItemDto {
      */
     itemKind: LibraryItemKind;
     /**
-     * 
-     * @type {LibraryItemDtoStateEnum}
-     * @memberof LibraryItemDto
-     */
-    state: LibraryItemDtoStateEnum;
-    /**
      * Opaque repository cursor. Clients must not parse or compare its contents.
      * @type {string}
      * @memberof LibraryItemDto
      */
     lastChangeCursor: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryItemDto
-     */
-    libraryCatalogVersion: string;
     /**
      * 
      * @type {LibraryNamespaceDto}
@@ -91,6 +79,12 @@ export interface LibraryItemDto {
      */
     content: LibraryContentVersionDto;
     /**
+     * Opaque repository cursor. Clients must not parse or compare its contents.
+     * @type {string}
+     * @memberof LibraryItemDto
+     */
+    contentRevision: string;
+    /**
      * 
      * @type {LibraryTombstoneDto}
      * @memberof LibraryItemDto
@@ -99,15 +93,6 @@ export interface LibraryItemDto {
 }
 
 
-/**
- * @export
- */
-export const LibraryItemDtoStateEnum = {
-    Live: 'live',
-    Tombstoned: 'tombstoned'
-} as const;
-export type LibraryItemDtoStateEnum = typeof LibraryItemDtoStateEnum[keyof typeof LibraryItemDtoStateEnum];
-
 
 /**
  * Check if a given object implements the LibraryItemDto interface.
@@ -115,11 +100,10 @@ export type LibraryItemDtoStateEnum = typeof LibraryItemDtoStateEnum[keyof typeo
 export function instanceOfLibraryItemDto(value: object): value is LibraryItemDto {
     if (!('itemId' in value) || value['itemId'] === undefined) return false;
     if (!('itemKind' in value) || value['itemKind'] === undefined) return false;
-    if (!('state' in value) || value['state'] === undefined) return false;
     if (!('lastChangeCursor' in value) || value['lastChangeCursor'] === undefined) return false;
-    if (!('libraryCatalogVersion' in value) || value['libraryCatalogVersion'] === undefined) return false;
     if (!('namespace' in value) || value['namespace'] === undefined) return false;
     if (!('content' in value) || value['content'] === undefined) return false;
+    if (!('contentRevision' in value) || value['contentRevision'] === undefined) return false;
     if (!('tombstone' in value) || value['tombstone'] === undefined) return false;
     return true;
 }
@@ -136,11 +120,10 @@ export function LibraryItemDtoFromJSONTyped(json: any, ignoreDiscriminator: bool
         
         'itemId': json['ItemId'],
         'itemKind': LibraryItemKindFromJSON(json['ItemKind']),
-        'state': json['State'],
         'lastChangeCursor': json['LastChangeCursor'],
-        'libraryCatalogVersion': json['LibraryCatalogVersion'],
         'namespace': LibraryNamespaceDtoFromJSON(json['Namespace']),
         'content': LibraryContentVersionDtoFromJSON(json['Content']),
+        'contentRevision': json['ContentRevision'],
         'tombstone': LibraryTombstoneDtoFromJSON(json['Tombstone']),
     };
 }
@@ -158,11 +141,10 @@ export function LibraryItemDtoToJSONTyped(value?: LibraryItemDto | null, ignoreD
         
         'ItemId': value['itemId'],
         'ItemKind': LibraryItemKindToJSON(value['itemKind']),
-        'State': value['state'],
         'LastChangeCursor': value['lastChangeCursor'],
-        'LibraryCatalogVersion': value['libraryCatalogVersion'],
         'Namespace': LibraryNamespaceDtoToJSON(value['namespace']),
         'Content': LibraryContentVersionDtoToJSON(value['content']),
+        'ContentRevision': value['contentRevision'],
         'Tombstone': LibraryTombstoneDtoToJSON(value['tombstone']),
     };
 }

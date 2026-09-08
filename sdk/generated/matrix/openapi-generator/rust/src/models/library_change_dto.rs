@@ -13,47 +13,31 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LibraryChangeDto {
-    /// Opaque repository cursor. Clients must not parse or compare its contents.
-    #[serde(rename = "Cursor")]
-    pub cursor: String,
     #[serde(rename = "OperationId")]
     pub operation_id: uuid::Uuid,
     #[serde(rename = "ChangeKind")]
     pub change_kind: models::LibraryChangeKind,
-    #[serde(rename = "ItemId")]
-    pub item_id: uuid::Uuid,
-    #[serde(rename = "ItemKind")]
-    pub item_kind: models::LibraryItemKind,
     #[serde(rename = "AcceptedAt")]
     pub accepted_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "AcceptedBy")]
     pub accepted_by: String,
     #[serde(rename = "LibraryCatalogVersion")]
     pub library_catalog_version: uuid::Uuid,
-    #[serde(rename = "Namespace")]
-    pub namespace: Box<models::LibraryNamespaceDto>,
-    #[serde(rename = "Content")]
-    pub content: Box<models::LibraryContentVersionDto>,
-    #[serde(rename = "Tombstone")]
-    pub tombstone: Box<models::LibraryTombstoneDto>,
+    #[serde(rename = "Item")]
+    pub item: Box<models::LibraryItemDto>,
     #[serde(rename = "Conflict")]
     pub conflict: Box<models::LibraryConflictProvenanceDto>,
 }
 
 impl LibraryChangeDto {
-    pub fn new(cursor: String, operation_id: uuid::Uuid, change_kind: models::LibraryChangeKind, item_id: uuid::Uuid, item_kind: models::LibraryItemKind, accepted_at: chrono::DateTime<chrono::FixedOffset>, accepted_by: String, library_catalog_version: uuid::Uuid, namespace: models::LibraryNamespaceDto, content: models::LibraryContentVersionDto, tombstone: models::LibraryTombstoneDto, conflict: models::LibraryConflictProvenanceDto) -> LibraryChangeDto {
+    pub fn new(operation_id: uuid::Uuid, change_kind: models::LibraryChangeKind, accepted_at: chrono::DateTime<chrono::FixedOffset>, accepted_by: String, library_catalog_version: uuid::Uuid, item: models::LibraryItemDto, conflict: models::LibraryConflictProvenanceDto) -> LibraryChangeDto {
         LibraryChangeDto {
-            cursor,
             operation_id,
             change_kind,
-            item_id,
-            item_kind,
             accepted_at,
             accepted_by,
             library_catalog_version,
-            namespace: Box::new(namespace),
-            content: Box::new(content),
-            tombstone: Box::new(tombstone),
+            item: Box::new(item),
             conflict: Box::new(conflict),
         }
     }

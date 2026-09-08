@@ -37,12 +37,14 @@ class TestLibraryContentPreconditionDto(unittest.TestCase):
         if include_optional:
             return LibraryContentPreconditionDto(
                 item_id = '',
-                expected_content_version_id = ''
+                expected_content_version_id = '',
+                expected_content_revision = '0'
             )
         else:
             return LibraryContentPreconditionDto(
                 item_id = '',
                 expected_content_version_id = '',
+                expected_content_revision = '0',
         )
         """
 

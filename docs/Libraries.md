@@ -9,7 +9,7 @@ An authorized remote client can:
 - Read current items and namespace slots.
 - Bootstrap current state and then pull ordered change pages.
 - Recover the stable receipt for a previously submitted operation.
-- Read retained immutable content through a short-lived, one-use grant.
+- Read retained immutable content through a signed URL that remains valid until its fixed expiry.
 - Read content-free repository synchronization status.
 
 Product V1 does not include local SQLite state, filesystem publication, `library sync enable`, `library sync disable`, `library sync run`, local synchronization status, or Watch-driven synchronization.
@@ -47,7 +47,7 @@ Each change request provides:
 - The exact current Library catalog version.
 - The change and item kinds.
 - The exact namespace, content, or destination-slot preconditions required by that change kind.
-- A prepared-content ID when complete bytes are required.
+- An upload session ID when complete bytes are required.
 
 The accepted order is:
 
@@ -55,10 +55,10 @@ The accepted order is:
 1. Check the Product V1 item-head and namespace-slot bounds before reservation.
 1. Reserve the complete deterministic command.
 1. Create the immutable repository change.
-1. Repair current-state, history, and receipt projections from that change.
-1. Advance the applied-through position and clear pending work.
-1. Complete the stable durable receipt.
-1. Attempt a best-effort content-free wake.
+1. Retain one permanent content reference and complete its manifest workflow for a content-bearing change.
+1. Write the current item, affected slots, and stable receipt.
+1. Acknowledge the tracked content add, advance the committed cursor, and clear pending work.
+1. Resume compact history and best-effort content-free wake progress from the accepted change.
 
 Only a caught-up authorized command with exact catalog, item, namespace, content, and slot preconditions can create one accepted repository change. Each repository is limited to 100,000 current item-head documents and 100,000 current namespace-slot documents. A command that would exceed either bound is rejected before it reserves the control document.
 
@@ -106,13 +106,13 @@ The remote contract has 15 HTTP operations under `/libraries`:
 - Bootstrap: start and continue.
 - Ordered state: get changes, operation receipts, current items, namespace slots, and status.
 - Changes: prepare content and submit a change.
-- Immutable reads: prepare a one-use read grant and redeem it.
+- Immutable reads: prepare a signed read URL and download its accepted content until expiry.
 
 `Grace.SDK.Libraries` is the handwritten .NET facade. The static OpenAPI sources are `src/OpenAPI/Libraries.Components.OpenAPI.yaml` and `src/OpenAPI/Libraries.Paths.OpenAPI.yaml`. The standard generator produces TypeScript, Python, and Rust raw clients behind their existing facade boundary.
 
 ## Server configuration
 
-Grace Server requires `grace__libraries__token_secret`. The value is a base64-encoded key containing at least 32 bytes. It protects opaque cursor, page, and read-grant tokens and must be stable across server instances that serve the same deployment.
+Grace Server requires `grace__libraries__token_secret`. The value is a base64-encoded key containing at least 32 bytes. It protects opaque cursor, page, and content-read tokens and must be stable across server instances that serve the same deployment.
 
 PowerShell:
 

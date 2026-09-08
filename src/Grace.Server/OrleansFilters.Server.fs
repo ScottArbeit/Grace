@@ -1,5 +1,7 @@
 namespace Grace.Server
 
+#nowarn "44"
+
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
