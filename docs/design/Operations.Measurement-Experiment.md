@@ -4,7 +4,7 @@
 
 **Verdict: simplified.** Select a DirectoryVersion declaration diagnostic. The executed model establishes finite capture behavior, and the real Grace serializer/projection establishes the selected metadata meaning. No Cosmos or Azure Blob experiment was executed. No repository-storage total, billing fact, historical interval, or production recovery algorithm is approved by this result.
 
-This is the evidence for [Issue #1045](https://github.com/ScottArbeit/Grace/issues/1045) under [Issue #554](https://github.com/ScottArbeit/Grace/issues/554). The selected next contract is in [Operations](../Operations.md#selected-next-production-slice). The [machine-readable record](Operations.Measurement-Experiment.json) retains the exact harness sources, fixture output, command output, and assertions so the disposable directory can be recreated after worktree cleanup.
+This is the evidence for [Issue #1045](https://github.com/ScottArbeit/Grace/issues/1045) under [Issue #554](https://github.com/ScottArbeit/Grace/issues/554). The selected next contract is in [Operations](../Operations.md#directoryversion-declaration-diagnostic). The [machine-readable record](Operations.Measurement-Experiment.json) retains the exact harness sources, fixture output, command output, and assertions so the disposable directory can be recreated after worktree cleanup.
 
 ## Environment and evidence boundary
 
@@ -63,7 +63,7 @@ Interruption is simulated by stopping at a named effect boundary and discarding 
 | Next enumeration after mutation | Captures 70; the changed identity/length map detects this observed mutation. Matching maps still would not exclude unobserved changes. |
 | Before staging write, before publish, after publish, and fresh retry of unpublished attempts | Reopen sees only a fully published result; fresh retries of unpublished attempts succeed. |
 
-**Result:** 23 capture assertions passed, plus the real source-seam assertions. The capture bounds (four pages and 20 rows by default) deliberately make boundaries cheap to exercise. They are not capacity measurements for the recommended production limits.
+**Result:** 23 capture assertions passed, plus the real source-seam assertions. The capture bounds (four pages and 20 rows by default) deliberately make boundaries cheap to exercise. They are historical model controls, not production capacity measurements. The owner-directed Issue #1047 revision removes fixed production count and elapsed-time limits while retaining exhaustion and caller cancellation.
 
 ## Reproduce and inspect
 
@@ -101,3 +101,25 @@ An additional local archive survives worktree cleanup at `C:/Users/scott/.codex/
 The finite model supports a declaration-specific diagnostic with strict exhaustion and error behavior. It rejects a total-storage claim and removes durable capture, repeated-measurement billing, scheduling, and historical backfill from the next slice. The next slice uses one successful response record and the established Grace error path; unknown is not represented as a nullable successful zero.
 
 Markdown lint, JSON parsing, harness parsing, source build, executable assertions, and diff checks validate this documentation candidate. Production runtime tests, Fast/Full, live Cosmos/Blob tests, and throughput tests were not selected for unchanged production code. Independent review, GitHub Validate, and the HTML Shape Review belong to the controller's candidate delivery checks.
+
+## Issue #1047 real provider preflight
+
+The follow-up [Issue #1047](https://github.com/ScottArbeit/Grace/issues/1047) ran its required provider check before production edits at base `59dd079cc08d75b4c82157fe3198adaf248bb663`. **Result: passed.** An isolated Linux Cosmos emulator used container `grace-ops-1047-preflight`, host endpoint `https://127.0.0.1:18081`, a unique database per attempt, and an `events` container partitioned by `/PartitionKey`. No cloud credentials or shared containers were used.
+
+The [retained preflight record](Operations.DirectoryVersionSize-Preflight.json) contains the executable F# source, PowerShell runner, SHA-256 values, SDK version, image digest, command, and output. The run used Cosmos SDK `3.62.1`, Grace's configured serializer, actual repository and DirectoryVersion events, the existing query wrapper, and the existing DTO fold. It read five retained logically deleted documents across three real pages, obtaining 50 bytes; another grain and repository partition were excluded. An existing repository with no declarations returned zero, an absent repository failed, and deleting the five source documents changed the next enumeration to zero. The preflight reads declarations and does not inspect blob content.
+
+To reproduce, extract the two allowlisted `harnessFiles` from the record into a disposable directory and check their SHA-256 values. Start the recorded image on an unused local port `18081`, wait for its healthy state, then invoke `Run-Preflight.ps1 -RepositoryRoot <checkout>` from PowerShell. The runner rebuilds the checkout's actor project and loads its actual dependencies. The emulator startup command is recorded verbatim in the JSON. Stop and remove only the named disposable container after capture. The original container and its test databases were removed after this run.
+
+The local archive is `C:/Users/scott/.codex/visualizations/2026/09/07/01a07acd-5979-7700-889f-51bc642202a5/overnight/1047-preflight`. It also retains the hosted-test log and the serializer zero-value check. This location is a local artifact, not a remotely accessible URL.
+
+The production implementation adds raw required-field checks before the typed fold so missing source fields cannot silently become empty declarations. The executable zero-value check also established that Grace legitimately omits `FileVersion.Size = 0`, while retaining `ContentReference.ReferenceType` and `Manifest`. The [recorded interpretation](https://github.com/ScottArbeit/Grace/issues/1047#issuecomment-5568841359) accepts that existing zero encoding and rejects explicit null or malformed sizes. Required Created, scope, `Files`, and content-reference checks remain in place; no serializer or persisted shape changed.
+
+Hosted tests exercise the actual SystemAdmin route and configured source reader with 257 retained event documents, duplicate whole-file and manifest identities, zero-length declarations, scope exclusions, conflicting lengths, missing `Files`, explicit invalid sizes, and physical source removal. A real serialized zero-length file returns zero bytes with a positive distinct-content count. The earlier Issue #1045 experiment remains a historical model result; this follow-up adds provider and HTTP evidence without changing its exclusion of snapshots, physical presence, historical intervals, or billing.
+
+## Issue #1047 owner-directed revision
+
+The current diagnostic runs until exhaustion or caller cancellation. Its reader uses the existing actor storage provider selection in `Grace.Actors.Services`; the handler and existing response record belong to `Grace.Server.DirectoryVersion`. Unsupported providers fail before Cosmos access. The server and PowerShell command impose no fixed count or elapsed-time limits. The source boundary, validation, deduplication, and error-without-quantity rules remain unchanged.
+
+Before production edits, a disposable extraction of the starting reader with its count ceilings removed completed 33 pages, 10,001 documents, and 100,001 direct entries. Cancellation after an accumulated first page returned no quantity. These are algorithm examples, not provider capacity or throughput measurements. Regression fixtures use distinct DirectoryVersion IDs and batches no larger than the configured provider page size. The earlier captured JSON experiments remain unchanged historical evidence for their pinned revisions.
+
+An explicit scan can be expensive, can take longer as the source grows, and retains one entry per distinct content identity in memory. This diagnostic is not the selected foundation for routine repository usage measurement. It still makes no snapshot, physical-content, historical-interval, or billing claim.
