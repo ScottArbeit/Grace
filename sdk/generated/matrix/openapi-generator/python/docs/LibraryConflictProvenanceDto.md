@@ -5,14 +5,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**source_operation_id** | **UUID** |  | 
-**source_item_id** | **UUID** |  | 
-**canonical_item_id** | **UUID** |  | 
-**conflict_item_id** | **UUID** |  | 
-**conflict_path** | **str** |  | 
-**accepted_at** | **datetime** |  | 
-**source_content_version_id** | **UUID** |  | 
+**original_item_id** | **UUID** |  | 
 **base_content_version_id** | **UUID** |  | 
+**base_content_revision** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 
 ## Example
 

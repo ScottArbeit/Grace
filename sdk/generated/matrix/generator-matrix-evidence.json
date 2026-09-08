@@ -2,20 +2,20 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "369a5dcd935a91a02777c06a59aa91e61edcf012198491c6bda124d989bb044b",
+  "sourceProjectionSha256": "42bf3efcead31e1fc2fe9936af6fa4e6836e51af064a12487520f756cdded7c2",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.5",
-    "dotnet": "10.0.302",
-    "node": "v24.3.0",
-    "npm": "11.10.1",
+    "dotnet": "10.0.400",
+    "node": "v26.7.0",
+    "npm": "12.0.2",
     "python": "Python 3.14.7",
-    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
-    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
     "docker": "Docker version 29.7.2, build a7dcaa6",
     "java": "unavailable",
     "openApiGenerator": "openapitools/openapi-generator-cli:v7.22.0",
-    "kiota": "The application to execute does not exist: 'C:\\Users\\scott\\AppData\\Local\\Temp\\grace-tools-221\\kiota\\.store\\microsoft.openapi.kiota\\1.32.1\\microsoft.openapi.kiota\\1.32.1\\tools\\net10.0\\any\\kiota.dll'.",
+    "kiota": "1.32.1+958a7d04f87c48ab4c0dba1c4e91032ad2f6b9cb",
     "nswag": "NSwag version: 14.7.1.0"
   },
   "matrix": [
@@ -23,7 +23,7 @@
       "generator": "Kiota",
       "language": ".NET",
       "command": "kiota generate -l CSharp",
-      "exitCode": -2147450726,
+      "exitCode": 1,
       "outcome": "Rejected",
       "conclusion": "Full projection fails before generation on malformed schema references/null schema properties.",
       "outputPath": "",
@@ -35,7 +35,7 @@
       "generator": "Kiota",
       "language": "TypeScript",
       "command": "kiota generate -l TypeScript --disable-validation-rules All",
-      "exitCode": -2147450726,
+      "exitCode": 1,
       "outcome": "Rejected",
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
@@ -52,7 +52,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 192101."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 190187."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -129,7 +129,7 @@
       "command": "npm install --ignore-scripts; npm run build; node sdk/proof/generated-client-wire/typescript-wire-proof.cjs",
       "exitCode": 0,
       "evidence": [
-        "found 0 vulnerabilities> tsc && tsc -p tsconfig.esm.jsonTypeScript PascalCase BranchApiDto wire round trip passed"
+        "found 0 vulnerabilitiesnpm notice run tsc && tsc -p tsconfig.esm.jsonTypeScript Reference and Library wire round trips passed"
       ]
     },
     {
@@ -139,7 +139,7 @@
       "evidence": [
         "0.0.0",
         "ApiClient",
-        "Python UUID-coerced typed Reference wire round trip passed"
+        "Python Reference and Library wire round trips passed"
       ]
     },
     {
@@ -152,15 +152,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "e9caec692d3af31463272b5af08e10f3735ea4bd7649a99e9bf09ed0ed2fc626"
+      "manifestSha256": "f18a82cb4406f224ffff446026bbec22f3b0fc0890a9208c9635379f5564ada0"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "d95ddbae7ef18ee52f87488f22cbb08cfb940ba373a5b5552bd80793e5d94261"
+      "manifestSha256": "7ac123e8d9dd4c493c67050f6c2e079ee5d84d9d244d0ffb0ef3cd52849db415"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "9510f90ad1dbc80dffe9eb6d3668bb7ee9e54b2ee4a1e596e56e75c0293ed616"
+      "manifestSha256": "c449efd76b1c5ba9cc22ea23deb9352c547c64dff6672803004398bbfc822624"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

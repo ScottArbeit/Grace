@@ -31,6 +31,12 @@ export interface LibraryContentPreconditionDto {
      * @memberof LibraryContentPreconditionDto
      */
     expectedContentVersionId: string;
+    /**
+     * Opaque repository cursor. Clients must not parse or compare its contents.
+     * @type {string}
+     * @memberof LibraryContentPreconditionDto
+     */
+    expectedContentRevision: string;
 }
 
 /**
@@ -39,6 +45,7 @@ export interface LibraryContentPreconditionDto {
 export function instanceOfLibraryContentPreconditionDto(value: object): value is LibraryContentPreconditionDto {
     if (!('itemId' in value) || value['itemId'] === undefined) return false;
     if (!('expectedContentVersionId' in value) || value['expectedContentVersionId'] === undefined) return false;
+    if (!('expectedContentRevision' in value) || value['expectedContentRevision'] === undefined) return false;
     return true;
 }
 
@@ -54,6 +61,7 @@ export function LibraryContentPreconditionDtoFromJSONTyped(json: any, ignoreDisc
         
         'itemId': json['ItemId'],
         'expectedContentVersionId': json['ExpectedContentVersionId'],
+        'expectedContentRevision': json['ExpectedContentRevision'],
     };
 }
 
@@ -70,6 +78,7 @@ export function LibraryContentPreconditionDtoToJSONTyped(value?: LibraryContentP
         
         'ItemId': value['itemId'],
         'ExpectedContentVersionId': value['expectedContentVersionId'],
+        'ExpectedContentRevision': value['expectedContentRevision'],
     };
 }
 

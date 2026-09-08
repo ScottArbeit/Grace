@@ -147,8 +147,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `211`
-- JSON-ready routed commands: `190`
+- Total leaf commands: `214`
+- JSON-ready routed commands: `193`
 - Conditionally JSON-ready routed commands: `1`
 - Intentionally human-only commands: `0`
 - Deferred routed commands with explicit V2 scope: `11`
@@ -197,12 +197,13 @@ supports `--schema`, `--examples`, and `--select`.
 
 ## Library command outcomes
 
-The remote-only `library` command group uses the same result envelope as other JSON-ready commands:
+The `library` command group uses the same result envelope as other JSON-ready commands:
 
 - `library get <path>` and `library list` return the persisted `LibraryCatalogDto`.
 - `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
+- `library sync enable`, `library sync run`, and `library sync status` return `Enabled`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, `AppliedCursor`, and `PendingOperationCount`. State is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent until all required baseline work is verified and its boundary commits; received pages never count as completed application. Pending count includes unfinished baseline items. Initial catch-up remains gated from saved-file capture until its complete pull. These commands support `--schema`, `--examples`, and `--select` through the same registry.
 
-Catalog changes require a positional Library path, `--expected-version`, and `--operation-id`. Automation must inspect
+Catalog changes require a positional Library path. `--expected-version` is optional: omission performs one scoped catalog read, while an explicit value skips that read. `--operation-id` is optional: omission creates one ID per invocation, while an explicit ID passes through unchanged. Lookup errors prevent submission; stale results return without automatic retry. Exact retries require identical request details, including explicit version and operation ID. Automation must inspect
 `ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process
 exit code as evidence that a repository change was accepted. These commands configure the server-owned remote
 namespace. They do not activate local synchronization, Watch participation, or filesystem publication.

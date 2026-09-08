@@ -63,7 +63,7 @@ Interruption is simulated by stopping at a named effect boundary and discarding 
 | Next enumeration after mutation | Captures 70; the changed identity/length map detects this observed mutation. Matching maps still would not exclude unobserved changes. |
 | Before staging write, before publish, after publish, and fresh retry of unpublished attempts | Reopen sees only a fully published result; fresh retries of unpublished attempts succeed. |
 
-**Result:** 23 capture assertions passed, plus the real source-seam assertions. The capture bounds (four pages and 20 rows by default) deliberately make boundaries cheap to exercise. They are not capacity measurements for the recommended production limits.
+**Result:** 23 capture assertions passed, plus the real source-seam assertions. The capture bounds (four pages and 20 rows by default) deliberately make boundaries cheap to exercise. They are historical model controls, not production capacity measurements. The owner-directed Issue #1047 revision removes fixed production count and elapsed-time limits while retaining exhaustion and caller cancellation.
 
 ## Reproduce and inspect
 
@@ -115,3 +115,11 @@ The local archive is `C:/Users/scott/.codex/visualizations/2026/09/07/01a07acd-5
 The production implementation adds raw required-field checks before the typed fold so missing source fields cannot silently become empty declarations. The executable zero-value check also established that Grace legitimately omits `FileVersion.Size = 0`, while retaining `ContentReference.ReferenceType` and `Manifest`. The [recorded interpretation](https://github.com/ScottArbeit/Grace/issues/1047#issuecomment-5568841359) accepts that existing zero encoding and rejects explicit null or malformed sizes. Required Created, scope, `Files`, and content-reference checks remain in place; no serializer or persisted shape changed.
 
 Hosted tests exercise the actual SystemAdmin route and configured source reader with 257 retained event documents, duplicate whole-file and manifest identities, zero-length declarations, scope exclusions, conflicting lengths, missing `Files`, explicit invalid sizes, and physical source removal. A real serialized zero-length file returns zero bytes with a positive distinct-content count. The earlier Issue #1045 experiment remains a historical model result; this follow-up adds provider and HTTP evidence without changing its exclusion of snapshots, physical presence, historical intervals, or billing.
+
+## Issue #1047 owner-directed revision
+
+The current diagnostic runs until exhaustion or caller cancellation. Its reader uses the existing actor storage provider selection in `Grace.Actors.Services`; the handler and existing response record belong to `Grace.Server.DirectoryVersion`. Unsupported providers fail before Cosmos access. The server and PowerShell command impose no fixed count or elapsed-time limits. The source boundary, validation, deduplication, and error-without-quantity rules remain unchanged.
+
+Before production edits, a disposable extraction of the starting reader with its count ceilings removed completed 33 pages, 10,001 documents, and 100,001 direct entries. Cancellation after an accumulated first page returned no quantity. These are algorithm examples, not provider capacity or throughput measurements. Regression fixtures use distinct DirectoryVersion IDs and batches no larger than the configured provider page size. The earlier captured JSON experiments remain unchanged historical evidence for their pinned revisions.
+
+An explicit scan can be expensive, can take longer as the source grows, and retains one entry per distinct content identity in memory. This diagnostic is not the selected foundation for routine repository usage measurement. It still makes no snapshot, physical-content, historical-interval, or billing claim.

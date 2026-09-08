@@ -9,13 +9,7 @@ Name | Type
 `operationId` | string
 `requestHash` | string
 `outcome` | [LibraryOutcomeKind](LibraryOutcomeKind.md)
-`libraryCatalogVersion` | string
-`recordedAt` | Date
-`principalId` | string
 `change` | [LibraryChangeDto](LibraryChangeDto.md)
-`cursor` | string
-`item` | [LibraryItemDto](LibraryItemDto.md)
-`conflict` | [LibraryConflictProvenanceDto](LibraryConflictProvenanceDto.md)
 `reasonCode` | string
 `currentLibraryCatalog` | [LibraryCatalogDto](LibraryCatalogDto.md)
 `rebaseline` | [LibraryRebaselineDto](LibraryRebaselineDto.md)
@@ -30,13 +24,7 @@ const example = {
   "operationId": null,
   "requestHash": null,
   "outcome": null,
-  "libraryCatalogVersion": null,
-  "recordedAt": null,
-  "principalId": null,
   "change": null,
-  "cursor": null,
-  "item": null,
-  "conflict": null,
   "reasonCode": null,
   "currentLibraryCatalog": null,
   "rebaseline": null,

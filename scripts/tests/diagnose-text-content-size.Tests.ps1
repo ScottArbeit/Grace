@@ -23,16 +23,18 @@ $script:expectedPath = '/admin/text-content-size/diagnose'
 # Verifies the operator's actual request while replacing transport so output publication still uses the filesystem.
 function Invoke-WebRequest {
     param([uri] $Uri, [string] $Method, [hashtable] $Headers, [string] $ContentType, [string] $Body,
-        [switch] $SkipHttpErrorCheck, [int] $TimeoutSec)
+        [switch] $SkipHttpErrorCheck, [int] $ConnectionTimeoutSeconds = -1, [int] $OperationTimeoutSeconds = -1)
     if ($Uri.AbsolutePath -cne $script:expectedPath -or $Method -cne 'Post' -or
         $Headers.Authorization -cne 'Bearer test-only' -or $ContentType -cne 'application/json' -or
-        -not $SkipHttpErrorCheck -or $TimeoutSec -ne 45) { throw 'Unexpected diagnostic request.' }
+        -not $SkipHttpErrorCheck -or $ConnectionTimeoutSeconds -ne 0 -or $OperationTimeoutSeconds -ne 0) { throw 'Unexpected diagnostic request.' }
+    if ($script:cancelRequest) { throw [OperationCanceledException]::new('Caller cancelled') }
     $sent = $Body | ConvertFrom-Json -AsHashtable
     foreach ($name in $scope.Keys) {
         if ([guid] $sent[$name] -ne [guid] $scope[$name]) { throw 'Unexpected request scope.' }
     }
     return $script:response
 }
+$script:cancelRequest = $false
 
 # Requires a failed attempt to leave the last saved result intact and create no staging residue.
 function Assert-PreservedFailure {
@@ -60,6 +62,9 @@ try {
     $saved = Get-Content -LiteralPath $destination -Raw | ConvertFrom-Json
     if ($saved.ReturnValue.DeclaredTextContentUtf8Bytes -ne 6 -or $saved.ReturnValue.DistinctTextContentCount -ne 1) { throw 'Nonzero result was not saved.' }
     Write-Output 'PASS: nonzero TextContent result saves and reopens'
+    $script:cancelRequest = $true
+    Assert-PreservedFailure 'caller cancellation'
+    $script:cancelRequest = $false
     $script:response.StatusCode = 503
     Assert-PreservedFailure 'HTTP failure'
     $script:response.StatusCode = 200
@@ -88,7 +93,7 @@ try {
     $script:expectedPath = '/admin/text-content-size/diagnose'
     $parameters.OwnerId = [guid]::Empty.ToString()
     Assert-PreservedFailure 'invalid request ID'
-    Write-Output 'PASS: 13 operator request and publication assertions'
+    Write-Output 'PASS: 14 operator request and publication assertions'
 }
 finally {
     $env:GRACE_SERVER_URI = $oldUri

@@ -5,8 +5,11 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
 open Grace.Types.Common
 open Grace.Types.UploadSession
+open Microsoft.Extensions.DependencyInjection
 open NodaTime
 open NUnit.Framework
+open Orleans.Serialization
+open Orleans.Serialization.NodaTime
 open System
 open System.Collections.Generic
 open System.IO
@@ -51,6 +54,7 @@ type UploadSessionActorTests() =
             ChunkingSuiteId = RabinChunking.SuiteName
             SamplingPolicySnapshot = "sparse-key-v1"
             OperationId = operationId
+            LibraryPreparation = None
         }
 
     /// Builds start For Manifest test data for the server unit upload Session Actor scenarios in this file.
@@ -233,6 +237,82 @@ type UploadSessionActorTests() =
         | Error error ->
             Assert.Fail($"{message}, got {error.Error}.")
             Unchecked.defaultof<_>
+
+    /// Verifies production Orleans serialization preserves populated upload records and union requests.
+    [<Test>]
+    member _.PopulatedUploadSessionGraphsRoundTripThroughProductionOrleansSerialization() =
+        let services = ServiceCollection()
+        let codeGenerationAssembly = Reflection.Assembly.Load("Grace.Orleans.CodeGen")
+
+        services.AddSerializer (fun builder ->
+            builder.AddAssembly(typeof<UploadSessionDto>.Assembly)
+            |> ignore
+
+            builder.AddAssembly(codeGenerationAssembly)
+            |> ignore
+
+            builder.AddNodaTimeSerializers() |> ignore
+
+            builder.AddJsonSerializer(
+                isSupported =
+                    (fun candidateType ->
+                        not (String.IsNullOrEmpty(candidateType.Namespace))
+                        && candidateType.Namespace.StartsWith("Grace", StringComparison.InvariantCulture)),
+                jsonSerializerOptions = Constants.JsonSerializerOptions
+            )
+            |> ignore)
+        |> ignore
+
+        use serviceProvider = services.BuildServiceProvider()
+
+        let serializer = serviceProvider.GetRequiredService<Serializer<UploadSessionDto>>()
+
+        let blockIntent =
+            {
+                ContentBlockAddress = ContentBlockAddress(String.replicate 64 "a")
+                LogicalOffset = 12L
+                LogicalLength = 34L
+                ExpectedPayloadLength = 56L
+                RegisteredAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.UploadingBlocks
+                BlockUploadIntents = [| blockIntent |]
+            }
+
+        let encoded = serializer.SerializeToArray(session)
+        let decoded = serializer.Deserialize(encoded)
+
+        Assert.That(decoded.UploadSessionId, Is.EqualTo(sessionId))
+        Assert.That(decoded.RepositoryId, Is.EqualTo(repositoryId))
+        Assert.That(decoded.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
+        Assert.That(decoded.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.UploadingBlocks))
+        Assert.That(decoded.BlockUploadIntents.Length, Is.EqualTo(1))
+        Assert.That(decoded.BlockUploadIntents[0], Is.EqualTo(blockIntent))
+
+        let registerIntent =
+            {
+                OperationId = UploadSessionOperationId "register-block"
+                ContentBlockAddress = blockIntent.ContentBlockAddress
+                LogicalOffset = blockIntent.LogicalOffset
+                LogicalLength = blockIntent.LogicalLength
+                ExpectedPayloadLength = blockIntent.ExpectedPayloadLength
+            }
+
+        let command = UploadSessionCommand.RegisterBlockUploadIntent registerIntent
+        let commandSerializer = serviceProvider.GetRequiredService<Serializer<UploadSessionCommand>>()
+        let decodedCommand = commandSerializer.Deserialize(commandSerializer.SerializeToArray(command))
+        Assert.That(decodedCommand, Is.EqualTo(command))
+
+        let eventType = UploadSessionEventType.BlockUploadIntentRegistered(registerIntent.OperationId, blockIntent)
+        let eventTypeSerializer = serviceProvider.GetRequiredService<Serializer<UploadSessionEventType>>()
+        let decodedEventType = eventTypeSerializer.Deserialize(eventTypeSerializer.SerializeToArray(eventType))
+        Assert.That(decodedEventType, Is.EqualTo(eventType))
 
     /// Verifies that finalize Prevalidates All Metadata Merge Plans Before Side Effecting Merge Calls.
     [<Test>]
@@ -2036,8 +2116,7 @@ type UploadSessionActorTests() =
         Assert.That(firstResult.Metadata.Ranges, Has.Length.EqualTo(1))
         Assert.That(firstResult.Metadata.Ranges[0].ActiveManifestCount, Is.Zero)
 
-        let finalizedSession =
-            apply { Event = UploadSessionEventType.Finalized("op-finalize", manifest.ManifestAddress); Metadata = metadata "corr-finalized" } session
+        let finalizedSession = apply { Event = UploadSessionEventType.Finalized("op-finalize", manifest); Metadata = metadata "corr-finalized" } session
 
         Assert.That(finalizedSession.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
 
@@ -2941,6 +3020,7 @@ type UploadSessionActorTests() =
     member _.PhysicalCleanupCompactsPersistedEventsToTombstoneAndDropsCoordinationPayloads() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
         let manifestAddress = ManifestAddress "manifest-blake3-final"
+        let manifest = { FileManifest.Default with ManifestAddress = manifestAddress }
         let cleanupReminderTime = timestamp.Plus(Duration.FromMinutes(5L))
 
         let blockIntent =
@@ -2986,7 +3066,7 @@ type UploadSessionActorTests() =
                 { Event = UploadSessionEventType.BlockUploadConfirmed("op-confirm", confirmedBlock); Metadata = metadata "corr-confirm" }
                 { Event = UploadSessionEventType.DedupeDiscoveryIssued("op-discovery", discoverySnapshot); Metadata = metadata "corr-discovery" }
                 { Event = UploadSessionEventType.ReuseRangesClaimed("op-claim", [| claimedRange |]); Metadata = metadata "corr-claim" }
-                { Event = UploadSessionEventType.Finalized("op-finalize", manifestAddress); Metadata = metadata "corr-finalize" }
+                { Event = UploadSessionEventType.Finalized("op-finalize", manifest); Metadata = metadata "corr-finalize" }
                 { Event = UploadSessionEventType.CleanupReminderScheduled("op-finalize:cleanup", cleanupReminderTime); Metadata = metadata "corr-retention" }
                 { Event = UploadSessionEventType.PhysicalStateDeleted "op-finalize:cleanup"; Metadata = metadata "corr-cleanup" }
             ]

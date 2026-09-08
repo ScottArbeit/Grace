@@ -13,10 +13,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LibraryTombstoneDto {
-    #[serde(rename = "ItemId")]
-    pub item_id: uuid::Uuid,
-    #[serde(rename = "ItemKind")]
-    pub item_kind: models::LibraryItemKind,
     #[serde(rename = "DeletedAt")]
     pub deleted_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "DeletedBy")]
@@ -24,21 +20,19 @@ pub struct LibraryTombstoneDto {
     /// Opaque repository cursor. Clients must not parse or compare its contents.
     #[serde(rename = "DeleteCursor")]
     pub delete_cursor: String,
-    #[serde(rename = "LastNamespaceVersion")]
-    pub last_namespace_version: uuid::Uuid,
+    #[serde(rename = "LastNamespace")]
+    pub last_namespace: Box<models::LibraryNamespaceDto>,
     #[serde(rename = "LastContentVersionId")]
     pub last_content_version_id: uuid::Uuid,
 }
 
 impl LibraryTombstoneDto {
-    pub fn new(item_id: uuid::Uuid, item_kind: models::LibraryItemKind, deleted_at: chrono::DateTime<chrono::FixedOffset>, deleted_by: String, delete_cursor: String, last_namespace_version: uuid::Uuid, last_content_version_id: uuid::Uuid) -> LibraryTombstoneDto {
+    pub fn new(deleted_at: chrono::DateTime<chrono::FixedOffset>, deleted_by: String, delete_cursor: String, last_namespace: models::LibraryNamespaceDto, last_content_version_id: uuid::Uuid) -> LibraryTombstoneDto {
         LibraryTombstoneDto {
-            item_id,
-            item_kind,
             deleted_at,
             deleted_by,
             delete_cursor,
-            last_namespace_version,
+            last_namespace: Box::new(last_namespace),
             last_content_version_id,
         }
     }

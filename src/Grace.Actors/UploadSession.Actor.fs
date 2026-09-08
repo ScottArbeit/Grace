@@ -1243,7 +1243,7 @@ module UploadSession =
                 | Ok _ ->
                     let events =
                         [
-                            { Event = UploadSessionEventType.Finalized(finalize.OperationId, finalize.Manifest.ManifestAddress); Metadata = metadata }
+                            { Event = UploadSessionEventType.Finalized(finalize.OperationId, finalize.Manifest); Metadata = metadata }
                         ]
                         @ cleanupEvents session finalize.OperationId metadata
 

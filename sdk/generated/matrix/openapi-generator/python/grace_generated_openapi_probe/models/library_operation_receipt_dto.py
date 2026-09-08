@@ -18,15 +18,11 @@ import pprint
 import re  # noqa: F401
 import json
 
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.library_catalog_dto import LibraryCatalogDto
 from grace_generated_openapi_probe.models.library_change_dto import LibraryChangeDto
-from grace_generated_openapi_probe.models.library_conflict_provenance_dto import LibraryConflictProvenanceDto
-from grace_generated_openapi_probe.models.library_item_dto import LibraryItemDto
 from grace_generated_openapi_probe.models.library_outcome_kind import LibraryOutcomeKind
 from grace_generated_openapi_probe.models.library_rebaseline_dto import LibraryRebaselineDto
 from typing import Optional, Set
@@ -40,17 +36,11 @@ class LibraryOperationReceiptDto(BaseModel):
     operation_id: UUID = Field(alias="OperationId")
     request_hash: StrictStr = Field(alias="RequestHash")
     outcome: LibraryOutcomeKind = Field(alias="Outcome")
-    library_catalog_version: UUID = Field(alias="LibraryCatalogVersion")
-    recorded_at: datetime = Field(alias="RecordedAt")
-    principal_id: StrictStr = Field(alias="PrincipalId")
     change: LibraryChangeDto = Field(alias="Change")
-    cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="Cursor")
-    item: LibraryItemDto = Field(alias="Item")
-    conflict: LibraryConflictProvenanceDto = Field(alias="Conflict")
     reason_code: StrictStr = Field(alias="ReasonCode")
     current_library_catalog: LibraryCatalogDto = Field(alias="CurrentLibraryCatalog")
     rebaseline: LibraryRebaselineDto = Field(alias="Rebaseline")
-    __properties: ClassVar[List[str]] = ["OperationId", "RequestHash", "Outcome", "LibraryCatalogVersion", "RecordedAt", "PrincipalId", "Change", "Cursor", "Item", "Conflict", "ReasonCode", "CurrentLibraryCatalog", "Rebaseline"]
+    __properties: ClassVar[List[str]] = ["OperationId", "RequestHash", "Outcome", "Change", "ReasonCode", "CurrentLibraryCatalog", "Rebaseline"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -94,12 +84,6 @@ class LibraryOperationReceiptDto(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of change
         if self.change:
             _dict['Change'] = self.change.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of item
-        if self.item:
-            _dict['Item'] = self.item.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of conflict
-        if self.conflict:
-            _dict['Conflict'] = self.conflict.to_dict()
         # override the default output from pydantic by calling `to_dict()` of current_library_catalog
         if self.current_library_catalog:
             _dict['CurrentLibraryCatalog'] = self.current_library_catalog.to_dict()
@@ -121,13 +105,7 @@ class LibraryOperationReceiptDto(BaseModel):
             "OperationId": obj.get("OperationId"),
             "RequestHash": obj.get("RequestHash"),
             "Outcome": obj.get("Outcome"),
-            "LibraryCatalogVersion": obj.get("LibraryCatalogVersion"),
-            "RecordedAt": obj.get("RecordedAt"),
-            "PrincipalId": obj.get("PrincipalId"),
             "Change": LibraryChangeDto.from_dict(obj["Change"]) if obj.get("Change") is not None else None,
-            "Cursor": obj.get("Cursor"),
-            "Item": LibraryItemDto.from_dict(obj["Item"]) if obj.get("Item") is not None else None,
-            "Conflict": LibraryConflictProvenanceDto.from_dict(obj["Conflict"]) if obj.get("Conflict") is not None else None,
             "ReasonCode": obj.get("ReasonCode"),
             "CurrentLibraryCatalog": LibraryCatalogDto.from_dict(obj["CurrentLibraryCatalog"]) if obj.get("CurrentLibraryCatalog") is not None else None,
             "Rebaseline": LibraryRebaselineDto.from_dict(obj["Rebaseline"]) if obj.get("Rebaseline") is not None else None

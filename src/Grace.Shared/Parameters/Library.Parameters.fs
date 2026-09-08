@@ -65,7 +65,7 @@ module Library =
         member val CreationSlotExpectation: LibraryCreationSlotExpectationDto option = None with get, set
         member val DestinationParent: LibraryParentDto option = None with get, set
         member val DestinationName: string = null with get, set
-        member val PreparedContentId: Nullable<Guid> = Nullable() with get, set
+        member val UploadSessionId: Nullable<Guid> = Nullable() with get, set
 
     /// Reads the deterministic receipt for one authorized operation identity.
     type GetLibraryOperationParameters() =
@@ -80,11 +80,12 @@ module Library =
         member val Sha256Hash = String.Empty with get, set
         member val Size = 0L with get, set
 
-    /// Requests a one-use read grant for an authorized retained content version.
+    /// Requests a signed read URL for an authorized retained content version until its fixed expiry.
     type PrepareLibraryContentReadParameters() =
         inherit LibraryParameters()
         member val ItemId = Guid.Empty with get, set
         member val ContentVersionId = Guid.Empty with get, set
+        member val ContentRevision = String.Empty with get, set
 
     /// Reads one current Library item after repository authorization.
     type GetLibraryItemParameters() =

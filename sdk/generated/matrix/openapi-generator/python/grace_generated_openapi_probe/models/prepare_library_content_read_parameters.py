@@ -20,6 +20,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
@@ -39,7 +40,8 @@ class PrepareLibraryContentReadParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     item_id: UUID = Field(alias="ItemId")
     content_version_id: UUID = Field(alias="ContentVersionId")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ItemId", "ContentVersionId"]
+    content_revision: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="ContentRevision")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ItemId", "ContentVersionId", "ContentRevision"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -101,7 +103,8 @@ class PrepareLibraryContentReadParameters(BaseModel):
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
             "ItemId": obj.get("ItemId"),
-            "ContentVersionId": obj.get("ContentVersionId")
+            "ContentVersionId": obj.get("ContentVersionId"),
+            "ContentRevision": obj.get("ContentRevision")
         })
         return _obj
 

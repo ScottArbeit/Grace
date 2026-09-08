@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
 from uuid import UUID
-from grace_generated_openapi_probe.models.library_item_kind import LibraryItemKind
+from grace_generated_openapi_probe.models.library_namespace_dto import LibraryNamespaceDto
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -32,14 +32,12 @@ class LibraryTombstoneDto(BaseModel):
     """
     LibraryTombstoneDto
     """ # noqa: E501
-    item_id: UUID = Field(alias="ItemId")
-    item_kind: LibraryItemKind = Field(alias="ItemKind")
     deleted_at: datetime = Field(alias="DeletedAt")
     deleted_by: StrictStr = Field(alias="DeletedBy")
     delete_cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="DeleteCursor")
-    last_namespace_version: UUID = Field(alias="LastNamespaceVersion")
+    last_namespace: LibraryNamespaceDto = Field(alias="LastNamespace")
     last_content_version_id: UUID = Field(alias="LastContentVersionId")
-    __properties: ClassVar[List[str]] = ["ItemId", "ItemKind", "DeletedAt", "DeletedBy", "DeleteCursor", "LastNamespaceVersion", "LastContentVersionId"]
+    __properties: ClassVar[List[str]] = ["DeletedAt", "DeletedBy", "DeleteCursor", "LastNamespace", "LastContentVersionId"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -80,6 +78,9 @@ class LibraryTombstoneDto(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of last_namespace
+        if self.last_namespace:
+            _dict['LastNamespace'] = self.last_namespace.to_dict()
         return _dict
 
     @classmethod
@@ -92,12 +93,10 @@ class LibraryTombstoneDto(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ItemId": obj.get("ItemId"),
-            "ItemKind": obj.get("ItemKind"),
             "DeletedAt": obj.get("DeletedAt"),
             "DeletedBy": obj.get("DeletedBy"),
             "DeleteCursor": obj.get("DeleteCursor"),
-            "LastNamespaceVersion": obj.get("LastNamespaceVersion"),
+            "LastNamespace": LibraryNamespaceDto.from_dict(obj["LastNamespace"]) if obj.get("LastNamespace") is not None else None,
             "LastContentVersionId": obj.get("LastContentVersionId")
         })
         return _obj

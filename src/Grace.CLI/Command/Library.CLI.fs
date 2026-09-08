@@ -5,6 +5,7 @@ open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Library
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Library
@@ -17,14 +18,18 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
-/// Defines the remote-only Library command tree without activating local synchronization participation.
+/// Defines Library catalog management and local synchronization commands.
 module LibraryCommand =
 
     /// Defines options shared by the Library handlers.
     module private Options =
         let libraryPath = Argument<string>("path", Description = "Repository-relative Library path.")
-        let expectedVersion = Option<Guid>("--expected-version", Required = true, Description = "Exact current Library catalog version <Guid>.")
-        let operationId = Option<Guid>("--operation-id", Required = true, Description = "Idempotent Library operation identity <Guid>.")
+
+        let expectedVersion =
+            Option<Guid>("--expected-version", Required = false, Description = "Exact Library catalog version <Guid>; reads the current version when omitted.")
+
+        let operationId =
+            Option<Guid>("--operation-id", Required = false, Description = "Library operation identity <Guid>; creates a new identity when omitted.")
 
         let ownerId =
             Option<OwnerId>(OptionName.OwnerId, Required = false, Description = "Repository owner ID <Guid>.", DefaultValueFactory = (fun _ -> OwnerId.Empty))
@@ -99,15 +104,44 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
-    /// Sends one exact-version root add or remove operation through the remote SDK.
-    let private changeLibraryHandler addLibrary (parseResult: ParseResult) : Task<GraceResult<LibraryCatalogChangeResultDto>> =
+    /// Sends one catalog mutation using explicit inputs or one lookup and one invocation-local operation identity.
+    let internal changeLibraryHandlerWith
+        (newOperationId: unit -> Guid)
+        (getCatalog: GetLibraryCatalogParameters -> Task<GraceResult<LibraryCatalogDto>>)
+        (add: AddLibraryParameters -> Task<GraceResult<LibraryCatalogChangeResultDto>>)
+        (remove: RemoveLibraryParameters -> Task<GraceResult<LibraryCatalogChangeResultDto>>)
+        addLibrary
+        (parseResult: ParseResult)
+        : Task<GraceResult<LibraryCatalogChangeResultDto>>
+        =
         task {
             try
-                let expectedVersion = parseResult.GetValue Options.expectedVersion
                 let libraryPath = parseResult.GetValue Options.libraryPath
-                let operationId = parseResult.GetValue Options.operationId
+                let operationResult = parseResult.GetResult Options.operationId
 
-                if addLibrary then
+                let operationId =
+                    if isNull operationResult || operationResult.Implicit then
+                        newOperationId ()
+                    else
+                        parseResult.GetValue Options.operationId
+
+                let! version =
+                    task {
+                        let versionResult = parseResult.GetResult Options.expectedVersion
+
+                        if isNull versionResult || versionResult.Implicit then
+                            let! catalog = getCatalog (applyScope (GetLibraryCatalogParameters()) parseResult)
+
+                            return
+                                catalog
+                                |> Result.map (fun result -> result.ReturnValue.Version)
+                        else
+                            return Ok(parseResult.GetValue Options.expectedVersion)
+                    }
+
+                match version with
+                | Error error -> return Error error
+                | Ok expectedVersion when addLibrary ->
                     let parameters =
                         AddLibraryParameters()
                         |> fun value -> applyScope value parseResult
@@ -115,8 +149,8 @@ module LibraryCommand =
                     parameters.ExpectedVersion <- expectedVersion
                     parameters.LibraryPath <- libraryPath
                     parameters.OperationId <- operationId
-                    return! Libraries.AddLibrary parameters
-                else
+                    return! add parameters
+                | Ok expectedVersion ->
                     let parameters =
                         RemoveLibraryParameters()
                         |> fun value -> applyScope value parseResult
@@ -124,10 +158,14 @@ module LibraryCommand =
                     parameters.ExpectedVersion <- expectedVersion
                     parameters.LibraryPath <- libraryPath
                     parameters.OperationId <- operationId
-                    return! Libraries.RemoveLibrary parameters
+                    return! remove parameters
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
+
+    /// Uses the ordinary SDK once for lookup when needed and once for the requested catalog mutation, without retries.
+    let private changeLibraryHandler addLibrary parseResult =
+        changeLibraryHandlerWith Guid.NewGuid Libraries.GetCatalog Libraries.AddLibrary Libraries.RemoveLibrary addLibrary parseResult
 
     /// Dispatches `grace library get <path>` and renders the standard Grace result envelope.
     type GetLibrary() =
@@ -173,7 +211,34 @@ module LibraryCommand =
                 return renderOutput parseResult result
             }
 
-    /// Builds the remote-only `grace library` command tree accepted by Issue #1038.
+    /// Runs synchronization against the repository configured for this working copy.
+    let internal synchronizationHandler verb (parseResult: ParseResult) cancellationToken =
+        task {
+            try
+                let configuration = Current()
+                let locator = applyScope (GetLibraryCatalogParameters()) parseResult
+
+                if locator.RepositoryId
+                   <> configuration.RepositoryId.ToString("D")
+                   || locator.OwnerId
+                      <> configuration.OwnerId.ToString("D")
+                   || locator.OrganizationId
+                      <> configuration.OrganizationId.ToString("D") then
+                    invalidOp "Library synchronization must target the configured working-copy repository."
+
+                let! status =
+                    match verb with
+                    | "enable" -> LibrarySynchronization.enable configuration locator.CorrelationId cancellationToken
+                    | "run" -> LibrarySynchronization.run configuration locator.CorrelationId cancellationToken
+                    | "status" -> LibrarySynchronization.status configuration
+                    | _ -> invalidArg (nameof verb) "Unsupported Library synchronization command."
+
+                return Ok(GraceReturnValue.Create status locator.CorrelationId)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Builds Library catalog and synchronization commands.
     let Build =
         let addScopeOptions (command: Command) =
             command
@@ -223,4 +288,23 @@ module LibraryCommand =
         removeCommand.Action <- RemoveLibrary()
         libraryCommand.Subcommands.Add removeCommand
 
+        let syncCommand = Command("sync", "Synchronize Library files in this working copy.")
+
+        for verb in [ "enable"; "run"; "status" ] do
+            let command =
+                Command(verb, $"Library synchronization {verb}.")
+                |> addScopeOptions
+
+            command.Action <-
+                { new AsynchronousCommandLineAction() with
+                    override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
+                        task {
+                            let! result = synchronizationHandler verb parseResult cancellationToken
+                            return renderOutput parseResult result
+                        }
+                }
+
+            syncCommand.Subcommands.Add command
+
+        libraryCommand.Subcommands.Add syncCommand
         libraryCommand

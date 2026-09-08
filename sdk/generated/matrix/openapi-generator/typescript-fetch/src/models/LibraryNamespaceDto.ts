@@ -44,19 +44,7 @@ export interface LibraryNamespaceDto {
      * @type {string}
      * @memberof LibraryNamespaceDto
      */
-    normalizedPath: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryNamespaceDto
-     */
     namespaceVersion: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryNamespaceDto
-     */
-    slotVersion: string;
 }
 
 /**
@@ -65,9 +53,7 @@ export interface LibraryNamespaceDto {
 export function instanceOfLibraryNamespaceDto(value: object): value is LibraryNamespaceDto {
     if (!('parent' in value) || value['parent'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
-    if (!('normalizedPath' in value) || value['normalizedPath'] === undefined) return false;
     if (!('namespaceVersion' in value) || value['namespaceVersion'] === undefined) return false;
-    if (!('slotVersion' in value) || value['slotVersion'] === undefined) return false;
     return true;
 }
 
@@ -83,9 +69,7 @@ export function LibraryNamespaceDtoFromJSONTyped(json: any, ignoreDiscriminator:
         
         'parent': LibraryParentDtoFromJSON(json['Parent']),
         'name': json['Name'],
-        'normalizedPath': json['NormalizedPath'],
         'namespaceVersion': json['NamespaceVersion'],
-        'slotVersion': json['SlotVersion'],
     };
 }
 
@@ -102,9 +86,7 @@ export function LibraryNamespaceDtoToJSONTyped(value?: LibraryNamespaceDto | nul
         
         'Parent': LibraryParentDtoToJSON(value['parent']),
         'Name': value['name'],
-        'NormalizedPath': value['normalizedPath'],
         'NamespaceVersion': value['namespaceVersion'],
-        'SlotVersion': value['slotVersion'],
     };
 }
 
