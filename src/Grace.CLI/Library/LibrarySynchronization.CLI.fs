@@ -599,9 +599,21 @@ module internal LibrarySynchronization =
                                                    && descriptor.Sha256Hash = source.Sha256Hash
                                                    && descriptor.Size = source.Size)))))
 
+                    // Before publication, this selected destination belongs to neither the renamed item nor a new local create.
+                    // Keep any arriving bytes as an obstruction until the user resolves it or the intent is rejected.
+                    let unpreparedRenameTarget =
+                        operations
+                        |> Array.exists (fun operation ->
+                            operation.Rename
+                            && not operation.Prepared
+                            && not operation.Terminal
+                            && operation.ExpectedCatalogVersion = current.Catalog.Version
+                            && pathsEqual operation.TargetPath relative)
+
                     if not (bytes |> Option.exists Array.isEmpty)
                        && not unchanged
                        && not pendingSource
+                       && not unpreparedRenameTarget
                        && publishedPending.Length <> 1 then
                         let origin =
                             if prior.IsSome then
@@ -912,6 +924,9 @@ module internal LibrarySynchronization =
                                let content = LibraryFilesystem.content bytes in actual = Some $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}"))
 
                 if not operation.Prepared then
+                    if operation.Rename && actual.IsSome then
+                        invalidOp "Library rename destination is occupied before preparation; preserve or move the obstruction before retrying."
+
                     let materialized =
                         previous
                         |> Option.bind (fun item -> item.Content)

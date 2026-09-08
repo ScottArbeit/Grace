@@ -202,7 +202,7 @@ Human output and `cli-json-v1` data distinguish four outcomes:
 | `ambiguous` | Acceptance is unresolved, including cancellation or a lost response. Rerun the same command to resume the retained operation. |
 | `acceptedButObstructed` | The server accepted, but local application is incomplete. Preserve and resolve the reported obstruction, then rerun the same command. |
 
-All incomplete or rejected outcomes return a nonzero exit code. Saved edits at either path retain their existing materialized content revision. Empty files and obstructions remain protected. Rejected saved-content operations retain their bytes and pending request; only a definitively rejected unprepared rename retires without an application effect.
+All incomplete or rejected outcomes return a nonzero exit code. A destination created before rename preparation remains an obstruction; Grace does not capture it as a new file or interpret it as an edit to the renamed item. Preserve those bytes outside the destination, then retry the same command. Saved edits at either path during prepared application retain their existing materialized content revision. Empty files and obstructions remain protected. Rejected saved-content operations retain their bytes and pending request; only a definitively rejected unprepared rename retires without an application effect.
 
 ## Deferred capabilities
 
