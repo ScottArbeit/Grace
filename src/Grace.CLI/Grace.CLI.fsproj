@@ -29,7 +29,7 @@
 		<Compile Include="Command\ConnectZipStaging.CLI.fs" />
 		<Compile Include="Command\WorkingDirectoryUpdate.Transition.CLI.fs" />
 		<Compile Include="LocalStateDb.CLI.fs" />
-		<Compile Include="LibraryLocalState.CLI.fs" />
+		<Compile Include="Library\LibraryLocalState.CLI.fs" />
 		<Compile Include="SelectProjection.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
@@ -42,10 +42,10 @@
 		<Compile Include="Command\Connect.CLI.fs" />
 		<Compile Include="Command\Organization.CLI.fs" />
 		<Compile Include="Command\Repository.CLI.fs" />
-		<Compile Include="Command\LibraryFilesystem.Windows.CLI.fs" />
-		<Compile Include="Command\LibraryManifestUpload.CLI.fs" />
-		<Compile Include="Command\LibraryBaseline.CLI.fs" />
-		<Compile Include="Command\LibrarySynchronization.CLI.fs" />
+		<Compile Include="Library\LibraryFilesystem.Windows.CLI.fs" />
+		<Compile Include="Library\LibraryManifestUpload.CLI.fs" />
+		<Compile Include="Library\LibraryBaseline.CLI.fs" />
+		<Compile Include="Library\LibrarySynchronization.CLI.fs" />
 		<Compile Include="Command\Library.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />
 		<Compile Include="Command\Branch.CLI.fs" />

@@ -37,6 +37,8 @@ It ships with a promotion queue - Grace doesn't do merges, it does promotions - 
 
 [Libraries](docs/Libraries.md) share ordinary nonempty files between authorized Windows working copies outside Save and Reference history. A fresh copy can join a populated Library from an empty local root, install selected content and catch up with later changes using `grace library sync enable`.
 
+Use `grace library add <path>` or `grace library remove <path>` to change configured Library roots. The CLI obtains the current catalog version and creates an operation ID unless you supply explicit values for a controlled request or exact retry.
+
 Grace is a modern, fast, powerful centralized version control system. It's made up of a web API, with a CLI (and soon a GUI).
 
 Grace is written primarily in **F#**, and uses:

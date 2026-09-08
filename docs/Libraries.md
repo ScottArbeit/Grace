@@ -85,8 +85,8 @@ PowerShell:
 ```powershell
 grace library list --repository-id $repositoryId
 grace library get shared --repository-id $repositoryId
-grace library add shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
-grace library remove shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
+grace library add shared --repository-id $repositoryId
+grace library remove shared --repository-id $repositoryId
 ```
 
 bash / zsh:
@@ -94,8 +94,24 @@ bash / zsh:
 ```bash
 grace library list --repository-id "$repository_id"
 grace library get shared --repository-id "$repository_id"
+grace library add shared --repository-id "$repository_id"
+grace library remove shared --repository-id "$repository_id"
+```
+
+Both add and remove accept optional `--expected-version` and `--operation-id`. When the version is omitted, the CLI reads the catalog once and submits its version. When the operation ID is omitted, the CLI generates one ID for that invocation. Explicit values pass through unchanged. A failed lookup prevents submission; a stale catalog result remains visible without rereading or retrying. The server still checks version, permissions, path and emptiness.
+
+For an exact scripted retry, retain all request details, including the same explicit version and operation ID. A new invocation with a generated ID is a new request. An omitted-version lookup may obtain a different version, so reusing only an operation ID does not preserve an earlier request.
+
+PowerShell:
+
+```powershell
+grace library add shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
+```
+
+bash / zsh:
+
+```bash
 grace library add shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
-grace library remove shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
 ```
 
 Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. Run these commands in each configured Windows working copy:

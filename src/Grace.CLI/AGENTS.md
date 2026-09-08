@@ -75,6 +75,9 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 ## Command Modules (`Grace.CLI.Command`)
 
+- Keep Library support modules in `Library/`: local state, filesystem mechanics, manifest upload, baseline acquisition and synchronization. `Command/Library.CLI.fs` remains the command entry point. Preserve module names and explicit F# compile order when moving files.
+- Library add/remove optionally read one catalog version and generate one operation ID when omitted. Explicit values bypass their defaults, including invalid values handled by existing validation. Preserve lookup errors and stale mutation results without retries or durable command state.
+
 - Parameter classes usually derive from `ParameterBase()`. Keep them
   lightweight and validated at construction.
 - Organize command-specific helpers under `Options` modules and wrap

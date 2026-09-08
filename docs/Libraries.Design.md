@@ -59,6 +59,8 @@ Keep content-free status and `LibraryContentAvailable.v1` wake behavior. A wake 
 
 Keep `grace library` catalog commands and the `grace library sync enable|run|status` commands delivered in Issue #1039. Preserve the normal human and `cli-json-v1` output conventions. Issue #1071 extends enable/run to populated-Library onboarding; disable/offline/re-enable behavior belongs to a later selected epic slice.
 
+Catalog add/remove commands accept optional `--expected-version` and `--operation-id`. An omitted version causes one scoped catalog read; an omitted operation ID creates one invocation-local ID. Explicit values are retained. Lookup failure prevents mutation, and a stale result remains visible without retry. Exact scripted retries retain both explicit values and all other request details. This changes only the CLI adapter; the server's exact-version and operation-replay contracts remain unchanged. The five support modules live in `src/Grace.CLI/Library/`, with the command entry point at `src/Grace.CLI/Command/Library.CLI.fs`.
+
 ## Identify each item by its parent and name
 
 `LibraryNamespaceDto = { Parent; Name; NamespaceVersion }`. A root parent names a configured Library path; an item parent names a stable directory item. A slot is keyed by `(repository, parent identity, normalized sibling name)`. Full paths are derived views. Remove `NormalizedPath` from the shared namespace/slot contracts and update the client to resolve the parent graph; do not store a path that silently becomes stale after an ancestor moves.

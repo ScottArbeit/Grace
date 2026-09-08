@@ -203,7 +203,7 @@ The `library` command group uses the same result envelope as other JSON-ready co
 - `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
 - `library sync enable`, `library sync run`, and `library sync status` return `Enabled`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, `AppliedCursor`, and `PendingOperationCount`. State is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent until all required baseline work is verified and its boundary commits; received pages never count as completed application. Pending count includes unfinished baseline items. Initial catch-up remains gated from saved-file capture until its complete pull. These commands support `--schema`, `--examples`, and `--select` through the same registry.
 
-Catalog changes require a positional Library path, `--expected-version`, and `--operation-id`. Automation must inspect
+Catalog changes require a positional Library path. `--expected-version` is optional: omission performs one scoped catalog read, while an explicit value skips that read. `--operation-id` is optional: omission creates one ID per invocation, while an explicit ID passes through unchanged. Lookup errors prevent submission; stale results return without automatic retry. Exact retries require identical request details, including explicit version and operation ID. Automation must inspect
 `ReturnValue.Outcome` for the typed accepted, stale, unchanged, or rejected result instead of treating a zero process
 exit code as evidence that a repository change was accepted. These commands configure the server-owned remote
 namespace. They do not activate local synchronization, Watch participation, or filesystem publication.
