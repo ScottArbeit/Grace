@@ -8,7 +8,7 @@ Most Grace users will be programmers, and we're a more technical audience. We kn
 
 ## Library synchronization
 
-Configured Library paths stay outside ordinary Watch Save and Reference processing, including when local participation is disabled. On an enabled Windows copy, the existing Watch timer invokes the same finite operation as `grace library sync run`. It captures stable saved files, submits frozen requests, pulls ordered changes, and completes local application through the three Library tables.
+Configured Library paths stay outside ordinary Watch Save and Reference processing, including when local participation is disabled. On an enabled Windows copy, the existing Watch timer invokes the same finite operation as `grace library sync run`. It captures stable nonempty saved files, submits frozen requests, pulls ordered changes, and completes local application through the three Library tables. Empty files are excluded from pending input and upload, remain present, and cannot be overwritten or deleted by incoming synchronization. Previously captured positive input remains durable after truncation to zero.
 
 Library publication uses the shared working-root exclusion and its own completion transaction. It adds no WDU caller or completion. Exact terminal echoes are consumed only after matching the observed path and complete content; repeated-byte ambiguity remains retained. Watch registers for `LibraryContentAvailable.v1`, coalesces hints for its repository, and pulls on the next timer pass. The hint's cursor never advances local progress. Periodic pulls recover from lost hints, and reconnect registers the subscription again. A changed catalog stops Watch before its next ordinary processing pass; restart after resolving the policy change.
 

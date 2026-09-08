@@ -343,6 +343,30 @@ module internal LibrarySynchronization =
                         |> Array.tryFind (fun item ->
                             item.Tombstone.IsNone
                             && pathsEqual (observedPath item) relative)
+                        |> Option.orElseWith (fun () ->
+                            let prepared =
+                                operations
+                                |> Array.choose (fun operation ->
+                                    if operation.Prepared
+                                       && not operation.Terminal
+                                       && operation.ExpectedCatalogVersion = current.Catalog.Version
+                                       && operation.ExpectedCursor = current.AppliedCursor
+                                       && pathsEqual operation.TargetPath relative then
+                                        operation.Accepted
+                                        |> Option.bind (fun change ->
+                                            if change.Item.ItemKind = ItemKind.File
+                                               && change.Item.Tombstone.IsNone
+                                               && ancestry items change.Item = operation.ExpectedAncestry then
+                                                items
+                                                |> Array.tryFind (fun item ->
+                                                    item.ItemId = change.Item.ItemId
+                                                    && item.Tombstone.IsNone)
+                                            else
+                                                None)
+                                    else
+                                        None)
+
+                            if prepared.Length = 1 then Some prepared[0] else None)
 
                     let itemKind = if Directory.Exists(path) then ItemKind.Directory else ItemKind.File
 
@@ -366,14 +390,25 @@ module internal LibrarySynchronization =
                         | _ -> false
 
                     let pendingSource =
-                        operations
-                        |> Array.filter (fun operation ->
-                            operation.Direction = "local"
-                            && not operation.Terminal
-                            && (pathsEqual operation.SourcePath relative
-                                || (prior.IsSome
-                                    && operation.MaterializedBase
-                                       |> Option.exists (fun item -> item.ItemId = prior.Value.ItemId))))
+                        let pending =
+                            operations
+                            |> Array.filter (fun operation ->
+                                operation.Direction = "local"
+                                && not operation.Terminal)
+
+                        let samePath =
+                            pending
+                            |> Array.filter (fun operation -> pathsEqual operation.SourcePath relative)
+
+                        (if samePath.Length > 0 then
+                             samePath
+                         else
+                             pending
+                             |> Array.filter (fun operation ->
+                                 prior
+                                 |> Option.exists (fun prior ->
+                                     operation.MaterializedBase
+                                     |> Option.exists (fun item -> item.ItemId = prior.ItemId))))
                         |> Array.tryLast
                         |> Option.exists (fun operation -> operation.SourceBytes = bytes)
 
@@ -401,7 +436,8 @@ module internal LibrarySynchronization =
                                                    && descriptor.Sha256Hash = source.Sha256Hash
                                                    && descriptor.Size = source.Size)))))
 
-                    if not unchanged
+                    if not (bytes |> Option.exists Array.isEmpty)
+                       && not unchanged
                        && not pendingSource
                        && publishedPending.Length <> 1 then
                         let origin =
@@ -669,6 +705,14 @@ module internal LibrarySynchronization =
                     change.Item.Content
                     |> Option.map contentFingerprint
 
+                /// Preserves excluded empty files both before preparation and immediately before later effects.
+                let requireNonemptyTarget () =
+                    if change.Item.ItemKind = ItemKind.File
+                       && File.Exists(target)
+                       && FileInfo(target).Length = 0L then
+                        invalidOp "Library synchronization preserves excluded empty files."
+
+                requireNonemptyTarget ()
                 let actual = LibraryFilesystem.fingerprint target
 
                 let saved =
@@ -735,6 +779,8 @@ module internal LibrarySynchronization =
                     if serialize persisted <> serialize operation then
                         invalidOp "Library exact operation changed before filesystem effects."
 
+                    requireNonemptyTarget ()
+
                     let mutable parent = Path.GetDirectoryName(target)
 
                     let root =
@@ -754,6 +800,62 @@ module internal LibrarySynchronization =
                         parent <- Path.GetDirectoryName(parent)
 
                 revalidate ()
+
+                /// Allows rename source removal only when changed positive bytes already have an exact accepted saved operation.
+                let requireMovedSource () =
+                    if
+                        change.Item.Tombstone.IsNone
+                        && change.Item.ItemKind = ItemKind.File
+                        && priorPath <> targetRelative
+                        && File.Exists(priorTarget)
+                    then
+                        let actual = LibraryFilesystem.fingerprint priorTarget
+
+                        let materialized =
+                            previous
+                            |> Option.bind (fun item -> item.Content)
+                            |> Option.map contentFingerprint
+
+                        if FileInfo(priorTarget).Length = 0L then
+                            invalidOp "Library rename preserves an excluded empty source."
+
+                        if actual <> materialized then
+                            let saved =
+                                readOperations configuration.GraceStatusFile configuration.RepositoryId
+                                |> Array.tryFind (fun pending ->
+                                    pending.Direction = "local"
+                                    && not pending.Terminal
+                                    && pending.Uploaded
+                                    && pending.RequestJson.IsSome
+                                    && pathsEqual pending.SourcePath priorPath
+                                    && (pending.MaterializedBase
+                                        |> Option.exists (fun item -> item.ItemId = change.Item.ItemId))
+                                    && (pending.SourceBytes
+                                        |> Option.exists (fun bytes ->
+                                            bytes.Length > 0
+                                            && let content = LibraryFilesystem.content bytes in
+                                               actual = Some $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}"))
+                                    && (pending.Accepted
+                                        |> Option.exists (fun accepted ->
+                                            accepted.OperationId = pending.OperationId
+                                            && (accepted.Item.Content
+                                                |> Option.map contentFingerprint) = actual)))
+
+                            match saved with
+                            | None -> invalidOp "Moved Library source has no exact accepted saved content."
+                            | Some saved ->
+                                revalidate ()
+
+                                let persisted =
+                                    readOperations configuration.GraceStatusFile configuration.RepositoryId
+                                    |> Array.find (fun pending -> pending.OperationId = saved.OperationId)
+
+                                if serialize persisted <> serialize saved
+                                   || LibraryFilesystem.fingerprint priorTarget
+                                      <> actual then
+                                    invalidOp "Accepted Library source changed immediately before rename."
+
+                requireMovedSource ()
 
                 // A saved target can change after preparation. Preserve it first, then refresh only the
                 // filesystem precondition while retaining the original accepted result and exact edit base.
@@ -826,18 +928,21 @@ module internal LibrarySynchronization =
 
                         do! checkCatalog configuration correlationId expected
                         let staged = Path.Combine(configuration.GraceDirectory, $"library-publish-{operation.OperationId:N}.tmp")
-                        LibraryFilesystem.publishAtomic revalidate staged target operation.ExpectedTarget bytes
+
+                        LibraryFilesystem.publishAtomic
+                            (fun () ->
+                                revalidate ()
+                                requireMovedSource ())
+                            staged
+                            target
+                            operation.ExpectedTarget
+                            bytes
 
                     if
                         priorPath <> targetRelative
                         && File.Exists(priorTarget)
                     then
-                        let materialized = previous.Value.Content.Value |> contentFingerprint
-
-                        if LibraryFilesystem.fingerprint priorTarget
-                           <> Some materialized then
-                            invalidOp "Moved Library source contains changed local bytes."
-
+                        requireMovedSource ()
                         File.Delete(priorTarget)
 
                     if LibraryFilesystem.fingerprint target

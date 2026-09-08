@@ -1,6 +1,6 @@
 # Libraries
 
-Libraries let authorized Windows working copies share ordinary files through a repository-ordered namespace and immutable-byte service. Each copy retains saved input, materialized edit bases, and completed progress locally.
+Libraries let authorized Windows working copies share ordinary nonempty files through a repository-ordered namespace and immutable-byte service. Each copy retains saved input, materialized edit bases, and completed progress locally.
 
 An authorized remote client can:
 
@@ -109,6 +109,10 @@ After both copies enable the empty baseline, create a file in A's Library and ru
 `ReturnValue.State` is `disabled`, `catchingUp`, `current`, or `blocked`. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. Catalog changes and rebaseline responses stop application and retain saved work.
 
 Saved bytes are captured before upload. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling.
+
+Zero-byte local files are excluded before pending input or upload preparation. They remain present: truncating a tracked file to zero does not submit an update or deletion, and a later nonempty save retains its previous materialized edit base. Incoming changes cannot overwrite or delete an excluded empty file. Such a change leaves synchronization blocked and its applied cursor unchanged until the local obstruction is resolved. A previously captured nonempty source and frozen request remain available after a later zero-length save; installing its accepted result cannot overwrite that empty file.
+
+A saved edit during an incoming file rename retains its original item and revision, including saves at either path during interrupted application. Grace removes changed old-path bytes only when those exact positive bytes are already accepted and retained by their pending operation. An edit submitted after the server deletes its item retains the `ItemTombstoned` rejection, saved bytes, and pending request; synchronization does not resurrect the item or manufacture a conflict sibling for that rejection.
 
 Local state uses exactly three Library tables in `.grace/grace-local.db`: repository participation/catalog/progress, materialized items, and pending/terminal operations. A Library connection uses WAL, foreign keys, and FULL synchronization. File bytes are verified before item state, terminal operation, and applied cursor commit together. Restart reuses frozen requests and verifies already-published bytes, avoiding another logical operation or completed-file rewrite.
 

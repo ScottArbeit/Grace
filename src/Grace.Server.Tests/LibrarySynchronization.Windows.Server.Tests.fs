@@ -414,6 +414,490 @@ module LibrarySynchronizationWindowsServerTests =
     /// Locates the existing shared local database for assertions against a disposable copy.
     let private localDb root = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
+    /// Orders a real file rename or deletion ahead of a saved edit in the other working copy.
+    let private changeNamespaceAsync (repositoryId: Guid) catalogVersion (item: LibraryItemDto) deleted =
+        task {
+            let request = Parameters.Library.SubmitLibraryChangeParameters()
+            request.OwnerId <- ownerId
+            request.OrganizationId <- organizationId
+            request.RepositoryId <- repositoryId.ToString("D")
+            request.OperationId <- Guid.NewGuid()
+            request.LibraryCatalogVersion <- catalogVersion
+            request.ItemId <- Nullable item.ItemId
+            request.ItemKind <- ItemKind.File
+            request.NamespacePrecondition <- Some { ItemId = item.ItemId; ExpectedNamespaceVersion = item.Namespace.Value.NamespaceVersion }
+            request.CorrelationId <- generateCorrelationId ()
+
+            if deleted then
+                request.ChangeKind <- ChangeKind.Delete
+
+                request.ContentPrecondition <-
+                    Some
+                        {
+                            ItemId = item.ItemId
+                            ExpectedContentVersionId = item.Content.Value.ContentVersionId
+                            ExpectedContentRevision = item.ContentRevision.Value
+                        }
+            else
+                request.ChangeKind <- ChangeKind.Rename
+                request.DestinationName <- "renamed.txt"
+
+            use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent request)
+            let! receipt = requireReturnValueAsync<LibraryOperationReceiptDto> response
+            Assert.That(receipt.Change.IsSome, Is.True, serialize receipt)
+            return receipt.Change.Value
+        }
+
+    /// Creates two enabled empty copies before any positive or excluded file is observed.
+    let private enableCopiesAsync label =
+        task {
+            let root = Path.Combine(Path.GetTempPath(), $"grace-library-{label}-{Guid.NewGuid():N}")
+            Console.WriteLine($"Library working copies: {root}")
+            let copyA, copyB = Path.Combine(root, "A"), Path.Combine(root, "B")
+            Directory.CreateDirectory(copyA) |> ignore
+            Directory.CreateDirectory(copyB) |> ignore
+            let! repositoryId = createRepositoryAsync ()
+            do! addLibraryAsync repositoryId
+            let proxy = new AuthenticatedProxy(graceServerBaseAddress, testUserId)
+            configureWorkingCopy copyA repositoryId proxy.BaseAddress
+            configureWorkingCopy copyB repositoryId proxy.BaseAddress
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "enable")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "enable")
+            return copyA, copyB, repositoryId, proxy
+        }
+
+    /// Excludes empty observations without losing presence, the original edit base, or a previously captured positive request.
+    [<Test>]
+    let ``nonempty boundary preserves zero files and frozen positive work across restart`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "nonempty"
+            use proxy = createdProxy
+            let pathA, pathB = Path.Combine(copyA, "Library", "source.txt"), Path.Combine(copyB, "Library", "source.txt")
+            let zero = Path.Combine(copyA, "Library", "zero.txt")
+            File.WriteAllBytes(zero, [||])
+            File.WriteAllText(pathA, "original positive")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(File.Exists(zero), Is.True)
+            Assert.That(FileInfo(zero).Length, Is.Zero)
+            Assert.That(File.Exists(Path.Combine(copyB, "Library", "zero.txt")), Is.False)
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.length,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.length,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(1))
+
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
+                |> Array.exactlyOne
+
+            let before = Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
+            let submitted = proxy.SubmitRequestCount
+            File.WriteAllBytes(pathA, [||])
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(File.Exists(pathA), Is.True)
+            Assert.That(FileInfo(pathA).Length, Is.Zero)
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
+                |> Array.exactlyOne,
+                Is.EqualTo(original)
+            )
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(before.Value.AppliedCursor)
+            )
+
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(submitted))
+            File.WriteAllText(pathA, "positive after zero")
+            proxy.AfterNextManifestUpload(fun () -> File.WriteAllBytes(pathA, [||]))
+            proxy.DropNextAcceptedSubmitResponse()
+            let! lost = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(lost.ExitCode, Is.Not.EqualTo(0))
+
+            let pending =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.find (fun operation -> not operation.Terminal)
+
+            let frozen = deserialize<Parameters.Library.SubmitLibraryChangeParameters> pending.RequestJson.Value
+            Assert.That(frozen.ContentPrecondition.Value.ExpectedContentRevision, Is.EqualTo(original.ContentRevision.Value))
+            let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(blocked.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(blocked.StandardOutput, Does.Contain("excluded empty"))
+            Assert.That(FileInfo(pathA).Length, Is.Zero)
+
+            let retained =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.find (fun operation -> not operation.Terminal)
+
+            Assert.That(retained.OperationId, Is.EqualTo(pending.OperationId))
+            Assert.That(retained.SourceBytes, Is.EqualTo(pending.SourceBytes))
+            Assert.That(retained.RequestJson, Is.EqualTo(pending.RequestJson))
+            Assert.That(retained.Accepted.IsSome, Is.True)
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(before.Value.AppliedCursor)
+            )
+
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(2))
+            File.WriteAllText(pathA, "positive after zero")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("positive after zero"))
+            Assert.That(File.Exists(zero), Is.True)
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+                |> Array.length,
+                Is.Zero
+            )
+
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(2))
+
+            let completed =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+
+            File.WriteAllText(pathA, "publication source")
+            proxy.AfterNextManifestUpload(fun () -> File.WriteAllText(pathA, "distinct later positive"))
+
+            localSql
+                copyA
+                "CREATE TRIGGER fail_zero_checkpoint BEFORE UPDATE OF applied_cursor ON library_repository_state WHEN NEW.applied_cursor <> OLD.applied_cursor BEGIN SELECT RAISE(ABORT, 'zero publication checkpoint'); END;"
+            |> ignore
+
+            let! published = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(published.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(published.StandardOutput, Does.Contain("zero publication checkpoint"))
+            Assert.That(File.ReadAllText(pathA), Is.EqualTo("publication source"))
+
+            let prepared =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+
+            Assert.That(prepared.Length, Is.EqualTo(2))
+
+            Assert.That(
+                prepared[0].Prepared
+                && prepared[0].Accepted.IsSome
+                && prepared[0].RequestJson.IsSome,
+                Is.True
+            )
+
+            Assert.That(prepared[1].SourceBytes.Value, Is.EqualTo<byte>(System.Text.Encoding.UTF8.GetBytes("distinct later positive")))
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(completed.AppliedCursor)
+            )
+
+            File.WriteAllBytes(pathA, [||])
+
+            localSql copyA "DROP TRIGGER fail_zero_checkpoint;"
+            |> ignore
+
+            let! zeroAfterPublication = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(zeroAfterPublication.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(File.Exists(pathA), Is.True)
+            Assert.That(FileInfo(pathA).Length, Is.Zero)
+
+            let afterZero =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+
+            Assert.That(afterZero.Length, Is.EqualTo(2))
+            Assert.That(afterZero[0], Is.EqualTo(prepared[0]))
+            Assert.That(afterZero[1].OperationId, Is.EqualTo(prepared[1].OperationId))
+            Assert.That(afterZero[1].SourceBytes, Is.EqualTo(prepared[1].SourceBytes))
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(completed.AppliedCursor)
+            )
+
+            File.WriteAllText(pathA, "publication source")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let conflict =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.find (fun operation -> operation.OperationId = prepared[1].OperationId)
+
+            Assert.That(conflict.Accepted.Value.Conflict.IsSome, Is.True)
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("publication source"))
+
+            Assert.That(
+                File.ReadAllText(Path.Combine(copyB, "Library", conflict.Accepted.Value.Item.Namespace.Value.Name)),
+                Is.EqualTo("distinct later positive")
+            )
+        }
+
+    /// Keeps empty files at actual incoming mutation sources and destinations intact until an explicit local recovery.
+    [<TestCase("update"); TestCase("rename-source"); TestCase("rename-target"); TestCase("delete")>]
+    let ``incoming changes preserve excluded zero files`` mutation =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync mutation
+            use proxy = createdProxy
+            let pathA, pathB = Path.Combine(copyA, "Library", "source.txt"), Path.Combine(copyB, "Library", "source.txt")
+            let renamed = Path.Combine(copyB, "Library", "renamed.txt")
+            File.WriteAllText(pathA, "original positive")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let before =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne
+
+            let protectedPath = if mutation = "rename-target" then renamed else pathB
+            File.WriteAllBytes(protectedPath, [||])
+
+            if mutation = "update" then
+                File.WriteAllText(pathA, "incoming positive")
+                let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+                ()
+            else
+                let! _ = changeNamespaceAsync repositoryId before.Catalog.Version original (mutation = "delete")
+                ()
+
+            let! failed = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(failed.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(File.Exists(protectedPath), Is.True)
+            Assert.That(FileInfo(protectedPath).Length, Is.Zero)
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(before.AppliedCursor)
+            )
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne,
+                Is.EqualTo(original)
+            )
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.filter (fun operation -> operation.Direction = "local")
+                |> Array.length,
+                Is.Zero
+            )
+
+            if mutation = "rename-target" then
+                File.Delete(renamed)
+            else
+                File.WriteAllText(pathB, "original positive")
+
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            if mutation = "delete" then
+                Assert.That(File.Exists(pathB), Is.False)
+            elif mutation.StartsWith("rename") then
+                Assert.That(File.Exists(pathB), Is.False)
+                Assert.That(File.ReadAllText(renamed), Is.EqualTo("original positive"))
+            else
+                Assert.That(File.ReadAllText(pathB), Is.EqualTo("incoming positive"))
+        }
+
+    /// Interrupts a real rename between publication and removal, then preserves distinct saves at either path with their original base.
+    [<TestCase(false); TestCase(true)>]
+    let ``accepted saved edit and later partial rename save survive process restart`` saveAtDestination =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "rename-saved"
+            use proxy = createdProxy
+            let pathA, pathB = Path.Combine(copyA, "Library", "source.txt"), Path.Combine(copyB, "Library", "source.txt")
+            let renamed = Path.Combine(copyB, "Library", "renamed.txt")
+            File.WriteAllText(pathA, "X")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let before =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne
+
+            let! rename = changeNamespaceAsync repositoryId before.Catalog.Version original false
+            File.WriteAllText(pathB, "Z1")
+            let mutable held: FileStream option = None
+            proxy.AfterNextContentRead(fun () -> held <- Some(new FileStream(pathB, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
+            let! interrupted = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            held
+            |> Option.iter (fun stream -> stream.Dispose())
+
+            Assert.That(interrupted.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(File.ReadAllText(renamed), Is.EqualTo("X"))
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("Z1"))
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(before.AppliedCursor)
+            )
+
+            let first =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.find (fun operation ->
+                    operation.Direction = "local"
+                    && not operation.Terminal)
+
+            Assert.That(first.Accepted.IsSome, Is.True)
+            Assert.That(first.Accepted.Value.Item.ItemId, Is.EqualTo(original.ItemId))
+            File.WriteAllText((if saveAtDestination then renamed else pathB), "Z2")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            let local =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.filter (fun operation -> operation.Direction = "local")
+
+            Assert.That(local.Length, Is.EqualTo(2))
+            Assert.That(local[0].RequestJson, Is.EqualTo(first.RequestJson))
+            let second = local[1]
+            let request = deserialize<Parameters.Library.SubmitLibraryChangeParameters> second.RequestJson.Value
+            Assert.That(request.ChangeKind, Is.EqualTo(ChangeKind.UpdateContent))
+            Assert.That(request.ItemId.Value, Is.EqualTo(original.ItemId))
+            Assert.That(request.ContentPrecondition.Value.ExpectedContentRevision, Is.EqualTo(original.ContentRevision.Value))
+            Assert.That(second.Accepted.Value.Conflict.IsSome, Is.True)
+            let conflictName = second.Accepted.Value.Item.Namespace.Value.Name
+            Assert.That(File.ReadAllText(renamed), Is.EqualTo("Z1"))
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", conflictName)), Is.EqualTo("Z2"))
+            Assert.That(File.ReadAllText(Path.Combine(copyA, "Library", conflictName)), Is.EqualTo("Z2"))
+            Assert.That(File.Exists(pathB), Is.False)
+
+            Assert.That(
+                local
+                |> Array.forall (fun operation -> operation.Terminal),
+                Is.True
+            )
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                 |> Array.find (fun operation -> operation.OperationId = rename.OperationId)
+                 |> fun operation -> operation.Terminal),
+                Is.True
+            )
+        }
+
+    /// Preserves rejected saved input after the real server has tombstoned its original item.
+    [<Test>]
+    let ``deletion first retains ItemTombstoned saved edit without resurrection`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "delete-saved"
+            use proxy = createdProxy
+            let pathA, pathB = Path.Combine(copyA, "Library", "source.txt"), Path.Combine(copyB, "Library", "source.txt")
+            File.WriteAllText(pathA, "X")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let before =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne
+
+            let! _ = changeNamespaceAsync repositoryId before.Catalog.Version original true
+            File.WriteAllText(pathB, "saved after server deletion")
+            let! rejected = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(rejected.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(rejected.StandardOutput, Does.Contain(RejectionReason.ItemTombstoned))
+
+            let pending =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.find (fun operation -> operation.Direction = "local")
+
+            let frozen = deserialize<Parameters.Library.SubmitLibraryChangeParameters> pending.RequestJson.Value
+            use! receiptResponse = Client.PostAsync("/libraries/changes/submit", createJsonContent frozen)
+            let! receipt = requireReturnValueAsync<LibraryOperationReceiptDto> receiptResponse
+            Assert.That(receipt.ReasonCode, Is.EqualTo(Some RejectionReason.ItemTombstoned))
+            Assert.That(receipt.Change.IsNone, Is.True)
+            Assert.That(receipt.OperationId, Is.EqualTo(pending.OperationId))
+
+            let! retried = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(retried.ExitCode, Is.Not.EqualTo(0))
+            Assert.That(retried.StandardOutput, Does.Contain(RejectionReason.ItemTombstoned))
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.find (fun operation -> operation.Direction = "local"),
+                Is.EqualTo(pending)
+            )
+
+            Assert.That(pending.Terminal, Is.False)
+            Assert.That(pending.Accepted.IsNone, Is.True)
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("saved after server deletion"))
+
+            Assert.That(
+                Directory
+                    .GetFiles(
+                        Path.Combine(copyB, "Library")
+                    )
+                    .Length,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(before.AppliedCursor)
+            )
+
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(File.Exists(pathA), Is.False)
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
+                 |> Array.exactlyOne)
+                    .Tombstone
+                    .IsSome,
+                Is.True
+            )
+        }
+
     /// Proves empty-page restart and a subsequent interruption between two item completions do not skip accepted changes.
     [<Test>]
     let ``empty visibility continuation and partial page restart preserve every change`` () =
