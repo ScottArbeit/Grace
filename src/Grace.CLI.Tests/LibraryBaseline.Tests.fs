@@ -126,7 +126,7 @@ module LibraryBaselineTests =
                 {
                     BootstrapId = Guid.NewGuid()
                     BoundaryCursor = "selected-boundary"
-                    CursorEpoch = "selected-epoch"
+                    CursorEpoch = LibraryCursorEpoch.parse "b1e68c2f-0abc-4139-a893-044d0d761593"
                     LibraryCatalog = catalog
                     Items = [| file; dead |]
                     NextPageToken = Some "second"
@@ -570,6 +570,7 @@ module LibraryBaselineTests =
                     AppliedCursor = ""
                     NextPageToken = None
                     State = "acquiringBaseline"
+                    Paused = false
                     Baseline = Some { BootstrapId = page.BootstrapId; BoundaryCursor = page.BoundaryCursor; MetadataComplete = false; Applied = false }
                 }
 

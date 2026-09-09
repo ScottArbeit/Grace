@@ -92,10 +92,11 @@ module LibraryLocalStateTests =
                         CreatedBy = "library-test"
                         PreviousVersion = None
                     }
-                CursorEpoch = "opaque-epoch"
+                CursorEpoch = LibraryCursorEpoch.parse "d6adb687-e197-4b0d-a90e-a485736c105a"
                 AppliedCursor = "opaque-before"
                 NextPageToken = None
                 State = "catchingUp"
+                Paused = false
                 Baseline = None
             }
 
@@ -179,6 +180,176 @@ module LibraryLocalStateTests =
             complete db initial first
             setState db (readRepository db initial.RepositoryId).Value "current"
             return configuration, (readRepository db initial.RepositoryId).Value, first.Accepted.Value.Item
+        }
+
+    /// Reads canonical epochs from SQLite and rejects corrupt identity text without modifying retained work.
+    [<TestCase("invalid-epoch");
+      TestCase("d6adb687e1974b0da90ea485736c105a");
+      TestCase("{d6adb687-e197-4b0d-a90e-a485736c105a}");
+      TestCase(" d6adb687-e197-4b0d-a90e-a485736c105a ")>]
+    let ``SQLite epoch boundary rejects malformed text and retains pending rows`` (invalidEpoch: string) =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let current, operation = prepared ()
+            enable db current
+
+            insertOperation db current.RepositoryId operation
+            |> ignore
+
+            Assert.That(readRepository db current.RepositoryId, Is.EqualTo(Some current))
+            let retained = readOperations db current.RepositoryId
+            use connection = openConnection db
+            use command = connection.CreateCommand()
+            command.CommandText <- "SELECT cursor_epoch FROM library_repository_state;"
+            Assert.That(command.ExecuteScalar(), Is.EqualTo(LibraryCursorEpoch.toString current.CursorEpoch))
+            command.CommandText <- "UPDATE library_repository_state SET cursor_epoch=$epoch;"
+
+            command.Parameters.AddWithValue("$epoch", invalidEpoch)
+            |> ignore
+
+            command.ExecuteNonQuery() |> ignore
+            throws<FormatException> (fun () -> readRepository db current.RepositoryId |> ignore)
+            Assert.That(readOperations db current.RepositoryId, Is.EqualTo<PendingOperation>(retained))
+            command.CommandText <- "SELECT cursor_epoch FROM library_repository_state;"
+            Assert.That(command.ExecuteScalar(), Is.EqualTo(invalidEpoch))
+        }
+
+    /// Checks persisted pause against real saved/terminal rows, capture, classification and stale completion callers.
+    [<Test>]
+    let ``pause preserves progress and exact work while stale callers cannot complete`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let db, repository = configuration.GraceStatusFile, configuration.RepositoryId
+            let retained = readOperations db repository
+            let! paused = LibrarySynchronization.pause configuration System.Threading.CancellationToken.None
+            Assert.That(paused.Enabled && paused.Paused, Is.True)
+            Assert.That(readRepository db repository, Is.EqualTo(Some { before with Paused = true }))
+            let! _ = LibrarySynchronization.pause configuration System.Threading.CancellationToken.None
+            File.WriteAllText(Path.Combine(configuration.RootDirectory, "Library", "latest.txt"), "paused save")
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
+
+            do!
+                LibrarySynchronization.classifyWatchObservations
+                    configuration
+                    [|
+                        Path.Combine(configuration.RootDirectory, "Library", "item.bin")
+                    |]
+                    System.Threading.CancellationToken.None
+
+            Assert.That(readOperations db repository, Is.EqualTo<PendingOperation>(retained))
+            throws<InvalidOperationException> (fun () -> setState db before "blocked")
+            throws<InvalidOperationException> (fun () -> recordPage db before (Some "stale-page"))
+            throws<InvalidOperationException> (fun () -> setPaused db before false)
+            let! _ = LibrarySynchronization.changePause configuration false System.Threading.CancellationToken.None
+            Assert.That(readRepository db repository, Is.EqualTo(Some before))
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+            Assert.That((readOperations db repository).Length, Is.EqualTo(retained.Length + 1))
+        }
+
+    /// An interrupted SQLite pause commit retains the old value and exact operation rows.
+    [<Test>]
+    let ``pause update failure rolls back without changing retained work`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let db = configuration.GraceStatusFile
+            let operations = readOperations db configuration.RepositoryId
+            use connection = openConnection db
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "CREATE TRIGGER fail_pause BEFORE UPDATE OF paused ON library_repository_state BEGIN SELECT RAISE(ABORT,'pause interruption'); END;"
+
+            command.ExecuteNonQuery() |> ignore
+
+            try
+                let! _ = LibrarySynchronization.pause configuration System.Threading.CancellationToken.None
+                Assert.Fail("Injected pause commit unexpectedly succeeded.")
+            with
+            | :? SqliteException -> ()
+
+            Assert.That(readRepository db configuration.RepositoryId, Is.EqualTo(Some before))
+            Assert.That(readOperations db configuration.RepositoryId, Is.EqualTo<PendingOperation>(operations))
+        }
+
+    /// Verifies cancellation while waiting changes nothing and a stale Watch tick rereads pause under exclusion.
+    [<Test>]
+    let ``pause cancellation and competing stale Watch run honor root lease`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                |> Result.defaultWith invalidOp
+
+            let! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope System.Threading.CancellationToken.None
+            use cancellation = new System.Threading.CancellationTokenSource()
+            let waiting = LibrarySynchronization.pause configuration cancellation.Token
+            cancellation.Cancel()
+
+            try
+                let! _ = waiting
+                Assert.Fail("Canceled pause unexpectedly committed.")
+            with
+            | :? OperationCanceledException -> ()
+
+            Assert.That(readRepository configuration.GraceStatusFile configuration.RepositoryId, Is.EqualTo(Some before))
+            let stale = LibrarySynchronization.runFromWatch configuration "stale-watch" System.Threading.CancellationToken.None
+            setPaused configuration.GraceStatusFile before true
+            (held :> IDisposable).Dispose()
+            do! stale
+
+            Assert.That(
+                (readRepository configuration.GraceStatusFile configuration.RepositoryId)
+                    .Value
+                    .Paused,
+                Is.True
+            )
+        }
+
+    /// Rejects toggles before onboarding and rejects non-Boolean SQLite values without adding another table.
+    [<TestCase(false); TestCase(true)>]
+    let ``pause requires completed participation and constrained SQLite value`` incomplete =
+        task {
+            let root, db = location ()
+            do! initialize db
+            let current, _ = prepared ()
+            let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
+            configuration.RootDirectory <- root
+            configuration.RepositoryId <- current.RepositoryId
+            configuration.GraceStatusFile <- db
+
+            let! disabled = LibrarySynchronization.status configuration
+            let decoded = deserialize<LibrarySynchronization.LibrarySynchronizationStatus> (serialize disabled)
+            Assert.That(decoded.Enabled, Is.False)
+            Assert.That(decoded.CursorEpoch, Is.EqualTo(None))
+
+            if incomplete then
+                enable
+                    db
+                    { current with Baseline = Some { BootstrapId = Guid.NewGuid(); BoundaryCursor = "boundary"; MetadataComplete = true; Applied = true } }
+
+            for paused in [ true; false ] do
+                try
+                    let! _ = LibrarySynchronization.changePause configuration paused System.Threading.CancellationToken.None
+                    Assert.Fail("Incomplete participation admitted a toggle.")
+                with
+                | :? InvalidOperationException -> ()
+
+            if incomplete then
+                use connection = openConnection db
+                use command = connection.CreateCommand()
+                command.CommandText <- "UPDATE library_repository_state SET paused=2;"
+                throws<SqliteException> (fun () -> command.ExecuteNonQuery() |> ignore)
         }
 
     /// Retains one selected ID across interruption without changing files or replacing it with another requested name.

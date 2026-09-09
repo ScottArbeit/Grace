@@ -147,8 +147,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `216`
-- JSON-ready routed commands: `195`
+- Total leaf commands: `218`
+- JSON-ready routed commands: `197`
 - Conditionally JSON-ready routed commands: `1`
 - Intentionally human-only commands: `0`
 - Deferred routed commands with explicit V2 scope: `11`

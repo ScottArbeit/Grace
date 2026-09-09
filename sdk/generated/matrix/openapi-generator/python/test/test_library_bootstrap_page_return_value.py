@@ -44,7 +44,7 @@ class TestLibraryBootstrapPageReturnValue(unittest.TestCase):
                 return_value = grace_generated_openapi_probe.models.library_bootstrap_page_dto.LibraryBootstrapPageDto(
                     bootstrap_id = '', 
                     boundary_cursor = '0', 
-                    cursor_epoch = '0', 
+                    cursor_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3', 
                     library_catalog = grace_generated_openapi_probe.models.library_catalog_dto.LibraryCatalogDto(
                         repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095', 
                         version = '', 

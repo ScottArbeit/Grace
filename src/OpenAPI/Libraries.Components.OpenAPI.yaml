@@ -26,9 +26,9 @@
       description: Opaque repository cursor. Clients must not parse or compare its contents.
     LibraryCursorEpoch:
       type: string
-      minLength: 1
-      maxLength: 2048
-      description: Opaque repository epoch. Clients compare only exact equality.
+      format: uuid
+      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      description: Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     LibraryPageToken:
       type: string
       minLength: 1

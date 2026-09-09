@@ -18,9 +18,10 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -30,10 +31,20 @@ class LibraryRebaselineDto(BaseModel):
     LibraryRebaselineDto
     """ # noqa: E501
     reason: StrictStr = Field(alias="Reason")
-    current_epoch: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository epoch. Clients compare only exact equality.", alias="CurrentEpoch")
+    current_epoch: UUID = Field(description="Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.", alias="CurrentEpoch")
     service_floor_cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="ServiceFloorCursor")
     recommended_bootstrap: StrictBool = Field(alias="RecommendedBootstrap")
     __properties: ClassVar[List[str]] = ["Reason", "CurrentEpoch", "ServiceFloorCursor", "RecommendedBootstrap"]
+
+    @field_validator('current_epoch')
+    def current_epoch_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", value):
+            raise ValueError(r"must validate the regular expression /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,

@@ -236,6 +236,8 @@ module LibraryCommand =
                     match verb with
                     | "enable" -> LibrarySynchronization.enable configuration locator.CorrelationId cancellationToken
                     | "run" -> LibrarySynchronization.run configuration locator.CorrelationId cancellationToken
+                    | "pause" -> LibrarySynchronization.pause configuration cancellationToken
+                    | "resume" -> LibrarySynchronization.resume configuration locator.CorrelationId cancellationToken
                     | "status" -> LibrarySynchronization.status configuration
                     | _ -> invalidArg (nameof verb) "Unsupported Library synchronization command."
 
@@ -397,9 +399,23 @@ module LibraryCommand =
 
         let syncCommand = Command("sync", "Synchronize Library files in this working copy.")
 
-        for verb in [ "enable"; "run"; "status" ] do
+        for verb in
+            [
+                "enable"
+                "run"
+                "pause"
+                "resume"
+                "status"
+            ] do
             let command =
-                Command(verb, $"Library synchronization {verb}.")
+                Command(
+                    verb,
+                    match verb with
+                    | "pause" -> "Pause this onboarded copy locally, retaining saved and pending work."
+                    | "resume" -> "Resume this paused copy and synchronize retained and latest saved work."
+                    | "status" -> "Show participation, pause setting and completed synchronization progress."
+                    | _ -> $"Library synchronization {verb}."
+                )
                 |> addScopeOptions
 
             command.Action <-
@@ -407,6 +423,25 @@ module LibraryCommand =
                     override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
                         task {
                             let! result = synchronizationHandler verb parseResult cancellationToken
+
+                            match result with
+                            | Ok value when not (hasSelect parseResult) ->
+                                let output =
+                                    discriminatedUnionFromString<OutputFormat>(
+                                        parseResult.GetValue Grace.CLI.Common.Options.output
+                                    )
+                                        .Value
+
+                                match output with
+                                | Normal
+                                | Verbose
+                                | Minimal ->
+                                    Console.Out.WriteLine(
+                                        $"Library synchronization: Enabled={value.ReturnValue.Enabled}, Paused={value.ReturnValue.Paused}, State={value.ReturnValue.State}, Pending={value.ReturnValue.PendingOperationCount}."
+                                    )
+                                | _ -> ()
+                            | _ -> ()
+
                             return renderOutput parseResult result
                         }
                 }

@@ -38,7 +38,7 @@ class TestLibraryContentAvailable(unittest.TestCase):
             return LibraryContentAvailable(
                 event_name = 'LibraryContentAvailable.v1',
                 repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
-                cursor_epoch = '0',
+                cursor_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3',
                 available_after_cursor = '0',
                 library_catalog_version = '',
                 occurred_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
@@ -48,7 +48,7 @@ class TestLibraryContentAvailable(unittest.TestCase):
             return LibraryContentAvailable(
                 event_name = 'LibraryContentAvailable.v1',
                 repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
-                cursor_epoch = '0',
+                cursor_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3',
                 available_after_cursor = '0',
                 library_catalog_version = '',
                 occurred_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),

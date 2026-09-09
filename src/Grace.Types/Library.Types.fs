@@ -21,7 +21,26 @@ module Library =
     type LibraryContentVersionId = Guid
     type LibraryBootstrapId = Guid
     type LibraryCursor = string
-    type LibraryCursorEpoch = string
+
+    /// Identifies one feed generation by equality, without ordering or timestamp meaning.
+    [<Struct; NoComparison>]
+    type LibraryCursorEpoch = LibraryCursorEpoch of Guid
+
+    /// Converts feed generation identities at GUID text boundaries without interpreting cursor tokens.
+    [<RequireQualifiedAccess>]
+    module LibraryCursorEpoch =
+        /// Wraps the server's existing generation identity without accepting another domain identifier implicitly.
+        let ofGuid value = LibraryCursorEpoch value
+
+        /// Writes the canonical hyphenated GUID representation used on the wire and in SQLite.
+        let toString (LibraryCursorEpoch value) = value.ToString("D")
+
+        /// Rejects malformed or non-D text before local state can authorize synchronization effects.
+        let parse (text: string) =
+            match Guid.TryParseExact(text, "D") with
+            | true, value when not (isNull text) && text.Length = 36 -> LibraryCursorEpoch value
+            | _ -> raise (FormatException("Library cursor epoch must be a GUID in D format."))
+
     type LibraryPageToken = string
 
     /// Provides the accepted lower-camel wire values for Library item kinds.

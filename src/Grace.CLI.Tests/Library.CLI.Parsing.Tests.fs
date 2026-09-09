@@ -57,10 +57,17 @@ module LibraryCliParsingTests =
                 Is.GreaterThan(0)
             )
 
-    /// Keeps the synchronization capability budget confined to enable, run, and status.
+    /// Keeps synchronization confined to participation, finite run, explicit pause/resume and status.
     [<Test>]
     let ``library synchronization accepts exact verbs and repository locators`` () =
-        for verb in [ "enable"; "run"; "status" ] do
+        for verb in
+            [
+                "enable"
+                "run"
+                "pause"
+                "resume"
+                "status"
+            ] do
             let parsed =
                 GraceCommand.rootCommand.Parse [| "library"
                                                   "sync"

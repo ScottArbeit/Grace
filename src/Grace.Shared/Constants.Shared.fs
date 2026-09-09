@@ -41,8 +41,84 @@ module Constants =
             )
             .WithUnwrapOption(true)
 
+    /// Checks a required Library epoch before F# record decoding can turn a null GUID field into its default value.
+    type private LibraryEpochDtoJsonConverter<'T>(inner: JsonConverter<'T>, epochField: string) =
+        inherit JsonConverter<'T>()
+
+        /// Validates through a reader copy, then delegates the original token stream without recursive selection of this converter.
+        override _.Read(reader, targetType, options) =
+            let mutable validationReader = reader
+            use document = JsonDocument.ParseValue(&validationReader)
+            let mutable epoch = Unchecked.defaultof<JsonElement>
+
+            let name =
+                if isNull options.PropertyNamingPolicy then
+                    epochField
+                else
+                    options.PropertyNamingPolicy.ConvertName(epochField)
+
+            let comparison =
+                if options.PropertyNameCaseInsensitive then
+                    StringComparison.OrdinalIgnoreCase
+                else
+                    StringComparison.Ordinal
+
+            if document.RootElement.ValueKind = JsonValueKind.Object then
+                for property in document.RootElement.EnumerateObject() do
+                    if String.Equals(property.Name, name, comparison) then epoch <- property.Value
+
+            if document.RootElement.ValueKind
+               <> JsonValueKind.Object
+               || epoch.ValueKind <> JsonValueKind.String then
+                raise (JsonException($"Library {epochField} must be a GUID in D format."))
+
+            let text = epoch.GetString()
+
+            if
+                text.Length <> 36
+                || not (fst (Guid.TryParseExact(text, "D")))
+            then
+                raise (JsonException($"Library {epochField} must be a GUID in D format."))
+
+            inner.Read(&reader, targetType, options)
+
+        /// Preserves the existing record serializer and its field encodings on output.
+        override _.Write(writer, value, options) = inner.Write(writer, value, options)
+
+    /// Selects only required remote Library epochs; Constants compiles before Library types, so registration uses their exact CLR names.
+    type private LibraryEpochDtoJsonConverterFactory() =
+        inherit JsonConverterFactory()
+
+        /// Keeps optional CLI status epochs and unrelated DTO fields under their existing serializer policy.
+        let epochField (targetType: Type) =
+            match targetType.FullName with
+            | "Grace.Types.Library+LibraryRebaselineDto" -> Some "CurrentEpoch"
+            | "Grace.Types.Library+LibraryBootstrapPageDto"
+            | "Grace.Types.Library+LibraryChangePageDto"
+            | "Grace.Types.Library+LibraryContentAvailable" -> Some "CursorEpoch"
+            | _ -> None
+
+        /// Limits validation to the four remote records with a required epoch.
+        override _.CanConvert(targetType) = (epochField targetType).IsSome
+
+        /// Creates the ordinary F# record decoder directly so nested records retain the registered epoch guard.
+        override _.CreateConverter(targetType, options) =
+            let inner =
+                JsonFSharpConverter(jsonFSharpOptions)
+                    .CreateConverter(targetType, options)
+
+            Activator.CreateInstance(
+                typedefof<LibraryEpochDtoJsonConverter<_>>.MakeGenericType (targetType),
+                [|
+                    box inner
+                    box (epochField targetType).Value
+                |]
+            )
+            :?> JsonConverter
+
     /// The universal JSON serialization options for Grace.
     let public JsonSerializerOptions = JsonSerializerOptions()
+    JsonSerializerOptions.Converters.Add(LibraryEpochDtoJsonConverterFactory())
     JsonSerializerOptions.Converters.Add(JsonFSharpConverter(jsonFSharpOptions))
     JsonSerializerOptions.Converters.Add(JsonStringEnumConverter(JsonNamingPolicy.CamelCase))
     JsonSerializerOptions.AllowTrailingCommas <- true

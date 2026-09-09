@@ -18,7 +18,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
 from uuid import UUID
@@ -34,11 +34,21 @@ class LibraryBootstrapPageDto(BaseModel):
     """ # noqa: E501
     bootstrap_id: UUID = Field(alias="BootstrapId")
     boundary_cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="BoundaryCursor")
-    cursor_epoch: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository epoch. Clients compare only exact equality.", alias="CursorEpoch")
+    cursor_epoch: UUID = Field(description="Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.", alias="CursorEpoch")
     library_catalog: LibraryCatalogDto = Field(alias="LibraryCatalog")
     items: List[LibraryItemDto] = Field(alias="Items")
     next_page_token: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque token for continuing one immutable page sequence.", alias="NextPageToken")
     __properties: ClassVar[List[str]] = ["BootstrapId", "BoundaryCursor", "CursorEpoch", "LibraryCatalog", "Items", "NextPageToken"]
+
+    @field_validator('cursor_epoch')
+    def cursor_epoch_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", value):
+            raise ValueError(r"must validate the regular expression /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,

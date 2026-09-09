@@ -6,7 +6,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **bootstrap_id** | **uuid::Uuid** |  | 
 **boundary_cursor** | **String** | Opaque repository cursor. Clients must not parse or compare its contents. | 
-**cursor_epoch** | **String** | Opaque repository epoch. Clients compare only exact equality. | 
+**cursor_epoch** | **uuid::Uuid** | Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning. | 
 **library_catalog** | [**models::LibraryCatalogDto**](LibraryCatalogDto.md) |  | 
 **items** | [**Vec<models::LibraryItemDto>**](LibraryItemDto.md) |  | 
 **next_page_token** | **String** | Opaque token for continuing one immutable page sequence. | 

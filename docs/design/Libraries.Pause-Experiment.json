@@ -1,0 +1,294 @@
+{
+  "Cases": [
+    {
+      "Name": "current-before-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "current-inside-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "current-after-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "current-before-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "current-inside-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "current-after-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-before-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-inside-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-after-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-before-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-inside-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-after-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-before-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-inside-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-after-pause-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-before-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-inside-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-after-resume-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-run",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-enable",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-rename",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-capture",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-timer",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-observation",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-wake",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "stale-echo-prune",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "lease-wait-cancellation",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "active-holder-finishes-before-pause",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-before-submit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-after-server-accept",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-after-receipt",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-before-publication",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-after-publication",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-before-completion",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-inside-completion",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "saved-resumed-after-completion",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-before-publication",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-after-publication",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-before-source-removal",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-after-source-removal",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-before-completion",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-inside-completion",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rename-resumed-after-completion",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "resume-block-network",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "resume-block-catalog",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "resume-block-rebaselineRequired",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "latest-save-retains-materialized-base",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "resume-then-later-pause-wins",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "concurrent-stale-reader-rechecks-under-lease",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "paused-zero-byte-does-not-capture-or-apply",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "resume-missing-object",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "resume-corrupt-object",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "rejected-save-remains-pending",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "all-operation-families-retained",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "incomplete-onboarding-rejects-toggle",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "two-copies-resume-one-modeled-accepted-rename",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    }
+  ],
+  "Passed": 56,
+  "Question": "Can independent pause on the existing repository row gate every admitted caller under the existing root lease while retaining typed pending work?",
+  "Total": 56,
+  "SourceRevision": "66aea34838a65a9e4b220463f0d8366836ee328d",
+  "SourceBase": "66aea34838a65a9e4b220463f0d8366836ee328d",
+  "ProgramSha256": "2BBD9558EA7BADB2C2D74715DD94D9131788D24C75C17B10842C55DED1AF305C",
+  "RunnerSha256": "216610858D1436E317629987818769807E522577DA092728E7385C1DCF62B043",
+  "StartedUtc": "2026-09-09T07:01:13.9653803Z",
+  "CompletedUtc": "2026-09-09T07:01:24.1836638Z",
+  "ArtifactRoot": "C:\\Source\\Grace-artifacts\\library-pause-1037\\final-20260909"
+}

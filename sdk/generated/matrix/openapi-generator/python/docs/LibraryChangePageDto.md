@@ -6,7 +6,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **outcome** | [**LibraryOutcomeKind**](LibraryOutcomeKind.md) |  | 
-**cursor_epoch** | **str** | Opaque repository epoch. Clients compare only exact equality. | 
+**cursor_epoch** | **UUID** | Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning. | 
 **changes** | [**List[LibraryChangeDto]**](LibraryChangeDto.md) |  | 
 **last_cursor** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **has_more** | **bool** |  | 

@@ -238,16 +238,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 216
+        |> should equal 218
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 207
+        |> should equal 209
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 195
+        |> should equal 197
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
@@ -298,7 +298,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 195
+        jsonReady |> should equal 197
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
@@ -575,7 +575,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 195
+        commonEntries.Length |> should equal 197
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -593,7 +593,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 195
+        commonEntries.Length |> should equal 197
 
         let parserInvalidEntries =
             commonEntries
@@ -1055,7 +1055,7 @@ module CommandOutputContractRegistryTests =
                 | ConditionalGraceResultEnvelope _ -> true
                 | _ -> false)
 
-        eligibleEntries.Length |> should equal 196
+        eligibleEntries.Length |> should equal 198
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status
@@ -1078,6 +1078,57 @@ module CommandOutputContractRegistryTests =
 
             examplesDocument.Examples[0].Name
             |> should equal "success-envelope-shape"
+
+    /// Requires every synchronization entrypoint to expose pause independently of participation and progress.
+    [<TestCase("enable"); TestCase("run"); TestCase("pause"); TestCase("resume"); TestCase("status")>]
+    let ``library synchronization schema exposes independent pause setting`` verb =
+        let entry =
+            CommandOutputContract.commandIdentity [ "library"; "sync" ] verb
+            |> CommandOutputContract.tryFind
+            |> Option.get
+
+        let document = CommandOutputContract.introspectionDocument Schema entry
+        use success = JsonDocument.Parse(Grace.Shared.Utilities.serialize document.Schema.Value.SuccessSchema)
+
+        let properties =
+            success
+                .RootElement
+                .GetProperty("properties")
+                .GetProperty("ReturnValue")
+                .GetProperty("properties")
+
+        Assert.That(
+            properties
+                .GetProperty("Paused")
+                .GetProperty("type")
+                .GetString(),
+            Is.EqualTo("boolean")
+        )
+
+        Assert.That(
+            properties
+                .GetProperty("Enabled")
+                .GetProperty("type")
+                .GetString(),
+            Is.EqualTo("boolean")
+        )
+
+        Assert.That(
+            properties
+                .GetProperty("State")
+                .GetProperty("type")
+                .GetString(),
+            Is.EqualTo("string")
+        )
+
+        let epochSchema =
+            properties
+                .GetProperty("CursorEpoch")
+                .GetProperty("anyOf")
+                .EnumerateArray()
+            |> Seq.find (fun schema -> schema.GetProperty("type").GetString() = "string")
+
+        Assert.That(epochSchema.GetProperty("format").GetString(), Is.EqualTo("uuid"))
 
     /// Keeps rename introspection tied to the retained operation result emitted by the actual command.
     [<Test>]

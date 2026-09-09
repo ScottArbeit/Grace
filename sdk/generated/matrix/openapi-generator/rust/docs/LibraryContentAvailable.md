@@ -6,7 +6,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **event_name** | **EventName** |  (enum: LibraryContentAvailable.v1) | 
 **repository_id** | **uuid::Uuid** |  | 
-**cursor_epoch** | **String** | Opaque repository epoch. Clients compare only exact equality. | 
+**cursor_epoch** | **uuid::Uuid** | Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning. | 
 **available_after_cursor** | **String** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **library_catalog_version** | **uuid::Uuid** |  | 
 **occurred_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 

@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 pub struct LibraryChangePageDto {
     #[serde(rename = "Outcome")]
     pub outcome: models::LibraryOutcomeKind,
-    /// Opaque repository epoch. Clients compare only exact equality.
+    /// Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     #[serde(rename = "CursorEpoch")]
-    pub cursor_epoch: String,
+    pub cursor_epoch: uuid::Uuid,
     #[serde(rename = "Changes")]
     pub changes: Vec<models::LibraryChangeDto>,
     /// Opaque repository cursor. Clients must not parse or compare its contents.
@@ -33,7 +33,7 @@ pub struct LibraryChangePageDto {
 }
 
 impl LibraryChangePageDto {
-    pub fn new(outcome: models::LibraryOutcomeKind, cursor_epoch: String, changes: Vec<models::LibraryChangeDto>, last_cursor: String, has_more: bool, next_page_token: String, rebaseline: models::LibraryRebaselineDto) -> LibraryChangePageDto {
+    pub fn new(outcome: models::LibraryOutcomeKind, cursor_epoch: uuid::Uuid, changes: Vec<models::LibraryChangeDto>, last_cursor: String, has_more: bool, next_page_token: String, rebaseline: models::LibraryRebaselineDto) -> LibraryChangePageDto {
         LibraryChangePageDto {
             outcome,
             cursor_epoch,

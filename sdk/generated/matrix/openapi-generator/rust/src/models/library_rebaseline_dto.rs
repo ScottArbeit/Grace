@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 pub struct LibraryRebaselineDto {
     #[serde(rename = "Reason")]
     pub reason: String,
-    /// Opaque repository epoch. Clients compare only exact equality.
+    /// Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     #[serde(rename = "CurrentEpoch")]
-    pub current_epoch: String,
+    pub current_epoch: uuid::Uuid,
     /// Opaque repository cursor. Clients must not parse or compare its contents.
     #[serde(rename = "ServiceFloorCursor")]
     pub service_floor_cursor: String,
@@ -26,7 +26,7 @@ pub struct LibraryRebaselineDto {
 }
 
 impl LibraryRebaselineDto {
-    pub fn new(reason: String, current_epoch: String, service_floor_cursor: String, recommended_bootstrap: bool) -> LibraryRebaselineDto {
+    pub fn new(reason: String, current_epoch: uuid::Uuid, service_floor_cursor: String, recommended_bootstrap: bool) -> LibraryRebaselineDto {
         LibraryRebaselineDto {
             reason,
             current_epoch,

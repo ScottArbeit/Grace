@@ -18,9 +18,9 @@ pub struct LibraryBootstrapPageDto {
     /// Opaque repository cursor. Clients must not parse or compare its contents.
     #[serde(rename = "BoundaryCursor")]
     pub boundary_cursor: String,
-    /// Opaque repository epoch. Clients compare only exact equality.
+    /// Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     #[serde(rename = "CursorEpoch")]
-    pub cursor_epoch: String,
+    pub cursor_epoch: uuid::Uuid,
     #[serde(rename = "LibraryCatalog")]
     pub library_catalog: Box<models::LibraryCatalogDto>,
     #[serde(rename = "Items")]
@@ -31,7 +31,7 @@ pub struct LibraryBootstrapPageDto {
 }
 
 impl LibraryBootstrapPageDto {
-    pub fn new(bootstrap_id: uuid::Uuid, boundary_cursor: String, cursor_epoch: String, library_catalog: models::LibraryCatalogDto, items: Vec<models::LibraryItemDto>, next_page_token: String) -> LibraryBootstrapPageDto {
+    pub fn new(bootstrap_id: uuid::Uuid, boundary_cursor: String, cursor_epoch: uuid::Uuid, library_catalog: models::LibraryCatalogDto, items: Vec<models::LibraryItemDto>, next_page_token: String) -> LibraryBootstrapPageDto {
         LibraryBootstrapPageDto {
             bootstrap_id,
             boundary_cursor,
