@@ -53,7 +53,7 @@ function Test-TextContentSizeResponse {
     finally { $document.Dispose() }
 }
 
-# Reads one bounded admin diagnostic and publishes validated JSON in the destination directory.
+# Reads an admin diagnostic until completion or caller cancellation and publishes validated JSON in the destination directory.
 function Invoke-TextContentSizeDiagnosis {
     param([hashtable] $BoundParameters)
 
@@ -76,7 +76,7 @@ function Invoke-TextContentSizeDiagnosis {
     }
     $response = Invoke-WebRequest -Uri ([uri]::new($serverUri, '/admin/text-content-size/diagnose')) `
         -Method Post -Headers @{ Authorization = "Bearer $($env:GRACE_TOKEN)" } -ContentType 'application/json' `
-        -Body ($scope | ConvertTo-Json -Compress) -SkipHttpErrorCheck -TimeoutSec 45
+        -Body ($scope | ConvertTo-Json -Compress) -SkipHttpErrorCheck -ConnectionTimeoutSeconds 0 -OperationTimeoutSeconds 0
     if ($response.StatusCode -ne 200) { throw "Grace Server returned HTTP $($response.StatusCode); no diagnostic was saved." }
     Test-TextContentSizeResponse -Json $response.Content -Scope $scope
     $temporary = Join-Path $parent ".$([IO.Path]::GetFileName($destination)).$([guid]::NewGuid().ToString('N')).tmp"

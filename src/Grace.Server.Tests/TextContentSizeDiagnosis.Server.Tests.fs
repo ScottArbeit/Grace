@@ -7,7 +7,8 @@ open System.Net.Http
 open System.Text.Json
 open System.Text.Json.Nodes
 open Grace.Server
-open Grace.Server.TextContentSizeDiagnosis
+open Grace.Server.WorkItem
+open Grace.Actors.Services
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities

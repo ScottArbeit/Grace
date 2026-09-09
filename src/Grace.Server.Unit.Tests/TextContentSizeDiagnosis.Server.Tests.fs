@@ -8,7 +8,8 @@ open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
 open Grace.Server
-open Grace.Server.TextContentSizeDiagnosis
+open Grace.Server.WorkItem
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Parameters.Repository
 open Grace.Shared.Utilities
@@ -47,7 +48,22 @@ type TextContentSizeDiagnosisTests() =
     /// Round-trips a complete persisted query row through the production decoder.
     let row events =
         use document = JsonDocument.Parse(serialize {| State = events |})
-        decodeDocument document.RootElement
+        decodeTextContentSizeDocument document.RootElement
+
+    /// Attaches the tested actor tuple to the unchanged server response shape.
+    let enumerateWith readPage scope cancellationToken =
+        task {
+            let! total, count, started, finished = enumerateTextContentSizeWith readPage scope cancellationToken
+
+            return
+                {
+                    Scope = scope
+                    DeclaredTextContentUtf8Bytes = total
+                    DistinctTextContentCount = count
+                    EnumerationStartedAt = started
+                    EnumerationFinishedAt = finished
+                }
+        }
 
     /// Supplies finite pages to the real aggregation boundary with a fresh attempt for each call.
     let enumerate (pages: WorkItemEvent array array array) =
@@ -215,7 +231,11 @@ type TextContentSizeDiagnosisTests() =
         Assert.That(target.AsObject().Remove field, Is.True)
         use changed = JsonDocument.Parse(node.ToJsonString())
 
-        Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument changed.RootElement |> ignore))
+        Assert.Throws<InvalidDataException>(
+            Action (fun () ->
+                decodeTextContentSizeDocument changed.RootElement
+                |> ignore)
+        )
         |> ignore
 
     /// Keeps malformed persisted identifiers classified as source failures rather than request-JSON failures.
@@ -229,7 +249,11 @@ type TextContentSizeDiagnosisTests() =
         created["workItemId"] <- JsonValue.Create "not-a-guid"
         use changed = JsonDocument.Parse(node.ToJsonString())
 
-        Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument changed.RootElement |> ignore))
+        Assert.Throws<InvalidDataException>(
+            Action (fun () ->
+                decodeTextContentSizeDocument changed.RootElement
+                |> ignore)
+        )
         |> ignore
 
     /// Validates the minimum declared facts required by the current immutable text producer.
@@ -253,37 +277,90 @@ type TextContentSizeDiagnosisTests() =
                              row [| created (Some { original with TextContent = Some changed }) |]
                          |] |])
 
-    /// Prevents a continuation at the page limit from masquerading as a completed sample.
+    /// Exhausts more pages than the removed diagnostic cap and counts the final page.
     [<Test>]
-    member _.``page cap aborts before a thirty third provider read``() =
+    member _.``enumeration crosses thirty two pages and includes the last declaration``() =
         task {
             let mutable reads = 0
 
-            do!
-                expectFailure typeof<InvalidDataException> (fun () ->
-                    enumerateWith
-                        (fun _ ->
-                            reads <- reads + 1
-                            Task.FromResult([||], true))
-                        scope
-                        CancellationToken.None)
+            let! result =
+                enumerateWith
+                    (fun _ ->
+                        reads <- reads + 1
 
-            Assert.That(reads, Is.EqualTo 32)
-            let! retry = enumerate [| [||] |]
-            Assert.That(retry.DeclaredTextContentUtf8Bytes, Is.Zero)
+                        Task.FromResult(
+                            (if reads < 33 then
+                                 [||]
+                             else
+                                 [|
+                                     [|
+                                         created (Some(description "last-page" "sixsix"))
+                                     |]
+                                 |]),
+                            reads < 33
+                        ))
+                    scope
+                    CancellationToken.None
+
+            Assert.That(reads, Is.EqualTo 33)
+            Assert.That(result.DeclaredTextContentUtf8Bytes, Is.EqualTo 6L)
+            Assert.That(result.DistinctTextContentCount, Is.EqualTo 1L)
         }
 
-    /// Applies the document cap to observed documents even when they contain no text.
+    /// Counts a declaration beyond the removed document cap.
     [<Test>]
-    member _.``document cap rejects an oversized final page``() =
-        expectFailure typeof<InvalidDataException> (fun () -> enumerate [| Array.create 10001 (row [| created None |]) |])
+    member _.``enumeration crosses ten thousand documents``() =
+        task {
+            let rows =
+                Array.append
+                    (Array.create 10000 [| created None |])
+                    [|
+                        [|
+                            created (Some(description "last-document" "x"))
+                        |]
+                    |]
 
-    /// Applies the reference cap before deduplication so repetition cannot evade bounded work.
+            let! result = enumerate [| rows |]
+            Assert.That(result.DeclaredTextContentUtf8Bytes, Is.EqualTo 1L)
+            Assert.That(result.DistinctTextContentCount, Is.EqualTo 1L)
+        }
+
+    /// Deduplicates retained references beyond the removed reference cap.
     [<Test>]
-    member _.``reference cap counts repeated declarations``() =
-        let value = description "repeated" "x"
-        let history = Array.append [| created (Some value) |] (Array.create 100000 (event (DescriptionSet value)))
-        expectFailure typeof<InvalidDataException> (fun () -> enumerate [| [| history |] |])
+    member _.``enumeration crosses one hundred thousand references``() =
+        task {
+            let value = description "repeated" "x"
+            let history = Array.append [| created (Some value) |] (Array.create 100000 (event (DescriptionSet value)))
+            let! result = enumerate [| [| history |] |]
+            Assert.That(result.DeclaredTextContentUtf8Bytes, Is.EqualTo 1L)
+            Assert.That(result.DistinctTextContentCount, Is.EqualTo 1L)
+        }
+
+    /// Rejects unsupported actor storage before obtaining a Cosmos container.
+    [<Test>]
+    member _.``unsupported providers fail before container access``() =
+        for provider in
+            [
+                ActorStateStorageProvider.MongoDB
+                ActorStateStorageProvider.Unknown
+            ] do
+            let mutable acquired = false
+
+            let error =
+                Assert.ThrowsAsync<NotSupportedException>(
+                    Func<Task> (fun () ->
+                        readTextContentSizeWith
+                            provider
+                            (fun () ->
+                                acquired <- true
+                                failwith "Container must not be acquired")
+                            scope
+                            CancellationToken.None
+                        :> Task)
+                )
+
+            Assert.That(error.Message, Does.Contain "actor state storage provider")
+            Assert.That(acquired, Is.False)
 
     /// Discards earlier-page quantities when the next provider read fails.
     [<Test>]
@@ -357,15 +434,26 @@ type TextContentSizeDiagnosisTests() =
         let parameters =
             GetRepositoryParameters(OwnerId = string scope.OwnerId, OrganizationId = string scope.OrganizationId, RepositoryId = string scope.RepositoryId)
 
-        match validateParameters parameters with
+        match validateTextContentSizeDiagnosticParameters parameters with
         | Ok actual -> Assert.That(actual, Is.EqualTo scope)
         | Error message -> Assert.Fail message
 
         parameters.RepositoryName <- "ignored-name"
-        Assert.That(validateParameters parameters |> Result.isError, Is.True)
+
+        Assert.That(
+            validateTextContentSizeDiagnosticParameters parameters
+            |> Result.isError,
+            Is.True
+        )
+
         parameters.RepositoryName <- ""
         parameters.OwnerId <- string Guid.Empty
-        Assert.That(validateParameters parameters |> Result.isError, Is.True)
+
+        Assert.That(
+            validateTextContentSizeDiagnosticParameters parameters
+            |> Result.isError,
+            Is.True
+        )
 
     /// Ensures zero is explicit on the successful wire and the field names cannot be confused with DirectoryVersion bytes.
     [<Test>]

@@ -13,13 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
-import type { LibraryContentVersionDto } from './LibraryContentVersionDto';
+import type { LibraryItemDto } from './LibraryItemDto';
 import {
-    LibraryContentVersionDtoFromJSON,
-    LibraryContentVersionDtoFromJSONTyped,
-    LibraryContentVersionDtoToJSON,
-    LibraryContentVersionDtoToJSONTyped,
-} from './LibraryContentVersionDto';
+    LibraryItemDtoFromJSON,
+    LibraryItemDtoFromJSONTyped,
+    LibraryItemDtoToJSON,
+    LibraryItemDtoToJSONTyped,
+} from './LibraryItemDto';
 import type { LibraryChangeKind } from './LibraryChangeKind';
 import {
     LibraryChangeKindFromJSON,
@@ -27,13 +27,6 @@ import {
     LibraryChangeKindToJSON,
     LibraryChangeKindToJSONTyped,
 } from './LibraryChangeKind';
-import type { LibraryItemKind } from './LibraryItemKind';
-import {
-    LibraryItemKindFromJSON,
-    LibraryItemKindFromJSONTyped,
-    LibraryItemKindToJSON,
-    LibraryItemKindToJSONTyped,
-} from './LibraryItemKind';
 import type { LibraryConflictProvenanceDto } from './LibraryConflictProvenanceDto';
 import {
     LibraryConflictProvenanceDtoFromJSON,
@@ -41,20 +34,6 @@ import {
     LibraryConflictProvenanceDtoToJSON,
     LibraryConflictProvenanceDtoToJSONTyped,
 } from './LibraryConflictProvenanceDto';
-import type { LibraryTombstoneDto } from './LibraryTombstoneDto';
-import {
-    LibraryTombstoneDtoFromJSON,
-    LibraryTombstoneDtoFromJSONTyped,
-    LibraryTombstoneDtoToJSON,
-    LibraryTombstoneDtoToJSONTyped,
-} from './LibraryTombstoneDto';
-import type { LibraryNamespaceDto } from './LibraryNamespaceDto';
-import {
-    LibraryNamespaceDtoFromJSON,
-    LibraryNamespaceDtoFromJSONTyped,
-    LibraryNamespaceDtoToJSON,
-    LibraryNamespaceDtoToJSONTyped,
-} from './LibraryNamespaceDto';
 
 /**
  * 
@@ -62,12 +41,6 @@ import {
  * @interface LibraryChangeDto
  */
 export interface LibraryChangeDto {
-    /**
-     * Opaque repository cursor. Clients must not parse or compare its contents.
-     * @type {string}
-     * @memberof LibraryChangeDto
-     */
-    cursor: string;
     /**
      * 
      * @type {string}
@@ -80,18 +53,6 @@ export interface LibraryChangeDto {
      * @memberof LibraryChangeDto
      */
     changeKind: LibraryChangeKind;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryChangeDto
-     */
-    itemId: string;
-    /**
-     * 
-     * @type {LibraryItemKind}
-     * @memberof LibraryChangeDto
-     */
-    itemKind: LibraryItemKind;
     /**
      * 
      * @type {Date}
@@ -112,22 +73,10 @@ export interface LibraryChangeDto {
     libraryCatalogVersion: string;
     /**
      * 
-     * @type {LibraryNamespaceDto}
+     * @type {LibraryItemDto}
      * @memberof LibraryChangeDto
      */
-    namespace: LibraryNamespaceDto;
-    /**
-     * 
-     * @type {LibraryContentVersionDto}
-     * @memberof LibraryChangeDto
-     */
-    content: LibraryContentVersionDto;
-    /**
-     * 
-     * @type {LibraryTombstoneDto}
-     * @memberof LibraryChangeDto
-     */
-    tombstone: LibraryTombstoneDto;
+    item: LibraryItemDto;
     /**
      * 
      * @type {LibraryConflictProvenanceDto}
@@ -142,17 +91,12 @@ export interface LibraryChangeDto {
  * Check if a given object implements the LibraryChangeDto interface.
  */
 export function instanceOfLibraryChangeDto(value: object): value is LibraryChangeDto {
-    if (!('cursor' in value) || value['cursor'] === undefined) return false;
     if (!('operationId' in value) || value['operationId'] === undefined) return false;
     if (!('changeKind' in value) || value['changeKind'] === undefined) return false;
-    if (!('itemId' in value) || value['itemId'] === undefined) return false;
-    if (!('itemKind' in value) || value['itemKind'] === undefined) return false;
     if (!('acceptedAt' in value) || value['acceptedAt'] === undefined) return false;
     if (!('acceptedBy' in value) || value['acceptedBy'] === undefined) return false;
     if (!('libraryCatalogVersion' in value) || value['libraryCatalogVersion'] === undefined) return false;
-    if (!('namespace' in value) || value['namespace'] === undefined) return false;
-    if (!('content' in value) || value['content'] === undefined) return false;
-    if (!('tombstone' in value) || value['tombstone'] === undefined) return false;
+    if (!('item' in value) || value['item'] === undefined) return false;
     if (!('conflict' in value) || value['conflict'] === undefined) return false;
     return true;
 }
@@ -167,17 +111,12 @@ export function LibraryChangeDtoFromJSONTyped(json: any, ignoreDiscriminator: bo
     }
     return {
         
-        'cursor': json['Cursor'],
         'operationId': json['OperationId'],
         'changeKind': LibraryChangeKindFromJSON(json['ChangeKind']),
-        'itemId': json['ItemId'],
-        'itemKind': LibraryItemKindFromJSON(json['ItemKind']),
         'acceptedAt': (new Date(json['AcceptedAt'])),
         'acceptedBy': json['AcceptedBy'],
         'libraryCatalogVersion': json['LibraryCatalogVersion'],
-        'namespace': LibraryNamespaceDtoFromJSON(json['Namespace']),
-        'content': LibraryContentVersionDtoFromJSON(json['Content']),
-        'tombstone': LibraryTombstoneDtoFromJSON(json['Tombstone']),
+        'item': LibraryItemDtoFromJSON(json['Item']),
         'conflict': LibraryConflictProvenanceDtoFromJSON(json['Conflict']),
     };
 }
@@ -193,17 +132,12 @@ export function LibraryChangeDtoToJSONTyped(value?: LibraryChangeDto | null, ign
 
     return {
         
-        'Cursor': value['cursor'],
         'OperationId': value['operationId'],
         'ChangeKind': LibraryChangeKindToJSON(value['changeKind']),
-        'ItemId': value['itemId'],
-        'ItemKind': LibraryItemKindToJSON(value['itemKind']),
         'AcceptedAt': value['acceptedAt'].toISOString(),
         'AcceptedBy': value['acceptedBy'],
         'LibraryCatalogVersion': value['libraryCatalogVersion'],
-        'Namespace': LibraryNamespaceDtoToJSON(value['namespace']),
-        'Content': LibraryContentVersionDtoToJSON(value['content']),
-        'Tombstone': LibraryTombstoneDtoToJSON(value['tombstone']),
+        'Item': LibraryItemDtoToJSON(value['item']),
         'Conflict': LibraryConflictProvenanceDtoToJSON(value['conflict']),
     };
 }

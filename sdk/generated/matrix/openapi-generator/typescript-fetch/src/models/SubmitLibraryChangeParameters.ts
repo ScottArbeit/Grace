@@ -175,7 +175,7 @@ export interface SubmitLibraryChangeParameters {
      * @type {string}
      * @memberof SubmitLibraryChangeParameters
      */
-    preparedContentId?: string;
+    uploadSessionId?: string;
 }
 
 
@@ -219,7 +219,7 @@ export function SubmitLibraryChangeParametersFromJSONTyped(json: any, ignoreDisc
         'creationSlotExpectation': json['CreationSlotExpectation'] == null ? undefined : LibraryCreationSlotExpectationDtoFromJSON(json['CreationSlotExpectation']),
         'destinationParent': json['DestinationParent'] == null ? undefined : LibraryParentDtoFromJSON(json['DestinationParent']),
         'destinationName': json['DestinationName'] == null ? undefined : json['DestinationName'],
-        'preparedContentId': json['PreparedContentId'] == null ? undefined : json['PreparedContentId'],
+        'uploadSessionId': json['UploadSessionId'] == null ? undefined : json['UploadSessionId'],
     };
 }
 
@@ -252,7 +252,7 @@ export function SubmitLibraryChangeParametersToJSONTyped(value?: SubmitLibraryCh
         'CreationSlotExpectation': LibraryCreationSlotExpectationDtoToJSON(value['creationSlotExpectation']),
         'DestinationParent': LibraryParentDtoToJSON(value['destinationParent']),
         'DestinationName': value['destinationName'],
-        'PreparedContentId': value['preparedContentId'],
+        'UploadSessionId': value['uploadSessionId'],
     };
 }
 

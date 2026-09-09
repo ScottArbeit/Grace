@@ -312,8 +312,8 @@ paths:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1prepare'
   /libraries/content/read:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1read'
-  /libraries/content/{grantId}:
-    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1{grantId}'
+  /libraries/content/{readToken}:
+    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1{readToken}'
   /libraries/items/get:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1items~1get'
   /libraries/namespace/get-slot:
@@ -634,8 +634,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentVersionId'
     LibraryBootstrapId:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryBootstrapId'
-    LibraryPreparedContentId:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentId'
     LibraryCursor:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCursor'
     LibraryCursorEpoch:
@@ -686,10 +684,10 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryBootstrapPageDto'
     LibraryChangePageDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangePageDto'
-    LibraryPreparedContentDto:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentDto'
-    LibraryContentReadGrantDto:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadGrantDto'
+    LibraryContentPreparationDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentPreparationDto'
+    LibraryContentReadDto:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadDto'
     LibraryRepositoryStatusDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryRepositoryStatusDto'
     LibraryContentAvailable:
@@ -736,10 +734,10 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangePageReturnValue'
     LibraryOperationReceiptReturnValue:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptReturnValue'
-    LibraryPreparedContentReturnValue:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentReturnValue'
-    LibraryContentReadGrantReturnValue:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadGrantReturnValue'
+    LibraryContentPreparationReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentPreparationReturnValue'
+    LibraryContentReadReturnValue:
+      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadReturnValue'
     LibraryItemReturnValue:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemReturnValue'
     LibraryNamespaceSlotReturnValue:

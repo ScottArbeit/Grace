@@ -7,6 +7,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **item_id** | **UUID** |  | 
 **expected_content_version_id** | **UUID** |  | 
+**expected_content_revision** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 
 ## Example
 

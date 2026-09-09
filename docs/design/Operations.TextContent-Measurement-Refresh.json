@@ -1,0 +1,711 @@
+{
+  "schemaVersion": 1,
+  "issue": "https://github.com/ScottArbeit/Grace/issues/1049",
+  "pullRequest": "https://github.com/ScottArbeit/Grace/pull/1050",
+  "sourceRevision": "f4ef7116a3ca5dec94117aa9b4770dff5fc6dee1",
+  "mainRevision": "8ce7cd4dda7089e801662dfc410bab4dcbf0ff81",
+  "sourceTree": "556abfd18445eef4588e011e32f23d8814295472",
+  "historicalEvidence": {
+    "path": "Operations.TextContent-Measurement-Experiment.json",
+    "sha256": "693258088FECF8ACB94D6A0626540A50F1A6ACF1EA7A6152739AA390D2D30B60",
+    "preservedByteIdentically": true
+  },
+  "environment": {
+    "powershell": "7.6.5",
+    "dotnetSdk": "10.0.401",
+    "os": "Microsoft Windows NT 10.0.26340.0"
+  },
+  "adaptations": [
+    "Extracted all four historical harnessFiles and verified their recorded SHA256 before use.",
+    "Run-Experiment.ps1 expectedBase changed from d16a9693035d375a6d9eac39419b1abbab1ead49 to f4ef7116a3ca5dec94117aa9b4770dff5fc6dee1; original executable-input drift check retained.",
+    "Start-Fixtures.ps1 and Stop-Fixtures.ps1 container names changed from grace-ops-1049-* to grace-ops-1050-refresh-*. Same free-checked loopback ports and cached image IDs.",
+    "Experiment.fsx unchanged byte-for-byte; limits, fixture inputs, producer calls, modeled actor boundaries and assertions unchanged."
+  ],
+  "commands": [
+    "pwsh -File replay/Start-Fixtures.ps1",
+    "pwsh -File replay/Run-Experiment.ps1 -RepositoryRoot C:/Source/Grace-worktrees/issue-1049-textcontent-measurement-discovery",
+    "dotnet build src/Grace.Server/Grace.Server.fsproj --configuration Release --nologo -v quiet -p:CopyLocalLockFileAssemblies=true",
+    "dotnet fsi replay/Load.fsx",
+    "pwsh -File replay/Stop-Fixtures.ps1"
+  ],
+  "build": {
+    "succeeded": true,
+    "warnings": 0,
+    "errors": 0,
+    "elapsed": "00:00:38.45",
+    "skipBuild": false
+  },
+  "harnessLimits": {
+    "Pages": 32,
+    "Objects": 32,
+    "References": 64,
+    "ReadBytes": 1048576,
+    "LogicalBytes": 1048576,
+    "Milliseconds": 30000
+  },
+  "sourceFiles": [
+    {
+      "path": "global.json",
+      "gitBlob": "55f28a66f2a05666901c6ec7329e5a30cf43e7e6",
+      "sha256": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Server/TextContent.Server.fs",
+      "gitBlob": "92336770c0323d315230e975ea09735855ea7716",
+      "sha256": "1E3AC78094D154EF777530AFB3905CCC29A1D752790DEB9632F6BBDF36EBAE5E",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Server/WorkItem.Server.fs",
+      "gitBlob": "cf1b60eded0865f414957b5ddb2e6a9f89b88854",
+      "sha256": "C062E689ED4883EEFB690A1F37E6D48B20004DBB48D3C2BAB87804E64C918A0C",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Types/TextContent.Types.fs",
+      "gitBlob": "9241bbd18f63c4445bf7de80e49dc9386951d25b",
+      "sha256": "C9D1F8AD5E1EFF652DA6EF840A1C42647405CB78E3595135E05CAAB23A642F48",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Types/WorkItem.Types.fs",
+      "gitBlob": "6f50909b91a3642779dca9f576bd458f51837001",
+      "sha256": "0CEA2C93768790618955A17295AF12594221626ACC70AD20687FAD6097B4D9D2",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Shared/StorageKeys.Shared.fs",
+      "gitBlob": "16e09dba32641e45c658e1d9f8ccfa10bffa7d9f",
+      "sha256": "68FC2717472A9C18AFBBAC1A8293B2153C78964E03485AA84F7E5EA990942D8B",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Shared/ContentAddress.Shared.fs",
+      "gitBlob": "d0fba17171223ae92473fb5828740f42f0a7dc5a",
+      "sha256": "0474B9782AC9D0ACF0D3ED43FE1775821B2ED48DDE6DCA1A2EDA352FB8A2A384",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Shared/Constants.Shared.fs",
+      "gitBlob": "ffb1fdb38234fb64c553308aae288fba0abde93d",
+      "sha256": "F39394D6210B1752BF6CA2ADDBEAEF259F30857DCC2DD4D2D683972555B5F817",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Shared/Utilities.Shared.fs",
+      "gitBlob": "18034bd16e2acbbb0425d8d3022eb4545736ab76",
+      "sha256": "0BA341B274E562E437051FCEAFEE3F5BF015781510FF27D6F3FC40BA439FCA88",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Actors/WorkItem.Actor.fs",
+      "gitBlob": "93aa91b440b5ae37c0626ba78783df6af4b0af0d",
+      "sha256": "1D06465D3EE694A96709788F0E82B04BBABEE5144CD8B58F31DFF501710A7DFD",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Actors/Services.Actor.fs",
+      "gitBlob": "a532dfc06160479a9ad7ce46bb52ae6068f5b9d7",
+      "sha256": "7C5B8A511E5F356FAF28C0660B9B4656B075C7142542483D7C573FA66DA0BFBF",
+      "historicalGitBlobUnchanged": false
+    },
+    {
+      "path": "src/Grace.Actors/Constants.Actor.fs",
+      "gitBlob": "b03669e5aa6cee395075657271a410c56b11d270",
+      "sha256": "2C0D701BE1E2FAFA3AA30CAD455C182D9F862C110F824482805375FE61EF425F",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Server/Grace.Server.fsproj",
+      "gitBlob": "c5f2e460b8f3176ca1ef568155561eab2084f733",
+      "sha256": "8B4D29D2BD6A5BE6BCD42359B802FB6DF434BBA0822903C739F359C913E8F0F9",
+      "historicalGitBlobUnchanged": false
+    },
+    {
+      "path": "src/Grace.Actors/Grace.Actors.fsproj",
+      "gitBlob": "52bdffb987460d57da02b87657d42b6618e98f45",
+      "sha256": "E42AA90EE9E4A49C541421024E9B8F78FDE1518880FFBD4194437F6AE1649B0C",
+      "historicalGitBlobUnchanged": false
+    },
+    {
+      "path": "src/Grace.Shared/Grace.Shared.fsproj",
+      "gitBlob": "1a21f3f9529e1b12adc319252ebfff1ae615935a",
+      "sha256": "3F0402A0D1B8DC20B4C3AB4396A0003BABDA2DEF599DC717E324088180207EBB",
+      "historicalGitBlobUnchanged": true
+    },
+    {
+      "path": "src/Grace.Types/Grace.Types.fsproj",
+      "gitBlob": "6d7e16fbf1fb4f915e91acb272e2487c511e0699",
+      "sha256": "54D98DFBCC36C5FC63A91B89EE3761057A2A0EBCEB4752280C86DDD8B080F2F3",
+      "historicalGitBlobUnchanged": true
+    }
+  ],
+  "binaries": [
+    {
+      "name": "Grace.Server.dll",
+      "version": "0.2.0.0",
+      "sha256": "54A2256EDB0D4DD36CD7D3A95FF44D481E7BFC6CD3297068AD6E99AFE5BDB925"
+    },
+    {
+      "name": "Grace.Actors.dll",
+      "version": "0.2.0.0",
+      "sha256": "7886F69B032FD2635705543051D46D2236899984EB898A33A96AFA606FBBB2F0"
+    },
+    {
+      "name": "Grace.Shared.dll",
+      "version": "0.2.0.0",
+      "sha256": "F90059F890DD0C0C06DDA0FA817EFAB00CA2BD4EA7A89C0EC70A6DFC95BE59B5"
+    },
+    {
+      "name": "Grace.Types.dll",
+      "version": "0.2.0.0",
+      "sha256": "4058CF2C06F467A0B7EBE76265D6029B9AF12506E71173D98AA883119DE9D83C"
+    },
+    {
+      "name": "Azure.Storage.Blobs.dll",
+      "version": "12.29.1.0",
+      "sha256": "E3AC899273AF3E079759DF37BF2A81301635084CB9CA38FE91D21948BF38E69B"
+    },
+    {
+      "name": "Microsoft.Azure.Cosmos.Client.dll",
+      "version": "3.62.1.0",
+      "sha256": "81950879D91A9B925A70D411FB60478998ADCB0D1ED507D53B29E1606D748E66"
+    }
+  ],
+  "providers": [
+    {
+      "name": "grace-ops-1050-refresh-cosmos",
+      "containerId": "1f8679345cfc8dc0473e5b727f3ef8b9d5fce91c3597413459c1dd79c990dbbd",
+      "imageId": "sha256:6ce44ed4ac69cf69a6cb7982d0536cfaa22696172168fc9fe9a722a189d38f99",
+      "finalState": "exited"
+    },
+    {
+      "name": "grace-ops-1050-refresh-azurite",
+      "containerId": "f262baf60aea488bc5673506a3a94e773e3830466baaf153193c93f199627759",
+      "imageId": "sha256:76b8127d608fab8287a14a4bfeb9a5502cdcffb4bf1e86f09f324ebb0e70edba",
+      "finalState": "exited"
+    }
+  ],
+  "results": {
+    "verdict": "simplified-negative-complete-retention-claim",
+    "count": 41,
+    "database": "ops-1049-125e724f6dc849559564d7e72c05f37c",
+    "started": "2026-09-08T16:11:02.4096673-07:00",
+    "finished": "2026-09-08T16:11:03.0188345-07:00",
+    "current": {
+      "Status": "enumeration-exhausted-declarations",
+      "Bytes": 1037,
+      "Pages": 3,
+      "Objects": 5,
+      "References": 3,
+      "ReadBytes": 6259
+    },
+    "retained": {
+      "Status": "enumeration-exhausted-declarations",
+      "Bytes": 2067,
+      "Pages": 3,
+      "Objects": 5,
+      "References": 5,
+      "ReadBytes": 6259
+    },
+    "inventory": {
+      "Status": "enumeration-exhausted-inventory",
+      "Bytes": null,
+      "Pages": 3,
+      "Objects": 5,
+      "References": 0,
+      "ReadBytes": 0
+    },
+    "measured": {
+      "Status": "enumeration-exhausted-observed-bytes",
+      "Bytes": 2076,
+      "Pages": 3,
+      "Objects": 5,
+      "References": 4,
+      "ReadBytes": 1022
+    },
+    "cases": [
+      {
+        "name": "valid-producer-created-multibyte",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "valid-producer-superseding-compressible",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "valid-producer-same-text-new-identity",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "valid-producer-current-varied",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "valid-producer-missing-reference",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "valid-producer-uncertain-outcome",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "valid-producer-known-rejection",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "immutable-retry-identity",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "immutable-provider-retry-read-verifies",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "identity-binds-repository-workitem-correlation-and-purpose",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "upload-has-no-logical-size-metadata",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "identical-text-distinct-objects",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "equal-logical-different-compression",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "multibyte-scalars-are-not-bytes",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "empty-text-rejected",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "actual-fold-supersede-then-clear",
+        "passed": true,
+        "observed": {
+          "AfterClear": {
+            "WorkItem": {
+              "Status": "backlog"
+            }
+          },
+          "AfterSet": {
+            "WorkItem": {
+              "Status": "backlog"
+            }
+          }
+        }
+      },
+      {
+        "name": "reference-driven-read-aborts-without-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 0,
+          "Objects": 4,
+          "References": 5,
+          "ReadBytes": 944
+        }
+      },
+      {
+        "name": "current-state-misses-retained-history",
+        "passed": true,
+        "observed": {
+          "Current": {
+            "Status": "enumeration-exhausted-declarations",
+            "Bytes": 1037,
+            "Pages": 3,
+            "Objects": 5,
+            "References": 3,
+            "ReadBytes": 6259
+          },
+          "Retained": {
+            "Status": "enumeration-exhausted-declarations",
+            "Bytes": 2067,
+            "Pages": 3,
+            "Objects": 5,
+            "References": 5,
+            "ReadBytes": 6259
+          }
+        }
+      },
+      {
+        "name": "actual-blob-prefix-pagination-excludes-foreign-sources",
+        "passed": true,
+        "observed": {
+          "Status": "enumeration-exhausted-inventory",
+          "Bytes": null,
+          "Pages": 3,
+          "Objects": 5,
+          "References": 0,
+          "ReadBytes": 0
+        }
+      },
+      {
+        "name": "retained-namespace-reconciliation",
+        "passed": true,
+        "observed": {
+          "Status": "enumeration-exhausted-observed-bytes",
+          "Bytes": 2076,
+          "Pages": 3,
+          "Objects": 5,
+          "References": 4,
+          "ReadBytes": 1022
+        }
+      },
+      {
+        "name": "missing-reference-has-no-verified-quantity",
+        "passed": true,
+        "observed": {
+          "CompleteVerifiedRetainedBytes": null,
+          "Declared": 2067,
+          "Observed": 2076,
+          "ProviderStatus": 404
+        }
+      },
+      {
+        "name": "modeled-known-rejection-cleans-new-blob-uncertain-retains",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "duplicate-reference-counts-once-control",
+        "passed": true,
+        "observed": null
+      },
+      {
+        "name": "existing-empty-sources-known-zero",
+        "passed": true,
+        "observed": {
+          "Blobs": {
+            "Status": "enumeration-exhausted-observed-bytes",
+            "Bytes": 0,
+            "Pages": 1,
+            "Objects": 0,
+            "References": 0,
+            "ReadBytes": 0
+          },
+          "Events": {
+            "Status": "enumeration-exhausted-declarations",
+            "Bytes": 0,
+            "Pages": 1,
+            "Objects": 0,
+            "References": 0,
+            "ReadBytes": 45
+          }
+        }
+      },
+      {
+        "name": "events-page-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 2,
+          "References": 3,
+          "ReadBytes": 3281
+        }
+      },
+      {
+        "name": "events-object-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 2,
+          "References": 2,
+          "ReadBytes": 3281
+        }
+      },
+      {
+        "name": "events-reference-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 1,
+          "References": 2,
+          "ReadBytes": 3281
+        }
+      },
+      {
+        "name": "events-read-byte-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 0,
+          "References": 0,
+          "ReadBytes": 3281
+        }
+      },
+      {
+        "name": "events-logical-byte-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 1,
+          "References": 2,
+          "ReadBytes": 3281
+        }
+      },
+      {
+        "name": "events-cancel-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 0,
+          "Objects": 0,
+          "References": 0,
+          "ReadBytes": 0
+        }
+      },
+      {
+        "name": "blobs-page-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 2,
+          "References": 2,
+          "ReadBytes": 66
+        }
+      },
+      {
+        "name": "blobs-object-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 2,
+          "References": 1,
+          "ReadBytes": 33
+        }
+      },
+      {
+        "name": "blobs-reference-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 2,
+          "References": 2,
+          "ReadBytes": 66
+        }
+      },
+      {
+        "name": "blobs-read-byte-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 1,
+          "References": 0,
+          "ReadBytes": 33
+        }
+      },
+      {
+        "name": "blobs-logical-byte-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 1,
+          "Objects": 1,
+          "References": 1,
+          "ReadBytes": 33
+        }
+      },
+      {
+        "name": "blobs-cancel-cap-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 0,
+          "Objects": 0,
+          "References": 0,
+          "ReadBytes": 0
+        }
+      },
+      {
+        "name": "orphan-decompression-lacks-original-integrity-evidence",
+        "passed": true,
+        "observed": {
+          "CompleteOriginalLengthEstablished": false,
+          "IntactObservedBytes": 16,
+          "TrailerRemoved": {
+            "Accepted": true,
+            "ObservedBytes": 16
+          }
+        }
+      },
+      {
+        "name": "invalid-payload-no-quantity",
+        "passed": true,
+        "observed": {
+          "Status": "incomplete",
+          "Bytes": null,
+          "Pages": 2,
+          "Objects": 4,
+          "References": 3,
+          "ReadBytes": 948
+        }
+      },
+      {
+        "name": "removed-event-source-does-not-remove-retained-blobs",
+        "passed": true,
+        "observed": {
+          "Blobs": {
+            "Status": "enumeration-exhausted-observed-bytes",
+            "Bytes": 2076,
+            "Pages": 3,
+            "Objects": 5,
+            "References": 0,
+            "ReadBytes": 1022
+          },
+          "Events": {
+            "Status": "enumeration-exhausted-declarations",
+            "Bytes": 0,
+            "Pages": 1,
+            "Objects": 0,
+            "References": 0,
+            "ReadBytes": 45
+          }
+        }
+      },
+      {
+        "name": "absent-provider-sources-no-quantity-no-provisioning",
+        "passed": true,
+        "observed": {
+          "Blobs": {
+            "Status": "incomplete",
+            "Bytes": null,
+            "Pages": 0,
+            "Objects": 0,
+            "References": 0,
+            "ReadBytes": 0
+          },
+          "Events": {
+            "Status": "incomplete",
+            "Bytes": null,
+            "Pages": 0,
+            "Objects": 0,
+            "References": 0,
+            "ReadBytes": 0
+          }
+        }
+      },
+      {
+        "name": "fresh-retry-restores-original-observed-result",
+        "passed": true,
+        "observed": {
+          "Status": "enumeration-exhausted-observed-bytes",
+          "Bytes": 2076,
+          "Pages": 3,
+          "Objects": 5,
+          "References": 4,
+          "ReadBytes": 1022
+        }
+      }
+    ],
+    "atomicSnapshot": false,
+    "historicalInterval": false,
+    "billableTotal": false
+  },
+  "artifacts": [
+    {
+      "name": "build.log",
+      "sha256": "AD4B23EA670D0EDD902945C4BEA47B98CCD26051D1AEC0742F3FF7608A441068"
+    },
+    {
+      "name": "Experiment.fsx",
+      "sha256": "E5A0BCA18172B7D609E2A4F49B4481E066F094A13D37E073405E017757DD328B"
+    },
+    {
+      "name": "grace-ops-1050-refresh-azurite.log",
+      "sha256": "B17CF49CC5B57BC49896A3356D8B240A2E18E0F2AFBAA3049A950C39E1070A99"
+    },
+    {
+      "name": "grace-ops-1050-refresh-cosmos.log",
+      "sha256": "E0EE6E0D19583D5C8996BFA4C7A5FEEE88FB80A4EF74F93C3C8F532B33B70398"
+    },
+    {
+      "name": "inputs.json",
+      "sha256": "135A01952EF2B370BE1A22D871055B431DCB4ECAF570FAC5E9E66C43BB3A2D41"
+    },
+    {
+      "name": "limits.json",
+      "sha256": "A6A8E99B606BE4E8A321F39BF650CAF2F918B277E7C9893122F96808B30C374D"
+    },
+    {
+      "name": "Load.fsx",
+      "sha256": "D16D03A515C991F4355EF81BA4465AC43CEC33B66A27E68A72A6C15008F89578"
+    },
+    {
+      "name": "provider-inspect.json",
+      "sha256": "9C5A23A0CB765D38168535D6013066958B30DB628B5639DF12768BACEA444C52"
+    },
+    {
+      "name": "results.json",
+      "sha256": "CE52F1795E7B2C20EBAB07E64AAE0907A3538DD5D1240B2BFA29D994A21ED684"
+    },
+    {
+      "name": "Run-Experiment.ps1",
+      "sha256": "73A9FB9013B0106A8176A376B21F536BB591932F7AE8EAB5D26F730737F4C5FB"
+    },
+    {
+      "name": "run.log",
+      "sha256": "D38B82FB4D6F08111A18C49C4B05AEDFE9761594632170142812943D2C0D47E4"
+    },
+    {
+      "name": "Start-Fixtures.ps1",
+      "sha256": "747BCC5C4CE459CD94B77A170EFA254D2FEB89793FBCC432743EE5F4A127DF32"
+    },
+    {
+      "name": "Stop-Fixtures.ps1",
+      "sha256": "29B38FAAF6FBD38C9943A9F360A4FB8196D71FEAE2568AA75299424A68516FA9"
+    }
+  ],
+  "artifactDirectory": "C:\\Users\\scott\\.codex\\visualizations\\2026\\09\\07\\01a07acd-5979-7700-889f-51bc642202a5\\overnight\\1050-refresh\\replay",
+  "limitations": [
+    "Replay is the captured local experiment, not a running WorkItem actor, HTTP or recovery test.",
+    "Historical harness limits are experimental controls and do not constrain the prospective admin diagnostic.",
+    "No routine repository-usage producer selected.",
+    "Full raw replay inputs, results and logs retained externally; this receipt avoids duplicating fixtures already embedded in historical evidence."
+  ],
+  "cleanup": "Both uniquely named containers stopped after log capture. Other containers preserved; no directories removed."
+}

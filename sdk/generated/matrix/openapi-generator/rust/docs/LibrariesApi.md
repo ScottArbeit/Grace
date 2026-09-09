@@ -6,7 +6,7 @@ Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**add_library**](LibrariesApi.md#add_library) | **POST** /libraries/add | Add one empty normalized Library under an exact configuration version.
 [**continue_library_bootstrap**](LibrariesApi.md#continue_library_bootstrap) | **POST** /libraries/bootstrap/continue | Continue one immutable bootstrap baseline page sequence.
-[**download_library_content**](LibrariesApi.md#download_library_content) | **GET** /libraries/content/{grantId} | Redeem one authorized short-lived immutable-content read grant.
+[**download_library_content**](LibrariesApi.md#download_library_content) | **GET** /libraries/content/{readToken} | Download authorized immutable content through a signed token until expiry.
 [**get_library_catalog**](LibrariesApi.md#get_library_catalog) | **POST** /libraries/catalog/get | Get the persisted Library configuration.
 [**get_library_changes**](LibrariesApi.md#get_library_changes) | **POST** /libraries/changes/get | Read repository-ordered accepted Library changes after an opaque cursor.
 [**get_library_item**](LibrariesApi.md#get_library_item) | **POST** /libraries/items/get | Get one current Library item.
@@ -15,7 +15,7 @@ Method | HTTP request | Description
 [**get_library_status**](LibrariesApi.md#get_library_status) | **POST** /libraries/status/get | Get content-free Library repository status.
 [**list_libraries**](LibrariesApi.md#list_libraries) | **POST** /libraries/list | List the sorted Libraries and their exact configuration version.
 [**prepare_library_content**](LibrariesApi.md#prepare_library_content) | **POST** /libraries/content/prepare | Prepare exact immutable bytes for a later Library change.
-[**prepare_library_content_read**](LibrariesApi.md#prepare_library_content_read) | **POST** /libraries/content/read | Prepare a one-use read grant for an authorized retained content version.
+[**prepare_library_content_read**](LibrariesApi.md#prepare_library_content_read) | **POST** /libraries/content/read | Prepare a signed read URL for an authorized retained content version until expiry.
 [**remove_library**](LibrariesApi.md#remove_library) | **POST** /libraries/remove | Remove one empty normalized Library under an exact configuration version.
 [**start_library_bootstrap**](LibrariesApi.md#start_library_bootstrap) | **POST** /libraries/bootstrap/start | Start a bounded bootstrap from the current immutable baseline.
 [**submit_library_change**](LibrariesApi.md#submit_library_change) | **POST** /libraries/changes/submit | Submit one exact idempotent Library namespace or content change.
@@ -80,15 +80,15 @@ Name | Type | Description  | Required | Notes
 
 ## download_library_content
 
-> std::path::PathBuf download_library_content(grant_id)
-Redeem one authorized short-lived immutable-content read grant.
+> std::path::PathBuf download_library_content(read_token)
+Download authorized immutable content through a signed token until expiry.
 
 ### Parameters
 
 
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
-**grant_id** | **String** |  | [required] |
+**read_token** | **String** |  | [required] |
 
 ### Return type
 
@@ -304,7 +304,7 @@ Name | Type | Description  | Required | Notes
 
 ## prepare_library_content
 
-> models::LibraryPreparedContentReturnValue prepare_library_content(prepare_library_content_parameters)
+> models::LibraryContentPreparationReturnValue prepare_library_content(prepare_library_content_parameters)
 Prepare exact immutable bytes for a later Library change.
 
 ### Parameters
@@ -316,7 +316,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::LibraryPreparedContentReturnValue**](LibraryPreparedContentReturnValue.md)
+[**models::LibraryContentPreparationReturnValue**](LibraryContentPreparationReturnValue.md)
 
 ### Authorization
 
@@ -332,8 +332,8 @@ Name | Type | Description  | Required | Notes
 
 ## prepare_library_content_read
 
-> models::LibraryContentReadGrantReturnValue prepare_library_content_read(prepare_library_content_read_parameters)
-Prepare a one-use read grant for an authorized retained content version.
+> models::LibraryContentReadReturnValue prepare_library_content_read(prepare_library_content_read_parameters)
+Prepare a signed read URL for an authorized retained content version until expiry.
 
 ### Parameters
 
@@ -344,7 +344,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::LibraryContentReadGrantReturnValue**](LibraryContentReadGrantReturnValue.md)
+[**models::LibraryContentReadReturnValue**](LibraryContentReadReturnValue.md)
 
 ### Authorization
 

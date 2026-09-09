@@ -17,13 +17,17 @@ pub struct LibraryContentPreconditionDto {
     pub item_id: uuid::Uuid,
     #[serde(rename = "ExpectedContentVersionId")]
     pub expected_content_version_id: uuid::Uuid,
+    /// Opaque repository cursor. Clients must not parse or compare its contents.
+    #[serde(rename = "ExpectedContentRevision")]
+    pub expected_content_revision: String,
 }
 
 impl LibraryContentPreconditionDto {
-    pub fn new(item_id: uuid::Uuid, expected_content_version_id: uuid::Uuid) -> LibraryContentPreconditionDto {
+    pub fn new(item_id: uuid::Uuid, expected_content_version_id: uuid::Uuid, expected_content_revision: String) -> LibraryContentPreconditionDto {
         LibraryContentPreconditionDto {
             item_id,
             expected_content_version_id,
+            expected_content_revision,
         }
     }
 }

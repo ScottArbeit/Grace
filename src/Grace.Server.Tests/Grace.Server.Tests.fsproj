@@ -35,6 +35,7 @@
     <Compile Include="Eventing.Integration.Server.Tests.fs" />
     <Compile Include="Access.Server.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
+    <Compile Include="LibrarySynchronization.Windows.Server.Tests.fs" />
     <Compile Include="DirectoryVersion.Server.Tests.fs" />
     <Compile Include="Cache.Server.Tests.fs" />
     <Compile Include="Diff.Server.Tests.fs" />

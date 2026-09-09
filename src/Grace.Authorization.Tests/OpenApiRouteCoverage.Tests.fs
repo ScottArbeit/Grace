@@ -65,7 +65,11 @@ type OpenApiRouteCoverageTests() =
         |> Set.ofArray
 
     /// Maps the one public Giraffe routef placeholder to its named OpenAPI path parameter.
-    let openApiComparablePath path = if path = "/libraries/content/%s" then "/libraries/content/{grantId}" else path
+    let openApiComparablePath path =
+        if path = "/libraries/content/%s" then
+            "/libraries/content/{readToken}"
+        else
+            path
 
     /// Asserts bundled schema is unique.
     let assertBundledSchemaIsUnique artifactPath schemaName =

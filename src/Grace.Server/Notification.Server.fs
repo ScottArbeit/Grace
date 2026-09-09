@@ -1491,6 +1491,10 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+                | LibraryContentAvailableEvent payload ->
+                    if not (isNull hubContext) then
+                        let! _ = notifyLibraryContentAvailableClients hubContext payload
+                        ()
 
                 match EventingPublisher.tryCreateEnvelope graceEvent with
                 | Some envelope ->

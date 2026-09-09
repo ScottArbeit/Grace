@@ -24,63 +24,28 @@ export interface LibraryConflictProvenanceDto {
      * @type {string}
      * @memberof LibraryConflictProvenanceDto
      */
-    sourceOperationId: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryConflictProvenanceDto
-     */
-    sourceItemId: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryConflictProvenanceDto
-     */
-    canonicalItemId: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryConflictProvenanceDto
-     */
-    conflictItemId: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryConflictProvenanceDto
-     */
-    conflictPath: string;
-    /**
-     * 
-     * @type {Date}
-     * @memberof LibraryConflictProvenanceDto
-     */
-    acceptedAt: Date;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryConflictProvenanceDto
-     */
-    sourceContentVersionId: string;
+    originalItemId: string;
     /**
      * 
      * @type {string}
      * @memberof LibraryConflictProvenanceDto
      */
     baseContentVersionId: string;
+    /**
+     * Opaque repository cursor. Clients must not parse or compare its contents.
+     * @type {string}
+     * @memberof LibraryConflictProvenanceDto
+     */
+    baseContentRevision: string;
 }
 
 /**
  * Check if a given object implements the LibraryConflictProvenanceDto interface.
  */
 export function instanceOfLibraryConflictProvenanceDto(value: object): value is LibraryConflictProvenanceDto {
-    if (!('sourceOperationId' in value) || value['sourceOperationId'] === undefined) return false;
-    if (!('sourceItemId' in value) || value['sourceItemId'] === undefined) return false;
-    if (!('canonicalItemId' in value) || value['canonicalItemId'] === undefined) return false;
-    if (!('conflictItemId' in value) || value['conflictItemId'] === undefined) return false;
-    if (!('conflictPath' in value) || value['conflictPath'] === undefined) return false;
-    if (!('acceptedAt' in value) || value['acceptedAt'] === undefined) return false;
-    if (!('sourceContentVersionId' in value) || value['sourceContentVersionId'] === undefined) return false;
+    if (!('originalItemId' in value) || value['originalItemId'] === undefined) return false;
     if (!('baseContentVersionId' in value) || value['baseContentVersionId'] === undefined) return false;
+    if (!('baseContentRevision' in value) || value['baseContentRevision'] === undefined) return false;
     return true;
 }
 
@@ -94,14 +59,9 @@ export function LibraryConflictProvenanceDtoFromJSONTyped(json: any, ignoreDiscr
     }
     return {
         
-        'sourceOperationId': json['SourceOperationId'],
-        'sourceItemId': json['SourceItemId'],
-        'canonicalItemId': json['CanonicalItemId'],
-        'conflictItemId': json['ConflictItemId'],
-        'conflictPath': json['ConflictPath'],
-        'acceptedAt': (new Date(json['AcceptedAt'])),
-        'sourceContentVersionId': json['SourceContentVersionId'],
+        'originalItemId': json['OriginalItemId'],
         'baseContentVersionId': json['BaseContentVersionId'],
+        'baseContentRevision': json['BaseContentRevision'],
     };
 }
 
@@ -116,14 +76,9 @@ export function LibraryConflictProvenanceDtoToJSONTyped(value?: LibraryConflictP
 
     return {
         
-        'SourceOperationId': value['sourceOperationId'],
-        'SourceItemId': value['sourceItemId'],
-        'CanonicalItemId': value['canonicalItemId'],
-        'ConflictItemId': value['conflictItemId'],
-        'ConflictPath': value['conflictPath'],
-        'AcceptedAt': value['acceptedAt'].toISOString(),
-        'SourceContentVersionId': value['sourceContentVersionId'],
+        'OriginalItemId': value['originalItemId'],
         'BaseContentVersionId': value['baseContentVersionId'],
+        'BaseContentRevision': value['baseContentRevision'],
     };
 }
 

@@ -45,12 +45,14 @@ class TestPrepareLibraryContentReadParameters(unittest.TestCase):
                 repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
                 repository_name = '',
                 item_id = '',
-                content_version_id = ''
+                content_version_id = '',
+                content_revision = '0'
             )
         else:
             return PrepareLibraryContentReadParameters(
                 item_id = '',
                 content_version_id = '',
+                content_revision = '0',
         )
         """
 

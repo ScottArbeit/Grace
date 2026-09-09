@@ -1710,6 +1710,62 @@ module WatchTests =
             classify Services.RepositoryPathKind.FilePath (current.GraceStatusFile + "-wal.extra")
             |> should equal Services.RepositoryPathClassification.GraceInternal)
 
+    /// Consumes advisory repository wakes once without treating a received cursor as completed local application.
+    [<Test; Category("WatchPathClassification")>]
+    let ``Library wake accepts only the named repository hint and coalesces duplicates`` () =
+        Watch.takeLibraryWake () |> ignore
+        let repositoryId = Guid.NewGuid()
+
+        let wake =
+            Grace.Types.Library.LibraryContentAvailable.Create(
+                repositoryId,
+                "received-epoch",
+                "received-cursor",
+                Guid.NewGuid(),
+                getCurrentInstant (),
+                "wake-test"
+            )
+
+        Watch.recordLibraryWake (Guid.NewGuid()) wake
+        Watch.recordLibraryWake repositoryId { wake with EventName = "unknown" }
+        Watch.takeLibraryWake () |> should equal false
+        Watch.recordLibraryWake repositoryId wake
+        Watch.recordLibraryWake repositoryId wake
+        Watch.takeLibraryWake () |> should equal true
+        Watch.takeLibraryWake () |> should equal false
+
+    /// Keeps configured Library files outside ordinary Watch save admission with or without local participation.
+    [<Test; Category("WatchPathClassification")>]
+    let ``Library callbacks stay outside ordinary Watch work`` () =
+        withTempRepo (fun root ->
+            use policy = Services.beginLibraryPolicy [| "Library" |]
+            activateWatchIgnoreSnapshot ()
+
+            let library =
+                Directory
+                    .CreateDirectory(
+                        Path.Combine(root, "Library")
+                    )
+                    .FullName
+
+            let path = Path.Combine(library, "shared.bin")
+            File.WriteAllBytes(path, [| 0uy; 255uy |])
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnCreated(createdEvent path)
+            Watch.OnChanged(changedEvent path)
+
+            Watch.shouldIgnoreFileForWatchTests path
+            |> should equal true
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false)
+
+            File.Exists(Services.IpcFileName())
+            |> should equal false)
+
     /// Verifies a configured ignore match cannot create a raw candidate, pending transition, IPC file, or callback output.
     [<Test; Category("WatchPathClassification"); Category("WatchSilentObservation")>]
     let ``raw ignored callback stops before ordinary Watch side effects`` () =

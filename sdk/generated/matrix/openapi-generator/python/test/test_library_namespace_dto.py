@@ -41,9 +41,7 @@ class TestLibraryNamespaceDto(unittest.TestCase):
                     library_path = '', 
                     item_id = null, ),
                 name = '',
-                normalized_path = '',
-                namespace_version = '',
-                slot_version = ''
+                namespace_version = ''
             )
         else:
             return LibraryNamespaceDto(
@@ -52,9 +50,7 @@ class TestLibraryNamespaceDto(unittest.TestCase):
                     library_path = '', 
                     item_id = null, ),
                 name = '',
-                normalized_path = '',
                 namespace_version = '',
-                slot_version = '',
         )
         """
 

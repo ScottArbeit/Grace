@@ -38,26 +38,26 @@ type OperationalFactsPublisherAppHostTests() =
     member _.LibraryContainersUseAcceptedContractsAndGateTestReadiness() =
         let expected =
             [
-                "grace-library-control", [| "/RepositoryId" |]
-                "grace-library-changes", [| "/RepositoryId"; "/StreamSegment" |]
-                "grace-library-current", [| "/RepositoryId"; "/ProjectionKind" |]
+                "grace-library-control", [| "/PartitionKey" |]
+                "grace-library-changes", [| "/PartitionKey"; "/PartitionKey2" |]
+                "grace-library-current", [| "/PartitionKey"; "/PartitionKey2" |]
                 "grace-library-receipts",
                 [|
-                    "/RepositoryId"
-                    "/RecordKind"
-                    "/RecordKey"
+                    "/PartitionKey"
+                    "/PartitionKey2"
+                    "/PartitionKey3"
                 |]
                 "grace-library-history",
                 [|
-                    "/RepositoryId"
-                    "/HistoryKey"
-                    "/HistorySegment"
+                    "/PartitionKey"
+                    "/PartitionKey2"
+                    "/PartitionKey3"
                 |]
                 "grace-library-baselines",
                 [|
-                    "/RepositoryId"
-                    "/BaselineId"
-                    "/ShardKey"
+                    "/PartitionKey"
+                    "/PartitionKey2"
+                    "/PartitionKey3"
                 |]
             ]
             |> Map.ofList

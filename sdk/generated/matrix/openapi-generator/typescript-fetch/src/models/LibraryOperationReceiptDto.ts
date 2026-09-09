@@ -20,13 +20,6 @@ import {
     LibraryCatalogDtoToJSON,
     LibraryCatalogDtoToJSONTyped,
 } from './LibraryCatalogDto';
-import type { LibraryItemDto } from './LibraryItemDto';
-import {
-    LibraryItemDtoFromJSON,
-    LibraryItemDtoFromJSONTyped,
-    LibraryItemDtoToJSON,
-    LibraryItemDtoToJSONTyped,
-} from './LibraryItemDto';
 import type { LibraryOutcomeKind } from './LibraryOutcomeKind';
 import {
     LibraryOutcomeKindFromJSON,
@@ -48,13 +41,6 @@ import {
     LibraryChangeDtoToJSON,
     LibraryChangeDtoToJSONTyped,
 } from './LibraryChangeDto';
-import type { LibraryConflictProvenanceDto } from './LibraryConflictProvenanceDto';
-import {
-    LibraryConflictProvenanceDtoFromJSON,
-    LibraryConflictProvenanceDtoFromJSONTyped,
-    LibraryConflictProvenanceDtoToJSON,
-    LibraryConflictProvenanceDtoToJSONTyped,
-} from './LibraryConflictProvenanceDto';
 
 /**
  * 
@@ -82,46 +68,10 @@ export interface LibraryOperationReceiptDto {
     outcome: LibraryOutcomeKind;
     /**
      * 
-     * @type {string}
-     * @memberof LibraryOperationReceiptDto
-     */
-    libraryCatalogVersion: string;
-    /**
-     * 
-     * @type {Date}
-     * @memberof LibraryOperationReceiptDto
-     */
-    recordedAt: Date;
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryOperationReceiptDto
-     */
-    principalId: string;
-    /**
-     * 
      * @type {LibraryChangeDto}
      * @memberof LibraryOperationReceiptDto
      */
     change: LibraryChangeDto;
-    /**
-     * Opaque repository cursor. Clients must not parse or compare its contents.
-     * @type {string}
-     * @memberof LibraryOperationReceiptDto
-     */
-    cursor: string;
-    /**
-     * 
-     * @type {LibraryItemDto}
-     * @memberof LibraryOperationReceiptDto
-     */
-    item: LibraryItemDto;
-    /**
-     * 
-     * @type {LibraryConflictProvenanceDto}
-     * @memberof LibraryOperationReceiptDto
-     */
-    conflict: LibraryConflictProvenanceDto;
     /**
      * 
      * @type {string}
@@ -151,13 +101,7 @@ export function instanceOfLibraryOperationReceiptDto(value: object): value is Li
     if (!('operationId' in value) || value['operationId'] === undefined) return false;
     if (!('requestHash' in value) || value['requestHash'] === undefined) return false;
     if (!('outcome' in value) || value['outcome'] === undefined) return false;
-    if (!('libraryCatalogVersion' in value) || value['libraryCatalogVersion'] === undefined) return false;
-    if (!('recordedAt' in value) || value['recordedAt'] === undefined) return false;
-    if (!('principalId' in value) || value['principalId'] === undefined) return false;
     if (!('change' in value) || value['change'] === undefined) return false;
-    if (!('cursor' in value) || value['cursor'] === undefined) return false;
-    if (!('item' in value) || value['item'] === undefined) return false;
-    if (!('conflict' in value) || value['conflict'] === undefined) return false;
     if (!('reasonCode' in value) || value['reasonCode'] === undefined) return false;
     if (!('currentLibraryCatalog' in value) || value['currentLibraryCatalog'] === undefined) return false;
     if (!('rebaseline' in value) || value['rebaseline'] === undefined) return false;
@@ -177,13 +121,7 @@ export function LibraryOperationReceiptDtoFromJSONTyped(json: any, ignoreDiscrim
         'operationId': json['OperationId'],
         'requestHash': json['RequestHash'],
         'outcome': LibraryOutcomeKindFromJSON(json['Outcome']),
-        'libraryCatalogVersion': json['LibraryCatalogVersion'],
-        'recordedAt': (new Date(json['RecordedAt'])),
-        'principalId': json['PrincipalId'],
         'change': LibraryChangeDtoFromJSON(json['Change']),
-        'cursor': json['Cursor'],
-        'item': LibraryItemDtoFromJSON(json['Item']),
-        'conflict': LibraryConflictProvenanceDtoFromJSON(json['Conflict']),
         'reasonCode': json['ReasonCode'],
         'currentLibraryCatalog': LibraryCatalogDtoFromJSON(json['CurrentLibraryCatalog']),
         'rebaseline': LibraryRebaselineDtoFromJSON(json['Rebaseline']),
@@ -204,13 +142,7 @@ export function LibraryOperationReceiptDtoToJSONTyped(value?: LibraryOperationRe
         'OperationId': value['operationId'],
         'RequestHash': value['requestHash'],
         'Outcome': LibraryOutcomeKindToJSON(value['outcome']),
-        'LibraryCatalogVersion': value['libraryCatalogVersion'],
-        'RecordedAt': value['recordedAt'].toISOString(),
-        'PrincipalId': value['principalId'],
         'Change': LibraryChangeDtoToJSON(value['change']),
-        'Cursor': value['cursor'],
-        'Item': LibraryItemDtoToJSON(value['item']),
-        'Conflict': LibraryConflictProvenanceDtoToJSON(value['conflict']),
         'ReasonCode': value['reasonCode'],
         'CurrentLibraryCatalog': LibraryCatalogDtoToJSON(value['currentLibraryCatalog']),
         'Rebaseline': LibraryRebaselineDtoToJSON(value['rebaseline']),

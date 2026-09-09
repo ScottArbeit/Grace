@@ -17,40 +17,20 @@ pub struct LibraryNamespaceSlotDto {
     pub parent: Box<models::LibraryParentDto>,
     #[serde(rename = "Name")]
     pub name: String,
-    #[serde(rename = "NormalizedPath")]
-    pub normalized_path: String,
     #[serde(rename = "SlotVersion")]
     pub slot_version: uuid::Uuid,
-    #[serde(rename = "State")]
-    pub state: State,
     #[serde(rename = "OccupantItemId")]
     pub occupant_item_id: uuid::Uuid,
 }
 
 impl LibraryNamespaceSlotDto {
-    pub fn new(parent: models::LibraryParentDto, name: String, normalized_path: String, slot_version: uuid::Uuid, state: State, occupant_item_id: uuid::Uuid) -> LibraryNamespaceSlotDto {
+    pub fn new(parent: models::LibraryParentDto, name: String, slot_version: uuid::Uuid, occupant_item_id: uuid::Uuid) -> LibraryNamespaceSlotDto {
         LibraryNamespaceSlotDto {
             parent: Box::new(parent),
             name,
-            normalized_path,
             slot_version,
-            state,
             occupant_item_id,
         }
-    }
-}
-/// 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum State {
-    #[serde(rename = "occupied")]
-    Occupied,
-    #[serde(rename = "vacant")]
-    Vacant,
-}
-
-impl Default for State {
-    fn default() -> State {
-        Self::Occupied
     }
 }
 

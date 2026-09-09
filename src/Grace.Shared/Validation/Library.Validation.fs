@@ -227,7 +227,7 @@ module Library =
         let hasSlot = parameters.CreationSlotExpectation.IsSome
         let hasParent = parameters.DestinationParent.IsSome
         let hasName = not (isNull parameters.DestinationName)
-        let hasPrepared = parameters.PreparedContentId.HasValue
+        let hasUpload = parameters.UploadSessionId.HasValue
 
         let valid =
             match parameters.ChangeKind with
@@ -238,7 +238,7 @@ module Library =
                 && hasSlot
                 && not hasParent
                 && not hasName
-                && hasPrepared
+                && hasUpload
             | ChangeKind.CreateDirectory ->
                 not hasItemId
                 && not hasNamespace
@@ -246,31 +246,30 @@ module Library =
                 && hasSlot
                 && not hasParent
                 && not hasName
-                && not hasPrepared
+                && not hasUpload
             | ChangeKind.UpdateContent ->
                 hasItemId
-                && not hasNamespace
                 && hasContent
                 && not hasSlot
                 && not hasParent
                 && not hasName
-                && hasPrepared
+                && hasUpload
             | ChangeKind.Rename ->
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && hasSlot
+                && not hasSlot
                 && not hasParent
                 && hasName
-                && not hasPrepared
+                && not hasUpload
             | ChangeKind.Move ->
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && hasSlot
+                && not hasSlot
                 && hasParent
                 && not hasName
-                && not hasPrepared
+                && not hasUpload
             | ChangeKind.Delete when parameters.ItemKind = ItemKind.File ->
                 hasItemId
                 && hasNamespace
@@ -278,7 +277,7 @@ module Library =
                 && not hasSlot
                 && not hasParent
                 && not hasName
-                && not hasPrepared
+                && not hasUpload
             | ChangeKind.Delete when parameters.ItemKind = ItemKind.Directory ->
                 hasItemId
                 && hasNamespace
@@ -286,10 +285,77 @@ module Library =
                 && not hasSlot
                 && not hasParent
                 && not hasName
-                && not hasPrepared
+                && not hasUpload
             | _ -> false
 
         if valid then
             Ok()
         else
             Error "The change fields do not match the selected change and item kinds."
+
+    /// Converts one valid public parameter object into the closed actor command union.
+    let toChangeCommand repositoryId (parameters: SubmitLibraryChangeParameters) =
+        let requestHashInput =
+            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.LibraryCatalogVersion:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.CreationSlotExpectation}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
+
+        let requestHash =
+            requestHashInput
+            |> Encoding.UTF8.GetBytes
+            |> Security.Cryptography.SHA256.HashData
+            |> Convert.ToHexString
+            |> fun value -> value.ToLowerInvariant()
+
+        match parameters.ChangeKind with
+        | ChangeKind.CreateFile ->
+            LibraryChangeCommand.CreateFile(
+                parameters.OperationId,
+                requestHash,
+                parameters.LibraryCatalogVersion,
+                parameters.CreationSlotExpectation.Value,
+                parameters.UploadSessionId.Value
+            )
+        | ChangeKind.CreateDirectory ->
+            LibraryChangeCommand.CreateDirectory(
+                parameters.OperationId,
+                requestHash,
+                parameters.LibraryCatalogVersion,
+                parameters.CreationSlotExpectation.Value
+            )
+        | ChangeKind.UpdateContent ->
+            LibraryChangeCommand.UpdateContent(
+                parameters.OperationId,
+                requestHash,
+                parameters.LibraryCatalogVersion,
+                parameters.ItemId.Value,
+                parameters.NamespacePrecondition,
+                parameters.ContentPrecondition.Value,
+                parameters.UploadSessionId.Value
+            )
+        | ChangeKind.Rename ->
+            LibraryChangeCommand.Rename(
+                parameters.OperationId,
+                requestHash,
+                parameters.LibraryCatalogVersion,
+                parameters.ItemId.Value,
+                parameters.NamespacePrecondition.Value,
+                parameters.DestinationName
+            )
+        | ChangeKind.Move ->
+            LibraryChangeCommand.Move(
+                parameters.OperationId,
+                requestHash,
+                parameters.LibraryCatalogVersion,
+                parameters.ItemId.Value,
+                parameters.NamespacePrecondition.Value,
+                parameters.DestinationParent.Value
+            )
+        | ChangeKind.Delete ->
+            LibraryChangeCommand.Delete(
+                parameters.OperationId,
+                requestHash,
+                parameters.LibraryCatalogVersion,
+                parameters.ItemId.Value,
+                parameters.NamespacePrecondition.Value,
+                parameters.ContentPrecondition
+            )
+        | _ -> invalidArg (nameof parameters) "The Library change kind is unsupported."
