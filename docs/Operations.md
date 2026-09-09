@@ -20,6 +20,34 @@ The current [usage contract](../src/Grace.Types/Usage.Types.fs) has only `Reposi
 
 The owner observation read introduced by [Issue #1068](https://github.com/ScottArbeit/Grace/issues/1068) implements [the selected read contract](design/Operations.OwnerObservationRead.md): read a retained DirectoryVersion observation by known ID and recorded scope, using current OwnerAdmin permission and exact quantity/time strings. The [codec and permission experiments](design/Operations.OwnerObservationRead-Experiment.json) remain design evidence; route and client tests cover the implementation.
 
+## Committed Library content declarations
+
+[Issue #1077](https://github.com/ScottArbeit/Grace/issues/1077) adds the internal SystemAdmin `POST /admin/library-content-size/diagnose` diagnostic. It reads permanent accepted Library changes through the existing control record's captured `Epoch` and `CommittedCursor`. Superseded content and tombstoned items remain included through their accepted history, including changes below the public synchronization `ReplayFloor`. Pending work and records above the selected cursor contribute nothing.
+
+The result contains explicit `Scope`, `DeclaredLogicalBytes`, `DistinctManifestCount`, `Epoch`, `CommittedCursor`, `EnumerationStartedAt` and `EnumerationFinishedAt` in the ordinary Grace success envelope. Quantities and cursor are exact nonnegative Int64 JSON numbers. The PowerShell command validates and saves the original JSON without reserializing its integers or nanosecond timestamps. SystemAdmin permission and the live, nondeleted repository scope are checked before and after the scan. Epoch change or cursor regression discards the result; an advancing tail does not change the selected prefix.
+
+The identity is `(StoragePoolId, ManifestAddress)` within the requested repository. Each complete, agreeing immutable declaration contributes once. Reference counts do not multiply bytes. A validated existing control at cursor zero can return explicit zero only when all required source containers exist. Missing control, history, mapping or provider; an exact cursor gap; a conflicting declaration; cancellation; or Int64 overflow produces an error without a successful quantity. Retry starts a new read. The diagnostic never repairs pending work, provisions storage or writes observations, manifests, counters, SQL, broker messages or Library records.
+
+PowerShell:
+
+```powershell
+$env:GRACE_SERVER_URI = 'https://your-grace-server'
+$env:GRACE_TOKEN = '<SystemAdmin token>'
+pwsh ./scripts/diagnose-library-content-size.ps1 -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath ./library-content.json
+```
+
+bash / zsh:
+
+```bash
+export GRACE_SERVER_URI='https://your-grace-server'
+export GRACE_TOKEN='<SystemAdmin token>'
+pwsh ./scripts/diagnose-library-content-size.ps1 -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath ./library-content.json
+```
+
+The eventual repository measurement should cover retained logical user-content bytes with complete membership for every selected content class. This diagnostic covers only committed Library declarations. Original payload lengths, orphan or pending uploads, confirmed deletion and common observation coverage remain unresolved. Issue #829 remains an unmet TextContent inclusion requirement. Do not treat `ContentVersionId` as a cross-class identity or add Library and DirectoryVersion totals: their manifests can overlap. The scan timestamps describe the read window, not a snapshot, elapsed usage interval, payload-presence guarantee, billable bytes or complete repository total. Lifetime scans can be expensive; no scheduling or capacity guarantee is made.
+
+The [bounded provider evidence](design/Operations.LibraryContentSize-Preflight.md) separates real provider IO, seeded control/history and production-adapter checks from hosted actor acceptance. Owner capture, owner reads/listing and SQL Library observations remain deferred.
+
 ## Owner reading of retained declarations
 
 An operator supplies the known observation ID and its recorded OwnerId, OrganizationId and RepositoryId. An OwnerAdmin on that recorded owner can read it through `GET /owner/usage/directory-version-observations/{observationId}` with the three scope IDs as query parameters. Existing SystemAdmin and SystemOperator inheritance also applies. OwnerReader or RepositoryAdmin alone does not grant access.

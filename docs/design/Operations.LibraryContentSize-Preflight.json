@@ -1,0 +1,51 @@
+{
+  "actorAcceptance": "not exercised; typed fixtures seeded through actual provider",
+  "actualCosmosPages": 13,
+  "actualCosmosRows": 205,
+  "batches": 13,
+  "boundary": 205,
+  "bytes": 30,
+  "checks": [
+    "production adapter captures and exhausts actual prefix",
+    "actual provider control and cross-segment history below ReplayFloor: 30 bytes",
+    "diagnostic did not change any provider document or ETag",
+    "fresh client and provider retry rereads same committed prefix",
+    "tail advancement retains frozen prefix",
+    "cancellation after partial accumulation yields no quantity",
+    "pre-cancelled fresh attempt yields no quantity",
+    "exact gap at cursor 200 yields no quantity",
+    "missing required immutable mapping yields no quantity",
+    "missing control remains absent without provisioning",
+    "final control reread detects epoch change",
+    "existing zero control persists and rereads at cursor zero",
+    "production adapter returns explicit zero only with all source containers",
+    "production zero refuses a missing required changes container",
+    "missing changes container yields no quantity and is not provisioned"
+  ],
+  "database": "issue1077-4f5c70c447544e12855eebb64f38a244",
+  "provider": "10.2.2-hpk.1",
+  "recordsSeeded": 206,
+  "replayFloor": 203,
+  "segments": 2,
+  "SourceBase": "8b418ac04e154b129809f673a2be2eecc4c6558e",
+  "SourceHashes": [
+    {
+      "Path": "src/Grace.Actors/LibraryQueries.Actor.fs",
+      "SHA256": "77D205951A2DEB8F9E25EE9D50B03A3DFE84A32465E5E1B999F607BECDB7BB4A"
+    },
+    {
+      "Path": "src/Grace.Actors/LibraryRecords.Actor.fs",
+      "SHA256": "0B83448C3B6CF6D302E93C5D9179AE853DEF7821FA599C2E9E6869EABE8587B7"
+    },
+    {
+      "Path": "src/Grace.Server/Library.Persistence.Server.fs",
+      "SHA256": "1F19E08AE812D164A1F667ACC6CB6CBAF66214DE3709171FC450C6A7CE43282F"
+    },
+    {
+      "Path": "src/Grace.Server/Library.Server.fs",
+      "SHA256": "12981719AF6FB69ABD5BFAC69E7B2BDA963D72496F88986F2C7A801068EE3AF0"
+    }
+  ],
+  "ProviderSHA256": "00C958BA67203901E4564F800F31A9443EB225D4821C29FCCE594933FEB74EE0",
+  "ExactCommand": "pwsh -File docs/design/Operations.LibraryContentSize-Preflight.ps1 -OutputDirectory <new-external-directory>"
+}

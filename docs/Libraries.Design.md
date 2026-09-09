@@ -34,6 +34,8 @@ All replacement choices in the report are accepted, including compact item/slot 
 
 ## Evidence and implementation status
 
+The internal SystemAdmin [committed-content diagnostic](Operations.md#committed-library-content-declarations) reads permanent accepted changes through a captured epoch/cursor, including history below `ReplayFloor`. It counts each agreeing `(StoragePoolId, ManifestAddress)` declaration once across edits, renames and deletions. This read does not activate Library repair or change retention, content ownership, counters or accepted history. It reports one repository's Library declarations; other content classes can overlap, and payload presence and repository-total completeness remain unproven.
+
 The following table records the historical inputs to the accepted redesign on 2026-09-06. The current server delivery is PR #1053, identified above; the older PRs remain preserved source material.
 
 | Evidence | Revision and treatment |
