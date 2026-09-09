@@ -20,7 +20,7 @@ module internal LibrarySynchronization =
 
     /// Exposes local participation and completed progress through the ordinary CLI result envelope.
     [<CLIMutable>]
-    type Status =
+    type LibrarySynchronizationStatus =
         {
             Enabled: bool
             Paused: bool

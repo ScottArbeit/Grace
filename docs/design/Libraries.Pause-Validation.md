@@ -45,3 +45,9 @@ Library production, Watch, hosted Library tests, Library SDK/types/validation an
 [Validate run 34329679911](https://github.com/ScottArbeit/Grace/actions/runs/34329679911) found three local pause tests calling the Windows-only participation API on Linux. Those tests now use the existing Windows filesystem guard, preserving every assertion. The cross-platform SQLite participation/constraint tests remain enabled. Production code and hosted evidence inputs are unchanged. The corrected revision still requires a fresh GitHub Validate result.
 
 A matching Release build passed with zero warnings and errors, followed by all five local pause cases on Windows: **5 passed, 0 failed, 0 skipped** (`platform-guard-build.log`, `platform-guard.trx`).
+
+## Status type naming
+
+Owner review renamed the local result type from `Status` to `LibrarySynchronizationStatus`. The record fields, JSON payload shape and synchronization behavior are unchanged. Schema introspection changes only `ReturnValueContract` and the success-envelope/ReturnValue schema titles to reflect the descriptive name.
+
+The matching Release build passed with zero warnings and errors; all **33 output-contract tests passed** (`status-rename-build.log`, `status-rename.trx`). Before/after status-schema captures confirm those three metadata changes only. Existing runtime evidence remains applicable.

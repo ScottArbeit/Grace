@@ -767,7 +767,7 @@ module CommandOutputContract =
         | "library.sync.run"
         | "library.sync.pause"
         | "library.sync.resume"
-        | "library.sync.status" -> typeof<Grace.CLI.Command.LibrarySynchronization.Status>
+        | "library.sync.status" -> typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
         | "review.checkpoint"
         | "review.deepen"
         | "review.resolve" -> typeof<string>
