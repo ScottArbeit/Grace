@@ -30,7 +30,7 @@ Focused local validation passed on Windows:
 
 The live Watch case proves initial capture, paused local saves and incoming isolation while B continues, resumed latest saved bytes with a compatible remote rename, restart without rewriting completed files, and unchanged VC Reference state. Earlier failed runs remain in the local evidence directory rather than being reported as passing proof.
 
-Artifacts are retained under `C:/Source/Grace-artifacts/issue-1075/`; the PR records exact commands and the candidate revision. Local Fast/Full was not run. Independent review, Shape Review and final-head GitHub Validate are still pending. No power-loss, arbitrary process-termination, full offline Watch or other-platform guarantee is claimed.
+Artifacts are retained under `C:/Source/Grace-artifacts/issue-1075/`; the PR records exact commands, the candidate revision and review outcomes. Local Fast/Full was not run. Final-head GitHub Validate remains required. No power-loss, arbitrary process-termination, full offline Watch or other-platform guarantee is claimed.
 
 ## Main composition
 
@@ -39,3 +39,9 @@ The [composition charter](https://github.com/ScottArbeit/Grace/issues/1075#issue
 After a fresh CLI restore and matching Release build, the combined Library/output/Owner client selection passed **138 executed tests with no failures** (`composition-cli.trx`). One existing Owner entry-point test is excluded on Windows because its temporary-profile isolation requires Linux; it remains a CI check. The command-tree and registry checks confirm 218 total entries, 209 routed entries, 197 JSON-ready entries and 198 schema-eligible entries.
 
 Library production, Watch, hosted Library tests, Library SDK/types/validation and the root lease remain identical to `d0503c5b`; the 34-plus-1 hosted evidence above retains its applicability. All 74 incoming paths outside the five overlapping documentation/registry paths match the new main exactly. `composition-preservation.json` records the comparisons. The integrated build has zero warnings and errors. No additional hosted or algorithm run was needed for these additive command-registration changes.
+
+## CI platform correction
+
+[Validate run 34329679911](https://github.com/ScottArbeit/Grace/actions/runs/34329679911) found three local pause tests calling the Windows-only participation API on Linux. Those tests now use the existing Windows filesystem guard, preserving every assertion. The cross-platform SQLite participation/constraint tests remain enabled. Production code and hosted evidence inputs are unchanged. The corrected revision still requires a fresh GitHub Validate result.
+
+A matching Release build passed with zero warnings and errors, followed by all five local pause cases on Windows: **5 passed, 0 failed, 0 skipped** (`platform-guard-build.log`, `platform-guard.trx`).

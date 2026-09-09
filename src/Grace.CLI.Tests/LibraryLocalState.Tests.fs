@@ -186,6 +186,9 @@ module LibraryLocalStateTests =
     [<Test>]
     let ``pause preserves progress and exact work while stale callers cannot complete`` () =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, before, _ = renameCopy ()
             let db, repository = configuration.GraceStatusFile, configuration.RepositoryId
             let retained = readOperations db repository
@@ -218,6 +221,9 @@ module LibraryLocalStateTests =
     [<Test>]
     let ``pause update failure rolls back without changing retained work`` () =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, before, _ = renameCopy ()
             let db = configuration.GraceStatusFile
             let operations = readOperations db configuration.RepositoryId
@@ -243,6 +249,9 @@ module LibraryLocalStateTests =
     [<Test>]
     let ``pause cancellation and competing stale Watch run honor root lease`` () =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, before, _ = renameCopy ()
 
             let scope =
