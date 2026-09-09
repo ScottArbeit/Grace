@@ -21,6 +21,10 @@ open System.Diagnostics
 open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
+open System.Threading
+open System.IO
+open System.Text.Json
+open Grace.Types.Usage
 
 /// Contains Grace Server artifact behavior and supporting helpers.
 module Artifact =
@@ -236,4 +240,122 @@ module Artifact =
                                 return!
                                     context
                                     |> result400BadRequest (GraceError.Create (ArtifactError.getErrorMessage ArtifactError.ArtifactDoesNotExist) correlationId)
+            }
+
+    /// Keeps declared bytes and distinct identities attached to verified scope and the non-atomic read window.
+    type ArtifactSizeDiagnostic =
+        {
+            Scope: UsageFactScope
+            DeclaredArtifactBytes: int64
+            DistinctArtifactCount: int64
+            EnumerationStartedAt: Instant
+            EnumerationFinishedAt: Instant
+        }
+
+    /// Rejects name selectors and incomplete identifiers before reading repository state.
+    let internal validateArtifactSizeDiagnosticParameters (parameters: Grace.Shared.Parameters.Repository.GetRepositoryParameters) =
+        /// Accepts only explicit, non-empty scope identifiers.
+        let parseId value =
+            match Guid.TryParse(value: string) with
+            | true, id when id <> Guid.Empty -> Some id
+            | _ -> None
+
+        if isNull (box parameters) then
+            Error "A repository scope is required."
+        elif
+            [
+                parameters.OwnerName
+                parameters.OrganizationName
+                parameters.RepositoryName
+            ]
+            |> List.exists (String.IsNullOrEmpty >> not)
+        then
+            Error "Use explicit owner, organization and repository IDs; name selectors are not supported."
+        else
+            match parseId parameters.OwnerId, parseId parameters.OrganizationId, parseId parameters.RepositoryId with
+            | Some owner, Some organization, Some repository -> Ok { OwnerId = owner; OrganizationId = organization; RepositoryId = repository }
+            | _ -> Error "OwnerId, OrganizationId and RepositoryId must be non-empty GUIDs."
+
+    /// Rechecks the live repository around enumeration and discards a completed quantity if scope or cancellation changed.
+    let internal diagnoseArtifactSizeWith
+        (checkArtifactSizeRepository: CancellationToken -> Task<unit>)
+        (collect: CancellationToken -> Task<ArtifactSizeDiagnostic>)
+        (token: CancellationToken)
+        =
+        task {
+            token.ThrowIfCancellationRequested()
+            do! checkArtifactSizeRepository token
+            let! result = collect token
+            do! checkArtifactSizeRepository token
+            token.ThrowIfCancellationRequested()
+            return result
+        }
+
+    /// Requires a present, nondeleted repository bound to the three requested identifiers.
+    let private checkArtifactSizeRepository (scope: UsageFactScope) correlationId (token: CancellationToken) =
+        task {
+            let repositoryActor = Repository.CreateActorProxy scope.OrganizationId scope.RepositoryId correlationId
+
+            let! repository =
+                (repositoryActor.Get correlationId)
+                    .WaitAsync(token)
+
+            if repository.RepositoryId <> scope.RepositoryId
+               || repository.OwnerId <> scope.OwnerId
+               || repository.OrganizationId <> scope.OrganizationId
+               || repository.UpdatedAt.IsNone
+               || repository.DeletedAt.IsSome then
+                raise (InvalidDataException "Repository is missing, deleted or outside the requested scope.")
+        }
+
+    /// Serves a fresh declaration scan after route-level SystemAdmin authorization, without publishing partial quantities.
+    let DiagnoseSize: HttpHandler =
+        fun next context ->
+            task {
+                let correlationId = Grace.Server.Services.getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<Grace.Shared.Parameters.Repository.GetRepositoryParameters>()
+
+                    match validateArtifactSizeDiagnosticParameters parameters with
+                    | Error message -> return! RequestErrors.BAD_REQUEST (GraceError.Create message correlationId) next context
+                    | Ok scope ->
+                        let! result =
+                            diagnoseArtifactSizeWith
+                                (checkArtifactSizeRepository scope correlationId)
+                                (fun token ->
+                                    task {
+                                        let! total, count, started, finished = readArtifactSize scope token
+
+                                        return
+                                            {
+                                                Scope = scope
+                                                DeclaredArtifactBytes = total
+                                                DistinctArtifactCount = count
+                                                EnumerationStartedAt = started
+                                                EnumerationFinishedAt = finished
+                                            }
+                                    })
+                                context.RequestAborted
+
+                        context.RequestAborted.ThrowIfCancellationRequested()
+                        return! json (GraceReturnValue.Create result correlationId) next context
+                with
+                | :? JsonException ->
+                    return! RequestErrors.BAD_REQUEST (GraceError.Create "The request body must be valid repository-scope JSON." correlationId) next context
+                | :? InvalidDataException ->
+                    return!
+                        RequestErrors.BAD_REQUEST
+                            (GraceError.Create "Repository scope or retained Artifact source is invalid; no quantity was produced." correlationId)
+                            next
+                            context
+                | :? OperationCanceledException ->
+                    return!
+                        ServerErrors.SERVICE_UNAVAILABLE
+                            (GraceError.Create "Artifact enumeration was cancelled; no quantity was produced." correlationId)
+                            next
+                            context
+                | _ ->
+                    return!
+                        ServerErrors.SERVICE_UNAVAILABLE (GraceError.Create "Artifact enumeration failed; no quantity was produced." correlationId) next context
             }

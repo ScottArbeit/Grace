@@ -30,6 +30,44 @@ Grace's current serializer omits `FileVersion.Size` when it is zero. The diagnos
 
 Two matching enumerations can report observational agreement; they cannot establish that the contents existed together at one instant. The first production diagnostic needs only one complete enumeration and an explicit start/end time. It makes no agreement or snapshot promise.
 
+## Artifact declaration diagnostic
+
+[Issue #1062](https://github.com/ScottArbeit/Grace/issues/1062) adds `POST /admin/artifact-size/diagnose` for an authenticated SystemAdmin. It measures retained Artifact **declared bytes**, using the configured actor state storage provider. It creates no durable observation ID, usage fact or SQL row. Each invocation starts a fresh read.
+
+The result is a standard Grace success envelope containing one server-local `ArtifactSizeDiagnostic`: `Scope`, `DeclaredArtifactBytes`, `DistinctArtifactCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. The two quantities are nonnegative `int64` values. Every result is tied to explicit owner, organization and repository GUIDs; names are rejected. The server checks that the repository exists, is not deleted and matches those IDs before and after enumeration.
+
+The reader projects each nonempty Artifact stream from its leading Created snapshot through the current full-snapshot conversion. It counts each projected Artifact ID once, including unattached metadata, logically deleted metadata and cleanup progress until state clearance. Distinct IDs declaring identical content count separately. A zero-size Artifact contributes zero bytes and one Artifact; an empty State shell contributes neither. Current Artifact serialization explicitly includes `Size: 0` and represents an absent optional WorkItemId with an empty GUID. Missing declarations cannot use serializer defaults to become zero.
+
+All snapshots in a stream must retain one Artifact ID, the requested three-ID scope, blob path and creation time. Duplicate projected identities count once only when their declared size and immutable source identity agree. Malformed state, conflicting identity/scope and invalid requests return an existing Grace error with HTTP 400 and no quantity. Unsupported providers, unavailable sources, failed reads, arithmetic overflow or cancellation return HTTP 503 with no quantity. A fresh attempt starts again; there is no partial result or continuation token.
+
+`Artifact.Server.fs` owns `ArtifactSizeDiagnostic`, `validateArtifactSizeDiagnosticParameters` and `DiagnoseSize`. `Services.Actor.fs` owns decoding, projection and `readArtifactSize`, which returns bytes, count and the complete read window. Its `ActorStateStorageProvider` dispatch selects Cosmos before acquiring the existing container; MongoDB and Unknown fail before Cosmos access. No container is provisioned. There is no separate diagnostic module or compatibility wrapper.
+
+The reader continues until exhaustion, caller cancellation or failure, with no arbitrary total-page, document, event or elapsed-time ceiling. The 256-document page-size hint controls batching only. The handler passes `RequestAborted` through the repository checks and enumeration. A large or growing source may take a long time and retains one in-memory entry per distinct Artifact. This explicit maintenance request makes no throughput promise and is not a selected routine usage producer. Its window describes a non-atomic scan of encountered records, not an instant snapshot or a complete repository storage inventory.
+
+Artifact declarations can precede upload and remain after object deletion. This command does not read blobs or establish their presence, length, hash, orphan coverage, physical storage or provider charges. A missing object changes neither the retained declared quantity nor the command's lack of blob-presence information. DirectoryVersion and TextContent diagnostics and their durable observations remain separate sources. This route is explicitly classified as an internal operational surface; no public DTO, generated client, SDK or CLI contract is added.
+
+PowerShell:
+
+```powershell
+$env:GRACE_SERVER_URI = 'https://your-grace-server'
+$env:GRACE_TOKEN = '<SystemAdmin token>'
+./scripts/diagnose-artifact-size.ps1 -OwnerId '<owner-guid>' -OrganizationId '<organization-guid>' -RepositoryId '<repository-guid>' -OutputPath './artifact-size.json'
+```
+
+bash / zsh, invoking the supported Windows PowerShell command:
+
+```bash
+export GRACE_SERVER_URI='https://your-grace-server'
+export GRACE_TOKEN='<SystemAdmin token>'
+pwsh -File ./scripts/diagnose-artifact-size.ps1 -OwnerId '<owner-guid>' -OrganizationId '<organization-guid>' -RepositoryId '<repository-guid>' -OutputPath './artifact-size.json'
+```
+
+The output parent directory must already exist. The command validates the full scope, source-specific quantities and ordered UTC window, preserves all nine timestamp fractional digits and the original JSON bytes, then publishes through a same-directory atomic rename. It sets connection and operation timeouts to zero; Ctrl+C cancels the request. HTTP, transport, payload and local publication failures preserve the previous output. There is no power-loss flush guarantee or coordination between concurrent local writers. A failed command exits with code 4; a successful command exits with code 0.
+
+The [complete preflight evidence](design/Operations.ArtifactSize-Preflight.json) captures five executable sources and their hashes, dependencies, original and extracted real-Cosmos runs, and the clean before-edit checkpoint. Both runs passed 36 finite checks. They reuse [Issue #1060's current serializer and projection evidence](design/Operations.Artifact-Measurement-Experiment.md) and add stricter source validation, complete limits and error behavior. Their provider envelope and lifecycle timing are modeled. The stalled-read deadline case uses a deterministic callback, not a stalled Cosmos transport. The hosted fixture separately calls actual public Artifact Create for positive and zero declarations, checks paginated storage, and emits one exact response for Windows script replay. Seeded duplicate and lifecycle cases are explicitly labeled; they do not claim actor cleanup execution.
+
+PR #1063's current-main refresh preserves those historical JSON records and the producer projection unchanged. Their limits describe the original experiment, not the current diagnostic. Current focused controls require successful reads beyond each former page/document/event cap, rejection of unsupported providers before container acquisition, checked overflow, cancellation and repository revalidation. The existing hosted fixture validates the relocated handler against actual public Artifact creation; the refresh adds no new persistence or cleanup behavior.
+
 ## Retained-content dispositions
 
 | Content | Logical identity and bytes | Disposition for the selected diagnostic |

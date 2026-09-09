@@ -1968,6 +1968,7 @@ module Application =
                                routef "/text-content-size/observations/%s" (fun id -> composeHandlers requireSystemAdmin (TextContentSizeObservation.Capture id))
                                route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersion.DiagnoseSize)
                                route "/text-content-size/diagnose" (composeHandlers requireSystemAdmin WorkItem.DiagnoseTextContentSize)
+                               route "/artifact-size/diagnose" (composeHandlers requireSystemAdmin Artifact.DiagnoseSize)
                                route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
                                route "/manifest-contribution/repair" (composeHandlers requireSystemAdmin ManifestContributionRepair.Repair)
 #if DEBUG

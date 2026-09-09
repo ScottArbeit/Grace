@@ -82,7 +82,9 @@ for one, ask to start tracked implementation, or otherwise request tracker setup
 See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
 validation profiles, review expectations, and cleanup steps.
 
-See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion and retained TextContent declarations, and durable source-specific observation capture/read for both.
+See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion, retained TextContent and retained Artifact declarations, and durable source-specific observation capture/read for DirectoryVersion and TextContent. The Artifact diagnostic has a PowerShell save command and creates no durable observation.
+
+Artifact diagnosis uses the configured actor storage provider and runs until exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its save command sets no connection or operation timeout; Ctrl+C cancels the request and preserves prior output.
 
 Observation capture reads until source exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its operator commands also set no connection or operation timeout. After an uncertain response, retry the same ObservationId to retrieve any committed result.
 
