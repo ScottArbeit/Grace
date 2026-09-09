@@ -44,6 +44,8 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/manifest-contribution/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/directory-version-size/diagnose" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/admin/directory-version-size/observations/%s" (Authorized(SystemAdmin, System))
+            endpoint "GET" "/admin/directory-version-size/observations/%s" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/text-content-size/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/manifest-contribution/repair" (Authorized(SystemAdmin, System))
             endpoint "POST" "/approval/policy/create" (Authorized(ApprovalPolicyManage, Repository))

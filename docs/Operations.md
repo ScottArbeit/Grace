@@ -82,7 +82,7 @@ The response type and diagnostic route name identify the fixed DirectoryVersion 
 
 Queue this next slice with the active Libraries replacement wherever it shares `Grace.Server.fsproj` or `Startup.Server.fs`; do not write concurrently in that worktree. The diagnostic does not require changes to Library types, Common types, AppHost, package policy, or generated clients.
 
-The isolated provider preflight established actual paginated Cosmos enumeration with Grace serialization and retained event documents. Hosted tests exercise the admin route, scope checks, and source reader against isolated repository data. A new durable acceptance path remains deferred until a supported measurement outcome needs it.
+The isolated provider preflight established actual paginated Cosmos enumeration with Grace serialization and retained event documents. Hosted tests exercise the admin route, scope checks, and source reader against isolated repository data. Issue #1056 adds the separate durable capture/read path described below; the live diagnostic remains request-local.
 
 ### Requirement and validation map
 
@@ -204,9 +204,71 @@ The [actual SQL boundary experiment](design/Operations.UsageObservation-Boundary
 
 That behavior does not make either source-specific diagnostic a minute accounting input. Both diagnostics need their byte/count meaning and full enumeration window, including known zero. Neither covers the complete repository, and their sum must not be labelled complete storage usage. The current positive additive `RepositoryStorageBytesMinute` contract remains unchanged.
 
-**Recommended, Exploratory:** the smallest next durable tracer lets a SystemAdmin request a DirectoryVersion declaration observation under a caller request ID. The first committed complete observation wins; retry/read returns that stored result with its source, scope, bytes, distinct-content count, and full read window. Prefer one immutable completed-observation row in Operations SQL through its data boundary. Preserve the existing worker and additive fact accounting intact and disconnected from these non-billable observations. Keep TextContent separate until that design is established. No pending/rejected/dispatch lifecycle, second accounting path, scanner, scheduler, public owner API, Library/Cache dependency, or billing rule is selected.
+[Issue #1056](https://github.com/ScottArbeit/Grace/issues/1056) selects and implements that first durable DirectoryVersion tracer. The accepted contract and its SQL experiment are described below. TextContent durable capture remains deferred.
 
-The owner still needs to accept the request ID's source/scope binding, authorization and collision behavior, how competing completed reads return the first committed winner, the internal capture/read surface, and the SQL commit point before successful response. A precommit failure may require a new enumeration; preserving that uncommitted reading is not promised. A disposable one-row SQL acceptance experiment must then exercise insert/commit failures, discarded acknowledgment, fresh-object retry, concurrent different windows under one ID, zero, source failure without a row, and source/scope collision rejection. The current experiment does not establish that new algorithm. This next tracer is not Design-ready or Plan-ready. Historical capture-before-send, full-payload comparison, current-state rechecks, and atomic acceptance are design inputs to compare; no journal, historical billing locks, repair/rejection workflows, EF relocation, or migrations are selected for import.
+## Durable DirectoryVersion declaration observations
+
+A SystemAdmin can capture a completed declaration reading under an explicit non-empty GUID, then retrieve the identical stored observation after source changes or an uncertain response. This is a source-specific, non-billable reading. It is not repository-total storage, physical blob presence, an atomic snapshot or a minute-usage contribution.
+
+The shared `DirectoryVersionSizeObservation` record contains `ObservationId`, the existing `UsageFactScope`, `DeclaredLogicalBytes`, `DistinctContentCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. Known zero is valid. Grace JSON writes both zero quantities explicitly and preserves Instant precision up to nine fractional digits, omitting insignificant trailing zeros. The observation is immutable; correlation ID and EventTime in each request's Grace envelope may differ.
+
+### Capture and read contract
+
+| Request | Behavior |
+| --- | --- |
+| `POST /admin/directory-version-size/observations/{observationId}` | Capture or return the prior completed observation. Body is `GetRepositoryParameters` with explicit OwnerId, OrganizationId and RepositoryId. |
+| `GET /admin/directory-version-size/observations/{observationId}?OwnerId=...&OrganizationId=...&RepositoryId=...` | Read only; never enumerate source. |
+| Success | HTTP 200 with `GraceReturnValue<DirectoryVersionSizeObservation>` containing the stored SQL winner. |
+| Invalid identifier, missing scope, name selector or invalid source | HTTP 400 without an observation. |
+| ID already bound to another owner, organization or repository | HTTP 409 without stored values. |
+| Missing GET | HTTP 404. |
+| Source/SQL failure or cancellation | HTTP 503 without a successful observation. An unsuccessful response does not promise that SQL did not commit. |
+
+Both routes require current SystemAdmin authorization before parsing or storage access. A same-ID retry first checks SQL and returns a matching stored observation without accessing the repository or source. A new collection requires an existing, nondeleted repository in the complete requested scope before and immediately after the DirectoryVersion scan. Historical observations remain readable after repository deletion. No name resolution is supported.
+
+The capture uses `DirectoryVersion.validateSizeDiagnosticParameters` and the existing `Services.Actor.fs` provider-dispatched reader with the manifest validator. It reads until exhaustion, caller cancellation or failure without a total-page, document, reference or elapsed-time ceiling. The 256-document page size controls pagination only. The HTTP request cancellation token passes through lookup, both repository checks, collection and acceptance. SQL per-command behavior remains unchanged. The enumeration window remains non-atomic; the repository recheck and SQL commit are not a distributed transaction.
+
+### SQL acceptance and runtime
+
+`Grace.Operations.Data.DirectoryVersionSizeObservations` exposes source-specific lookup and acceptance functions. One `ops.DirectoryVersionSizeObservation` table stores the ID, all scope IDs, nonnegative bytes/count and two ISO Instant text columns. No time-index or range-query feature is selected.
+
+Collection holds no SQL lock. A short serializable transaction selects the ID using `UPDLOCK,HOLDLOCK`, inserts only when absent, selects the stored result, commits and then returns success. A concurrent completed reading with the same ID and scope returns the first committed row, including its original quantities and full window. A different scope gets only a conflict. Before commit, disposal rolls back an unfinished insert; after commit, a same-ID retry resolves a discarded acknowledgment through fresh SQL objects.
+
+The existing Operations worker schema initializer creates the table, preserving its default target-database-only and explicit-create modes. AppHost forwards the existing `grace__operations__sql__connectionstring` setting to Server in DebugLocal and DebugAzure. Server startup does not require SQL; the new routes report unavailable when configuration or schema is missing. The worker, raw facts and minute aggregates remain separate and unchanged. Live diagnostics and content writes retain their existing dependencies.
+
+### Operator command
+
+Set `GRACE_SERVER_URI` and `GRACE_TOKEN` to the server base URI and a SystemAdmin token. Choose and retain one ObservationId explicitly. Do not replace it after an uncertain response; retry the same ID to learn whether the original attempt committed. Choose a new ID only to request another reading.
+
+PowerShell:
+
+```powershell
+$observationId = '10560000-0000-0000-0000-000000000001'
+./scripts/capture-directory-version-size.ps1 -ObservationId $observationId -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath './observation.json'
+./scripts/capture-directory-version-size.ps1 -Mode Read -ObservationId $observationId -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath './observation.json'
+```
+
+bash / zsh:
+
+```bash
+observationId='10560000-0000-0000-0000-000000000001'
+pwsh ./scripts/capture-directory-version-size.ps1 -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './observation.json'
+pwsh ./scripts/capture-directory-version-size.ps1 -Mode Read -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './observation.json'
+```
+
+The script validates the returned ID, all scope IDs, nonnegative 64-bit quantities and complete UTC window before publishing the original JSON through a temporary file in the output directory. Window ordering retains all nine fractional digits. Transport, HTTP and response-validation failures leave prior output intact. The output directory must already exist. It sets connection and operation timeouts to zero; Ctrl+C cancels the request. Cancellation can follow a committed row, so retain the same ObservationId for a retry.
+
+### Algorithm evidence and boundaries
+
+The [captured SQL preflight](design/Operations.DirectoryVersionObservation-Preflight.json) records a **proven** result: 25 controls over real isolated SQL Server, including zero, nanosecond round trips, full scope collisions, skipped source on retry, source failure, before-write/precommit rollback, discarded postcommit acknowledgment, fresh connections, gated different windows and pre-cancellation. Seven complete rows were independently queried, captured and parsed. An extracted replay reproduced every source and result hash against baseline `6cb54792c8a7d54ba37fff83b0e192371e4898b6`.
+
+The initial real-SQL controls passed before production edits. Artifact packaging, the complete multi-fragment SQL JSON capture, deterministic replay and captured baseline dependency hashes were completed after the first production draft. The recorded dependency hashes describe that later baseline-backed replay, not the earlier run. Failure callbacks and discarded acknowledgment simulate effect interruption; real SQL proves the transaction and durable rows. No process-kill, network-outage, power-loss, load or corruption claim is made.
+
+PR #1057's current-main refresh updates the reader location and removes capture/operator deadlines while preserving the Data module, DTO, SQL schema and historical JSON byte-for-byte. The captured 25 SQL controls remain applicable to the unchanged lookup/check/collect/recheck/accept sequence. This is reused evidence, not a fresh SQL replay; any scan ceilings in the historical record describe that earlier execution only.
+
+Focused tests cover Types validation/serialization, no-Aspire orchestration/error ordering, actual production Data concurrency, operator validation/publication, AppHost forwarding and hosted HTTP/Cosmos/SQL capture/retry/new-ID/read behavior. The hosted suite also checks authorization, invalid input, absent/colliding IDs, failed source, historical reads after deletion and unchanged usage tables. Local hosted execution is deferred to the isolated GitHub Validate runner because another active task shares the local Aspire container-cleanup prefixes. DebugAzure evidence is configuration-only; no Azure deployment was performed.
+
+Public OpenAPI, generated SDK/CLI, producer events and broker contracts are unchanged: these routes are explicitly classified internal operational surfaces. This slice adds no provider abstraction, journal, pending/rejected/dispatch lifecycle, scheduler, new accounting rule, owner API, compatibility migration or broader content coverage.
 
 ## Later decisions and preservation
 

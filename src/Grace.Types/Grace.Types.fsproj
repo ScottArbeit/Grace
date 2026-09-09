@@ -50,6 +50,7 @@
         <Compile Include="ManifestContributionAccounting.Types.fs" />
         <Compile Include="RepositoryContentCounter.Types.fs" />
         <Compile Include="Usage.Types.fs" />
+        <Compile Include="UsageObservation.Types.fs" />
         <Compile Include="ManifestContributionWorkflow.Types.fs" />
         <Compile Include="Reminder.Types.fs" />
         <Compile Include="Events.Types.fs" />

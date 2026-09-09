@@ -82,7 +82,9 @@ for one, ask to start tracked implementation, or otherwise request tracker setup
 See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
 validation profiles, review expectations, and cleanup steps.
 
-See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, and explicit SystemAdmin diagnostics for DirectoryVersion and retained TextContent declarations.
+See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion and retained TextContent declarations, and durable DirectoryVersion observation capture/read.
+
+DirectoryVersion observation capture reads until source exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its operator command also sets no connection or operation timeout. After an uncertain response, retry the same ObservationId to retrieve any committed result.
 
 ## Running Grace locally
 

@@ -1,0 +1,200 @@
+{
+  "Issue": 1056,
+  "Verdict": "proven",
+  "Base": "6cb54792c8a7d54ba37fff83b0e192371e4898b6",
+  "SupportedWorld": "Explicit current Windows/.NET caller; isolated real SQL Server2022; one immutable DirectoryVersion observation; finite retries and concurrent completed readings",
+  "Representation": "GUID plus UsageFactScope; nonnegative Int64 quantities; canonical ExtendedIso Instant varchar(40) strings retaining up to nine fractional digits",
+  "Sequence": [
+    "Prior SQL lookup; existing scope collision gives no payload; matching prior skips source",
+    "New collection checks repository before and after unchanged bounded source reader",
+    "Short SERIALIZABLE transaction: SELECT WITH(UPDLOCK,HOLDLOCK) by unique ID; compare scope or INSERT; SELECT stored winner; COMMIT; return",
+    "Transaction disposal rolls back precommit insert. Postcommit uncertain response resolves by same-ID lookup on fresh connections"
+  ],
+  "Chronology": "Initial real SQL controls passed before production edits. Complete multi-fragment JSON capture, deterministic packaging, extracted replay and dependency hashes were completed after the first production draft. Final captured replay uses the clean predecessor worktree at the frozen baseline; these binary hashes do not claim to identify the earlier pre-edit run.",
+  "RunCommand": "dotnet run --project 1056-preflight/Experiment.fsproj --configuration Release",
+  "ReplayCommand": "Expand preflight.zip into extracted-replay; supply external connection.txt separately; dotnet run --project extracted-replay/Experiment.fsproj --configuration Release; compare every source-hashes.json entry against extracted files and regenerated results/rows",
+  "Fixture": "grace-ops-1056-sql; SQL2022 image sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89; loopback14340; credentials external and excluded",
+  "BundleSha256": "241F28A4DB1BB380D7E43EB1BEACAE25C61AA3D723931A0BFE925F912AA93EC0",
+  "SourceHashes": [
+    {
+      "File": "captured-rows.json",
+      "Hash": "69514CE543392BC60AFB014ED8DE77803A5B724A45607939C7B16F7955EDAF71"
+    },
+    {
+      "File": "dependencies.json",
+      "Hash": "5F0CF92D29C7DFC240A4DACE504587673DDCDEBF49BE42B9D57820B7975B9BBA"
+    },
+    {
+      "File": "Experiment.fsproj",
+      "Hash": "9CD351E19736D3815153A10D60EA59FA53DDCA168178A38801A5CFE1E3BCEE26"
+    },
+    {
+      "File": "global.json",
+      "Hash": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0"
+    },
+    {
+      "File": "Program.fs",
+      "Hash": "E6DF8B600D07FE49DE9F681C9BC9D7D4E4B3EBBF5E969CE1F73A14BE8A634EA4"
+    },
+    {
+      "File": "results.json",
+      "Hash": "165DEFEEDCCBFA66AF5798621F5839F04F20968F0EFFB4A30312B49DB03892F6"
+    }
+  ],
+  "Dependencies": [
+    {
+      "File": "FSharp.Core.dll",
+      "Hash": "454275E6F64F26C19F989CC0E0C43A2EAF41705FC0F456097FAA1DA445139394"
+    },
+    {
+      "File": "Grace.Types.dll",
+      "Hash": "0DBC1FCEE9C716EDB9F06FF749B3DDBF2664321D92632B91EE4300337FEE6C88"
+    },
+    {
+      "File": "Microsoft.Data.SqlClient.dll",
+      "Hash": "A66F0534A8D29FE93B5C0D6C30F8BA0A8982D402DC090724B66634DCFDB60964"
+    },
+    {
+      "File": "NodaTime.dll",
+      "Hash": "CAFA84A12852E81A8DD848F3B652747BB7B7895D0F6A7FE6BB7FC275929B7363"
+    }
+  ],
+  "Result": {
+    "controls": [
+      "initially absent",
+      "positive exact nine-digit round trip",
+      "independent stored positive row",
+      "existing lookup skips source",
+      "known zero persists",
+      "source failure no row",
+      "before-write injected",
+      "before-write exact residue",
+      "before-write fresh connection retry",
+      "precommit injected",
+      "precommit exact residue",
+      "precommit fresh connection retry",
+      "postcommit injected",
+      "postcommit exact residue",
+      "postcommit fresh connection retry",
+      "scope collision carries no payload",
+      "scope collision carries no payload",
+      "scope collision carries no payload",
+      "gated different-window first winner",
+      "independent concurrent row",
+      "pre-cancellation rejected",
+      "pre-cancellation no row",
+      "pre-cancellation fresh retry",
+      "independent final exact row count",
+      "captured complete seven JSON rows"
+    ],
+    "finish": "2026-09-07T01:02:03.12345679Z",
+    "limitations": "Failure callbacks and discarded acknowledgement; real SQL transactions and fresh connections; no process kill or network outage.",
+    "rows": 7,
+    "start": "2026-09-07T01:02:03.123456789Z",
+    "verdict": "proven"
+  },
+  "CapturedRows": [
+    {
+      "Id": "10560000-0000-0000-0000-000000000001",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 37,
+      "Count": 2,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    },
+    {
+      "Id": "10560000-0000-0000-0000-000000000002",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 0,
+      "Count": 0,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    },
+    {
+      "Id": "10560000-0000-0000-0000-000000000004",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 37,
+      "Count": 2,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    },
+    {
+      "Id": "10560000-0000-0000-0000-000000000005",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 37,
+      "Count": 2,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    },
+    {
+      "Id": "10560000-0000-0000-0000-000000000006",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 37,
+      "Count": 2,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    },
+    {
+      "Id": "10560000-0000-0000-0000-000000000010",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 37,
+      "Count": 2,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    },
+    {
+      "Id": "10560000-0000-0000-0000-000000000011",
+      "OwnerId": "11111111-1111-1111-1111-111111111111",
+      "OrganizationId": "22222222-2222-2222-2222-222222222222",
+      "RepositoryId": "33333333-3333-3333-3333-333333333333",
+      "Bytes": 37,
+      "Count": 2,
+      "Started": "2026-09-07T01:02:03.123456789Z",
+      "Finished": "2026-09-07T01:02:03.12345679Z"
+    }
+  ],
+  "ExecutableSource": "open System\nopen System.IO\nopen System.Data\nopen System.Threading\nopen System.Threading.Tasks\nopen Microsoft.Data.SqlClient\nopen NodaTime\nopen NodaTime.Text\nopen Grace.Types.Usage\n\nlet connectionString = File.ReadAllText(Path.Combine(__SOURCE_DIRECTORY__, \"connection.txt\")).Trim()\nlet scope: UsageFactScope = { OwnerId = Guid.Parse \"11111111-1111-1111-1111-111111111111\"; OrganizationId = Guid.Parse \"22222222-2222-2222-2222-222222222222\"; RepositoryId = Guid.Parse \"33333333-3333-3333-3333-333333333333\" }\nlet start = InstantPattern.ExtendedIso.Parse(\"2026-09-07T01:02:03.123456789Z\").Value\nlet finish = InstantPattern.ExtendedIso.Parse(\"2026-09-07T01:02:03.123456790Z\").Value\nlet row = (scope, 37L, 2L, start, finish)\nlet mutable identity = 0\nlet nextId () =\n    identity <- identity + 1\n    Guid.Parse(sprintf \"10560000-0000-0000-0000-%012d\" identity)\nlet reports = ResizeArray<string>()\nlet check name condition = if not condition then failwith name else reports.Add name\nlet bind (cmd: SqlCommand) name value = cmd.Parameters.AddWithValue(name, value) |> ignore\nlet execute text = task {\n    use c = new SqlConnection(connectionString)\n    do! c.OpenAsync()\n    use cmd = new SqlCommand(text,c)\n    let! _ = cmd.ExecuteNonQueryAsync()\n    return () }\nlet read (c:SqlConnection) (tx:SqlTransaction) locked id (ct:CancellationToken) = task {\n    use cmd = new SqlCommand(\"SELECT OwnerId,OrganizationId,RepositoryId,Bytes,Count,Started,Finished FROM dbo.Observation \" + (if locked then \"WITH (UPDLOCK,HOLDLOCK) \" else \"\") + \"WHERE Id=@id\",c,tx)\n    bind cmd \"@id\" id\n    use! reader = cmd.ExecuteReaderAsync(ct)\n    let! exists = reader.ReadAsync(ct)\n    return if exists then Some ({OwnerId=reader.GetGuid 0; OrganizationId=reader.GetGuid 1; RepositoryId=reader.GetGuid 2},reader.GetInt64 3,reader.GetInt64 4,InstantPattern.ExtendedIso.Parse(reader.GetString 5).Value,InstantPattern.ExtendedIso.Parse(reader.GetString 6).Value) else None\n}\nlet lookup id ct = task {\n    use c = new SqlConnection(connectionString)\n    do! c.OpenAsync(ct)\n    return! read c null false id ct }\nlet accept id ((s,b,n,a,z) as candidate) failure (locked:unit->Task) ct = task {\n    use c = new SqlConnection(connectionString)\n    do! c.OpenAsync(ct)\n    use tx = c.BeginTransaction(IsolationLevel.Serializable)\n    let! existing = read c tx true id ct\n    do! locked()\n    let! result = task {\n        match existing with\n        | Some ((stored,_,_,_,_) as winner) -> return if stored=s then Ok winner else Error \"scope conflict\"\n        | None ->\n            if failure=\"before-write\" then failwith failure\n            use cmd = new SqlCommand(\"INSERT dbo.Observation VALUES(@id,@o,@g,@r,@b,@n,@a,@z)\",c,tx)\n            [(\"@id\",box id);(\"@o\",box s.OwnerId);(\"@g\",box s.OrganizationId);(\"@r\",box s.RepositoryId);(\"@b\",box b);(\"@n\",box n);(\"@a\",box (InstantPattern.ExtendedIso.Format a));(\"@z\",box (InstantPattern.ExtendedIso.Format z))] |> List.iter(fun (k,v)->bind cmd k v)\n            let! _ = cmd.ExecuteNonQueryAsync(ct)\n            if failure=\"precommit\" then failwith failure\n            let! stored = read c tx false id ct\n            return Ok stored.Value\n    }\n    do! tx.CommitAsync(ct)\n    if failure=\"postcommit\" then failwith \"discarded acknowledgement\"\n    return result\n}\nlet capture id s source ct = task {\n    let! prior=lookup id ct\n    match prior with\n    | Some ((stored,_,_,_,_) as value) -> return if stored=s then Ok value else Error \"scope conflict\"\n    | None -> let! candidate=source()\n              return! accept id candidate \"\" (fun()->Task.CompletedTask) ct\n}\nlet noLock ()=Task.CompletedTask\nlet run () = task {\n    do! execute \"IF OBJECT_ID('dbo.Observation') IS NOT NULL DROP TABLE dbo.Observation; CREATE TABLE dbo.Observation(Id uniqueidentifier PRIMARY KEY,OwnerId uniqueidentifier NOT NULL,OrganizationId uniqueidentifier NOT NULL,RepositoryId uniqueidentifier NOT NULL,Bytes bigint NOT NULL CHECK(Bytes>=0),Count bigint NOT NULL CHECK(Count>=0),Started varchar(40) NOT NULL,Finished varchar(40) NOT NULL)\"\n    let ct=CancellationToken.None\n    let id=nextId()\n    let! absent=lookup id ct\n    check \"initially absent\" absent.IsNone\n    let! positive=accept id row \"\" noLock ct\n    check \"positive exact nine-digit round trip\" (positive=Ok row)\n    let! independent=lookup id ct\n    check \"independent stored positive row\" (independent=Some row)\n    let! retry=capture id scope (fun()->failwith \"source must not run\") ct\n    check \"existing lookup skips source\" (retry=Ok row)\n    let zeroId=nextId()\n    let zero=(scope,0L,0L,start,finish)\n    let! zeroResult=accept zeroId zero \"\" noLock ct\n    check \"known zero persists\" (zeroResult=Ok zero)\n    let failed=nextId()\n    try let! _=capture failed scope (fun()->Task.FromException<_>(Exception \"source failed\")) ct\n        failwith \"unexpected success\"\n    with _ -> ()\n    let! residue=lookup failed ct\n    check \"source failure no row\" residue.IsNone\n    for failure in [\"before-write\";\"precommit\";\"postcommit\"] do\n        let failedId=nextId()\n        let mutable threw=false\n        try let! _=accept failedId row failure noLock ct\n            ()\n        with _ -> threw<-true\n        check (failure+\" injected\") threw\n        let! stored=lookup failedId ct\n        check (failure+\" exact residue\") (stored=(if failure=\"postcommit\" then Some row else None))\n        let! fresh=capture failedId scope (fun()->Task.FromResult row) ct\n        check (failure+\" fresh connection retry\") (fresh=Ok row)\n    for changed in [{scope with OwnerId=nextId()};{scope with OrganizationId=nextId()};{scope with RepositoryId=nextId()}] do\n        let! conflict=accept id (changed,999L,8L,finish,finish) \"\" noLock ct\n        check \"scope collision carries no payload\" (conflict=Error \"scope conflict\")\n    let concurrentId=nextId()\n    let acquired=TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)\n    let release=TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)\n    let secondStarted=TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)\n    let first=accept concurrentId row \"\" (fun()->acquired.SetResult();release.Task) ct\n    do! acquired.Task\n    let second=task { secondStarted.SetResult(); return! accept concurrentId (scope,88L,9L,finish,finish) \"\" noLock ct }\n    do! secondStarted.Task\n    release.SetResult()\n    let! firstResult=first\n    let! secondResult=second\n    check \"gated different-window first winner\" (firstResult=Ok row && secondResult=Ok row)\n    let! final=lookup concurrentId ct\n    check \"independent concurrent row\" (final=Some row)\n    use cancelled=new CancellationTokenSource()\n    cancelled.Cancel()\n    let cancelledId=nextId()\n    let mutable rejected=false\n    try let! _=capture cancelledId scope (fun()->failwith \"cancelled source\") cancelled.Token\n        ()\n    with :? OperationCanceledException -> rejected<-true\n    check \"pre-cancellation rejected\" rejected\n    let! beforeRetry=lookup cancelledId ct\n    check \"pre-cancellation no row\" beforeRetry.IsNone\n    let! afterRetry=capture cancelledId scope (fun()->Task.FromResult row) ct\n    check \"pre-cancellation fresh retry\" (afterRetry=Ok row)\n    use audit = new SqlConnection(connectionString)\n    do! audit.OpenAsync()\n    use query = new SqlCommand(\"SELECT COUNT(*) FROM dbo.Observation\",audit)\n    let! count = query.ExecuteScalarAsync()\n    check \"independent final exact row count\" (unbox<int> count = 7)\n    use captureQuery = new SqlCommand(\"SELECT * FROM dbo.Observation ORDER BY Id FOR JSON PATH\",audit)\n    use! fragments = captureQuery.ExecuteReaderAsync()\n    let rows = Text.StringBuilder()\n    while fragments.Read() do rows.Append(fragments.GetString 0) |> ignore\n    use parsedRows = Text.Json.JsonDocument.Parse(rows.ToString())\n    check \"captured complete seven JSON rows\" (parsedRows.RootElement.GetArrayLength()=7)\n    File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__,\"captured-rows.json\"),string rows)\n    File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__,\"results.json\"), System.Text.Json.JsonSerializer.Serialize({| verdict=\"proven\"; controls=reports; start=InstantPattern.ExtendedIso.Format start; finish=InstantPattern.ExtendedIso.Format finish; rows=7; limitations=\"Failure callbacks and discarded acknowledgement; real SQL transactions and fresh connections; no process kill or network outage.\" |},System.Text.Json.JsonSerializerOptions(WriteIndented=true)))\n    printfn \"PROVEN: %d controls; exact UTC nine-digit text; first committed SQL row wins\" reports.Count\n}\nrun().GetAwaiter().GetResult()\n\r\n\r\n\r\n\r\n\r\n",
+  "Project": "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup>\n  <ItemGroup><Compile Include=\"Program.fs\" /></ItemGroup>\n  <ItemGroup><ProjectReference Include=\"C:/Source/Grace-worktrees/issue-1054-usage-observation-boundary/src/Grace.Operations.Data/Grace.Operations.Data.fsproj\" /></ItemGroup>\n  <ItemGroup><PackageReference Update=\"FSharp.Core\" Version=\"10.1.400\" /></ItemGroup>\n</Project>\n",
+  "Limitations": [
+    "Simulated failure callbacks and discarded acknowledgment; actual SQL transactions and fresh connections",
+    "No process kill, power loss, network partition, load or arbitrary corruption claim",
+    "No distributed transaction with repository/Cosmos; bounded enumeration is non-atomic",
+    "Hosted provider tests are compiled locally; isolated GitHub Validate runs them because shared local Aspire cleanup could affect a concurrent task",
+    "DebugAzure forwarding checked structurally; no Azure deployment"
+  ],
+  "ProductionDataControls": [
+    "production concurrent callers return same winner",
+    "winner is one full completed candidate",
+    "fresh production lookup preserves winner",
+    "changed reading cannot replace winner",
+    "production zero preserves precise window",
+    "production missing read",
+    "scope dimension 0 returns no acceptance payload",
+    "scope dimension 0 returns no lookup payload",
+    "scope dimension 1 returns no acceptance payload",
+    "scope dimension 1 returns no lookup payload",
+    "scope dimension 2 returns no acceptance payload",
+    "scope dimension 2 returns no lookup payload",
+    "production cancellation propagated",
+    "independent SQL exact winner and zero rows",
+    "production observations do not write usage facts or aggregates"
+  ],
+  "ExecutableHashes": {
+    "ExtractedReplay": "95EFDC82C9E722172EA9E55D5E54AF92DAF207C12D923A8ACBFF52A87013E9C5",
+    "Captured": "4DDCD71D28DD3870E0618BB50A906FCF5CC92E4E964ECF4807AC637DD1CCCD10",
+    "Meaning": "Compiled executables have different embedded source-directory locations. Extracted source, baseline binary dependencies and regenerated result/row hashes all match their captured values."
+  },
+  "FixtureDisposition": "Stopped and retained after all dedicated real SQL controls; no unowned container stopped or removed."
+}
