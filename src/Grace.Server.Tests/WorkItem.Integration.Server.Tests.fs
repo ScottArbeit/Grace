@@ -76,13 +76,6 @@ module private WorkItemIntegrationHelpers =
                 return ()
             }
 
-        /// Resets the accepted socket after upload to inject an unacknowledged downstream failure before append.
-        member _.AbortConnections() =
-            clients
-            |> Seq.iter (fun client ->
-                client.Client.LingerState <- LingerOption(true, 0)
-                client.Close())
-
         /// Reads the route result observed by each request after the test gate releases it.
         member _.ReadOutcomesAsync() =
             task {
@@ -427,7 +420,7 @@ module private WorkItemIntegrationHelpers =
     let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
         setWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier text (generateCorrelationId ())
 
-    /// Sets one description while selecting the private ephemeral hosted-race rendezvous after immutable storage writes.
+    /// Sets one description with independent caller cancellation and the private post-upload rendezvous.
     let setWorkItemDescriptionWithGateResponseAsync
         (client: HttpClient)
         (repositoryId: string)
@@ -435,6 +428,7 @@ module private WorkItemIntegrationHelpers =
         (text: string)
         (correlationId: string)
         (gatePort: int)
+        (cancellationToken: CancellationToken)
         =
         task {
             let parameters = Parameters.WorkItem.SetWorkItemDescriptionParameters()
@@ -448,7 +442,7 @@ module private WorkItemIntegrationHelpers =
             request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
             request.Headers.Add("X-Grace-Test-Description-Clear-Gate-Port", string gatePort)
             request.Content <- createJsonContent parameters
-            return! client.SendAsync(request)
+            return! client.SendAsync(request, cancellationToken)
         }
 
     /// Clears one work-item description through the public route with caller-selected correlation data for replay proof.
@@ -1097,9 +1091,9 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(afterEvents.Length, Is.EqualTo(beforeEvents.Length))
         }
 
-    /// Retains the uploaded body and evidence after a reset interrupts the existing post-upload gate before append.
+    /// Retains uploaded evidence when the caller cancels before receiving a response, then converges to one accepted append on retry.
     [<Test>]
-    member _.DescriptionPostUploadFailureRetainsEvidenceForRetry() =
+    member _.DescriptionCallerCancellationRetainsEvidenceForRetry() =
         task {
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-text-evidence-uncertain"
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "uncertain text evidence"
@@ -1114,23 +1108,54 @@ type WorkItemNumberAndLinksIntegrationTests() =
             let! beforeEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
             let gatePort, listener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
             use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(listener, 1)
-            let pending = WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync Client repositoryId workItemId text correlation gatePort
+            use callerCancellation = new CancellationTokenSource()
+
+            let pending =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    text
+                    correlation
+                    gatePort
+                    callerCancellation.Token
+
             let! entered = gate.WaitForFreshOperationsAsync()
             Assert.That(entered, Is.EqualTo(box [| "fresh-description-operation" |]))
             let! beforeETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
-            gate.AbortConnections()
-            use! failed = pending
-            let! failedBody = failed.Content.ReadAsStringAsync()
-            Assert.That(failed.StatusCode, Is.Not.EqualTo(HttpStatusCode.OK), failedBody)
-            let! afterEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
-            Assert.That(afterEvents.Length, Is.EqualTo(beforeEvents.Length))
+            callerCancellation.Cancel()
+
+            let! callerObservedCancellation =
+                task {
+                    try
+                        use! response = pending
+                        return false
+                    with
+                    | :? OperationCanceledException -> return true
+                }
+
+            Assert.That(callerObservedCancellation, Is.True, "The caller must lose the response after the upload is inspected and before the gate releases.")
+            let! blockedEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            Assert.That(blockedEvents.Length, Is.EqualTo(beforeEvents.Length), "The independent gate still blocks append at this point.")
             let! afterETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
             Assert.That(afterETag, Is.EqualTo(beforeETag))
+            do! gate.ReleaseAsync()
             use! retry = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlation
             let! retryBody = retry.Content.ReadAsStringAsync()
             Assert.That(retry.StatusCode, Is.EqualTo(HttpStatusCode.OK), retryBody)
             let! retryETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
             Assert.That(retryETag, Is.EqualTo(beforeETag))
+            let! acceptedEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            Assert.That(acceptedEvents.Length, Is.EqualTo(beforeEvents.Length + 1))
+
+            let acceptedDescriptions =
+                acceptedEvents
+                |> Array.choose (fun event ->
+                    match event.Event with
+                    | DescriptionSet description when description.TextContent = Some reference -> Some description
+                    | _ -> None)
+
+            Assert.That(acceptedDescriptions, Has.Length.EqualTo(1))
         }
 
     /// Verifies that immutable description writes hydrate the final accepted append for GUID and numeric reads.
@@ -1591,7 +1616,14 @@ type WorkItemNumberAndLinksIntegrationTests() =
             use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(gateListener, 1)
 
             let creatorRequest =
-                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync Client repositoryId workItemId text correlationId gatePort
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    text
+                    correlationId
+                    gatePort
+                    CancellationToken.None
 
             let! freshOperations = gate.WaitForFreshOperationsAsync()
 
