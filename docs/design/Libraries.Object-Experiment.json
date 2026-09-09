@@ -1,0 +1,98 @@
+{
+  "Cases": [
+    {
+      "Name": "restart-before-stage",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-after-partial-stage",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-after-flush",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-before-publication",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-after-publication",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-before-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-inside-transaction",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "restart-after-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "reuse-without-rewrite-and-two-references",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "working-file-rename-keeps-frozen-locator",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "missing-reference-never-recaptures-changed-source",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "corrupt-reference-never-recaptures-changed-source",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "partial-final-object-is-never-overwritten",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "source-writer-is-excluded-during-snapshot",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "source-change-after-capture-does-not-replace-selected-object",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "empty-source-does-not-commit",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "cancellation-before-commit-retains-only-complete-object",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    },
+    {
+      "Name": "large-input-stays-out-of-json-and-stream-read-is-stable",
+      "Passed": true,
+      "Detail": "Assertions passed."
+    }
+  ],
+  "Failed": 0,
+  "Passed": 18,
+  "Root": "C:\\Source\\Grace-artifacts\\issue-1073-redesign\\preflight\\runs\\20260909T005713492",
+  "Runtime": "10.0.12"
+}

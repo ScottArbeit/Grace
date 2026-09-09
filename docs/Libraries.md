@@ -128,7 +128,7 @@ Enable A, create nonempty files and nested directories in its Library, and run s
 
 Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation or catalog adoption.
 
-Saved bytes are captured before upload. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling.
+Saved content is captured into Grace's existing object directory before its pending operation is recorded. Upload uses that verified snapshot even if the working file changes. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling. Missing or corrupt saved objects block synchronization and retain the pending request; Grace does not substitute newer working-file bytes.
 
 Zero-byte local files are excluded before pending input or upload preparation. They remain present: truncating a tracked file to zero does not submit an update or deletion, and a later nonempty save retains its previous materialized edit base. Incoming changes cannot overwrite or delete an excluded empty file. Such a change leaves synchronization blocked and its applied cursor unchanged until the local obstruction is resolved. A previously captured nonempty source and frozen request remain available after a later zero-length save; installing its accepted result cannot overwrite that empty file.
 
@@ -171,6 +171,41 @@ export grace__libraries__token_secret="$(openssl rand -base64 32)"
 
 The Aspire local topology generates this value for the development run and provisions the six Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
 
+## Rename a synchronized file
+
+Use `grace library rename <path> <new-name>` in the configured Windows working copy after onboarding and synchronization have completed. The source must be a clean materialized nonempty file and the destination must be absent in the same parent. Grace derives the item and namespace version and retains one generated operation ID; this command takes no internal IDs or version options.
+
+PowerShell:
+
+```powershell
+grace library rename Library/design/notes.txt overview.txt
+grace library rename Library/design/notes.txt overview.txt --output Json
+```
+
+bash / zsh:
+
+```bash
+grace library rename Library/design/notes.txt overview.txt
+grace library rename Library/design/notes.txt overview.txt --output Json
+```
+
+The shell examples describe the same Windows-only client. Directory rename, cross-parent moves, case-only or normalized-equivalent names, dirty or empty sources, reparse paths, and incompatible pending work are excluded.
+
+Grace saves the selected intent and exact namespace-only request before submission. It changes filenames only after server acceptance and ordered application of preceding changes. Compatible remote content edits keep their order and content history. Restart with the same source and name resumes the original request; another name cannot replace pending work.
+
+Human output and `cli-json-v1` data distinguish four outcomes. JSON exposes `OperationId`, `SourcePath`, `TargetPath`, `Outcome`, `ReasonCode` and `Diagnostic`. `ReasonCode` contains a stable server rejection code; `Diagnostic` contains an explanation of unresolved acceptance or incomplete local application. Neither field is set for a completed result.
+
+| Outcome | Meaning and next action |
+| --- | --- |
+| `completed` | The accepted rename and local completion committed. The item keeps its identity at the new name. Exit code is zero. |
+| `rejected` | The server definitively rejected the request. The command retained its receipt/reason and changed no local filename, item or applied cursor. Later `grace library sync run` can apply unrelated or competing accepted changes. |
+| `ambiguous` | Acceptance is unresolved, including cancellation or a lost response. Rerun the same command to resume the retained operation. |
+| `acceptedButObstructed` | The server accepted, but local application is incomplete. Preserve and resolve the reported obstruction, then rerun the same command. |
+
+All incomplete or rejected outcomes return a nonzero exit code. A destination created before rename preparation remains an obstruction; Grace does not capture it as a new file or interpret it as an edit to the renamed item. Preserve those bytes outside the destination, then retry the same command. Saved edits at either path during prepared application retain their existing materialized content revision. Empty files and obstructions remain protected. Rejected saved-content operations retain their bytes and pending request; only a definitively rejected unprepared rename retires without an application effect.
+
 ## Deferred capabilities
+
+Explicit same-parent file rename follows the [accepted design and experiment](Libraries.Design.md#explicit-file-rename-accepted-next-slice). Automatic recognition of a local Explorer rename remains deferred.
 
 Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.

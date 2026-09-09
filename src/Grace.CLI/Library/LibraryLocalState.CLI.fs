@@ -4,6 +4,7 @@ open System
 open Grace.Shared.Utilities
 open Grace.Types.Library
 open Microsoft.Data.Sqlite
+open Grace.CLI.LibraryOperation
 
 /// Stores Library participation, materialized ancestry, and pending operations in the existing local database.
 module internal LibraryLocalState =
@@ -26,33 +27,18 @@ module internal LibraryLocalState =
             Baseline: BaselineSelection option
         }
 
-    /// Retains immutable saved input and the exact request/result needed to resume one Library operation.
-    [<CLIMutable>]
-    type PendingOperation =
-        {
-            OperationId: Guid
-            Direction: string
-            SourcePath: string
-            SourceBytes: byte array option
-            MaterializedBase: LibraryItemDto option
-            OriginatingCreateId: Guid option
-            Parent: LibraryParentDto
-            Name: string
-            ItemKind: string
-            RequestJson: string option
-            Uploaded: bool
-            Accepted: LibraryChangeDto option
-            BaselineItem: LibraryItemDto option
-            Prepared: bool
-            ExpectedCatalogVersion: Guid
-            ExpectedCursor: string
-            ExpectedAncestry: LibraryItemDto array
-            ExpectedTarget: string option
-            TargetPath: string
-            Terminal: bool
-            EchoPending: bool
-            CreatedAtTicks: int64
-        }
+    /// Stores the typed operation model directly in the existing operation JSON column.
+    type PendingOperation = LibraryOperation.Operation
+
+    /// Derives every indexed operation column from the same typed JSON source for guarded writes.
+    let private operationColumns (operation: PendingOperation) =
+        [
+            "$direction", box operation.Direction
+            "$terminal", box (if operation.Terminal then 1 else 0)
+            "$echo", box (if operation.EchoPending then 1 else 0)
+            "$created", box operation.CreatedAtTicks
+            "$json", box (serialize operation)
+        ]
 
     /// Runs parameterized writes on a Library-owned connection or its current completion transaction.
     let private execute (connection: SqliteConnection) (transaction: SqliteTransaction option) sql parameters =
@@ -188,7 +174,8 @@ module internal LibraryLocalState =
         transaction
         |> Option.iter (fun value -> command.Transaction <- value)
 
-        command.CommandText <- "SELECT operation_json FROM library_operations WHERE repository_id=$repository ORDER BY created_at_ticks,operation_id;"
+        command.CommandText <-
+            "SELECT operation_json,direction,terminal,echo_pending,created_at_ticks FROM library_operations WHERE repository_id=$repository ORDER BY created_at_ticks,operation_id;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
         |> ignore
@@ -197,7 +184,16 @@ module internal LibraryLocalState =
         let operations = ResizeArray<PendingOperation>()
 
         while reader.Read() do
-            operations.Add(deserialize<PendingOperation> (reader.GetString(0)))
+            let operation = deserialize<PendingOperation> (reader.GetString(0))
+
+            if reader.GetString(1) <> operation.Direction
+               || (reader.GetInt64(2) <> 0L) <> operation.Terminal
+               || (reader.GetInt64(3) <> 0L)
+                  <> operation.EchoPending
+               || reader.GetInt64(4) <> operation.CreatedAtTicks then
+                invalidOp "Library operation routing columns disagree with its typed state."
+
+            operations.Add operation
 
         operations.ToArray()
 
@@ -286,45 +282,28 @@ module internal LibraryLocalState =
 
         page.Items
         |> Array.iter (fun item ->
-            let ns =
-                item.Namespace
-                |> Option.orElseWith (fun () ->
-                    item.Tombstone
-                    |> Option.map (fun value -> value.LastNamespace))
-
             let op =
                 {
                     OperationId = Guid.NewGuid()
-                    Direction = "baseline"
-                    SourcePath = ""
-                    SourceBytes = None
-                    MaterializedBase = None
-                    OriginatingCreateId = None
-                    Parent = ns.Value.Parent
-                    Name = ns.Value.Name
-                    ItemKind = item.ItemKind
-                    RequestJson = None
-                    Uploaded = false
-                    Accepted = None
-                    BaselineItem = Some item
-                    Prepared = false
-                    ExpectedCatalogVersion = selected.Catalog.Version
-                    ExpectedCursor = ""
-                    ExpectedAncestry = [||]
-                    ExpectedTarget = None
-                    TargetPath = ""
-                    Terminal = false
-                    EchoPending = false
+                    CatalogVersion = selected.Catalog.Version
+                    Work =
+                        if item.Tombstone.IsSome then
+                            OperationWork.BaselineTombstone(item, TombstoneInstallation.Selected)
+                        else
+                            OperationWork.BaselineLive(item, BaselineInstallation.Selected)
                     CreatedAtTicks = DateTime.UtcNow.Ticks
                 }
 
             execute
                 connection
                 (Some transaction)
-                "INSERT INTO library_operations(repository_id,operation_id,direction,terminal,echo_pending,created_at_ticks,operation_json) VALUES($repository,$operation,'baseline',0,0,$created,$json);"
+                "INSERT INTO library_operations(repository_id,operation_id,direction,terminal,echo_pending,created_at_ticks,operation_json) VALUES($repository,$operation,$direction,$terminal,$echo,$created,$json);"
                 [
                     "$repository", box (selected.RepositoryId.ToString("D"))
                     "$operation", box (op.OperationId.ToString("D"))
+                    "$direction", box op.Direction
+                    "$terminal", box (if op.Terminal then 1 else 0)
+                    "$echo", box (if op.EchoPending then 1 else 0)
                     "$created", box op.CreatedAtTicks
                     "$json", box (serialize op)
                 ]
@@ -355,7 +334,7 @@ module internal LibraryLocalState =
            || baseline.Applied
            || expected.AppliedCursor <> ""
            || operation.Direction <> "baseline"
-           || not operation.Prepared
+           || (not operation.Prepared && item.Tombstone.IsNone)
            || operation.Terminal
            || operation.Accepted.IsSome
            || operation.ExpectedCatalogVersion
@@ -383,20 +362,19 @@ module internal LibraryLocalState =
             |> ignore
 
         afterItem connection transaction
-        let terminal = { operation with Terminal = true }
+        let terminal = LibraryOperation.complete operation
 
         let changed =
             execute
                 connection
                 (Some transaction)
-                "UPDATE library_operations SET terminal=1,echo_pending=$echo,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
-                [
-                    "$repository", box (expected.RepositoryId.ToString("D"))
-                    "$operation", box (operation.OperationId.ToString("D"))
-                    "$echo", box (if terminal.EchoPending then 1 else 0)
-                    "$json", box (serialize terminal)
-                    "$expected", box (serialize operation)
-                ]
+                "UPDATE library_operations SET direction=$direction,terminal=$terminal,echo_pending=$echo,created_at_ticks=$created,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
+                (operationColumns terminal
+                 @ [
+                     "$repository", box (expected.RepositoryId.ToString("D"))
+                     "$operation", box (operation.OperationId.ToString("D"))
+                     "$expected", box (serialize operation)
+                 ])
 
         if changed <> 1 then
             invalidOp "Baseline exact operation changed before item completion."
@@ -487,11 +465,13 @@ module internal LibraryLocalState =
         execute
             connection
             None
-            "INSERT INTO library_operations(repository_id,operation_id,direction,terminal,echo_pending,created_at_ticks,operation_json) VALUES($repository,$operation,$direction,0,0,$created,$json);"
+            "INSERT INTO library_operations(repository_id,operation_id,direction,terminal,echo_pending,created_at_ticks,operation_json) VALUES($repository,$operation,$direction,$terminal,$echo,$created,$json);"
             [
                 "$repository", box (repositoryId.ToString("D"))
                 "$operation", box (operation.OperationId.ToString("D"))
                 "$direction", box operation.Direction
+                "$terminal", box (if operation.Terminal then 1 else 0)
+                "$echo", box (if operation.EchoPending then 1 else 0)
                 "$created", box operation.CreatedAtTicks
                 "$json", box (serialize operation)
             ]
@@ -500,22 +480,24 @@ module internal LibraryLocalState =
     /// Updates a pending operation only if its exact previously read input remains current.
     let updateOperation dbPath (repositoryId: Guid) (expected: PendingOperation) (updated: PendingOperation) =
         if expected.OperationId <> updated.OperationId
-           || expected.Direction <> updated.Direction
-           || expected.SourcePath <> updated.SourcePath
-           || expected.Parent <> updated.Parent
-           || expected.Name <> updated.Name
-           || expected.ItemKind <> updated.ItemKind
+           || not (LibraryOperation.sameIntent expected updated)
+           || (expected.Receipt.IsSome
+               && expected.Receipt <> updated.Receipt)
+           || expected.CatalogVersion <> updated.CatalogVersion
            || expected.CreatedAtTicks <> updated.CreatedAtTicks
            || updated.Terminal
            || (expected.Accepted.IsSome
                && expected.Accepted <> updated.Accepted)
            || (expected.Uploaded && not updated.Uploaded)
-           || expected.SourceBytes <> updated.SourceBytes
-           || expected.BaselineItem <> updated.BaselineItem
-           || expected.MaterializedBase
-              <> updated.MaterializedBase
-           || expected.OriginatingCreateId
-              <> updated.OriginatingCreateId
+           || (expected.Prepared && not updated.Prepared)
+           || (LibraryOperation.checkpoint expected
+               |> Option.exists (fun before ->
+                   LibraryOperation.checkpoint updated
+                   |> Option.forall (fun after ->
+                       before.ExpectedCursor <> after.ExpectedCursor
+                       || before.ExpectedAncestry <> after.ExpectedAncestry
+                       || before.SourcePath <> after.SourcePath
+                       || before.TargetPath <> after.TargetPath)))
            || (expected.RequestJson.IsSome
                && expected.RequestJson <> updated.RequestJson) then
             invalidOp "Library saved input or submitted request cannot be changed."
@@ -526,17 +508,61 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "UPDATE library_operations SET operation_json=$json,echo_pending=$echo WHERE repository_id=$repository AND operation_id=$operation AND operation_json=$expected AND terminal=0;"
+                "UPDATE library_operations SET operation_json=$json,direction=$direction,terminal=$terminal,echo_pending=$echo,created_at_ticks=$created WHERE repository_id=$repository AND operation_id=$operation AND operation_json=$expected AND terminal=0;"
                 [
                     "$repository", box (repositoryId.ToString("D"))
                     "$operation", box (expected.OperationId.ToString("D"))
                     "$expected", box (serialize expected)
                     "$json", box (serialize updated)
+                    "$direction", box updated.Direction
+                    "$terminal", box (if updated.Terminal then 1 else 0)
+                    "$created", box updated.CreatedAtTicks
                     "$echo", box (if updated.EchoPending then 1 else 0)
                 ]
 
         if changed <> 1 then
             invalidOp "Library pending operation changed before persistence."
+
+    /// Retires only an unprepared namespace intent with an exact definitive rejection, preserving its receipt and all materialized state.
+    let retireRejectedRename dbPath (repositoryId: Guid) (operation: PendingOperation) =
+        if
+            not operation.Rename
+            || operation.Direction <> "local"
+            || operation.Prepared
+            || operation.Terminal
+            || operation.SourceObject.IsSome
+            || operation.Uploaded
+            || operation.Accepted.IsSome
+            || operation.EchoPending
+            || operation.RequestJson.IsNone
+            || not
+                (
+                    operation.Receipt
+                    |> Option.exists (fun receipt ->
+                        receipt.OperationId = operation.OperationId
+                        && receipt.Outcome = "rejected"
+                        && receipt.Change.IsNone)
+                )
+        then
+            invalidOp "Only a definitively rejected unprepared Library rename can retire."
+
+        use connection = openConnection dbPath
+        let terminal = LibraryOperation.retireRename operation
+
+        let changed =
+            execute
+                connection
+                None
+                "UPDATE library_operations SET direction=$direction,terminal=$terminal,echo_pending=$echo,created_at_ticks=$created,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
+                (operationColumns terminal
+                 @ [
+                     "$repository", box (repositoryId.ToString("D"))
+                     "$operation", box (operation.OperationId.ToString("D"))
+                     "$expected", box (serialize operation)
+                 ])
+
+        if changed <> 1 then
+            invalidOp "Library rejected rename changed before retirement."
 
     /// Retains a completed page's continuation, including an empty visibility gap, without advancing applied progress.
     let recordPage dbPath (expected: RepositoryState) nextPageToken =
@@ -639,53 +665,62 @@ module internal LibraryLocalState =
 
         priorEchoes
         |> Array.iter (fun prior ->
-            let retired = { prior with EchoPending = false }
+            let retired = LibraryOperation.setEcho false prior
 
             let changed =
                 execute
                     connection
                     (Some transaction)
-                    "UPDATE library_operations SET echo_pending=0,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=1 AND echo_pending=1 AND operation_json=$expected;"
-                    [
-                        "$repository", box (expected.RepositoryId.ToString("D"))
-                        "$operation", box (prior.OperationId.ToString("D"))
-                        "$json", box (serialize retired)
-                        "$expected", box (serialize prior)
-                    ]
+                    "UPDATE library_operations SET direction=$direction,terminal=$terminal,echo_pending=$echo,created_at_ticks=$created,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=1 AND echo_pending=1 AND operation_json=$expected;"
+                    (operationColumns retired
+                     @ [
+                         "$repository", box (expected.RepositoryId.ToString("D"))
+                         "$operation", box (prior.OperationId.ToString("D"))
+                         "$expected", box (serialize prior)
+                     ])
 
             if changed <> 1 then
                 invalidOp "Library publication echo changed before completion.")
 
         // A completion that needs no rewrite can inherit an earlier matching publication's unobserved echo.
-        let terminal = { operation with Terminal = true; EchoPending = operation.EchoPending || observablePriorEcho }
+        let terminal =
+            operation
+            |> LibraryOperation.setEcho (operation.EchoPending || observablePriorEcho)
+            |> LibraryOperation.complete
 
         let completed =
             execute
                 connection
                 (Some transaction)
-                "UPDATE library_operations SET terminal=1,echo_pending=$echo,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
-                [
-                    "$repository", box (expected.RepositoryId.ToString("D"))
-                    "$operation", box (operation.OperationId.ToString("D"))
-                    "$echo", box (if terminal.EchoPending then 1 else 0)
-                    "$json", box (serialize terminal)
-                    "$expected", box (serialize operation)
-                ]
+                "UPDATE library_operations SET direction=$direction,terminal=$terminal,echo_pending=$echo,created_at_ticks=$created,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=0 AND operation_json=$expected;"
+                (operationColumns terminal
+                 @ [
+                     "$repository", box (expected.RepositoryId.ToString("D"))
+                     "$operation", box (operation.OperationId.ToString("D"))
+                     "$expected", box (serialize operation)
+                 ])
 
         if completed <> 1 then
             invalidOp "Library exact pending operation changed before completion."
 
         // Once any item commits, restart uses its applied cursor rather than replaying the previous page.
         // A fully applied page subsequently checkpoints its next token, including an empty HasMore page.
-        execute
-            connection
-            (Some transaction)
-            "UPDATE library_repository_state SET applied_cursor=$cursor,next_page_token=NULL,lifecycle_state='catchingUp' WHERE repository_id=$repository;"
-            [
-                "$cursor", box change.Item.LastChangeCursor
-                "$repository", box (expected.RepositoryId.ToString("D"))
-            ]
-        |> ignore
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected then
+            invalidOp "Library repository changed during completion."
+
+        let advanced =
+            execute
+                connection
+                (Some transaction)
+                "UPDATE library_repository_state SET applied_cursor=$cursor,next_page_token=NULL,lifecycle_state='catchingUp' WHERE repository_id=$repository;"
+                [
+                    "$cursor", box change.Item.LastChangeCursor
+                    "$repository", box (expected.RepositoryId.ToString("D"))
+                ]
+
+        if advanced <> 1 then
+            invalidOp "Library repository disappeared during completion."
 
         transaction.Commit()
 
@@ -707,18 +742,18 @@ module internal LibraryLocalState =
         | [| operation |] ->
             use connection = openConnection dbPath
 
-            let updated = { operation with EchoPending = false }
+            let updated = LibraryOperation.setEcho false operation
 
             execute
                 connection
                 None
-                "UPDATE library_operations SET echo_pending=0,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=1 AND echo_pending=1 AND operation_json=$expected;"
-                [
-                    "$repository", box (repositoryId.ToString("D"))
-                    "$operation", box (operation.OperationId.ToString("D"))
-                    "$json", box (serialize updated)
-                    "$expected", box (serialize operation)
-                ] = 1
+                "UPDATE library_operations SET direction=$direction,terminal=$terminal,echo_pending=$echo,created_at_ticks=$created,operation_json=$json WHERE repository_id=$repository AND operation_id=$operation AND terminal=1 AND echo_pending=1 AND operation_json=$expected;"
+                (operationColumns updated
+                 @ [
+                     "$repository", box (repositoryId.ToString("D"))
+                     "$operation", box (operation.OperationId.ToString("D"))
+                     "$expected", box (serialize operation)
+                 ]) = 1
         | _ -> false
 
     /// Bounds classified terminal history while retaining the applied tip, unclassified echoes and every pending originating-create dependency.

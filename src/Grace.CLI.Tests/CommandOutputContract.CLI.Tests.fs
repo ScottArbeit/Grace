@@ -238,16 +238,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 214
+        |> should equal 215
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 205
+        |> should equal 206
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 193
+        |> should equal 194
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
@@ -298,7 +298,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 193
+        jsonReady |> should equal 194
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
@@ -575,7 +575,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 193
+        commonEntries.Length |> should equal 194
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -593,7 +593,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 193
+        commonEntries.Length |> should equal 194
 
         let parserInvalidEntries =
             commonEntries
@@ -1055,7 +1055,7 @@ module CommandOutputContractRegistryTests =
                 | ConditionalGraceResultEnvelope _ -> true
                 | _ -> false)
 
-        eligibleEntries.Length |> should equal 194
+        eligibleEntries.Length |> should equal 195
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status
@@ -1078,6 +1078,55 @@ module CommandOutputContractRegistryTests =
 
             examplesDocument.Examples[0].Name
             |> should equal "success-envelope-shape"
+
+    /// Keeps rename introspection tied to the retained operation result emitted by the actual command.
+    [<Test>]
+    let ``library rename schema describes the retained operation outcome`` () =
+        let entry =
+            CommandOutputContract.commandIdentity [ "library" ] "rename"
+            |> CommandOutputContract.tryFind
+            |> Option.get
+
+        let document = CommandOutputContract.introspectionDocument Schema entry
+        let schema = document.Schema |> Option.get
+        use success = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+        let result =
+            success
+                .RootElement
+                .GetProperty("properties")
+                .GetProperty("ReturnValue")
+
+        result.GetProperty("title").GetString()
+        |> should equal "RenameOutput"
+
+        let properties = result.GetProperty("properties")
+
+        properties.EnumerateObject()
+        |> Seq.map (fun property -> property.Name)
+        |> Seq.toList
+        |> should
+            equal
+            [
+                "OperationId"
+                "SourcePath"
+                "TargetPath"
+                "Outcome"
+                "ReasonCode"
+                "Diagnostic"
+            ]
+
+        properties
+            .GetProperty("OperationId")
+            .GetProperty("format")
+            .GetString()
+        |> should equal "uuid"
+
+        properties
+            .GetProperty("Outcome")
+            .GetProperty("type")
+            .GetString()
+        |> should equal "string"
 
     /// Verifies that refs keeps its current tuple and nested DTO serialization shape.
     [<Test>]

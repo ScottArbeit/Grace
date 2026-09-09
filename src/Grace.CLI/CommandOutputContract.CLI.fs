@@ -762,6 +762,7 @@ module CommandOutputContract =
         | "library.list" -> typeof<Grace.Types.Library.LibraryCatalogDto>
         | "library.add"
         | "library.remove" -> typeof<Grace.Types.Library.LibraryCatalogChangeResultDto>
+        | "library.rename" -> typeof<Grace.CLI.Command.LibraryCommand.RenameOutput>
         | "library.sync.enable"
         | "library.sync.run"
         | "library.sync.status" -> typeof<Grace.CLI.Command.LibrarySynchronization.Status>
@@ -1378,6 +1379,7 @@ module CommandOutputContract =
             row [ "library" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "library" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "library" ] "remove" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "library" ] "rename" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "library"; "sync" ] "enable" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "library"; "sync" ] "run" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "library"; "sync" ] "status" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto

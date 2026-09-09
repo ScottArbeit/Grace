@@ -4,6 +4,8 @@ open Grace.Shared
 open System
 open System.IO
 open System.Security.Cryptography
+open Grace.Shared.Client.Configuration
+open Grace.CLI.LibraryOperation
 
 /// Supplies the existing narrow Windows read and same-volume publication mechanics for Library files.
 module internal LibraryFilesystem =
@@ -52,10 +54,143 @@ module internal LibraryFilesystem =
     /// Captures one immutable saved file without injecting an interleaving.
     let stableRead path = stableReadWith ignore path
 
+    /// Computes both existing content hashes without buffering the whole source file.
+    let private streamIdentity (stream: Stream) =
+        stream.Position <- 0L
+
+        let sha =
+            Grace.Shared.Services.computeSha256ForFile stream ""
+            |> fun value -> value.GetAwaiter().GetResult()
+
+        stream.Position <- 0L
+
+        let blake =
+            Grace.Shared.Services.computeBlake3ForFile stream
+            |> fun value -> value.GetAwaiter().GetResult()
+
+        { Size = stream.Length; Sha256Hash = string sha; Blake3Hash = string blake }
+
+    /// Opens an ordinary source with sharing that excludes changes throughout its stable snapshot.
+    let private openStableSource (path: string) =
+        if not (OperatingSystem.IsWindows()) then
+            invalidOp "Library synchronization requires Windows 11."
+
+        let attributes = File.GetAttributes path
+
+        if
+            attributes.HasFlag(FileAttributes.ReparsePoint)
+            || attributes.HasFlag(FileAttributes.Directory)
+        then
+            invalidOp "Library synchronization accepts ordinary files only."
+
+        new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan)
+
+    /// Reads a stable complete identity for admission and saved-observation comparison.
+    let stableIdentity path =
+        use stream = openStableSource path
+        streamIdentity stream
+
+    /// Resolves a frozen locator under the configured object directory, independent of working-file placement.
+    let objectPath (configuration: GraceConfiguration) (reference: SavedObject) =
+        let root =
+            Path
+                .GetFullPath(configuration.ObjectDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar)
+            + string Path.DirectorySeparatorChar
+
+        let path = Path.GetFullPath(Path.Combine(root, reference.ObjectPath))
+
+        if not (path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) then
+            invalidOp "Library object locator escaped the configured object directory."
+
+        let mutable parent = Path.GetDirectoryName path
+
+        while parent.Length
+              >= root.TrimEnd(Path.DirectorySeparatorChar).Length do
+            if
+                (Directory.Exists(parent) || File.Exists(parent))
+                && File.GetAttributes(parent).HasFlag(FileAttributes.ReparsePoint)
+            then
+                invalidOp "Library object ancestry is a reparse point."
+
+            parent <- Path.GetDirectoryName parent
+
+        path
+
+    /// Verifies the frozen object and returns a read lease that prevents its replacement during consumption.
+    let openObject configuration reference =
+        let stream = openStableSource (objectPath configuration reference)
+
+        try
+            if streamIdentity stream <> reference.Content
+               || reference.Content.Size <= 0L then
+                invalidOp "Library saved object is missing, incomplete or corrupt; working-file bytes cannot replace it."
+
+            stream.Position <- 0L
+            stream
+        with
+        | _ ->
+            stream.Dispose()
+            reraise ()
+
+    /// Publishes a complete verified snapshot before its caller can commit a saved operation.
+    let captureObjectWith afterPublication (configuration: GraceConfiguration) relative expected =
+        let sourcePath = Path.Combine(configuration.RootDirectory, relative)
+
+        Directory.CreateDirectory(configuration.ObjectDirectory)
+        |> ignore
+
+        let temporary = Path.Combine(configuration.ObjectDirectory, $"library-capture-{Guid.NewGuid():N}.tmp")
+
+        try
+            use source = openStableSource sourcePath
+            if source.Length <= 0L then invalidOp "Library capture excludes empty files."
+
+            do
+                use staged = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.WriteThrough)
+                source.CopyTo(staged, 65536)
+                staged.Flush(true)
+
+            let captured = stableIdentity temporary
+
+            if captured <> expected
+               || streamIdentity source <> captured then
+                invalidOp "Library source changed before object capture."
+
+            let name = Grace.CLI.Services.getLocalObjectCacheFileName relative captured.Sha256Hash captured.Blake3Hash
+            let reference = { ObjectPath = Path.Combine(relative, name); Content = captured }
+
+            let target = objectPath configuration reference
+
+            Directory.CreateDirectory(Path.GetDirectoryName(target))
+            |> ignore
+
+            objectPath configuration reference |> ignore
+
+            if File.Exists target then
+                use verified = openObject configuration reference
+                ()
+            else
+                try
+                    File.Move(temporary, target, false)
+                with
+                | :? IOException when File.Exists target ->
+                    use verified = openObject configuration reference
+                    ()
+
+            use verified = openObject configuration reference
+            afterPublication reference
+            reference
+        finally
+            if File.Exists temporary then File.Delete temporary
+
+    /// Captures or reuses immutable content under the existing configured object layout.
+    let captureObject configuration relative expected = captureObjectWith ignore configuration relative expected
+
     /// Encodes the full target content precondition, keeping absence distinct from an empty file.
     let fingerprint path =
         if File.Exists(path) then
-            let value = stableRead path
+            let value = stableIdentity path
             Some $"{value.Blake3Hash}:{value.Sha256Hash}:{value.Size}"
         elif Directory.Exists(path) then
             Some "directory"

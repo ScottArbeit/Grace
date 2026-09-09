@@ -25,6 +25,12 @@ module LibraryCommand =
     module private Options =
         let libraryPath = Argument<string>("path", Description = "Repository-relative Library path.")
 
+        /// Selects one materialized file without exposing internal item or namespace identities.
+        let renamePath = Argument<string>("path", Description = "Repository-relative synchronized nonempty file path.")
+
+        /// Supplies a different filename within the file's existing parent.
+        let newName = Argument<string>("new-name", Description = "New filename in the same parent; case-only changes are excluded.")
+
         let expectedVersion =
             Option<Guid>("--expected-version", Required = false, Description = "Exact Library catalog version <Guid>; reads the current version when omitted.")
 
@@ -238,6 +244,46 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Exposes stable command fields while separating server rejection codes from local diagnostics.
+    [<CLIMutable>]
+    type RenameOutput = { OperationId: Guid; SourcePath: string; TargetPath: string; Outcome: string; ReasonCode: string option; Diagnostic: string option }
+
+    /// Converts internal outcomes only at the CLI boundary, keeping their existing output spellings.
+    let internal renameOutput (result: LibrarySynchronization.RenameResult) =
+        let outcome, reason, diagnostic =
+            match result.Outcome with
+            | LibrarySynchronization.RenameOutcome.Completed -> "completed", None, None
+            | LibrarySynchronization.RenameOutcome.Rejected code -> "rejected", Some(Grace.CLI.LibraryOperation.rejectionCodeText code), None
+            | LibrarySynchronization.RenameOutcome.Ambiguous message -> "ambiguous", None, message
+            | LibrarySynchronization.RenameOutcome.AcceptedButObstructed message -> "acceptedButObstructed", None, message
+
+        {
+            OperationId = result.OperationId
+            SourcePath = result.SourcePath
+            TargetPath = result.TargetPath
+            Outcome = outcome
+            ReasonCode = reason
+            Diagnostic = diagnostic
+        }
+
+    /// Explains the retained rename state without describing an unresolved filename change as success.
+    let internal renameMessage (result: LibrarySynchronization.RenameResult) =
+        let message =
+            match result.Outcome with
+            | LibrarySynchronization.RenameOutcome.Completed -> $"Library rename completed: '{result.SourcePath}' to '{result.TargetPath}'."
+            | LibrarySynchronization.RenameOutcome.Rejected _ -> "Library rename rejected. This request changed no local filenames."
+            | LibrarySynchronization.RenameOutcome.AcceptedButObstructed _ ->
+                "Library rename accepted by the server; local application is incomplete. Resolve the obstruction and rerun the same command."
+            | LibrarySynchronization.RenameOutcome.Ambiguous _ ->
+                "Library rename outcome is ambiguous. The selected request is retained; rerun the same command to resume."
+
+        let output = renameOutput result
+
+        output.ReasonCode
+        |> Option.orElse output.Diagnostic
+        |> Option.map (fun reason -> message + " " + reason)
+        |> Option.defaultValue message
+
     /// Builds Library catalog and synchronization commands.
     let Build =
         let addScopeOptions (command: Command) =
@@ -287,6 +333,67 @@ module LibraryCommand =
         removeCommand.Arguments.Add Options.libraryPath
         removeCommand.Action <- RemoveLibrary()
         libraryCommand.Subcommands.Add removeCommand
+
+        let renameCommand = Command("rename", "Rename one clean synchronized nonempty file in its existing parent.")
+        renameCommand.Arguments.Add Options.renamePath
+        renameCommand.Arguments.Add Options.newName
+
+        renameCommand.Action <-
+            { new AsynchronousCommandLineAction() with
+                /// Runs the configured-copy rename and reports receipt and local completion separately.
+                override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
+                    task {
+                        let! result =
+                            task {
+                                try
+                                    let correlationId = getCorrelationId parseResult
+
+                                    let! result =
+                                        LibrarySynchronization.rename
+                                            (Current())
+                                            correlationId
+                                            (parseResult.GetValue Options.renamePath)
+                                            (parseResult.GetValue Options.newName)
+                                            cancellationToken
+
+                                    return Ok(GraceReturnValue.Create result correlationId)
+                                with
+                                | ex -> return Error(GraceError.Create ex.Message (getCorrelationId parseResult))
+                            }
+
+                        match result with
+                        | Ok value when not (hasSelect parseResult) ->
+                            let output =
+                                discriminatedUnionFromString<OutputFormat>(
+                                    parseResult.GetValue Grace.CLI.Common.Options.output
+                                )
+                                    .Value
+
+                            match output with
+                            | Normal
+                            | Verbose
+                            | Minimal -> Console.Out.WriteLine(renameMessage value.ReturnValue)
+                            | _ -> ()
+                        | _ -> ()
+
+                        let output =
+                            result
+                            |> Result.map (fun value -> GraceReturnValue.Create (renameOutput value.ReturnValue) (getCorrelationId parseResult))
+
+                        let rendered = renderOutput parseResult output
+
+                        return
+                            match result with
+                            | Ok result when
+                                result.ReturnValue.Outcome
+                                <> LibrarySynchronization.RenameOutcome.Completed
+                                ->
+                                1
+                            | _ -> rendered
+                    }
+            }
+
+        libraryCommand.Subcommands.Add renameCommand
 
         let syncCommand = Command("sync", "Synchronize Library files in this working copy.")
 
