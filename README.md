@@ -41,6 +41,8 @@ Use `grace library add <path>` or `grace library remove <path>` to change config
 
 Use `grace library rename <path> <new-name>` to rename one clean synchronized nonempty file within its existing parent. The command retains its generated request across retry and reports local completion only after accepted changes have been applied in order.
 
+Use `grace library sync pause` to stop Library capture and transfer for one onboarded copy while retaining its saved work. `grace library sync resume` continues synchronization; status reports pause separately from participation and progress.
+
 Grace is a modern, fast, powerful centralized version control system. It's made up of a web API, with a CLI (and soon a GUI).
 
 Grace is written primarily in **F#**, and uses:

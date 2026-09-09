@@ -570,6 +570,7 @@ module LibraryBaselineTests =
                     AppliedCursor = ""
                     NextPageToken = None
                     State = "acquiringBaseline"
+                    Paused = false
                     Baseline = Some { BootstrapId = page.BootstrapId; BoundaryCursor = page.BoundaryCursor; MetadataComplete = false; Applied = false }
                 }
 

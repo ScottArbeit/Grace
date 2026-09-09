@@ -204,8 +204,34 @@ Human output and `cli-json-v1` data distinguish four outcomes. JSON exposes `Ope
 
 All incomplete or rejected outcomes return a nonzero exit code. A destination created before rename preparation remains an obstruction; Grace does not capture it as a new file or interpret it as an edit to the renamed item. Preserve those bytes outside the destination, then retry the same command. Saved edits at either path during prepared application retain their existing materialized content revision. Empty files and obstructions remain protected. Rejected saved-content operations retain their bytes and pending request; only a definitively rejected unprepared rename retires without an application effect.
 
+## Pause and resume this copy
+
+Pause an onboarded Windows copy while other copies continue. Pause waits for the current Library operation to release the working-root lease, then commits locally without contacting the server. Canceling that wait leaves the setting unchanged.
+
+PowerShell:
+
+```powershell
+grace library sync pause
+grace library sync status --output Json
+grace library sync resume
+```
+
+bash / zsh:
+
+```bash
+grace library sync pause
+grace library sync status --output Json
+grace library sync resume
+```
+
+Status shows `Enabled=true` and `Paused=true` independently of progress `State`. Watch skips Library capture, upload and incoming application while paused. `run`, `enable` and `rename` return a nonzero result directing you to resume. Catalog-based exclusion from version control remains in force; pause is not a fully offline Watch mode.
+
+Resume retains captured objects and exact pending requests, then captures the latest supported local save before applying incoming changes. It does not retain every intermediate save overwritten while paused. A failed resume stays active and blocked with saved work retained. Resolve the reported object, zero-byte or other obstruction before retrying; a changed catalog or rebaseline requirement never authorizes discarding local state. Pause and resume require completed onboarding and are safe to repeat.
+
 ## Deferred capabilities
 
-Explicit same-parent file rename follows the [accepted design and experiment](Libraries.Design.md#explicit-file-rename-accepted-next-slice). Automatic recognition of a local Explorer rename remains deferred.
+Explicit same-parent file rename follows the [delivered design](Libraries.Design.md#explicit-file-rename-delivered). Automatic recognition of a local Explorer rename remains deferred.
+
+The [pause/resume design](Libraries.Design.md#pause-and-resume-accepted-next-slice) and [validation mapping](design/Libraries.Pause-Validation.md) distinguish the 56-case readiness experiment from production command and Watch testing in Issue #1075.
 
 Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.

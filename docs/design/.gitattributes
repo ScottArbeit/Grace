@@ -1,0 +1,4 @@
+# Preserve the exact bytes identified by the executed pause/resume evidence hashes.
+Libraries.Pause-Experiment.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Libraries.Pause-Experiment/Program.fs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Libraries.Pause-Experiment/Run.ps1 -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

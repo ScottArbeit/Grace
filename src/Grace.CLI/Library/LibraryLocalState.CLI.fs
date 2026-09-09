@@ -24,6 +24,7 @@ module internal LibraryLocalState =
             AppliedCursor: string
             NextPageToken: string option
             State: string
+            Paused: bool
             Baseline: BaselineSelection option
         }
 
@@ -74,7 +75,7 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "CREATE TABLE IF NOT EXISTS library_repository_state(repository_id TEXT PRIMARY KEY,working_copy_id TEXT NOT NULL,catalog_json TEXT NOT NULL,cursor_epoch TEXT NOT NULL,applied_cursor TEXT NOT NULL,next_page_token TEXT NULL,lifecycle_state TEXT NOT NULL,baseline_json TEXT NULL);
+                "CREATE TABLE IF NOT EXISTS library_repository_state(repository_id TEXT PRIMARY KEY,working_copy_id TEXT NOT NULL,catalog_json TEXT NOT NULL,cursor_epoch TEXT NOT NULL,applied_cursor TEXT NOT NULL,next_page_token TEXT NULL,lifecycle_state TEXT NOT NULL,paused INTEGER NOT NULL CHECK(paused IN (0,1)),baseline_json TEXT NULL);
                  CREATE TABLE IF NOT EXISTS library_items(repository_id TEXT NOT NULL,item_id TEXT NOT NULL,item_json TEXT NOT NULL,PRIMARY KEY(repository_id,item_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE TABLE IF NOT EXISTS library_operations(repository_id TEXT NOT NULL,operation_id TEXT NOT NULL,direction TEXT NOT NULL CHECK(direction IN ('local','remote','baseline')),terminal INTEGER NOT NULL CHECK(terminal IN (0,1)),echo_pending INTEGER NOT NULL CHECK(echo_pending IN (0,1)),created_at_ticks INTEGER NOT NULL,operation_json TEXT NOT NULL,PRIMARY KEY(repository_id,operation_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE INDEX IF NOT EXISTS ix_library_operations_pending ON library_operations(repository_id,terminal,created_at_ticks);"
@@ -90,7 +91,7 @@ module internal LibraryLocalState =
         |> Option.iter (fun value -> command.Transaction <- value)
 
         command.CommandText <-
-            "SELECT working_copy_id,catalog_json,cursor_epoch,applied_cursor,lifecycle_state,next_page_token,baseline_json FROM library_repository_state WHERE repository_id=$repository;"
+            "SELECT working_copy_id,catalog_json,cursor_epoch,applied_cursor,lifecycle_state,next_page_token,baseline_json,paused FROM library_repository_state WHERE repository_id=$repository;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
         |> ignore
@@ -106,6 +107,7 @@ module internal LibraryLocalState =
                     CursorEpoch = reader.GetString(2)
                     AppliedCursor = reader.GetString(3)
                     State = reader.GetString(4)
+                    Paused = reader.GetInt64(7) <> 0L
                     NextPageToken = if reader.IsDBNull(5) then None else Some(reader.GetString(5))
                     Baseline =
                         if reader.IsDBNull(6) then
@@ -126,10 +128,11 @@ module internal LibraryLocalState =
         execute
             connection
             transaction
-            "INSERT INTO library_repository_state(repository_id,working_copy_id,catalog_json,cursor_epoch,applied_cursor,next_page_token,lifecycle_state,baseline_json) VALUES($repository,$copy,$catalog,$epoch,$cursor,$next,$state,$baseline);"
+            "INSERT INTO library_repository_state(repository_id,working_copy_id,catalog_json,cursor_epoch,applied_cursor,next_page_token,lifecycle_state,paused,baseline_json) VALUES($repository,$copy,$catalog,$epoch,$cursor,$next,$state,$paused,$baseline);"
             [
                 "$repository", box (state.RepositoryId.ToString("D"))
                 "$copy", box (state.WorkingCopyId.ToString("D"))
+                "$paused", box (if state.Paused then 1 else 0)
                 "$catalog", box (serialize state.Catalog)
                 "$epoch", box state.CursorEpoch
                 "$cursor", box state.AppliedCursor
@@ -149,6 +152,27 @@ module internal LibraryLocalState =
     let enable dbPath state =
         use connection = openConnection dbPath
         enableWith connection None state
+
+    /// Changes only pause after the caller rereads completed participation under the root lease.
+    let setPaused dbPath (expected: RepositoryState) paused =
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected then
+            invalidOp "Library participation changed before pause setting commit."
+
+        execute
+            connection
+            (Some transaction)
+            "UPDATE library_repository_state SET paused=$paused WHERE repository_id=$repository;"
+            [
+                "$repository", box (expected.RepositoryId.ToString("D"))
+                "$paused", box (if paused then 1 else 0)
+            ]
+        |> ignore
+
+        transaction.Commit()
 
     /// Loads materialized items only; incoming accepted responses do not update this table.
     let readItems dbPath (repositoryId: Guid) =
@@ -572,8 +596,9 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "UPDATE library_repository_state SET next_page_token=$next,lifecycle_state='catchingUp' WHERE repository_id=$repository AND applied_cursor=$cursor AND cursor_epoch=$epoch AND catalog_json=$catalog;"
+                "UPDATE library_repository_state SET next_page_token=$next,lifecycle_state='catchingUp' WHERE repository_id=$repository AND applied_cursor=$cursor AND cursor_epoch=$epoch AND catalog_json=$catalog AND paused=$paused;"
                 [
+                    "$paused", box (if expected.Paused then 1 else 0)
                     "$next",
                     (nextPageToken
                      |> Option.map box
@@ -595,9 +620,10 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "UPDATE library_repository_state SET lifecycle_state=$state WHERE repository_id=$repository AND applied_cursor=$cursor AND cursor_epoch=$epoch AND catalog_json=$catalog;"
+                "UPDATE library_repository_state SET lifecycle_state=$state WHERE repository_id=$repository AND applied_cursor=$cursor AND cursor_epoch=$epoch AND catalog_json=$catalog AND paused=$paused;"
                 [
                     "$state", box state
+                    "$paused", box (if expected.Paused then 1 else 0)
                     "$repository", box (expected.RepositoryId.ToString("D"))
                     "$cursor", box expected.AppliedCursor
                     "$epoch", box expected.CursorEpoch

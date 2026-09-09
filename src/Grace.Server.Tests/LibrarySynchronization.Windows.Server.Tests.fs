@@ -47,6 +47,7 @@ module LibrarySynchronizationWindowsServerTests =
         let mutable singleItemBootstrapPages = false
         let mutable gapPage: byte array option = None
         let mutable injectGap = 0
+        let mutable changedFeed = 0
         let pageTokens = ConcurrentQueue<string>()
         let gapToken = "fixture-opaque-visibility-gap"
 
@@ -170,6 +171,29 @@ module LibrarySynchronizationWindowsServerTests =
 
                 if response.IsSuccessStatusCode
                    && path = "/libraries/changes/get" then
+                    let mode = Interlocked.Exchange(&changedFeed, 0)
+
+                    if mode <> 0 then
+                        let envelope = deserialize<GraceReturnValue<LibraryChangePageDto>> (System.Text.Encoding.UTF8.GetString(bytes))
+                        let page = envelope.ReturnValue
+
+                        let altered =
+                            if mode = 1 then
+                                { page with CursorEpoch = "changed-fixture-epoch" }
+                            else
+                                { page with
+                                    Rebaseline =
+                                        Some
+                                            {
+                                                Reason = "fixture service floor"
+                                                CurrentEpoch = page.CursorEpoch
+                                                ServiceFloorCursor = page.LastCursor
+                                                RecommendedBootstrap = true
+                                            }
+                                }
+
+                        bytes <- System.Text.Encoding.UTF8.GetBytes(serialize { envelope with ReturnValue = altered })
+
                     if replayGap then
                         bytes <- gapPage.Value
                         gapPage <- None
@@ -255,6 +279,8 @@ module LibrarySynchronizationWindowsServerTests =
         member _.UseSingleItemBootstrapPages() = singleItemBootstrapPages <- true
         /// Simulates one empty visibility page while retaining its real two-change response behind an opaque fixture continuation.
         member _.InjectEmptyVisibilityPage() = Interlocked.Exchange(&injectGap, 1) |> ignore
+        /// Returns one changed-epoch or rebaseline HTTP response while retaining the real feed as its source.
+        member _.ChangeNextFeed(mode) = Interlocked.Exchange(&changedFeed, mode) |> ignore
         /// Exposes received continuation values for restart assertions, without interpreting server cursors.
         member _.PageTokens = pageTokens.ToArray()
         /// Counts actual submissions, including idempotent retries.
@@ -384,7 +410,7 @@ module LibrarySynchronizationWindowsServerTests =
         saveConfigFile (Path.Combine(graceDirectory.FullName, Constants.GraceConfigFileName)) configuration
 
     /// Runs one real CLI process from the selected working copy and preserves bounded failure output.
-    let private runGraceAsync workingDirectory serverUri arguments =
+    let private runGraceWithTokenAsync token workingDirectory serverUri arguments =
         task {
             let cliAssembly =
                 Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net10.0", "grace.dll"))
@@ -394,6 +420,12 @@ module LibrarySynchronizationWindowsServerTests =
             startInfo.RedirectStandardOutput <- true
             startInfo.RedirectStandardError <- true
             startInfo.UseShellExecute <- false
+
+            token
+            |> Option.iter (fun value ->
+                startInfo.Environment[
+                    Constants.EnvironmentVariables.GraceToken
+                ] <- value)
 
             startInfo.Environment[
                 Constants.EnvironmentVariables.GraceServerUri
@@ -423,6 +455,9 @@ module LibrarySynchronizationWindowsServerTests =
             let! error = standardError
             return { ExitCode = cliProcess.ExitCode; StandardOutput = output; StandardError = error }
         }
+
+    /// Runs the fixture-authenticated CLI without changing the parent test process authentication.
+    let private runGraceAsync workingDirectory serverUri arguments = runGraceWithTokenAsync None workingDirectory serverUri arguments
 
     /// Requires one successful CLI command and returns its JSON output for state assertions.
     let private requireGraceSuccessAsync workingDirectory serverUri arguments =
@@ -468,6 +503,29 @@ module LibrarySynchronizationWindowsServerTests =
 
     /// Locates the existing shared local database for assertions against a disposable copy.
     let private localDb root = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+    /// Pauses through a fresh CLI and verifies restart preserves every repository and operation field except pause.
+    let private pauseRetainingAsync root repositoryId (proxy: AuthenticatedProxy) =
+        task {
+            let before =
+                Grace.CLI.LibraryLocalState.readRepository (localDb root) repositoryId
+                |> Option.get
+
+            let operations = Grace.CLI.LibraryLocalState.readOperations (localDb root) repositoryId
+            let uploads, submits = proxy.ManifestUploadCount, proxy.SubmitRequestCount
+            let! _ = requireGraceSuccessAsync root proxy.BaseAddress (syncCommand "pause")
+            let! status = requireGraceSuccessAsync root proxy.BaseAddress (syncCommand "status")
+            Assert.That(status, Does.Contain("\"Paused\": true"))
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb root) repositoryId, Is.EqualTo(Some { before with Paused = true }))
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb root) repositoryId,
+                Is.EqualTo<Grace.CLI.LibraryLocalState.PendingOperation>(operations)
+            )
+
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(uploads))
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(submits))
+        }
 
     /// Orders a real file rename or deletion ahead of a saved edit in the other working copy.
     let private changeNamespaceAsync (repositoryId: Guid) catalogVersion (item: LibraryItemDto) deleted =
@@ -521,6 +579,282 @@ module LibrarySynchronizationWindowsServerTests =
             return copyA, copyB, repositoryId, proxy
         }
 
+    /// Retains exact local state when resume encounters changed remote catalog, epoch or service-floor requirements.
+    [<TestCase("catalog"); TestCase("epoch"); TestCase("rebaseline")>]
+    let ``resume stops active with retained state when remote participation boundary changes`` scenario =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, _, repositoryId, createdProxy = enableCopiesAsync ("pause-" + scenario)
+            use proxy = createdProxy
+            File.WriteAllText(Path.Combine(copyA, "Library", "retained.txt"), "retained original")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            do! pauseRetainingAsync copyA repositoryId proxy
+
+            let before =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
+                |> Option.get
+
+            let operations = Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+
+            if scenario = "catalog" then
+                let add = Parameters.Library.AddLibraryParameters()
+                add.OwnerId <- ownerId
+                add.OrganizationId <- organizationId
+                add.RepositoryId <- string repositoryId
+                add.ExpectedVersion <- before.Catalog.Version
+                add.LibraryPath <- "OtherLibrary"
+                add.OperationId <- Guid.NewGuid()
+                add.CorrelationId <- generateCorrelationId ()
+                use! response = Client.PostAsync("/libraries/add", createJsonContent add)
+                let! _ = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
+                ()
+            else
+                proxy.ChangeNextFeed(if scenario = "epoch" then 1 else 2)
+
+            let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "resume")
+            Assert.That(blocked.ExitCode, Is.Not.Zero)
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId,
+                Is.EqualTo(Some { before with Paused = false; State = "blocked" })
+            )
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId,
+                Is.EqualTo<Grace.CLI.LibraryLocalState.PendingOperation>(operations)
+            )
+
+            Assert.That(File.ReadAllText(Path.Combine(copyA, "Library", "retained.txt")), Is.EqualTo("retained original"))
+        }
+
+    /// Exercises a running Watch process with real authentication while CLI pause/resume races its periodic work.
+    [<Test>]
+    let ``live Watch and CLI pause retain local saves while another copy continues`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! _, copyB, repositoryId, createdProxy = enableCopiesAsync "live-pause"
+            use proxy = createdProxy
+            let copyA = Path.Combine(Path.GetDirectoryName(copyB), "Watched")
+            Directory.CreateDirectory(copyA) |> ignore
+            // Watch requires an actual Reference boundary; the Library-only fixture starts with no branch content.
+            let branchParameters = BranchServerTestHelpers.getBranchParameters (string repositoryId) ""
+            branchParameters.BranchName <- "main"
+            use! branchResponse = Client.PostAsync("/branch/get", createJsonContent branchParameters)
+            let! branch = requireReturnValueAsync<Grace.Types.Branch.BranchDto> branchResponse
+            let enableSave = Parameters.Branch.EnableFeatureParameters()
+            enableSave.OwnerId <- ownerId
+            enableSave.OrganizationId <- organizationId
+            enableSave.RepositoryId <- string repositoryId
+            enableSave.BranchId <- string branch.BranchId
+            enableSave.Enabled <- true
+            enableSave.CorrelationId <- generateCorrelationId ()
+            use! saveEnabled = Client.PostAsync("/branch/enableSave", createJsonContent enableSave)
+            let! _ = requireReturnValueAsync<string> saveEnabled
+            let initialRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) (string repositoryId) (RelativePath ".") []
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync (string repositoryId) [ initialRoot ]
+            use! saved = BranchServerTestHelpers.saveReferenceResponseAsync (string repositoryId) branch initialRoot.DirectoryVersionId initialRoot.Sha256Hash
+            let! savedBody = saved.Content.ReadAsStringAsync()
+            Assert.That(saved.IsSuccessStatusCode, Is.True, savedBody)
+            let! seededBranch = BranchServerTestHelpers.getBranchAsync (string repositoryId) (string branch.BranchId)
+            Assert.That(seededBranch.LatestSave.DirectoryId, Is.EqualTo(initialRoot.DirectoryVersionId))
+            let tokenParameters = Parameters.Auth.CreatePersonalAccessTokenParameters()
+            tokenParameters.TokenName <- $"library-watch-{Guid.NewGuid():N}"
+            tokenParameters.CorrelationId <- generateCorrelationId ()
+            use! tokenResponse = Client.PostAsync("/authenticate/token/create", createJsonContent tokenParameters)
+            let! token = requireReturnValueAsync<Grace.Types.PersonalAccessToken.PersonalAccessTokenCreated> tokenResponse
+
+            /// Uses the same real credentials for Watch and every CLI call from its directly configured copy.
+            let requireWatched arguments =
+                task {
+                    let! result = runGraceWithTokenAsync (Some token.Token) copyA graceServerBaseAddress arguments
+                    Assert.That(result.ExitCode, Is.Zero, result.StandardOutput + result.StandardError)
+                    return result.StandardOutput
+                }
+
+            let! connected =
+                runGraceWithTokenAsync
+                    (Some token.Token)
+                    copyA
+                    graceServerBaseAddress
+                    [|
+                        "connect"
+                        "--owner-id"
+                        ownerId
+                        "--organization-id"
+                        organizationId
+                        "--repository-id"
+                        string repositoryId
+                        "--server-address"
+                        graceServerBaseAddress
+                        "--reference-id"
+                        string seededBranch.LatestSave.ReferenceId
+                    |]
+
+            Assert.That(connected.ExitCode, Is.Zero, connected.StandardOutput + connected.StandardError)
+
+            Directory.CreateDirectory(Path.Combine(copyA, "Library"))
+            |> ignore
+
+            let! _ = requireWatched (syncCommand "enable")
+            let pathA = Path.Combine(copyA, "Library", "local.txt")
+            let remoteA = Path.Combine(copyA, "Library", "remote.txt")
+            let startInfo = ProcessStartInfo("dotnet")
+            startInfo.WorkingDirectory <- copyA
+            startInfo.UseShellExecute <- false
+            startInfo.CreateNoWindow <- true
+            startInfo.RedirectStandardOutput <- true
+            startInfo.RedirectStandardError <- true
+
+            startInfo.Environment[
+                Constants.EnvironmentVariables.GraceServerUri
+            ] <- graceServerBaseAddress
+
+            startInfo.Environment[
+                Constants.EnvironmentVariables.GraceToken
+            ] <- token.Token
+
+            startInfo.ArgumentList.Add(
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net10.0", "grace.dll"))
+            )
+
+            startInfo.ArgumentList.Add("watch")
+            startInfo.ArgumentList.Add("--output")
+            startInfo.ArgumentList.Add("Verbose")
+            use watch = new Process(StartInfo = startInfo)
+            let output = ConcurrentQueue<string>()
+            watch.OutputDataReceived.Add(fun line -> if not (isNull line.Data) then output.Enqueue(line.Data))
+            watch.ErrorDataReceived.Add(fun line -> if not (isNull line.Data) then output.Enqueue(line.Data))
+            Assert.That(watch.Start(), Is.True)
+            watch.BeginOutputReadLine()
+            watch.BeginErrorReadLine()
+
+            /// Waits for an observable runtime condition with bounded process diagnostics on failure.
+            let waitUntil condition =
+                task {
+                    let timer = Stopwatch.StartNew()
+
+                    while not (condition ())
+                          && not watch.HasExited
+                          && timer.Elapsed < TimeSpan.FromSeconds(45.0) do
+                        do! Task.Delay(100)
+
+                    Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
+                    Assert.That(condition (), Is.True, String.Join(Environment.NewLine, output))
+                }
+
+            try
+                do!
+                    waitUntil (fun () ->
+                        output
+                        |> Seq.exists (fun line -> line.Contains("Starting timer.")))
+
+                File.WriteAllText(pathA, "positive Watch capture")
+
+                do!
+                    waitUntil (fun () ->
+                        Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
+                        |> Array.exists (fun item ->
+                            item.Namespace
+                            |> Option.exists (fun ns -> ns.Name = "local.txt")))
+
+                let! paused = requireWatched (syncCommand "pause")
+                Assert.That(paused, Does.Contain("\"Paused\": true"))
+
+                let! human =
+                    requireGraceSuccessAsync
+                        copyA
+                        proxy.BaseAddress
+                        [|
+                            "library"
+                            "sync"
+                            "pause"
+                            "--output"
+                            "Normal"
+                        |]
+
+                Assert.That(human, Does.Contain("Enabled=True, Paused=True, State="))
+                let frozen = Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                let before = Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
+                File.WriteAllText(pathA, "intermediate paused save")
+                File.WriteAllText(pathA, "latest paused save")
+                File.WriteAllText(Path.Combine(copyB, "Library", "remote.txt"), "other copy continues")
+                let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+                let! _ =
+                    requireGraceSuccessAsync
+                        copyB
+                        proxy.BaseAddress
+                        [|
+                            "library"
+                            "rename"
+                            "Library/local.txt"
+                            "remote-renamed.txt"
+                            "--output"
+                            "Json"
+                        |]
+
+                let verbs = [| "run"; "enable" |]
+                let mutable index = 0
+
+                while index < verbs.Length do
+                    let! blocked = runGraceWithTokenAsync (Some token.Token) copyA graceServerBaseAddress (syncCommand verbs[index])
+                    Assert.That(blocked.ExitCode, Is.Not.Zero)
+                    Assert.That(blocked.StandardOutput, Does.Contain("sync resume"))
+                    index <- index + 1
+
+                let! rename =
+                    runGraceAsync
+                        copyA
+                        proxy.BaseAddress
+                        [|
+                            "library"
+                            "rename"
+                            "Library/local.txt"
+                            "renamed.txt"
+                            "--output"
+                            "Json"
+                        |]
+
+                Assert.That(rename.ExitCode, Is.Not.Zero)
+                Assert.That(rename.StandardOutput, Does.Contain("sync resume"))
+                do! Task.Delay(6500)
+                Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
+                Assert.That(File.Exists(remoteA), Is.False)
+                Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId, Is.EqualTo(before))
+
+                Assert.That(
+                    Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId,
+                    Is.EqualTo<Grace.CLI.LibraryLocalState.PendingOperation>(frozen)
+                )
+
+                let! _ = requireWatched (syncCommand "resume")
+                let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+                Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "remote-renamed.txt")), Is.EqualTo("latest paused save"))
+                Assert.That(File.ReadAllText(Path.Combine(copyA, "Library", "remote-renamed.txt")), Is.EqualTo("latest paused save"))
+                Assert.That(File.Exists(pathA), Is.False)
+                Assert.That(File.ReadAllText(remoteA), Is.EqualTo("other copy continues"))
+                let! _ = requireWatched (syncCommand "pause")
+                let completedWrite = File.GetLastWriteTimeUtc(remoteA)
+                let! _ = requireWatched (syncCommand "resume")
+                Assert.That(File.GetLastWriteTimeUtc(remoteA), Is.EqualTo(completedWrite))
+                Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
+                let! afterBranch = BranchServerTestHelpers.getBranchAsync (string repositoryId) (string branch.BranchId)
+
+                Assert.That(
+                    afterBranch.LatestSave.DirectoryId,
+                    Is.EqualTo(initialRoot.DirectoryVersionId),
+                    "Library content entered version-control Save history."
+                )
+            finally
+                if not watch.HasExited then watch.Kill(true)
+                watch.WaitForExit()
+                output |> Seq.iter TestContext.Progress.WriteLine
+        }
+
     /// Proves committed object discovery, frozen-object upload and missing-reference blocking through actual CLI processes and the hosted server.
     [<TestCase("complete"); TestCase("missing"); TestCase("corrupt")>]
     let ``committed saved object resumes without caller identity and uploads frozen content`` scenario =
@@ -553,6 +887,7 @@ module LibrarySynchronizationWindowsServerTests =
 
             let locator = LibraryFilesystem.objectPath configuration pending.SourceObject.Value
             let timestamp = File.GetLastWriteTimeUtc locator
+            do! pauseRetainingAsync copyA repositoryId proxy
             Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
 
             Assert.That(
@@ -569,8 +904,16 @@ module LibrarySynchronizationWindowsServerTests =
                 else
                     File.WriteAllText(locator, "corrupt partial object")
 
-                let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+                let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "resume")
                 Assert.That(blocked.ExitCode, Is.Not.Zero)
+
+                Assert.That(
+                    (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                        .Value
+                        .Paused,
+                    Is.False
+                )
+
                 Assert.That(proxy.ManifestUploadCount, Is.Zero)
                 Assert.That(proxy.SubmitRequestCount, Is.Zero)
 
@@ -590,7 +933,7 @@ module LibrarySynchronizationWindowsServerTests =
                 // Restore the exact test backup explicitly; production never repairs from changed working bytes.
                 File.WriteAllBytes(locator, frozenBytes)
 
-            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "resume")
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
 
             let completed =
@@ -1133,7 +1476,8 @@ module LibrarySynchronizationWindowsServerTests =
             let otherA = File.GetLastWriteTimeUtc(Path.Combine(copyA, "Library", "other.bin"))
             let otherB = File.GetLastWriteTimeUtc(Path.Combine(copyB, "Library", "other.bin"))
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
-            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            do! pauseRetainingAsync copyB repositoryId proxy
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "resume")
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "enable")
             Assert.That(File.GetLastWriteTimeUtc(pathA), Is.EqualTo(beforeA))
             Assert.That(File.GetLastWriteTimeUtc(pathB), Is.EqualTo(beforeB))
@@ -1382,8 +1726,17 @@ module LibrarySynchronizationWindowsServerTests =
                 let! _ = changeNamespaceAsync repositoryId before.Catalog.Version original (mutation = "delete")
                 ()
 
-            let! failed = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            do! pauseRetainingAsync copyB repositoryId proxy
+            let! failed = runGraceAsync copyB proxy.BaseAddress (syncCommand "resume")
             Assert.That(failed.ExitCode, Is.Not.EqualTo(0))
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+                    .Paused,
+                Is.False
+            )
+
             Assert.That(File.Exists(protectedPath), Is.True)
             Assert.That(FileInfo(protectedPath).Length, Is.Zero)
 
@@ -1502,8 +1855,9 @@ module LibrarySynchronizationWindowsServerTests =
                 }
 
             Assert.That(proxy.ManifestUploadCount, Is.EqualTo(uploadsBeforeCapture))
+            do! pauseRetainingAsync copyB repositoryId proxy
             File.WriteAllText((if saveAtDestination then renamed else pathB), "Z2")
-            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "resume")
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
 
             let local =
@@ -1595,7 +1949,16 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(receipt.Change.IsNone, Is.True)
             Assert.That(receipt.OperationId, Is.EqualTo(pending.OperationId))
 
-            let! retried = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            do! pauseRetainingAsync copyB repositoryId proxy
+            let! retried = runGraceAsync copyB proxy.BaseAddress (syncCommand "resume")
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+                    .Paused,
+                Is.False
+            )
+
             Assert.That(retried.ExitCode, Is.Not.EqualTo(0))
             Assert.That(retried.StandardOutput, Does.Contain(RejectionReason.ItemTombstoned))
 
@@ -1949,7 +2312,8 @@ module LibrarySynchronizationWindowsServerTests =
             let! lost = runGraceAsync copyA proxy.BaseAddress (command "run")
             Assert.That(lost.ExitCode, Is.Not.EqualTo(0), lost.StandardOutput + lost.StandardError)
             Assert.That(proxy.DroppedAcceptedSubmitCount, Is.EqualTo(1))
-            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "run")
+            do! pauseRetainingAsync copyA repositoryId proxy
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "resume")
             let beforeCursor = localSql copyB "SELECT applied_cursor FROM library_repository_state;" :?> string
 
             localSql
@@ -2090,7 +2454,8 @@ module LibrarySynchronizationWindowsServerTests =
             let! lost = runGraceAsync copyA proxy.BaseAddress (command "run")
             Assert.That(lost.ExitCode, Is.Not.EqualTo(0))
             Assert.That(File.ReadAllText(pathA), Is.EqualTo("second save during create upload"))
-            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "run")
+            do! pauseRetainingAsync copyA repositoryId proxy
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "resume")
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (command "run")
             Assert.That(File.ReadAllText(pathA), Is.EqualTo("second save during create upload"))
             Assert.That(File.ReadAllText(pathB), Is.EqualTo("second save during create upload"))

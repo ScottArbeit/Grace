@@ -23,6 +23,7 @@ module internal LibrarySynchronization =
     type Status =
         {
             Enabled: bool
+            Paused: bool
             State: string
             LibraryCatalogVersion: Guid option
             CursorEpoch: string option
@@ -51,6 +52,13 @@ module internal LibrarySynchronization =
     let private state (configuration: GraceConfiguration) =
         readRepository configuration.GraceStatusFile configuration.RepositoryId
         |> Option.defaultWith (fun () -> invalidOp "Library synchronization is not enabled for this working copy.")
+
+    /// Distinguishes an ordinary paused timer tick from synchronization failures that Watch must report.
+    type private LibraryPausedException() =
+        inherit InvalidOperationException("Library synchronization is paused. Run 'grace library sync resume' to continue.")
+
+    /// Rejects active commands after their lease-protected participation read observes pause.
+    let private requireActive (current: RepositoryState) = if current.Paused then raise (LibraryPausedException())
 
     /// Maps an accepted relative path into the configured working root.
     let private fullPath (configuration: GraceConfiguration) relative =
@@ -138,7 +146,15 @@ module internal LibrarySynchronization =
             match readRepository configuration.GraceStatusFile configuration.RepositoryId with
             | None ->
                 return
-                    { Enabled = false; State = "disabled"; LibraryCatalogVersion = None; CursorEpoch = None; AppliedCursor = None; PendingOperationCount = 0 }
+                    {
+                        Enabled = false
+                        Paused = false
+                        State = "disabled"
+                        LibraryCatalogVersion = None
+                        CursorEpoch = None
+                        AppliedCursor = None
+                        PendingOperationCount = 0
+                    }
             | Some current ->
                 let count =
                     readOperations configuration.GraceStatusFile configuration.RepositoryId
@@ -148,6 +164,7 @@ module internal LibrarySynchronization =
                 return
                     {
                         Enabled = true
+                        Paused = current.Paused
                         State = current.State
                         LibraryCatalogVersion = Some current.Catalog.Version
                         CursorEpoch = Some current.CursorEpoch
@@ -220,6 +237,9 @@ module internal LibrarySynchronization =
             use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
             do! initialize configuration.GraceStatusFile
 
+            readRepository configuration.GraceStatusFile configuration.RepositoryId
+            |> Option.iter requireActive
+
             if (readRepository configuration.GraceStatusFile configuration.RepositoryId)
                 .IsNone then
                 do! LibraryBaseline.startWith ignore (baselineRemote configuration correlationId) configuration
@@ -245,6 +265,7 @@ module internal LibrarySynchronization =
 
             match readRepository configuration.GraceStatusFile configuration.RepositoryId with
             | None -> ()
+            | Some current when current.Paused -> ()
             | Some current ->
                 for path in paths do
                     let relative =
@@ -293,6 +314,7 @@ module internal LibrarySynchronization =
             |> Result.defaultWith invalidOp
 
         let current = state configuration
+        requireActive current
         let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
 
         let matching =
@@ -401,7 +423,7 @@ module internal LibrarySynchronization =
 
         { OperationId = operation.OperationId; SourcePath = operation.SourcePath; TargetPath = operation.TargetPath; Outcome = outcome }
 
-    /// Captures all observable saved files whose parent is materialized, before incoming metadata can replace their base.
+    /// With the root lease held, captures observable saved files before incoming metadata can replace their base; paused copies are skipped.
     let internal captureSavedWith afterInsert (configuration: GraceConfiguration) =
         let current = state configuration
         let items = readItems configuration.GraceStatusFile configuration.RepositoryId
@@ -443,7 +465,11 @@ module internal LibrarySynchronization =
                 (pathItems
                  |> Array.find (fun current -> current.ItemId = item.ItemId))
 
-        for libraryRoot in (if current.Baseline.IsSome then [||] else current.Catalog.Libraries) do
+        for libraryRoot in
+            (if current.Paused || current.Baseline.IsSome then
+                 [||]
+             else
+                 current.Catalog.Libraries) do
             let root = fullPath configuration libraryRoot
 
             if not (Directory.Exists(root)) then
@@ -1198,6 +1224,7 @@ module internal LibrarySynchronization =
             use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
             do! initialize configuration.GraceStatusFile
             let original = state configuration
+            requireActive original
 
             if original.Baseline.IsNone then
                 setState configuration.GraceStatusFile original "catchingUp"
@@ -1274,6 +1301,16 @@ module internal LibrarySynchronization =
                 return raise ex
         }
 
+    /// Lets a racing pause skip a Watch tick without terminating Watch or hiding unrelated synchronization failures.
+    let runFromWatch configuration correlationId cancellationToken =
+        task {
+            try
+                let! _ = run configuration correlationId cancellationToken
+                return ()
+            with
+            | :? LibraryPausedException -> return ()
+        }
+
     /// Enables or resumes populated-Library onboarding, then catches up through genuine accepted changes.
     let enable configuration correlationId cancellationToken =
         task {
@@ -1283,6 +1320,37 @@ module internal LibrarySynchronization =
                 return! run configuration correlationId cancellationToken
             else
                 return selected
+        }
+
+    /// Commits a local setting without network access or draining retained operations.
+    let internal changePause (configuration: GraceConfiguration) paused cancellationToken =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                invalidOp "Library synchronization requires Windows 11."
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                |> Result.defaultWith invalidOp
+
+            use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+            do! initialize configuration.GraceStatusFile
+            let current = state configuration
+
+            if current.Baseline.IsSome then
+                invalidOp "Library pause and resume require completed onboarding."
+
+            setPaused configuration.GraceStatusFile current paused
+            return! status configuration
+        }
+
+    /// Pauses this participating copy after its existing root lease holder finishes or stops.
+    let pause configuration cancellationToken = changePause configuration true cancellationToken
+
+    /// Commits active participation before a finite run whose fresh lease read honors any newer pause.
+    let resume configuration correlationId cancellationToken =
+        task {
+            let! _ = changePause configuration false cancellationToken
+            return! run configuration correlationId cancellationToken
         }
 
     /// Persists an explicit rename before submission and resumes it through genuine ordered synchronization.
@@ -1299,6 +1367,7 @@ module internal LibrarySynchronization =
 
                     use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
                     do! initialize configuration.GraceStatusFile
+                    requireActive (state configuration)
                     do! checkCatalog configuration correlationId (state configuration)
                     return selectRenameWith ignore configuration sourcePath newName
                 }

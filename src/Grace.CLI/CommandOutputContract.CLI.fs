@@ -765,6 +765,8 @@ module CommandOutputContract =
         | "library.rename" -> typeof<Grace.CLI.Command.LibraryCommand.RenameOutput>
         | "library.sync.enable"
         | "library.sync.run"
+        | "library.sync.pause"
+        | "library.sync.resume"
         | "library.sync.status" -> typeof<Grace.CLI.Command.LibrarySynchronization.Status>
         | "review.checkpoint"
         | "review.deepen"
@@ -1382,6 +1384,8 @@ module CommandOutputContract =
             row [ "library" ] "rename" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "library"; "sync" ] "enable" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "library"; "sync" ] "run" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
+            row [ "library"; "sync" ] "pause" true true common_renderOutput_envelope mutating_state_transition local_client RequiresCliDto
+            row [ "library"; "sync" ] "resume" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "library"; "sync" ] "status" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "review" ] "checkpoint" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
             row [ "review" ] "deepen" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto

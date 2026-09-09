@@ -10049,7 +10049,7 @@ module Watch =
                           && not (cancellationToken.IsCancellationRequested) do
                         let! libraryStatus = LibrarySynchronization.status cachedOperationalConfiguration
 
-                        if libraryStatus.Enabled then
+                        if libraryStatus.Enabled && not libraryStatus.Paused then
                             if Volatile.Read(&libraryRegistered) = 0
                                && signalRConnection.State = HubConnectionState.Connected then
                                 do! signalRConnection.InvokeAsync("RegisterLibraryContent", operationalConfiguration.RepositoryId, cancellationToken)
@@ -10069,7 +10069,7 @@ module Watch =
                                || observations.Length > 0
                                || libraryStatus.State <> "current"
                                || DateTime.UtcNow >= nextLibraryPull then
-                                let! _ = LibrarySynchronization.run cachedOperationalConfiguration (getCorrelationId parseResult) cancellationToken
+                                do! LibrarySynchronization.runFromWatch cachedOperationalConfiguration (getCorrelationId parseResult) cancellationToken
                                 nextLibraryPull <- DateTime.UtcNow.AddSeconds(5.0)
 
                         let! currentLibraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
