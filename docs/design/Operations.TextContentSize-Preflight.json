@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "issue": "https://github.com/ScottArbeit/Grace/issues/1051",
+  "baseRevision": "5b509c56b25dfaef75dc585b3e58c5a7ad5d6494",
+  "eventualMainRevision": "9f54fe14626cd718af88890b731f8518f9b06e34",
+  "question": "How does the current WorkItem producer serialize absent and present retained TextContent references?",
+  "outcome": "PASS: four actual serializer and fold controls before production diagnostic edits.",
+  "capturedExecution": {
+    "command": "dotnet fsi Wire.fsx",
+    "binaries": "Reviewed Issue #1049 Release build, checked against all six captured binary hashes; all sixteen source hashes matched the selected base. No claim that a later rebuild is byte-identical.",
+    "binarySourceRevision": "d16a9693035d375a6d9eac39419b1abbab1ead49",
+    "executable": "Actual TextContentStorage.createDescription/createIds, Grace JsonSerializerOptions, WorkItem event types and WorkItemState.UpdateState.",
+    "providers": "None; no Cosmos, blob, actor, HTTP or SQL calls in these wire controls.",
+    "initialFailure": "An initial loader also executed the earlier provider experiment and failed to connect to its stopped localhost Cosmos fixture before the wire controls ran. The loader was replaced with references only. No provider connection succeeded and no provider state was changed."
+  },
+  "decisions": [
+    "Created with no description emits description: null; it is a legitimate known-zero input.",
+    "DescriptionCleared retains DescriptionId and emits TextContent: null.",
+    "A present content reference emits TextContentId, Blake3Hash and Utf8ByteLength; the actual multibyte string has six UTF-8 bytes.",
+    "Required declaration fields must be present before deserialization; do not borrow DirectoryVersion zero-size omission rules.",
+    "A retained-event scan must inspect prior Created and DescriptionSet references after a clear; the final fold alone no longer contains them."
+  ],
+  "sourceFiles": [
+    {
+      "path": "global.json",
+      "gitBlob": "55f28a66f2a05666901c6ec7329e5a30cf43e7e6",
+      "sha256": "D56107E1DAE60B2BEAFD6D4D999C72F43A4BE3562236EFBD7F116F1892E198D0"
+    },
+    {
+      "path": "src/Grace.Server/TextContent.Server.fs",
+      "gitBlob": "92336770c0323d315230e975ea09735855ea7716",
+      "sha256": "1E3AC78094D154EF777530AFB3905CCC29A1D752790DEB9632F6BBDF36EBAE5E"
+    },
+    {
+      "path": "src/Grace.Server/WorkItem.Server.fs",
+      "gitBlob": "cf1b60eded0865f414957b5ddb2e6a9f89b88854",
+      "sha256": "C062E689ED4883EEFB690A1F37E6D48B20004DBB48D3C2BAB87804E64C918A0C"
+    },
+    {
+      "path": "src/Grace.Types/TextContent.Types.fs",
+      "gitBlob": "9241bbd18f63c4445bf7de80e49dc9386951d25b",
+      "sha256": "C9D1F8AD5E1EFF652DA6EF840A1C42647405CB78E3595135E05CAAB23A642F48"
+    },
+    {
+      "path": "src/Grace.Types/WorkItem.Types.fs",
+      "gitBlob": "6f50909b91a3642779dca9f576bd458f51837001",
+      "sha256": "0CEA2C93768790618955A17295AF12594221626ACC70AD20687FAD6097B4D9D2"
+    },
+    {
+      "path": "src/Grace.Shared/StorageKeys.Shared.fs",
+      "gitBlob": "16e09dba32641e45c658e1d9f8ccfa10bffa7d9f",
+      "sha256": "68FC2717472A9C18AFBBAC1A8293B2153C78964E03485AA84F7E5EA990942D8B"
+    },
+    {
+      "path": "src/Grace.Shared/ContentAddress.Shared.fs",
+      "gitBlob": "d0fba17171223ae92473fb5828740f42f0a7dc5a",
+      "sha256": "0474B9782AC9D0ACF0D3ED43FE1775821B2ED48DDE6DCA1A2EDA352FB8A2A384"
+    },
+    {
+      "path": "src/Grace.Shared/Constants.Shared.fs",
+      "gitBlob": "ffb1fdb38234fb64c553308aae288fba0abde93d",
+      "sha256": "F39394D6210B1752BF6CA2ADDBEAEF259F30857DCC2DD4D2D683972555B5F817"
+    },
+    {
+      "path": "src/Grace.Shared/Utilities.Shared.fs",
+      "gitBlob": "18034bd16e2acbbb0425d8d3022eb4545736ab76",
+      "sha256": "0BA341B274E562E437051FCEAFEE3F5BF015781510FF27D6F3FC40BA439FCA88"
+    },
+    {
+      "path": "src/Grace.Actors/WorkItem.Actor.fs",
+      "gitBlob": "93aa91b440b5ae37c0626ba78783df6af4b0af0d",
+      "sha256": "1D06465D3EE694A96709788F0E82B04BBABEE5144CD8B58F31DFF501710A7DFD"
+    },
+    {
+      "path": "src/Grace.Actors/Services.Actor.fs",
+      "gitBlob": "3fb159bafba3d7bd06340f98c042ba68b7d720b7",
+      "sha256": "113B8034537E1D01B244133C9F94E73FD827A7B825DF74D16E050001732A4C78"
+    },
+    {
+      "path": "src/Grace.Actors/Constants.Actor.fs",
+      "gitBlob": "b03669e5aa6cee395075657271a410c56b11d270",
+      "sha256": "2C0D701BE1E2FAFA3AA30CAD455C182D9F862C110F824482805375FE61EF425F"
+    },
+    {
+      "path": "src/Grace.Server/Grace.Server.fsproj",
+      "gitBlob": "d5f5459b36224636831fc7cf7f6f029a3c5d0481",
+      "sha256": "DE67C2C62AB661D9785E455B5FA24AD5E4A423BF7D8FD0AA8A348BAE88FDFBFB"
+    },
+    {
+      "path": "src/Grace.Actors/Grace.Actors.fsproj",
+      "gitBlob": "9fee615e5aae7a773861f205f8ac6c9f3eec4a4e",
+      "sha256": "5838F17AA24FAD5CB548FC3A8F57C0B91387F0DF8F13AED5A92BCB1FFD26ABCB"
+    },
+    {
+      "path": "src/Grace.Shared/Grace.Shared.fsproj",
+      "gitBlob": "1a21f3f9529e1b12adc319252ebfff1ae615935a",
+      "sha256": "3F0402A0D1B8DC20B4C3AB4396A0003BABDA2DEF599DC717E324088180207EBB"
+    },
+    {
+      "path": "src/Grace.Types/Grace.Types.fsproj",
+      "gitBlob": "6d7e16fbf1fb4f915e91acb272e2487c511e0699",
+      "sha256": "54D98DFBCC36C5FC63A91B89EE3761057A2A0EBCEB4752280C86DDD8B080F2F3"
+    }
+  ],
+  "capturedBinaries": [
+    {
+      "name": "Grace.Server.dll",
+      "version": "0.2.0.0",
+      "sha256": "49428497A9DD2317A229A5451F4C4D77DA4E1DB30E0EE70EFD11CDDDA1C264C9"
+    },
+    {
+      "name": "Grace.Actors.dll",
+      "version": "0.2.0.0",
+      "sha256": "187D1F3E459FD8214DB59835CE20DF0ECC54F49954B45A8594E4AB5FD562B9BC"
+    },
+    {
+      "name": "Grace.Shared.dll",
+      "version": "0.2.0.0",
+      "sha256": "FDF7354A98E4F91D01C6DE62F6814A4F31283425F2F421103EF12A02F453E807"
+    },
+    {
+      "name": "Grace.Types.dll",
+      "version": "0.2.0.0",
+      "sha256": "B4E7BB610DC2B4CB887C87BF5F6097301B3FF790CEB36A20DDD377D9CC52C7D1"
+    },
+    {
+      "name": "Azure.Storage.Blobs.dll",
+      "version": "12.29.1.0",
+      "sha256": "E3AC899273AF3E079759DF37BF2A81301635084CB9CA38FE91D21948BF38E69B"
+    },
+    {
+      "name": "Microsoft.Azure.Cosmos.Client.dll",
+      "version": "3.62.1.0",
+      "sha256": "81950879D91A9B925A70D411FB60478998ADCB0D1ED507D53B29E1606D748E66"
+    }
+  ],
+  "portableReplay": {
+    "extraction": "Write every embedded file by name with UTF-8 without BOM and verify its SHA-256 before execution. Use an empty disposable directory; do not overwrite an existing source checkout.",
+    "command": "pwsh -NoProfile -File Run-Wire.ps1 -RepositoryRoot <candidate-checkout>",
+    "result": "Four controls must pass. Compare the four JSON output hashes; identities and metadata are fixed. Run-Wire generates a references-only Load.fsx against the matching Release build.",
+    "excluded": "Original machine-specific Load.fsx is not a portable input. No cleanup or container creation is required."
+  },
+  "files": [
+    {
+      "name": "Wire.fsx",
+      "sha256": "5748B9B3A15A6254AF1E27EB62F0941A1C641770B5AA2BB196126D4EF851E389",
+      "content": "#load \"Load.fsx\"\n\nopen System\nopen System.IO\nopen System.Text.Json\nopen System.Collections.Generic\nopen Grace.Shared\nopen Grace.Types.Common\nopen Grace.Types.TextContent\nopen Grace.Types.WorkItem\nopen Grace.Server\nopen NodaTime\n\n/// Binds the wire fixtures to one explicit repository and work item.\nlet owner = Guid.Parse \"11111111-1111-1111-1111-111111111051\"\nlet organization = Guid.Parse \"22222222-2222-2222-2222-222222221051\"\nlet repository = Guid.Parse \"33333333-3333-3333-3333-333333331051\"\nlet workItem = Guid.Parse \"44444444-4444-4444-4444-444444441051\"\n\n/// Uses the reviewed compiled producer to generate an actual multibyte reference.\nlet description = TextContentStorage.createDescription repository workItem \"ops-1051-wire\" \"é🙂\"\n\n/// Uses the current clear producer's identity shape without a content reference.\nlet cleared = { DescriptionId = fst (TextContentStorage.createIds repository workItem \"ops-1051-clear\"); TextContent = None }\n\n/// Wraps an existing WorkItem event case with real current metadata fields.\nlet event value : WorkItemEvent =\n    { Event = value\n      Metadata = { Timestamp = Instant.FromUtc(2026, 9, 7, 11, 25); CorrelationId = \"ops-1051-wire\"; Principal = \"fixture\"; ClientType = None; Properties = Dictionary<string, string>() } }\n\n/// Creates the actual Created case, preserving the distinction between an absent description and one with content.\nlet created value = event (Created(workItem, 1L, owner, organization, repository, \"wire fixture\", value))\n\n/// Checks round-trip truth and saves the exact current producer bytes for the decode-boundary decision.\nlet capture name (events: WorkItemEvent array) =\n    let wire = JsonSerializer.Serialize(events, Constants.JsonSerializerOptions)\n    let restored = JsonSerializer.Deserialize<WorkItemEvent array>(wire, Constants.JsonSerializerOptions)\n    if restored.Length <> events.Length then failwith \"Event count changed during round trip.\"\n    let state = restored |> Array.fold (fun prior next -> WorkItemState.UpdateState next prior) WorkItemState.Default\n    File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__, name + \".json\"), wire)\n    printfn \"%s: %s\" name wire\n    state\n\nlet noDescription = capture \"created-without-description\" [| created None |]\nlet withDescription = capture \"created-with-description\" [| created (Some description) |]\nlet setDescription = capture \"description-set\" [| created None; event (DescriptionSet description) |]\nlet clearDescription = capture \"description-cleared\" [| created (Some description); event (DescriptionCleared cleared) |]\nif noDescription.Description.IsSome then failwith \"Absent description became present.\"\nif withDescription.Description.Value.TextContent.Value.Utf8ByteLength <> 6L then failwith \"Multibyte length changed.\"\nif setDescription.Description <> Some description then failwith \"Set did not retain its reference.\"\nif clearDescription.Description <> Some cleared then failwith \"Clear did not preserve the no-content description.\"\nprintfn \"PASS: Four actual serializer/fold controls; multibyte length is six and legitimate absent options remain absent.\"\n"
+    },
+    {
+      "name": "Run-Wire.ps1",
+      "sha256": "5C315BAD3CC991528F1DFBB6F2A92059F9E490A9B99E5FD00F874F688BFAFB06",
+      "content": "[CmdletBinding()]\nparam([Parameter(Mandatory)][string] $RepositoryRoot, [switch] $SkipBuild)\n\nSet-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n$repository = (Resolve-Path -LiteralPath $RepositoryRoot).Path\nPush-Location $repository\ntry {\n    if (-not $SkipBuild) {\n        dotnet build src/Grace.Server/Grace.Server.fsproj --configuration Release --nologo -p:CopyLocalLockFileAssemblies=true\n        if ($LASTEXITCODE -ne 0) { throw 'The matching Release build failed.' }\n    }\n    $binaryDirectory = Join-Path $repository 'src/Grace.Server/bin/Release/net10.0'\n    $references = [Collections.Generic.List[string]]::new()\n    $references.Add('#I \"' + $binaryDirectory.Replace('\\', '/') + '\"')\n    foreach ($file in Get-ChildItem -LiteralPath $binaryDirectory -Filter '*.dll' | Sort-Object Name) {\n        if ($file.Name -eq 'FSharp.Core.dll') { continue }\n        try { [void][Reflection.AssemblyName]::GetAssemblyName($file.FullName) }\n        catch { continue }\n        $references.Add('#r \"' + $file.Name + '\"')\n    }\n    # The loader contains references only; Wire.fsx owns execution and cannot trigger provider experiments.\n    [IO.File]::WriteAllLines((Join-Path $PSScriptRoot 'Load.fsx'), $references, [Text.UTF8Encoding]::new($false))\n    dotnet fsi (Join-Path $PSScriptRoot 'Wire.fsx')\n    if ($LASTEXITCODE -ne 0) { throw 'The serializer controls failed.' }\n}\nfinally { Pop-Location }\n"
+    },
+    {
+      "name": "created-without-description.json",
+      "sha256": "310B01147F23318D6DCACCE503F4D128A55EC3412ECE1CCEC45BA9ED939C8754",
+      "content": "[\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": null\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]"
+    },
+    {
+      "name": "created-with-description.json",
+      "sha256": "8CA7A05787FA594F926D05745A6BE00E5343BE39D7CED49969DBEE5192870375",
+      "content": "[\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": {\r\n          \"DescriptionId\": \"89aff744-95e0-35b8-0ae1-caff80445316\",\r\n          \"TextContent\": {\r\n            \"TextContentId\": \"d094b2dc-3c7b-2423-4e38-96567caf308d\",\r\n            \"Blake3Hash\": \"49e0eccdc2b39bc7add9ef0759875af347fb9e17b8fda03de6b85d662afe1475\",\r\n            \"Utf8ByteLength\": 6\r\n          }\r\n        }\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]"
+    },
+    {
+      "name": "description-set.json",
+      "sha256": "C98CE60B97350FC8FA3443423AEDC4A718857D1E36C7D8C2CA97929A3AA799E7",
+      "content": "[\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": null\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  },\r\n  {\r\n    \"Event\": {\r\n      \"descriptionSet\": {\r\n        \"DescriptionId\": \"89aff744-95e0-35b8-0ae1-caff80445316\",\r\n        \"TextContent\": {\r\n          \"TextContentId\": \"d094b2dc-3c7b-2423-4e38-96567caf308d\",\r\n          \"Blake3Hash\": \"49e0eccdc2b39bc7add9ef0759875af347fb9e17b8fda03de6b85d662afe1475\",\r\n          \"Utf8ByteLength\": 6\r\n        }\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]"
+    },
+    {
+      "name": "description-cleared.json",
+      "sha256": "DDFA77DC04D37C0429DFC167C07C6E7317FA2E6F1A428F94C1242E94E6A91921",
+      "content": "[\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": {\r\n          \"DescriptionId\": \"89aff744-95e0-35b8-0ae1-caff80445316\",\r\n          \"TextContent\": {\r\n            \"TextContentId\": \"d094b2dc-3c7b-2423-4e38-96567caf308d\",\r\n            \"Blake3Hash\": \"49e0eccdc2b39bc7add9ef0759875af347fb9e17b8fda03de6b85d662afe1475\",\r\n            \"Utf8ByteLength\": 6\r\n          }\r\n        }\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  },\r\n  {\r\n    \"Event\": {\r\n      \"descriptionCleared\": {\r\n        \"DescriptionId\": \"e7a04c51-e6e7-16b2-eb57-6ea8a8d057d1\",\r\n        \"TextContent\": null\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]"
+    },
+    {
+      "name": "wire.log",
+      "sha256": "00B4264A19BF98F2247F0C217335778523D26DFC960F517D4F9B692CAA762886",
+      "content": "created-without-description: [\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": null\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]\r\ncreated-with-description: [\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": {\r\n          \"DescriptionId\": \"89aff744-95e0-35b8-0ae1-caff80445316\",\r\n          \"TextContent\": {\r\n            \"TextContentId\": \"d094b2dc-3c7b-2423-4e38-96567caf308d\",\r\n            \"Blake3Hash\": \"49e0eccdc2b39bc7add9ef0759875af347fb9e17b8fda03de6b85d662afe1475\",\r\n            \"Utf8ByteLength\": 6\r\n          }\r\n        }\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]\r\ndescription-set: [\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": null\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  },\r\n  {\r\n    \"Event\": {\r\n      \"descriptionSet\": {\r\n        \"DescriptionId\": \"89aff744-95e0-35b8-0ae1-caff80445316\",\r\n        \"TextContent\": {\r\n          \"TextContentId\": \"d094b2dc-3c7b-2423-4e38-96567caf308d\",\r\n          \"Blake3Hash\": \"49e0eccdc2b39bc7add9ef0759875af347fb9e17b8fda03de6b85d662afe1475\",\r\n          \"Utf8ByteLength\": 6\r\n        }\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]\r\ndescription-cleared: [\r\n  {\r\n    \"Event\": {\r\n      \"created\": {\r\n        \"workItemId\": \"44444444-4444-4444-4444-444444441051\",\r\n        \"workItemNumber\": 1,\r\n        \"ownerId\": \"11111111-1111-1111-1111-111111111051\",\r\n        \"organizationId\": \"22222222-2222-2222-2222-222222221051\",\r\n        \"repositoryId\": \"33333333-3333-3333-3333-333333331051\",\r\n        \"title\": \"wire fixture\",\r\n        \"description\": {\r\n          \"DescriptionId\": \"89aff744-95e0-35b8-0ae1-caff80445316\",\r\n          \"TextContent\": {\r\n            \"TextContentId\": \"d094b2dc-3c7b-2423-4e38-96567caf308d\",\r\n            \"Blake3Hash\": \"49e0eccdc2b39bc7add9ef0759875af347fb9e17b8fda03de6b85d662afe1475\",\r\n            \"Utf8ByteLength\": 6\r\n          }\r\n        }\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  },\r\n  {\r\n    \"Event\": {\r\n      \"descriptionCleared\": {\r\n        \"DescriptionId\": \"e7a04c51-e6e7-16b2-eb57-6ea8a8d057d1\",\r\n        \"TextContent\": null\r\n      }\r\n    },\r\n    \"Metadata\": {\r\n      \"Timestamp\": \"2026-09-07T11:25:00Z\",\r\n      \"CorrelationId\": \"ops-1051-wire\",\r\n      \"Principal\": \"fixture\",\r\n      \"ClientType\": null,\r\n      \"Properties\": {}\r\n    }\r\n  }\r\n]\r\nPASS: Four actual serializer/fold controls; multibyte length is six and legitimate absent options remain absent.\r\n"
+    }
+  ],
+  "limits": [
+    "Wire-shape evidence only; hosted and unit diagnostic proof lives with its tests.",
+    "No snapshot, storage presence, orphan completeness, durable usage acceptance or billing proof."
+  ]
+}

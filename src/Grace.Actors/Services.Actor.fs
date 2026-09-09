@@ -1986,6 +1986,224 @@ module Services =
     let readDirectoryVersionSize validateManifest scope correlationId cancellationToken =
         readDirectoryVersionSizeWith actorStateStorageProvider (fun () -> cosmosContainer) validateManifest scope correlationId cancellationToken
 
+    /// Preserves explicit null options while rejecting missing declaration fields on the current persisted wire shape.
+    let internal decodeTextContentSizeDocument (document: JsonElement) =
+        /// Requires fields whose absence could hide a scope or retained reference.
+        let requireFields (names: string list) (element: JsonElement) =
+            names
+            |> List.iter (fun name ->
+                let mutable value = Unchecked.defaultof<JsonElement>
+
+                if
+                    element.ValueKind <> JsonValueKind.Object
+                    || not (element.TryGetProperty(name, &value))
+                then
+                    raise (InvalidDataException $"WorkItem source is missing required field '{name}'."))
+
+        /// Checks the actual description encoding, where a clear retains its identity and writes TextContent as null.
+        let requireDescription allowNull (description: JsonElement) =
+            if description.ValueKind = JsonValueKind.Null then
+                if not allowNull then
+                    raise (InvalidDataException "WorkItem description event is missing its description.")
+            else
+                requireFields [ "DescriptionId"; "TextContent" ] description
+                let content = description.GetProperty "TextContent"
+
+                if content.ValueKind <> JsonValueKind.Null then
+                    requireFields
+                        [
+                            "TextContentId"
+                            "Blake3Hash"
+                            "Utf8ByteLength"
+                        ]
+                        content
+
+        requireFields [ "State" ] document
+        let state = document.GetProperty "State"
+
+        if state.ValueKind <> JsonValueKind.Array
+           || state.GetArrayLength() = 0 then
+            raise (InvalidDataException "WorkItem source is missing Created data.")
+
+        state.EnumerateArray()
+        |> Seq.iter (fun item ->
+            requireFields [ "Event" ] item
+            let event = item.GetProperty "Event"
+
+            if event.ValueKind <> JsonValueKind.Object then
+                raise (InvalidDataException "WorkItem event must identify its case.")
+
+            let mutable payload = Unchecked.defaultof<JsonElement>
+
+            if event.TryGetProperty("created", &payload) then
+                requireFields
+                    [
+                        "workItemId"
+                        "ownerId"
+                        "organizationId"
+                        "repositoryId"
+                        "description"
+                    ]
+                    payload
+
+                requireDescription true (payload.GetProperty "description")
+            elif
+                event.TryGetProperty("descriptionSet", &payload)
+                || event.TryGetProperty("descriptionCleared", &payload)
+            then
+                requireDescription false payload)
+
+        try
+            JsonSerializer.Deserialize<Grace.Types.WorkItem.WorkItemEvent array>(state.GetRawText(), Grace.Shared.Constants.JsonSerializerOptions)
+        with
+        | :? JsonException as error -> raise (InvalidDataException("WorkItem source could not be decoded.", error))
+
+    /// Validates the document's Created authority and returns all retained description references, including superseded content.
+    let private textContentDeclarations (scope: UsageFactScope) (events: Grace.Types.WorkItem.WorkItemEvent array) =
+        if isNull events || events.Length = 0 then
+            raise (InvalidDataException "WorkItem source is missing Created data.")
+
+        let mutable createdCount = 0
+
+        events
+        |> Array.iter (fun event ->
+            match event.Event with
+            | Grace.Types.WorkItem.WorkItemEventType.Created _ -> createdCount <- createdCount + 1
+            | _ -> ())
+
+        if createdCount <> 1 then
+            raise (InvalidDataException "WorkItem source must contain exactly one Created event.")
+
+        match events[0].Event with
+        | Grace.Types.WorkItem.WorkItemEventType.Created (workItemId, _, ownerId, organizationId, repositoryId, _, _) when
+            workItemId <> Guid.Empty
+            && ownerId = scope.OwnerId
+            && organizationId = scope.OrganizationId
+            && repositoryId = scope.RepositoryId
+            ->
+            ()
+        | _ -> raise (InvalidDataException "WorkItem source must start with Created in the requested scope.")
+
+        events
+        |> Seq.choose (fun event ->
+            match event.Event with
+            | Grace.Types.WorkItem.WorkItemEventType.Created (_, _, _, _, _, _, description) -> description
+            | Grace.Types.WorkItem.WorkItemEventType.DescriptionSet description ->
+                if
+                    isNull (box description)
+                    || description.TextContent.IsNone
+                then
+                    raise (InvalidDataException "A retained description set is missing its TextContent reference.")
+
+                Some description
+            | Grace.Types.WorkItem.WorkItemEventType.DescriptionCleared description -> Some description
+            | _ -> None)
+        |> Seq.map (fun description ->
+            if
+                isNull (box description)
+                || description.DescriptionId = Guid.Empty
+            then
+                raise (InvalidDataException "WorkItem source contains an invalid description identity.")
+
+            description.TextContent)
+
+    /// Produces a quantity only after every scoped event page is exhausted; cancellation discards the attempt.
+    let internal enumerateTextContentSizeWith
+        (readPage: CancellationToken -> Task<Grace.Types.WorkItem.WorkItemEvent array array * bool>)
+        (scope: UsageFactScope)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let started = getCurrentInstant ()
+            let distinct = Dictionary<Guid, Grace.Types.TextContent.TextContent>()
+            let mutable total = 0L
+            let mutable more = true
+
+            while more do
+                cancellationToken.ThrowIfCancellationRequested()
+
+                let! rows, hasMore = readPage cancellationToken
+                let mutable index = 0
+
+                while index < rows.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    use entries =
+                        (textContentDeclarations scope rows[index])
+                            .GetEnumerator()
+
+                    while entries.MoveNext() do
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        match entries.Current with
+                        | None -> ()
+                        | Some content ->
+                            if
+                                isNull (box content)
+                                || content.TextContentId = Guid.Empty
+                                || content.Utf8ByteLength <= 0L
+                                || not (ContentAddress.isValidAddress content.Blake3Hash)
+                            then
+                                raise (InvalidDataException "WorkItem source contains an invalid TextContent declaration.")
+
+                            match distinct.TryGetValue content.TextContentId with
+                            | true, previous when previous <> content ->
+                                raise (InvalidDataException "TextContent declarations disagree about one immutable identity.")
+                            | true, _ -> ()
+                            | false, _ ->
+                                total <- Checked.op_Addition total content.Utf8ByteLength
+                                distinct.Add(content.TextContentId, content)
+
+                    index <- index + 1
+
+                more <- hasMore
+
+            cancellationToken.ThrowIfCancellationRequested()
+
+            return total, int64 distinct.Count, started, getCurrentInstant ()
+        }
+
+    /// Reads the configured WorkItem partition without provisioning storage, reading blobs or materializing content.
+    let internal readTextContentSizeFromContainer (container: Container) (scope: UsageFactScope) cancellationToken =
+        task {
+            let query =
+                QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey")
+                    .WithParameter("@grainType", Grace.Actors.Constants.StateName.WorkItem)
+                    .WithParameter("@partitionKey", string scope.RepositoryId)
+
+            let options = QueryRequestOptions(PartitionKey = PartitionKey(string scope.RepositoryId), MaxItemCount = 256)
+            use iterator = container.GetItemQueryIterator<JsonElement>(query, requestOptions = options)
+
+            return!
+                enumerateTextContentSizeWith
+                    (fun token ->
+                        task {
+                            let! page = iterator.ReadNextAsync token
+
+                            return
+                                page.Resource
+                                |> Seq.map decodeTextContentSizeDocument
+                                |> Seq.toArray,
+                                iterator.HasMoreResults
+                        })
+                    scope
+                    cancellationToken
+        }
+
+    /// Selects actor storage before acquiring a container for retained TextContent declarations.
+    let internal readTextContentSizeWith provider getContainer scope (cancellationToken: CancellationToken) =
+        task {
+            match provider with
+            | AzureCosmosDb ->
+                cancellationToken.ThrowIfCancellationRequested()
+                return! readTextContentSizeFromContainer (getContainer ()) scope cancellationToken
+            | MongoDB
+            | Unknown -> return raise (NotSupportedException "TextContent size diagnosis is not supported by the configured actor state storage provider.")
+        }
+
+    /// Reads retained declarations through the configured actor storage provider until exhaustion, cancellation or failure.
+    let readTextContentSize scope cancellationToken = readTextContentSizeWith actorStateStorageProvider (fun () -> cosmosContainer) scope cancellationToken
+
     /// Returns root directory version by directory version id data from Services storage or actor state.
     let internal getRootDirectoryVersionByDirectoryVersionId (repositoryId: RepositoryId) (directoryVersionId: DirectoryVersionId) correlationId =
         task {

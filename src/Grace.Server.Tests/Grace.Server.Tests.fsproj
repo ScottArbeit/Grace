@@ -22,6 +22,7 @@
     <Compile Include="OperationalFactsPublisher.AppHost.Tests.fs" />
     <Compile Include="General.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeDiagnosis.Server.Tests.fs" />
+    <Compile Include="TextContentSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="OperationsTracerBullet.Server.Tests.fs" />
     <Compile Include="Smoke.Server.Tests.fs" />
     <Compile Include="Slop.Server.Tests.fs" />

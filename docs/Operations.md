@@ -42,7 +42,7 @@ Two matching enumerations can report observational agreement; they cannot establ
 | Library namespace and retained content | Existing Library/content owners | No separate Library byte estimate. Existing DirectoryVersion declarations count by their identity wherever referenced; namespace entries are not multiplied into bytes. Broader Library coverage awaits its accepted implementation and evidence. |
 | Orphan/missing blobs, metadata, caches, derived files, compressed representation, provider charges | Different or unavailable byte meaning | Excluded. Blob enumeration and retained metadata do not establish one shared read boundary. |
 
-Issue #829's eventual TextContent accounting must keep description success independent of Operations availability. Identical text under different TextContent IDs represents distinct stored objects. [Issue #1049's historical captured results](design/Operations.TextContent-Measurement-Experiment.json) distinguish 2067 retained-event declared bytes from 2076 decoded observed blob bytes: one referenced object is missing and one observed object has no retained reference. Bounded orphan decompression in that experiment can report observed bytes, but the executed trailer-removal control shows that successful decoding alone does not establish the original expected content. The next recommended decision is a separate diagnostic of distinct TextContent bytes declared by surviving WorkItem events. If selected, it should keep handling in existing server modules and reads in `Services.Actor.fs`, with `ActorStateStorageProvider` dispatch, reading existing storage until exhaustion, caller cancellation or failure without arbitrary total-work or elapsed-time limits inherited from the experiment. The [current-main refresh](design/Operations.TextContent-Measurement-Experiment.md#current-main-refresh) records fresh replay evidence separately from historical limits and results. No implementation or routine repository-usage producer is selected here; blob reconciliation, original-content completeness and a complete repository-storage total remain deferred.
+Issue #829's eventual TextContent accounting must keep description success independent of Operations availability. Identical text under different TextContent IDs represents distinct stored objects. [Issue #1049's historical captured results](design/Operations.TextContent-Measurement-Experiment.json) distinguish 2067 retained-event declared bytes from 2076 decoded observed blob bytes: one referenced object is missing and one observed object has no retained reference. Bounded orphan decompression in that experiment can report observed bytes, but the executed trailer-removal control shows that successful decoding alone does not establish the original expected content. [Issue #1051](https://github.com/ScottArbeit/Grace/issues/1051) selects a separate diagnostic of distinct TextContent bytes declared by surviving WorkItem events. It keeps handling in existing server modules and reads in `Services.Actor.fs`, with `ActorStateStorageProvider` dispatch, reading existing storage until exhaustion, caller cancellation or failure without arbitrary total-work or elapsed-time limits inherited from the experiment. The [current-main refresh](design/Operations.TextContent-Measurement-Experiment.md#current-main-refresh) records fresh replay evidence separately from historical limits and results. No routine repository-usage producer is selected here; blob reconciliation, original-content completeness and a complete repository-storage total remain deferred.
 
 ## DirectoryVersion declaration diagnostic
 
@@ -125,6 +125,78 @@ Exit `0` means a complete success envelope was validated and saved. Exit `4` mea
 The saved JSON uses Grace's `ReturnValue`, `EventTime`, `CorrelationId`, and `Properties` envelope. `ReturnValue` contains the five fields above. Zero with `DistinctContentCount = 0` means no content declarations were encountered; zero with a positive count means zero-length declarations were encountered. Neither establishes physical blob presence. The server returns HTTP `400` for invalid scope or source declarations and HTTP `503` for an interrupted or failed enumeration, with `GraceError` and no successful quantity. A caller can issue a new request; partial counts and continuations are never resumed.
 
 No usage fact, SQL row, counter change, content object, cache, reminder, or runtime diagnostic state is created. The route does not read blobs and does not verify a repository-wide snapshot. The only saved diagnostic is the caller's local output file.
+
+## TextContent declaration diagnostic
+
+[Issue #1051](https://github.com/ScottArbeit/Grace/issues/1051) adds an explicit SystemAdmin diagnostic for distinct logical UTF-8 bytes declared by surviving WorkItem events. This helps a maintainer inspect retained text independently from DirectoryVersion declarations. A description that was superseded or cleared still contributes its earlier TextContent references while its events survive. Folding only the current description would omit those references.
+
+The internal `POST /admin/text-content-size/diagnose` route reuses `GetRepositoryParameters`, the existing SystemAdmin authorization boundary, and the standard success/error envelopes. Supply all three non-empty GUIDs and no names. The handler verifies the repository's owner and organization before `Services.Actor.fs` reads its WorkItem partition through `ActorStateStorageProvider`. Unsupported providers fail before any Cosmos container access. The existing WorkItem server module owns the handler and response record. It does not provision storage, read blobs, call SQL, publish a UsageFact, or change a producer.
+
+This is Product V1 on the existing Grace Server/Cosmos topology, with an explicit request and a local PowerShell output file. There is no automatic retry, background capture, durable recovery, historical interval reconstruction, or repository-total claim. A declaration remains countable when its blob is missing; an orphan blob with no surviving event reference is absent from this result. Do not add the two diagnostic quantities and label the sum complete storage usage.
+
+### TextContent meaning and type budget
+
+One new production type, the server-local `TextContentSizeDiagnostic` response record, contains five fields. Its source-specific quantity names prevent a saved response from being mistaken for the DirectoryVersion diagnostic. The operator scripts reject each other's response shape before publishing an output file.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `Scope` | Existing `UsageFactScope` | Verified owner, organization and repository IDs; this creates no UsageFact. |
+| `DeclaredTextContentUtf8Bytes` | `int64` | Sum of distinct valid retained declarations, in uncompressed UTF-8 bytes. |
+| `DistinctTextContentCount` | `int64` | Distinct `TextContentId` values within the selected repository. |
+| `EnumerationStartedAt` | Existing `Instant` | Beginning of source enumeration. |
+| `EnumerationFinishedAt` | Existing `Instant` | End of enumeration; the window is not an atomic snapshot. |
+
+An exhausted empty source, or WorkItems whose retained descriptions all have no content, produces explicit zero bytes and zero count. A present TextContent reference must have a non-empty identity, valid content hash, and positive declared length, matching the current producer's non-empty-text contract. Equal references encountered again contribute once. Equal text under distinct IDs contributes once per ID. Conflicting length or hash for the same ID aborts the attempt.
+
+The reader requires one leading `Created` event with the requested scope in every document and examines retained `Created`, `DescriptionSet`, and `DescriptionCleared` declarations. The [serializer preflight](design/Operations.TextContentSize-Preflight.json) records the actual producer wire: absent options are explicit JSON `null`; required declaration fields cannot silently become zero or disappear during decoding. This differs from the DirectoryVersion file-size encoding and is kept in a separate reader.
+
+Enumeration continues until exhaustion, caller cancellation or failure, with a 256-document page-size hint and no total-work or elapsed-time cap. The scan retains one entry per distinct TextContent identity, and source growth can extend its duration. Malformed or conflicting source data, cancellation, overflow, or provider failure returns an error with no successful quantity. No partial result or continuation is exposed. Retry starts a new enumeration with an empty accumulator. The earlier serializer preflight and measurement experiments remain historical evidence; their experimental limits do not constrain this diagnostic.
+
+### Run the TextContent diagnostic
+
+Set `GRACE_SERVER_URI` and `GRACE_TOKEN` to the existing server URI and a SystemAdmin token. The output directory must exist.
+
+PowerShell:
+
+```powershell
+./scripts/diagnose-text-content-size.ps1 `
+    -OwnerId '11111111-1111-1111-1111-111111111111' `
+    -OrganizationId '22222222-2222-2222-2222-222222222222' `
+    -RepositoryId '33333333-3333-3333-3333-333333333333' `
+    -OutputPath './text-content-size.json'
+```
+
+bash / zsh, invoking the supported PowerShell command:
+
+```bash
+pwsh -File ./scripts/diagnose-text-content-size.ps1 \
+    -OwnerId '11111111-1111-1111-1111-111111111111' \
+    -OrganizationId '22222222-2222-2222-2222-222222222222' \
+    -RepositoryId '33333333-3333-3333-3333-333333333333' \
+    -OutputPath './text-content-size.json'
+```
+
+Cancel the PowerShell request with Ctrl+C to stop the scan. The command sets no connection or operation timeout, and the server observes the request cancellation token. Cancellation publishes no diagnostic and preserves an existing output file.
+
+Exit `0` means the complete successful envelope was validated and saved. Exit `4` means request, response validation or local output failed. The command checks the source-specific fields, requested scope, nonnegative integer quantities and read window before writing a same-directory temporary file and renaming it to the destination. Failed requests and invalid responses preserve an existing destination. The command makes no power-loss flush or concurrent-writer guarantee.
+
+The saved JSON uses Grace's `ReturnValue`, `EventTime`, `CorrelationId`, and `Properties` envelope. `ReturnValue` contains the five fields above. HTTP `400` reports invalid scope or source declarations; HTTP `503` reports cancellation or provider failure. Errors use `GraceError` and contain no successful diagnostic quantity.
+
+### TextContent contract and proof map
+
+| Requirement | Evidence |
+| --- | --- |
+| Admin authorization precedes parsing; scope is explicit and verified | Hosted `text diagnostic requires admin and explicit verified scope`; focused parameter test. |
+| Superseded and cleared references count; identity deduplication spans pages | Unit `retained events count superseded and cleared text with identity deduplication`; hosted 258 WorkItem documents produce 16 bytes across three IDs, with no blob uploads. |
+| Empty is known zero; incomplete input cannot become zero | Unit empty/null and required-field controls; hosted actual zero envelope captured after source removal. |
+| Enumeration has no arbitrary work cap | Unit successful scans beyond 32 pages, 10,000 documents and 100,000 references; unsupported providers fail before container access. |
+| Incomplete attempts produce no quantity | Unit cancellation before/after reads, provider failure after a valid page, conflicting identity and checked-overflow controls; hosted malformed source responses. |
+| Operator output retains source meaning and preserves prior results on failure | PowerShell transport/validation/publication controls, including both directions of cross-source response rejection; actual hosted zero envelope replay. |
+| No durable accounting side effect | Source depends on repository scope lookup and read-only Cosmos enumeration; no producer, SQL, broker, runtime worker, or persisted-shape changes. |
+
+Only the internal server response, source reader, route, authorization manifest, route classification, operator script, focused tests and these docs change. Public SDK/CLI, OpenAPI schemas/generated clients, persisted events, SQL and Operations worker are unchanged because this is an internal read-only diagnostic. Route classification explicitly records `intentionallyExcludedOperationalSurface`.
+
+The repository lookup verifies scope before reading; each retained document revalidates its Created scope before contributing. The result exposes an enumeration window, so concurrent event changes may produce a mixed observation. There is no mutation or billing publication for a stale snapshot to win. Any future durable capture needs its own acceptance design. Current DirectoryVersion and Library implementations remain unchanged by this diagnostic.
 
 ## Later decisions and preservation
 
