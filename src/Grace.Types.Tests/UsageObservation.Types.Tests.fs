@@ -63,6 +63,34 @@ type UsageObservationTests() =
                     .Value
         }
 
+    /// Supplies a deterministic Artifact declaration and complete nanosecond window.
+    let artifactObservation =
+        {
+            ObservationId = Guid.Parse "10560000-0000-0000-0000-000000000001"
+            Scope =
+                {
+                    OwnerId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                    OrganizationId = Guid.Parse "22222222-2222-2222-2222-222222222222"
+                    RepositoryId = Guid.Parse "33333333-3333-3333-3333-333333333333"
+                }
+            DeclaredArtifactBytes = 0L
+            DistinctArtifactCount = 0L
+            EnumerationStartedAt =
+                InstantPattern
+                    .ExtendedIso
+                    .Parse(
+                        "2026-09-07T01:02:03.123456789Z"
+                    )
+                    .Value
+            EnumerationFinishedAt =
+                InstantPattern
+                    .ExtendedIso
+                    .Parse(
+                        "2026-09-07T01:02:03.123456790Z"
+                    )
+                    .Value
+        }
+
     /// Accepts known zero and positive completed readings while preserving every nanosecond in real Grace JSON.
     [<Test>]
     member _.``zero positive and precise windows round trip through Grace JSON``() =
@@ -215,6 +243,84 @@ type UsageObservationTests() =
         |> List.iter (fun value ->
             Assert.That(
                 TextContentSizeObservation.Validate value
+                |> Result.isError,
+                Is.True
+            ))
+
+    /// Accepts known zero and positive completed readings while preserving every nanosecond in real Grace JSON.
+    [<Test>]
+    member _.``artifact zero positive and precise windows round trip through Grace JSON``() =
+        [
+            artifactObservation
+            { artifactObservation with DeclaredArtifactBytes = 37L; DistinctArtifactCount = 2L }
+        ]
+        |> List.iter (fun value ->
+            Assert.That(
+                ArtifactSizeObservation.Validate value
+                |> Result.isOk,
+                Is.True
+            )
+
+            let json = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)
+            use document = JsonDocument.Parse json
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("DeclaredArtifactBytes")
+                    .GetInt64(),
+                Is.EqualTo value.DeclaredArtifactBytes
+            )
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("DistinctArtifactCount")
+                    .GetInt64(),
+                Is.EqualTo value.DistinctArtifactCount
+            )
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("EnumerationStartedAt")
+                    .GetString(),
+                Is.EqualTo "2026-09-07T01:02:03.123456789Z"
+            )
+
+            Assert.That(
+                document
+                    .RootElement
+                    .GetProperty("EnumerationFinishedAt")
+                    .GetString(),
+                Is.EqualTo "2026-09-07T01:02:03.12345679Z"
+            )
+
+            Assert.That(JsonSerializer.Deserialize<ArtifactSizeObservation>(json, Constants.JsonSerializerOptions), Is.EqualTo value))
+
+    /// Rejects each independently incomplete identity, negative quantity and missing or reversed read window.
+    [<Test>]
+    member _.``invalid artifact observation partitions are rejected``() =
+        [
+            Unchecked.defaultof<ArtifactSizeObservation>
+            { artifactObservation with ObservationId = Guid.Empty }
+            { artifactObservation with Scope = Unchecked.defaultof<_> }
+            { artifactObservation with Scope = { artifactObservation.Scope with OwnerId = Guid.Empty } }
+            { artifactObservation with Scope = { artifactObservation.Scope with OrganizationId = Guid.Empty } }
+            { artifactObservation with Scope = { artifactObservation.Scope with RepositoryId = Guid.Empty } }
+            { artifactObservation with DeclaredArtifactBytes = -1L }
+            { artifactObservation with DistinctArtifactCount = -1L }
+            { artifactObservation with EnumerationStartedAt = Constants.DefaultTimestamp }
+            { artifactObservation with EnumerationFinishedAt = Constants.DefaultTimestamp }
+            { artifactObservation with
+                EnumerationFinishedAt =
+                    artifactObservation.EnumerationStartedAt
+                    - NodaTime.Duration.FromNanoseconds 1L
+            }
+        ]
+        |> List.iter (fun value ->
+            Assert.That(
+                ArtifactSizeObservation.Validate value
                 |> Result.isError,
                 Is.True
             ))

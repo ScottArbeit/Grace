@@ -14,6 +14,7 @@
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="DirectoryVersionSizeObservation.fs" />
     <Compile Include="TextContentSizeObservation.fs" />
+    <Compile Include="ArtifactSizeObservation.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>
 

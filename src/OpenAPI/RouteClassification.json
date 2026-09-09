@@ -24,6 +24,8 @@
         { "method": "GET", "path": "/admin/directory-version-size/observations/%s" },
         { "method": "POST", "path": "/admin/text-content-size/observations/%s" },
         { "method": "GET", "path": "/admin/text-content-size/observations/%s" },
+        { "method": "POST", "path": "/admin/artifact-size/observations/%s" },
+        { "method": "GET", "path": "/admin/artifact-size/observations/%s" },
         { "method": "POST", "path": "/admin/text-content-size/diagnose" },
         { "method": "POST", "path": "/admin/artifact-size/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/diagnose" },

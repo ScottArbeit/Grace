@@ -18,6 +18,7 @@
     <Compile Include="DirectoryVersionSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeObservation.Server.Tests.fs" />
     <Compile Include="TextContentSizeObservation.Server.Tests.fs" />
+    <Compile Include="ArtifactSizeObservation.Server.Tests.fs" />
     <Compile Include="TextContentSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="ArtifactSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="CosmosWarmup.Server.Tests.fs" />

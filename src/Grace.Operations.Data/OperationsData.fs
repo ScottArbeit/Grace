@@ -502,6 +502,7 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             do! executeCommandAsync connection OperationsUsageSql.CreateSchema cancellationToken
             do! executeCommandAsync connection DirectoryVersionSizeObservations.CreateTable cancellationToken
             do! executeCommandAsync connection TextContentSizeObservations.CreateTable cancellationToken
+            do! executeCommandAsync connection ArtifactSizeObservations.CreateTable cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateRawUsageFactTable cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateUsageAggregateMinuteTable cancellationToken
         }

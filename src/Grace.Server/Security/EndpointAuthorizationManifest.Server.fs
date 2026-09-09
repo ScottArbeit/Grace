@@ -48,6 +48,8 @@ module EndpointAuthorizationManifest =
             endpoint "GET" "/admin/directory-version-size/observations/%s" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/text-content-size/observations/%s" (Authorized(SystemAdmin, System))
             endpoint "GET" "/admin/text-content-size/observations/%s" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/admin/artifact-size/observations/%s" (Authorized(SystemAdmin, System))
+            endpoint "GET" "/admin/artifact-size/observations/%s" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/text-content-size/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/artifact-size/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/manifest-contribution/repair" (Authorized(SystemAdmin, System))

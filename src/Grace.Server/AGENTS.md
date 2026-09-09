@@ -40,18 +40,18 @@ code.
 3. Note any unusual hosting assumptions or deployment considerations here so
    agents avoid unnecessary spelunking.
 
-## DirectoryVersion and TextContent observation SQL access
+## DirectoryVersion, TextContent and Artifact observation SQL access
 
 The internal SystemAdmin capture/read routes use `Grace.Operations.Data` and the existing
 `grace__operations__sql__connectionstring` setting. The Operations worker creates their source-specific observation
 tables. SQL is not a Server startup requirement: missing configuration/schema returns unavailable on these routes.
 Preserve live diagnostic dependencies and the separate additive usage worker. Same-ID capture checks SQL before
 repository/source access; new capture checks repository scope and nondeleted state before and after enumeration.
-Both observation handlers use the existing provider-dispatched readers in `Services.Actor.fs`, with scope validation
-from `DirectoryVersion` or `WorkItem`. Pass `RequestAborted` through lookup, repository checks, collection and acceptance;
+All three observation handlers use the existing provider-dispatched readers in `Services.Actor.fs`, with scope validation
+from `DirectoryVersion`, `WorkItem` or `Artifact`. Pass `RequestAborted` through lookup, repository checks, collection and acceptance;
 do not add total scan or wrapper deadlines. SQL per-command behavior and short acceptance transactions remain unchanged.
 A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
-Source identity belongs to each route/table; matching GUIDs across the two sources do not identify a combined observation.
+Source identity belongs to each route/table; matching GUIDs across the three sources do not identify a combined observation.
 
 ## Artifact declaration diagnostic
 

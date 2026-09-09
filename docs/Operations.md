@@ -317,7 +317,7 @@ A SystemAdmin can capture and read an immutable retained TextContent declaration
 | `POST /admin/text-content-size/observations/{observationId}` | Capture or return the first committed TextContent row. Body is existing `GetRepositoryParameters` with explicit owner, organization and repository GUIDs. |
 | `GET /admin/text-content-size/observations/{observationId}?OwnerId=...&OrganizationId=...&RepositoryId=...` | Read the stored row without repository or source access. |
 
-Success returns `GraceReturnValue<TextContentSizeObservation>` with `ObservationId`, `Scope`, `DeclaredTextContentUtf8Bytes`, `DistinctTextContentCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. The two quantities are nonnegative 64-bit integers; known zero and all Instant fractional digits are preserved. HTTP 400 rejects invalid IDs, scope, names or malformed source; 409 rejects conflicting scope without stored values; a missing read is 404; unavailable SQL/source, deadline and cancellation return 503 without a successful observation.
+Success returns `GraceReturnValue<TextContentSizeObservation>` with `ObservationId`, `Scope`, `DeclaredTextContentUtf8Bytes`, `DistinctTextContentCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. The two quantities are nonnegative 64-bit integers; known zero and all Instant fractional digits are preserved. HTTP 400 rejects invalid IDs, scope, names or malformed source; 409 rejects conflicting scope without stored values; a missing read is 404; unavailable SQL/source and cancellation return 503 without a successful observation.
 
 Authorization precedes parsing. A matching prior SQL row bypasses the source even after repository deletion. New capture verifies current repository scope and nondeleted state before and after the retained scan, then enters the short acceptance transaction. Scope validation uses `WorkItem.validateTextContentSizeDiagnosticParameters`; `Services.Actor.fs` selects the configured provider and returns the declaration quantity, distinct count and full read window. The capture retains the verified scope and requested ObservationId. Collection runs until exhaustion, caller cancellation or failure without total-work or elapsed-time ceilings; the 256-document page size controls pagination only. The request token passes through all effects, and SQL per-command behavior remains unchanged. The window is non-atomic. A same-ID retry returns the original quantities and window; choose a new ID to recollect.
 
@@ -348,6 +348,47 @@ The script rejects a DirectoryVersion response, validates the source-specific qu
 The [algorithm applicability record](design/Operations.TextContentObservation-Applicability.json) maps this table and its fields to the predecessor's captured SQL experiment. Locking, absent-or-complete state, scope binding, time representation, commit ordering and retry behavior are unchanged. It reuses the recorded 25 controls and extracted replay without claiming a new experiment. Actual TextContent Data checks use isolated SQL; hosted acceptance runs in isolated GitHub Validate, followed by Windows validation of the actual hosted envelope. No new DebugAzure deployment or unsupported crash guarantee is claimed.
 
 PR #1059's refresh consumes the reviewed PR #1052 readers and also updates its inherited DirectoryVersion observation caller from PR #1057. Both Data modules, observation DTOs, SQL schemas and historical JSON records remain unchanged. Historical scan ceilings in the applicability record describe that earlier run; the current capture behavior above supersedes them. The recorded 19 TextContent Data controls and 25 SQL preflight controls remain applicable to the unchanged acceptance sequence; they are reused evidence, not a fresh SQL replay.
+
+## Retained Artifact observations
+
+A SystemAdmin can capture and read an immutable retained Artifact declaration using the same SQL-first acceptance sequence as DirectoryVersion observations. The unchanged Artifact reader projects one retained declaration per ID and counts its declared bytes, including unattached, zero-byte and logically deleted state until clearance. It does not inspect blobs or measure physical storage, repository totals or an interval.
+
+| Request | Behavior |
+| --- | --- |
+| `POST /admin/artifact-size/observations/{observationId}` | Capture or return the first committed Artifact row. Body is existing `GetRepositoryParameters` with explicit owner, organization and repository GUIDs. |
+| `GET /admin/artifact-size/observations/{observationId}?OwnerId=...&OrganizationId=...&RepositoryId=...` | Read the stored row without repository or source access. |
+
+Success returns `GraceReturnValue<ArtifactSizeObservation>` with `ObservationId`, `Scope`, `DeclaredArtifactBytes`, `DistinctArtifactCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. The two quantities are nonnegative 64-bit integers; known zero and all Instant fractional digits are preserved. HTTP 400 rejects invalid IDs, scope, names or malformed source; 409 rejects conflicting scope without stored values; a missing read is 404; unavailable SQL/source and cancellation return 503 without a successful observation.
+
+Authorization precedes parsing. A matching prior SQL row bypasses the source even after repository deletion. New capture verifies current repository scope and nondeleted state before and after the retained scan, then enters the short acceptance transaction. The scan dispatches through ActorStateStorageProvider before Cosmos acquisition and continues until exhaustion, caller cancellation or source failure. Its non-atomic window and 256-item page hint remain; no total-work or elapsed-time ceiling applies. A same-ID retry returns the original quantities and window; choose a new ID to recollect.
+
+The worker initializer creates `ops.ArtifactSizeObservation` through the existing Operations SQL setting. No Server startup dependency or AppHost change is added. Its row is separate from DirectoryVersion and TextContent observations, raw usage facts and minute aggregates. Identical GUIDs on the three source routes address separate observations, with no combined identity or total.
+
+### Artifact operator command
+
+Set `GRACE_SERVER_URI` and `GRACE_TOKEN` as above. Supply an explicit ObservationId and an output file in an existing directory.
+
+PowerShell:
+
+```powershell
+$observationId = '10640000-0000-0000-0000-000000000001'
+./scripts/capture-artifact-size.ps1 -ObservationId $observationId -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath './artifact-observation.json'
+./scripts/capture-artifact-size.ps1 -Mode Read -ObservationId $observationId -OwnerId $ownerId -OrganizationId $organizationId -RepositoryId $repositoryId -OutputPath './artifact-observation.json'
+```
+
+bash / zsh:
+
+```bash
+observationId='10640000-0000-0000-0000-000000000001'
+pwsh ./scripts/capture-artifact-size.ps1 -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './artifact-observation.json'
+pwsh ./scripts/capture-artifact-size.ps1 -Mode Read -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './artifact-observation.json'
+```
+
+The script rejects DirectoryVersion and TextContent responses, validates the source-specific quantities, ID, complete scope and precise UTC window, then publishes the original JSON atomically. HTTP, transport, validation and local publication failures preserve prior output. The Windows tests include an actual locked destination. The Artifact command sets connection and operation timeout ceilings to zero so the caller controls cancellation. Capture may have committed despite a failed response: retry the same ID. Read failures direct another read of that ID. There are no automatic retries.
+
+The [algorithm applicability record](design/Operations.ArtifactObservation-Applicability.json) maps this table and its fields to the predecessor's captured SQL experiment. Locking, absent-or-complete state, scope binding, time representation, commit ordering and retry behavior are unchanged. It reuses the recorded 25 controls and extracted replay without claiming a new experiment. Actual Artifact Data checks use isolated SQL; hosted acceptance runs in isolated GitHub Validate, followed by Windows validation of the actual hosted envelope. No new DebugAzure deployment or unsupported crash guarantee is claimed.
+
+The Artifact observation refresh preserves its Data module, DTO, schema and historical JSON. Historical scan ceilings in its applicability record describe that earlier run; current capture uses the caller-cancellable reader above. The unchanged SQL acceptance sequence reuses the recorded SQL evidence without claiming a new replay.
 
 ## Later decisions and preservation
 
