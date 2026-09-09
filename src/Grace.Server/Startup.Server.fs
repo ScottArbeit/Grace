@@ -1961,9 +1961,11 @@ module Application =
                     "/admin"
                     [
                         GET [ routef "/directory-version-size/observations/%s" (fun id ->
-                                  composeHandlers requireSystemAdmin (DirectoryVersionSizeObservation.Read id)) ]
+                                  composeHandlers requireSystemAdmin (DirectoryVersionSizeObservation.Read id))
+                              routef "/text-content-size/observations/%s" (fun id -> composeHandlers requireSystemAdmin (TextContentSizeObservation.Read id)) ]
                         POST [ routef "/directory-version-size/observations/%s" (fun id ->
                                    composeHandlers requireSystemAdmin (DirectoryVersionSizeObservation.Capture id))
+                               routef "/text-content-size/observations/%s" (fun id -> composeHandlers requireSystemAdmin (TextContentSizeObservation.Capture id))
                                route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersion.DiagnoseSize)
                                route "/text-content-size/diagnose" (composeHandlers requireSystemAdmin WorkItem.DiagnoseTextContentSize)
                                route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)

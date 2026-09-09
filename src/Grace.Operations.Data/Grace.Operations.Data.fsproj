@@ -13,6 +13,7 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="DirectoryVersionSizeObservation.fs" />
+    <Compile Include="TextContentSizeObservation.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>
 

@@ -23,6 +23,7 @@
     <Compile Include="General.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeObservation.Server.Tests.fs" />
+    <Compile Include="TextContentSizeObservation.Server.Tests.fs" />
     <Compile Include="TextContentSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="OperationsTracerBullet.Server.Tests.fs" />
     <Compile Include="Smoke.Server.Tests.fs" />
