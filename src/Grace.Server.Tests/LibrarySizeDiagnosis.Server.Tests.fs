@@ -188,7 +188,38 @@ module LibrarySizeDiagnosisHttpTests =
             Assert.That(empty.DeclaredLogicalBytes, Is.Zero)
             Assert.That(empty.DistinctManifestCount, Is.Zero)
             Assert.That(empty.CommittedCursor, Is.Zero)
-            TestContext.Progress.WriteLine("LIBRARY-SIZE-HOSTED-JSON-ZERO " + emptyBody)
+            use emptyJson = JsonDocument.Parse(emptyBody)
+            let emptyValue = emptyJson.RootElement.GetProperty("ReturnValue")
+
+            Assert.That(
+                emptyValue
+                    .GetProperty("DeclaredLogicalBytes")
+                    .GetInt64(),
+                Is.EqualTo 0L
+            )
+
+            Assert.That(
+                emptyValue
+                    .GetProperty("DistinctManifestCount")
+                    .GetInt64(),
+                Is.EqualTo 0L
+            )
+
+            Assert.That(
+                emptyValue
+                    .GetProperty("CommittedCursor")
+                    .GetInt64(),
+                Is.EqualTo 0L
+            )
+
+            TestContext.Error.WriteLine(
+                "LIBRARY_SIZE_DIAGNOSTIC_HOSTED_ZERO_JSON_BASE64:"
+                + Convert.ToBase64String(Encoding.UTF8.GetBytes emptyBody)
+            )
+
+            let zeroOutput = Path.Combine(TestContext.CurrentContext.WorkDirectory, "library-size-diagnostic-hosted-zero-response.json")
+            File.WriteAllText(zeroOutput, emptyBody)
+            TestContext.AddTestAttachment(zeroOutput, "Exact hosted zero Library declaration envelope for Windows operator replay.")
             let add = Parameters.Library.AddLibraryParameters(ExpectedVersion = catalog.Version, LibraryPath = "Library", OperationId = Guid.NewGuid())
             scope repository add
             let! configured, _ = post<LibraryCatalogChangeResultDto> "/libraries/add" add
@@ -321,6 +352,13 @@ module LibrarySizeDiagnosisHttpTests =
             Assert.That(result.DistinctManifestCount, Is.EqualTo 2L)
             Assert.That(result.CommittedCursor, Is.EqualTo 205L)
             Assert.That(result.Epoch, Is.EqualTo empty.Epoch)
-            TestContext.Progress.WriteLine("LIBRARY-SIZE-HOSTED-JSON-POSITIVE " + body)
-            File.WriteAllText(Path.Combine(TestContext.CurrentContext.WorkDirectory, "library-size-diagnostic-hosted-response.json"), body)
+
+            TestContext.Error.WriteLine(
+                "LIBRARY_SIZE_DIAGNOSTIC_HOSTED_POSITIVE_JSON_BASE64:"
+                + Convert.ToBase64String(Encoding.UTF8.GetBytes body)
+            )
+
+            let positiveOutput = Path.Combine(TestContext.CurrentContext.WorkDirectory, "library-size-diagnostic-hosted-response.json")
+            File.WriteAllText(positiveOutput, body)
+            TestContext.AddTestAttachment(positiveOutput, "Exact hosted positive Library declaration envelope for Windows operator replay.")
         }
