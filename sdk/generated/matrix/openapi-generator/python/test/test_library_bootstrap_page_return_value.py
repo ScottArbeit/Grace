@@ -58,11 +58,10 @@ class TestLibraryBootstrapPageReturnValue(unittest.TestCase):
                         grace_generated_openapi_probe.models.library_item_dto.LibraryItemDto(
                             item_id = '', 
                             item_kind = 'file', 
-                            state = 'live', 
                             last_change_cursor = '0', 
-                            library_catalog_version = '', 
                             namespace = null, 
                             content = null, 
+                            content_revision = null, 
                             tombstone = null, )
                         ], 
                     next_page_token = null, )

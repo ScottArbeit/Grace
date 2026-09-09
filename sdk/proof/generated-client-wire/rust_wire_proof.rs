@@ -1,4 +1,7 @@
-use grace_generated_openapi_probe::models::TypedReferenceApiDto;
+use grace_generated_openapi_probe::models::{
+    LibraryContentPreparationDto, LibraryNamespaceSlotDto, PrepareLibraryContentReadParameters,
+    TypedReferenceApiDto,
+};
 use serde_json::json;
 
 fn sentinel() -> serde_json::Value {
@@ -44,4 +47,49 @@ fn typed_reference_wire_variants_are_semantic() {
     let mut non_canonical = sentinel();
     non_canonical["Links"] = json!(["unexpected-link"]);
     assert!(serde_json::from_value::<TypedReferenceApiDto>(non_canonical).is_err());
+}
+
+#[test]
+fn library_preparation_parent_name_and_content_revision_round_trip() {
+    let preparation = json!({
+        "UploadSessionId":"77777777-7777-7777-7777-777777777777",
+        "Blake3Hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "Sha256Hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "Size":123456,
+        "AuthorizedScope":"repository:44444444-4444-4444-4444-444444444444",
+        "StoragePoolId":"pool-primary",
+        "ExpiresAt":"2026-07-11T20:15:00Z"
+    });
+    let decoded: LibraryContentPreparationDto = serde_json::from_value(preparation.clone()).unwrap();
+    assert_eq!(decoded.upload_session_id.to_string(), "77777777-7777-7777-7777-777777777777");
+    assert_eq!(decoded.authorized_scope, "repository:44444444-4444-4444-4444-444444444444");
+    assert_eq!(serde_json::to_value(decoded).unwrap(), preparation);
+
+    let slot = json!({
+        "Parent":{
+            "Kind":"item",
+            "LibraryPath":"media",
+            "ItemId":"88888888-8888-8888-8888-888888888888"
+        },
+        "Name":"logo.svg",
+        "SlotVersion":"99999999-9999-9999-9999-999999999999",
+        "OccupantItemId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    });
+    let decoded: LibraryNamespaceSlotDto = serde_json::from_value(slot.clone()).unwrap();
+    assert!(matches!(
+        decoded.parent.kind,
+        grace_generated_openapi_probe::models::library_parent_dto::Kind::Item
+    ));
+    assert_eq!(decoded.parent.item_id.to_string(), "88888888-8888-8888-8888-888888888888");
+    assert_eq!(decoded.name, "logo.svg");
+    assert_eq!(serde_json::to_value(decoded).unwrap(), slot);
+
+    let read_request = json!({
+        "ItemId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "ContentVersionId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "ContentRevision":"cursor-revision-3"
+    });
+    let decoded: PrepareLibraryContentReadParameters = serde_json::from_value(read_request.clone()).unwrap();
+    assert_eq!(decoded.content_revision, "cursor-revision-3");
+    assert_eq!(serde_json::to_value(decoded).unwrap(), read_request);
 }

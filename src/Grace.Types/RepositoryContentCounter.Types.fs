@@ -11,7 +11,7 @@ open System.Runtime.Serialization
 module RepositoryContentCounter =
 
     /// Represents repository content counter lifecycle state.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterLifecycleState =
         | NotReferenced
         | Referenced
@@ -20,7 +20,7 @@ module RepositoryContentCounter =
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterLifecycleState>()
 
     /// Identifies the bounded counter operation recorded by the latest completed change.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterChangeOperation =
         | Added
         | Removed
@@ -32,10 +32,15 @@ module RepositoryContentCounter =
     [<GenerateSerializer>]
     type RepositoryContentCounterCompletedChange =
         {
+            [<Id(0u)>]
             OperationId: RepositoryContentCounterOperationId
+            [<Id(1u)>]
             Operation: RepositoryContentCounterChangeOperation
+            [<Id(2u)>]
             PreviousCount: ReferenceCount
+            [<Id(3u)>]
             CurrentCount: ReferenceCount
+            [<Id(4u)>]
             Revision: int64
         }
 
@@ -60,11 +65,17 @@ module RepositoryContentCounter =
     [<GenerateSerializer>]
     type RepositoryContentCounterRepairCommand =
         {
+            [<Id(0u)>]
             OperationId: RepositoryContentCounterOperationId
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             StoragePoolId: StoragePoolId
+            [<Id(3u)>]
             ManifestAddress: ManifestAddress
+            [<Id(4u)>]
             ExpectedRevision: int64
+            [<Id(5u)>]
             RebuiltCount: ReferenceCount
         }
 
@@ -99,19 +110,36 @@ module RepositoryContentCounter =
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterIntent>()
 
     /// Represents the repository content counter event contract.
-    type RepositoryContentCounterEvent = { Event: RepositoryContentCounterEventType; Metadata: EventMetadata }
+    [<GenerateSerializer>]
+    type RepositoryContentCounterEvent =
+        {
+            [<Id(0u)>]
+            Event: RepositoryContentCounterEventType
+            [<Id(1u)>]
+            Metadata: EventMetadata
+        }
 
     /// Represents repository content counter dto.
     [<GenerateSerializer>]
     type RepositoryContentCounterDto =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+            [<Id(2u)>]
             StoragePoolId: StoragePoolId
+            [<Id(3u)>]
             ManifestAddress: ManifestAddress
+            [<Id(4u)>]
             Count: ReferenceCount
+            [<Id(5u)>]
             Revision: int64
+            [<Id(6u)>]
             LastCompletedChange: RepositoryContentCounterCompletedChange option
+            /// Retains one exact add until its dependent workflow and Library receipt are durable.
+            [<Id(7u)>]
+            PendingTrackedAdd: RepositoryContentCounterCompletedChange option
         }
 
         /// Preserves the established read name while the durable snapshot stores the contract's `Count` field.
@@ -139,6 +167,7 @@ module RepositoryContentCounter =
                 Count = 0L
                 Revision = 0L
                 LastCompletedChange = None
+                PendingTrackedAdd = None
             }
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
@@ -196,10 +225,16 @@ module RepositoryContentCounter =
     [<GenerateSerializer>]
     type RepositoryContentCounterDecision =
         {
+            [<Id(0u)>]
             Counter: RepositoryContentCounterDto
+            [<Id(1u)>]
             OperationId: RepositoryContentCounterOperationId
+            [<Id(2u)>]
             Events: RepositoryContentCounterEvent list
+            [<Id(3u)>]
             Intents: RepositoryContentCounterIntent list
+            [<Id(4u)>]
             WasIdempotentReplay: bool
+            [<Id(5u)>]
             Message: string
         }

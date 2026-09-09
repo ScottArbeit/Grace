@@ -31,11 +31,11 @@ from grace_generated_openapi_probe.models.library_bootstrap_page_return_value im
 from grace_generated_openapi_probe.models.library_catalog_change_return_value import LibraryCatalogChangeReturnValue
 from grace_generated_openapi_probe.models.library_catalog_return_value import LibraryCatalogReturnValue
 from grace_generated_openapi_probe.models.library_change_page_return_value import LibraryChangePageReturnValue
-from grace_generated_openapi_probe.models.library_content_read_grant_return_value import LibraryContentReadGrantReturnValue
+from grace_generated_openapi_probe.models.library_content_preparation_return_value import LibraryContentPreparationReturnValue
+from grace_generated_openapi_probe.models.library_content_read_return_value import LibraryContentReadReturnValue
 from grace_generated_openapi_probe.models.library_item_return_value import LibraryItemReturnValue
 from grace_generated_openapi_probe.models.library_namespace_slot_return_value import LibraryNamespaceSlotReturnValue
 from grace_generated_openapi_probe.models.library_operation_receipt_return_value import LibraryOperationReceiptReturnValue
-from grace_generated_openapi_probe.models.library_prepared_content_return_value import LibraryPreparedContentReturnValue
 from grace_generated_openapi_probe.models.library_status_return_value import LibraryStatusReturnValue
 from grace_generated_openapi_probe.models.list_libraries_parameters import ListLibrariesParameters
 from grace_generated_openapi_probe.models.prepare_library_content_parameters import PrepareLibraryContentParameters
@@ -636,7 +636,7 @@ class LibrariesApi:
     @validate_call
     def download_library_content(
         self,
-        grant_id: Annotated[str, Field(min_length=1, strict=True, max_length=2048)],
+        read_token: Annotated[str, Field(min_length=1, strict=True, max_length=2048)],
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -650,11 +650,11 @@ class LibrariesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> bytes:
-        """Redeem one authorized short-lived immutable-content read grant.
+        """Download authorized immutable content through a signed token until expiry.
 
 
-        :param grant_id: (required)
-        :type grant_id: str
+        :param read_token: (required)
+        :type read_token: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -678,7 +678,7 @@ class LibrariesApi:
         """ # noqa: E501
 
         _param = self._download_library_content_serialize(
-            grant_id=grant_id,
+            read_token=read_token,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -707,7 +707,7 @@ class LibrariesApi:
     @validate_call
     def download_library_content_with_http_info(
         self,
-        grant_id: Annotated[str, Field(min_length=1, strict=True, max_length=2048)],
+        read_token: Annotated[str, Field(min_length=1, strict=True, max_length=2048)],
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -721,11 +721,11 @@ class LibrariesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[bytes]:
-        """Redeem one authorized short-lived immutable-content read grant.
+        """Download authorized immutable content through a signed token until expiry.
 
 
-        :param grant_id: (required)
-        :type grant_id: str
+        :param read_token: (required)
+        :type read_token: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -749,7 +749,7 @@ class LibrariesApi:
         """ # noqa: E501
 
         _param = self._download_library_content_serialize(
-            grant_id=grant_id,
+            read_token=read_token,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -778,7 +778,7 @@ class LibrariesApi:
     @validate_call
     def download_library_content_without_preload_content(
         self,
-        grant_id: Annotated[str, Field(min_length=1, strict=True, max_length=2048)],
+        read_token: Annotated[str, Field(min_length=1, strict=True, max_length=2048)],
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -792,11 +792,11 @@ class LibrariesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Redeem one authorized short-lived immutable-content read grant.
+        """Download authorized immutable content through a signed token until expiry.
 
 
-        :param grant_id: (required)
-        :type grant_id: str
+        :param read_token: (required)
+        :type read_token: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -820,7 +820,7 @@ class LibrariesApi:
         """ # noqa: E501
 
         _param = self._download_library_content_serialize(
-            grant_id=grant_id,
+            read_token=read_token,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -844,7 +844,7 @@ class LibrariesApi:
 
     def _download_library_content_serialize(
         self,
-        grant_id,
+        read_token,
         _request_auth,
         _content_type,
         _headers,
@@ -866,8 +866,8 @@ class LibrariesApi:
         _body_params: Optional[bytes] = None
 
         # process the path parameters
-        if grant_id is not None:
-            _path_params['grantId'] = grant_id
+        if read_token is not None:
+            _path_params['readToken'] = read_token
         # process the query parameters
         # process the header parameters
         # process the form parameters
@@ -891,7 +891,7 @@ class LibrariesApi:
 
         return self.api_client.param_serialize(
             method='GET',
-            resource_path='/libraries/content/{grantId}',
+            resource_path='/libraries/content/{readToken}',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,
@@ -2896,7 +2896,7 @@ class LibrariesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> LibraryPreparedContentReturnValue:
+    ) -> LibraryContentPreparationReturnValue:
         """Prepare exact immutable bytes for a later Library change.
 
 
@@ -2933,7 +2933,7 @@ class LibrariesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "LibraryPreparedContentReturnValue",
+            '200': "LibraryContentPreparationReturnValue",
             '400': "GraceError",
             '403': "str",
             '409': "GraceError",
@@ -2966,7 +2966,7 @@ class LibrariesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[LibraryPreparedContentReturnValue]:
+    ) -> ApiResponse[LibraryContentPreparationReturnValue]:
         """Prepare exact immutable bytes for a later Library change.
 
 
@@ -3003,7 +3003,7 @@ class LibrariesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "LibraryPreparedContentReturnValue",
+            '200': "LibraryContentPreparationReturnValue",
             '400': "GraceError",
             '403': "str",
             '409': "GraceError",
@@ -3073,7 +3073,7 @@ class LibrariesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "LibraryPreparedContentReturnValue",
+            '200': "LibraryContentPreparationReturnValue",
             '400': "GraceError",
             '403': "str",
             '409': "GraceError",
@@ -3180,8 +3180,8 @@ class LibrariesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> LibraryContentReadGrantReturnValue:
-        """Prepare a one-use read grant for an authorized retained content version.
+    ) -> LibraryContentReadReturnValue:
+        """Prepare a signed read URL for an authorized retained content version until expiry.
 
 
         :param prepare_library_content_read_parameters: (required)
@@ -3217,7 +3217,7 @@ class LibrariesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "LibraryContentReadGrantReturnValue",
+            '200': "LibraryContentReadReturnValue",
             '400': "GraceError",
             '403': "str",
             '404': "GraceError",
@@ -3250,8 +3250,8 @@ class LibrariesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[LibraryContentReadGrantReturnValue]:
-        """Prepare a one-use read grant for an authorized retained content version.
+    ) -> ApiResponse[LibraryContentReadReturnValue]:
+        """Prepare a signed read URL for an authorized retained content version until expiry.
 
 
         :param prepare_library_content_read_parameters: (required)
@@ -3287,7 +3287,7 @@ class LibrariesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "LibraryContentReadGrantReturnValue",
+            '200': "LibraryContentReadReturnValue",
             '400': "GraceError",
             '403': "str",
             '404': "GraceError",
@@ -3321,7 +3321,7 @@ class LibrariesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Prepare a one-use read grant for an authorized retained content version.
+        """Prepare a signed read URL for an authorized retained content version until expiry.
 
 
         :param prepare_library_content_read_parameters: (required)
@@ -3357,7 +3357,7 @@ class LibrariesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "LibraryContentReadGrantReturnValue",
+            '200': "LibraryContentReadReturnValue",
             '400': "GraceError",
             '403': "str",
             '404': "GraceError",

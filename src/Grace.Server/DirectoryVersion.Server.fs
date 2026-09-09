@@ -28,6 +28,9 @@ open System.Text.Json
 open System.Threading.Tasks
 open Giraffe.ViewEngine.HtmlElements
 open System.IO
+open Grace.Shared.Parameters.Repository
+open Grace.Types.Usage
+open NodaTime
 
 /// Contains Grace Server directory version behavior and supporting helpers.
 module DirectoryVersion =
@@ -611,4 +614,101 @@ module DirectoryVersion =
                     }
 
                 return! processCommand context validations command
+            }
+
+    /// Binds a completed declaration count to the requested repository and its non-atomic read window.
+    type DirectoryVersionSizeDiagnostic =
+        {
+            Scope: UsageFactScope
+            DeclaredLogicalBytes: int64
+            DistinctContentCount: int64
+            EnumerationStartedAt: Instant
+            EnumerationFinishedAt: Instant
+        }
+
+    /// Rejects name resolution and incomplete identifiers before reading repository state.
+    let internal validateSizeDiagnosticParameters (parameters: GetRepositoryParameters) =
+        /// Accepts only explicit, non-empty repository scope identifiers.
+        let parseId (value: string) =
+            match Guid.TryParse value with
+            | true, id when id <> Guid.Empty -> Some id
+            | _ -> None
+
+        if isNull (box parameters) then
+            Error "A repository scope is required."
+        elif
+            [
+                parameters.OwnerName
+                parameters.OrganizationName
+                parameters.RepositoryName
+            ]
+            |> List.exists (String.IsNullOrEmpty >> not)
+        then
+            Error "Use explicit owner, organization and repository IDs; name selectors are not supported."
+        else
+            match parseId parameters.OwnerId, parseId parameters.OrganizationId, parseId parameters.RepositoryId with
+            | Some owner, Some organization, Some repository -> Ok { OwnerId = owner; OrganizationId = organization; RepositoryId = repository }
+            | _ -> Error "OwnerId, OrganizationId and RepositoryId must be non-empty GUIDs."
+
+    /// Requires an existing repository in the supplied scope before returning a completed read-only diagnostic.
+    let DiagnoseSize: HttpHandler =
+        fun next context ->
+            task {
+                let correlationId = Grace.Server.Services.getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<GetRepositoryParameters>()
+
+                    match validateSizeDiagnosticParameters parameters with
+                    | Error message -> return! RequestErrors.BAD_REQUEST (GraceError.Create message correlationId) next context
+                    | Ok scope ->
+                        let repositoryActor = Repository.CreateActorProxy scope.OrganizationId scope.RepositoryId correlationId
+
+                        let! repository =
+                            (repositoryActor.Get correlationId)
+                                .WaitAsync(context.RequestAborted)
+
+                        if repository.RepositoryId <> scope.RepositoryId
+                           || repository.UpdatedAt.IsNone
+                           || repository.OwnerId <> scope.OwnerId
+                           || repository.OrganizationId <> scope.OrganizationId then
+                            return!
+                                RequestErrors.BAD_REQUEST
+                                    (GraceError.Create "Repository does not exist in the requested owner and organization scope." correlationId)
+                                    next
+                                    context
+                        else
+                            let! total, distinctCount, started, finished =
+                                readDirectoryVersionSize
+                                    Grace.Actors.DirectoryVersion.validateManifestBackedFileForSaveBoundary
+                                    scope
+                                    correlationId
+                                    context.RequestAborted
+
+                            let result =
+                                {
+                                    Scope = scope
+                                    DeclaredLogicalBytes = total
+                                    DistinctContentCount = distinctCount
+                                    EnumerationStartedAt = started
+                                    EnumerationFinishedAt = finished
+                                }
+
+                            return! json (GraceReturnValue.Create result correlationId) next context
+                with
+                | :? System.Text.Json.JsonException ->
+                    return! RequestErrors.BAD_REQUEST (GraceError.Create "The request body must be valid repository-scope JSON." correlationId) next context
+                | :? InvalidDataException as error -> return! RequestErrors.BAD_REQUEST (GraceError.Create error.Message correlationId) next context
+                | :? OperationCanceledException ->
+                    return!
+                        ServerErrors.SERVICE_UNAVAILABLE
+                            (GraceError.Create "DirectoryVersion enumeration was cancelled; no quantity was produced." correlationId)
+                            next
+                            context
+                | _ ->
+                    return!
+                        ServerErrors.SERVICE_UNAVAILABLE
+                            (GraceError.Create "DirectoryVersion enumeration failed; no quantity was produced." correlationId)
+                            next
+                            context
             }

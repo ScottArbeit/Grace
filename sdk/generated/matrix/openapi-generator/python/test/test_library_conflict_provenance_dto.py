@@ -36,25 +36,15 @@ class TestLibraryConflictProvenanceDto(unittest.TestCase):
         model = LibraryConflictProvenanceDto()
         if include_optional:
             return LibraryConflictProvenanceDto(
-                source_operation_id = '',
-                source_item_id = '',
-                canonical_item_id = '',
-                conflict_item_id = '',
-                conflict_path = '',
-                accepted_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
-                source_content_version_id = '',
-                base_content_version_id = ''
+                original_item_id = '',
+                base_content_version_id = '',
+                base_content_revision = '0'
             )
         else:
             return LibraryConflictProvenanceDto(
-                source_operation_id = '',
-                source_item_id = '',
-                canonical_item_id = '',
-                conflict_item_id = '',
-                conflict_path = '',
-                accepted_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
-                source_content_version_id = '',
+                original_item_id = '',
                 base_content_version_id = '',
+                base_content_revision = '0',
         )
         """
 

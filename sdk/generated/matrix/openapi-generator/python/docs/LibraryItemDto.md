@@ -7,11 +7,10 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **item_id** | **UUID** |  | 
 **item_kind** | [**LibraryItemKind**](LibraryItemKind.md) |  | 
-**state** | **str** |  | 
 **last_change_cursor** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
-**library_catalog_version** | **UUID** |  | 
 **namespace** | [**LibraryNamespaceDto**](LibraryNamespaceDto.md) |  | 
 **content** | [**LibraryContentVersionDto**](LibraryContentVersionDto.md) |  | 
+**content_revision** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **tombstone** | [**LibraryTombstoneDto**](LibraryTombstoneDto.md) |  | 
 
 ## Example

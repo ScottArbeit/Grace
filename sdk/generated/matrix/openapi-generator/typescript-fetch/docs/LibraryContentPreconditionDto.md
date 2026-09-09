@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `itemId` | string
 `expectedContentVersionId` | string
+`expectedContentRevision` | string
 
 ## Example
 
@@ -18,6 +19,7 @@ import type { LibraryContentPreconditionDto } from '@grace-vcs/generated-openapi
 const example = {
   "itemId": null,
   "expectedContentVersionId": null,
+  "expectedContentRevision": null,
 } satisfies LibraryContentPreconditionDto
 
 console.log(example)

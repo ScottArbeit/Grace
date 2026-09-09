@@ -53,7 +53,7 @@ function Test-DirectoryVersionSizeResponse {
     finally { $document.Dispose() }
 }
 
-# Reads one bounded admin diagnostic and publishes validated JSON in the destination directory.
+# Reads one cancellable admin diagnostic and publishes validated JSON in the destination directory.
 function Invoke-DirectoryVersionSizeDiagnosis {
     param([hashtable] $BoundParameters)
 
@@ -76,7 +76,7 @@ function Invoke-DirectoryVersionSizeDiagnosis {
     }
     $response = Invoke-WebRequest -Uri ([uri]::new($serverUri, '/admin/directory-version-size/diagnose')) `
         -Method Post -Headers @{ Authorization = "Bearer $($env:GRACE_TOKEN)" } -ContentType 'application/json' `
-        -Body ($scope | ConvertTo-Json -Compress) -SkipHttpErrorCheck -TimeoutSec 45
+        -Body ($scope | ConvertTo-Json -Compress) -SkipHttpErrorCheck -ConnectionTimeoutSeconds 0 -OperationTimeoutSeconds 0
     if ($response.StatusCode -ne 200) { throw "Grace Server returned HTTP $($response.StatusCode); no diagnostic was saved." }
     Test-DirectoryVersionSizeResponse -Json $response.Content -Scope $scope
     $temporary = Join-Path $parent ".$([IO.Path]::GetFileName($destination)).$([guid]::NewGuid().ToString('N')).tmp"

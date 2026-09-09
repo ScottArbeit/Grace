@@ -1,0 +1,61 @@
+{
+  "baseline": [
+    "{\"items\":100000,\"shards\":100,\"maxShardBytes\":262482,\"serializedBytes\":26246675,\"queryRu\":1,\"elapsedSeconds\":20.7630012,\"managedMemoryDelta\":382357920}",
+    "{\"items\":100000,\"shards\":100,\"maxShardBytes\":262482,\"serializedBytes\":26246675,\"queryRu\":1,\"elapsedSeconds\":20.5339701,\"managedMemoryDelta\":322633936}",
+    "PASS: concurrent repository write ran only after baseline manifest publication"
+  ],
+  "model": {
+    "cases": 34,
+    "results": [
+      "before:reserve",
+      "after:reserve",
+      "before:change",
+      "after:change",
+      "before:tracked-add",
+      "after:tracked-add",
+      "before:workflow",
+      "after:workflow",
+      "before:item",
+      "after:item",
+      "before:old-slot",
+      "after:old-slot",
+      "before:new-slot",
+      "after:new-slot",
+      "before:receipt",
+      "after:receipt",
+      "before:acknowledge",
+      "after:acknowledge",
+      "before:commit",
+      "after:commit",
+      "request hash mismatch leaves stored result unchanged",
+      "before:history-segment",
+      "after:history-segment",
+      "before:history-tail",
+      "after:history-tail",
+      "before:history-progress",
+      "after:history-progress",
+      "before:send-progress",
+      "after:send-progress",
+      "before:failed-clear",
+      "after:failed-clear",
+      "first send interrupted before progress resumes from journal",
+      "broker outage does not block history or create successful envelopes",
+      "stale edit after repeated bytes chooses a free deterministic sibling"
+    ],
+    "scope": "Synthetic acceptance/history/notification effects with fresh state loaded after interruption; not live counter, broker or filesystem publication."
+  },
+  "provider": {
+    "repo": "run-20260907051313",
+    "results": [
+      "control: create/read/ETag/ambiguous-write/duplicate/clear",
+      "changes: create/read/ETag/ambiguous-write/duplicate/clear",
+      "current: create/read/ETag/ambiguous-write/duplicate/clear",
+      "receipts: create/read/ETag/ambiguous-write/duplicate/clear",
+      "history: create/read/ETag/ambiguous-write/duplicate/clear",
+      "baselines: create/read/ETag/ambiguous-write/duplicate/clear",
+      "F# nested record and option round trip",
+      "same-client SQL count=100000",
+      "fresh silo/client SQL count=100000"
+    ]
+  }
+}

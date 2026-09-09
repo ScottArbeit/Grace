@@ -19,9 +19,6 @@
     LibraryBootstrapId:
       type: string
       format: uuid
-    LibraryPreparedContentId:
-      type: string
-      format: uuid
     LibraryCursor:
       type: string
       minLength: 1
@@ -72,10 +69,8 @@
       properties:
         Parent: { $ref: '#/LibraryParentDto' }
         Name: { type: string }
-        NormalizedPath: { type: string }
         NamespaceVersion: { $ref: '#/LibraryNamespaceVersion' }
-        SlotVersion: { $ref: '#/LibraryNamespaceSlotVersion' }
-      required: [Parent, Name, NormalizedPath, NamespaceVersion, SlotVersion]
+      required: [Parent, Name, NamespaceVersion]
     LibraryContentVersionDto:
       type: object
       properties:
@@ -91,45 +86,34 @@
     LibraryTombstoneDto:
       type: object
       properties:
-        ItemId: { $ref: '#/LibraryItemId' }
-        ItemKind: { $ref: '#/LibraryItemKind' }
         DeletedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
         DeletedBy: { type: string }
         DeleteCursor: { $ref: '#/LibraryCursor' }
-        LastNamespaceVersion: { $ref: '#/LibraryNamespaceVersion' }
+        LastNamespace: { $ref: '#/LibraryNamespaceDto' }
         LastContentVersionId:
           allOf:
             - $ref: '#/LibraryContentVersionId'
           nullable: true
-      required: [ItemId, ItemKind, DeletedAt, DeletedBy, DeleteCursor, LastNamespaceVersion, LastContentVersionId]
+      required: [DeletedAt, DeletedBy, DeleteCursor, LastNamespace, LastContentVersionId]
     LibraryConflictProvenanceDto:
       type: object
       properties:
-        SourceOperationId: { $ref: '#/LibraryOperationId' }
-        SourceItemId: { $ref: '#/LibraryItemId' }
-        CanonicalItemId: { $ref: '#/LibraryItemId' }
-        ConflictItemId: { $ref: '#/LibraryItemId' }
-        ConflictPath: { type: string }
-        AcceptedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
-        SourceContentVersionId:
-          allOf:
-            - $ref: '#/LibraryContentVersionId'
-          nullable: true
+        OriginalItemId: { $ref: '#/LibraryItemId' }
         BaseContentVersionId:
           allOf:
             - $ref: '#/LibraryContentVersionId'
           nullable: true
-      required: [SourceOperationId, SourceItemId, CanonicalItemId, ConflictItemId, ConflictPath, AcceptedAt, SourceContentVersionId, BaseContentVersionId]
+        BaseContentRevision:
+          allOf:
+            - $ref: '#/LibraryCursor'
+          nullable: true
+      required: [OriginalItemId, BaseContentVersionId, BaseContentRevision]
     LibraryItemDto:
       type: object
       properties:
         ItemId: { $ref: '#/LibraryItemId' }
         ItemKind: { $ref: '#/LibraryItemKind' }
-        State:
-          type: string
-          enum: [live, tombstoned]
         LastChangeCursor: { $ref: '#/LibraryCursor' }
-        LibraryCatalogVersion: { $ref: '#/LibraryCatalogVersion' }
         Namespace:
           allOf:
             - $ref: '#/LibraryNamespaceDto'
@@ -138,26 +122,26 @@
           allOf:
             - $ref: '#/LibraryContentVersionDto'
           nullable: true
+        ContentRevision:
+          allOf:
+            - $ref: '#/LibraryCursor'
+          nullable: true
         Tombstone:
           allOf:
             - $ref: '#/LibraryTombstoneDto'
           nullable: true
-      required: [ItemId, ItemKind, State, LastChangeCursor, LibraryCatalogVersion, Namespace, Content, Tombstone]
+      required: [ItemId, ItemKind, LastChangeCursor, Namespace, Content, ContentRevision, Tombstone]
     LibraryNamespaceSlotDto:
       type: object
       properties:
         Parent: { $ref: '#/LibraryParentDto' }
         Name: { type: string }
-        NormalizedPath: { type: string }
         SlotVersion: { $ref: '#/LibraryNamespaceSlotVersion' }
-        State:
-          type: string
-          enum: [occupied, vacant]
         OccupantItemId:
           allOf:
             - $ref: '#/LibraryItemId'
           nullable: true
-      required: [Parent, Name, NormalizedPath, SlotVersion, State, OccupantItemId]
+      required: [Parent, Name, SlotVersion, OccupantItemId]
     LibraryCatalogDto:
       type: object
       properties:
@@ -185,7 +169,8 @@
       properties:
         ItemId: { $ref: '#/LibraryItemId' }
         ExpectedContentVersionId: { $ref: '#/LibraryContentVersionId' }
-      required: [ItemId, ExpectedContentVersionId]
+        ExpectedContentRevision: { $ref: '#/LibraryCursor' }
+      required: [ItemId, ExpectedContentVersionId, ExpectedContentRevision]
     LibraryCreationSlotExpectationDto:
       type: object
       properties:
@@ -199,31 +184,17 @@
     LibraryChangeDto:
       type: object
       properties:
-        Cursor: { $ref: '#/LibraryCursor' }
         OperationId: { $ref: '#/LibraryOperationId' }
         ChangeKind: { $ref: '#/LibraryChangeKind' }
-        ItemId: { $ref: '#/LibraryItemId' }
-        ItemKind: { $ref: '#/LibraryItemKind' }
         AcceptedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
         AcceptedBy: { type: string }
         LibraryCatalogVersion: { $ref: '#/LibraryCatalogVersion' }
-        Namespace:
-          allOf:
-            - $ref: '#/LibraryNamespaceDto'
-          nullable: true
-        Content:
-          allOf:
-            - $ref: '#/LibraryContentVersionDto'
-          nullable: true
-        Tombstone:
-          allOf:
-            - $ref: '#/LibraryTombstoneDto'
-          nullable: true
+        Item: { $ref: '#/LibraryItemDto' }
         Conflict:
           allOf:
             - $ref: '#/LibraryConflictProvenanceDto'
           nullable: true
-      required: [Cursor, OperationId, ChangeKind, ItemId, ItemKind, AcceptedAt, AcceptedBy, LibraryCatalogVersion, Namespace, Content, Tombstone, Conflict]
+      required: [OperationId, ChangeKind, AcceptedAt, AcceptedBy, LibraryCatalogVersion, Item, Conflict]
     LibraryRebaselineDto:
       type: object
       properties:
@@ -238,24 +209,9 @@
         OperationId: { $ref: '#/LibraryOperationId' }
         RequestHash: { type: string }
         Outcome: { $ref: '#/LibraryOutcomeKind' }
-        LibraryCatalogVersion: { $ref: '#/LibraryCatalogVersion' }
-        RecordedAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
-        PrincipalId: { type: string }
         Change:
           allOf:
             - $ref: '#/LibraryChangeDto'
-          nullable: true
-        Cursor:
-          allOf:
-            - $ref: '#/LibraryCursor'
-          nullable: true
-        Item:
-          allOf:
-            - $ref: '#/LibraryItemDto'
-          nullable: true
-        Conflict:
-          allOf:
-            - $ref: '#/LibraryConflictProvenanceDto'
           nullable: true
         ReasonCode:
           type: string
@@ -268,7 +224,7 @@
           allOf:
             - $ref: '#/LibraryRebaselineDto'
           nullable: true
-      required: [OperationId, RequestHash, Outcome, LibraryCatalogVersion, RecordedAt, PrincipalId, Change, Cursor, Item, Conflict, ReasonCode, CurrentLibraryCatalog, Rebaseline]
+      required: [OperationId, RequestHash, Outcome, Change, ReasonCode, CurrentLibraryCatalog, Rebaseline]
     LibraryCatalogChangeResultDto:
       type: object
       properties:
@@ -314,30 +270,29 @@
             - $ref: '#/LibraryRebaselineDto'
           nullable: true
       required: [Outcome, CursorEpoch, Changes, LastCursor, HasMore, NextPageToken, Rebaseline]
-    LibraryPreparedContentDto:
+    LibraryContentPreparationDto:
       type: object
       properties:
-        PreparedContentId: { $ref: '#/LibraryPreparedContentId' }
+        UploadSessionId:
+          type: string
+          format: uuid
         Blake3Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash' }
         Sha256Hash: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash' }
         Size:
           type: integer
           format: int64
           minimum: 1
-        UploadRequired: { type: boolean }
-        UploadInstructions:
-          type: string
-          nullable: true
+        AuthorizedScope: { type: string }
+        StoragePoolId: { type: string }
         ExpiresAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
-      required: [PreparedContentId, Blake3Hash, Sha256Hash, Size, UploadRequired, UploadInstructions, ExpiresAt]
-    LibraryContentReadGrantDto:
+      required: [UploadSessionId, Blake3Hash, Sha256Hash, Size, AuthorizedScope, StoragePoolId, ExpiresAt]
+    LibraryContentReadDto:
       type: object
       properties:
-        GrantId: { type: string }
         DownloadPath: { type: string }
         Content: { $ref: '#/LibraryContentVersionDto' }
         ExpiresAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
-      required: [GrantId, DownloadPath, Content, ExpiresAt]
+      required: [DownloadPath, Content, ExpiresAt]
     LibraryRepositoryStatusDto:
       type: object
       properties:
@@ -480,9 +435,9 @@
             DestinationName:
               type: string
               nullable: true
-            PreparedContentId:
-              allOf:
-                - $ref: '#/LibraryPreparedContentId'
+            UploadSessionId:
+              type: string
+              format: uuid
               nullable: true
           required: [OperationId, LibraryCatalogVersion, ChangeKind, ItemKind]
     GetLibraryOperationParameters:
@@ -512,7 +467,8 @@
           properties:
             ItemId: { $ref: '#/LibraryItemId' }
             ContentVersionId: { $ref: '#/LibraryContentVersionId' }
-          required: [ItemId, ContentVersionId]
+            ContentRevision: { $ref: '#/LibraryCursor' }
+          required: [ItemId, ContentVersionId, ContentRevision]
     GetLibraryItemParameters:
       allOf:
         - $ref: '#/LibraryParameters'
@@ -562,18 +518,18 @@
         - type: object
           properties:
             ReturnValue: { $ref: '#/LibraryOperationReceiptDto' }
-    LibraryPreparedContentReturnValue:
+    LibraryContentPreparationReturnValue:
       allOf:
         - $ref: '#/LibraryReturnValueBase'
         - type: object
           properties:
-            ReturnValue: { $ref: '#/LibraryPreparedContentDto' }
-    LibraryContentReadGrantReturnValue:
+            ReturnValue: { $ref: '#/LibraryContentPreparationDto' }
+    LibraryContentReadReturnValue:
       allOf:
         - $ref: '#/LibraryReturnValueBase'
         - type: object
           properties:
-            ReturnValue: { $ref: '#/LibraryContentReadGrantDto' }
+            ReturnValue: { $ref: '#/LibraryContentReadDto' }
     LibraryItemReturnValue:
       allOf:
         - $ref: '#/LibraryReturnValueBase'
@@ -627,16 +583,16 @@
       content:
         application/json:
           schema: { $ref: '#/LibraryOperationReceiptReturnValue' }
-    LibraryPreparedContentResponse:
+    LibraryContentPreparationResponse:
       description: Authorized immutable-content preparation.
       content:
         application/json:
-          schema: { $ref: '#/LibraryPreparedContentReturnValue' }
-    LibraryContentReadGrantResponse:
-      description: One-use authorized immutable-content read grant.
+          schema: { $ref: '#/LibraryContentPreparationReturnValue' }
+    LibraryContentReadResponse:
+      description: Signed immutable-content read URL that remains valid until its fixed expiry.
       content:
         application/json:
-          schema: { $ref: '#/LibraryContentReadGrantReturnValue' }
+          schema: { $ref: '#/LibraryContentReadReturnValue' }
     LibraryItemResponse:
       description: Current Library item state.
       content:

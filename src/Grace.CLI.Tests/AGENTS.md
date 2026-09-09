@@ -22,6 +22,7 @@ Read `../AGENTS.md` for global expectations before updating CLI tests.
 - Stateful command invocation, config, environment, console, filesystem, local-state, and SDK identity tests remain in
   the non-parsing files and stay serialized.
 - Keep auth-focused tests separate for now (`Auth.Tests.fs`, `AuthTokenBundle.Tests.fs`).
+- `LibraryBaseline.Tests.fs` exercises production onboarding with real SQLite and Windows publication plus controlled remote DTO responses. Keep its transaction interruptions and partial-installation capture controls distinct from the actual hosted CLI scenario in `Grace.Server.Tests/LibrarySynchronization.Windows.Server.Tests.fs`.
 
 ## Key Patterns
 

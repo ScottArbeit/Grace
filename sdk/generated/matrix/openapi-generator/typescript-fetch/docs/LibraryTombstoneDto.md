@@ -6,12 +6,10 @@
 
 Name | Type
 ------------ | -------------
-`itemId` | string
-`itemKind` | [LibraryItemKind](LibraryItemKind.md)
 `deletedAt` | Date
 `deletedBy` | string
 `deleteCursor` | string
-`lastNamespaceVersion` | string
+`lastNamespace` | [LibraryNamespaceDto](LibraryNamespaceDto.md)
 `lastContentVersionId` | string
 
 ## Example
@@ -21,12 +19,10 @@ import type { LibraryTombstoneDto } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
-  "itemId": null,
-  "itemKind": null,
   "deletedAt": null,
   "deletedBy": null,
   "deleteCursor": null,
-  "lastNamespaceVersion": null,
+  "lastNamespace": null,
   "lastContentVersionId": null,
 } satisfies LibraryTombstoneDto
 

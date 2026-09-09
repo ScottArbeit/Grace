@@ -6,7 +6,7 @@ All URIs are relative to *http://localhost:5000*
 |------------- | ------------- | -------------|
 | [**addLibrary**](LibrariesApi.md#addlibrary) | **POST** /libraries/add | Add one empty normalized Library under an exact configuration version. |
 | [**continueLibraryBootstrap**](LibrariesApi.md#continuelibrarybootstrap) | **POST** /libraries/bootstrap/continue | Continue one immutable bootstrap baseline page sequence. |
-| [**downloadLibraryContent**](LibrariesApi.md#downloadlibrarycontent) | **GET** /libraries/content/{grantId} | Redeem one authorized short-lived immutable-content read grant. |
+| [**downloadLibraryContent**](LibrariesApi.md#downloadlibrarycontent) | **GET** /libraries/content/{readToken} | Download authorized immutable content through a signed token until expiry. |
 | [**getLibraryCatalog**](LibrariesApi.md#getlibrarycatalog) | **POST** /libraries/catalog/get | Get the persisted Library configuration. |
 | [**getLibraryChanges**](LibrariesApi.md#getlibrarychanges) | **POST** /libraries/changes/get | Read repository-ordered accepted Library changes after an opaque cursor. |
 | [**getLibraryItem**](LibrariesApi.md#getlibraryitem) | **POST** /libraries/items/get | Get one current Library item. |
@@ -15,7 +15,7 @@ All URIs are relative to *http://localhost:5000*
 | [**getLibraryStatus**](LibrariesApi.md#getlibrarystatus) | **POST** /libraries/status/get | Get content-free Library repository status. |
 | [**listLibraries**](LibrariesApi.md#listlibraries) | **POST** /libraries/list | List the sorted Libraries and their exact configuration version. |
 | [**prepareLibraryContent**](LibrariesApi.md#preparelibrarycontent) | **POST** /libraries/content/prepare | Prepare exact immutable bytes for a later Library change. |
-| [**prepareLibraryContentRead**](LibrariesApi.md#preparelibrarycontentread) | **POST** /libraries/content/read | Prepare a one-use read grant for an authorized retained content version. |
+| [**prepareLibraryContentRead**](LibrariesApi.md#preparelibrarycontentread) | **POST** /libraries/content/read | Prepare a signed read URL for an authorized retained content version until expiry. |
 | [**removeLibrary**](LibrariesApi.md#removelibrary) | **POST** /libraries/remove | Remove one empty normalized Library under an exact configuration version. |
 | [**startLibraryBootstrap**](LibrariesApi.md#startlibrarybootstrap) | **POST** /libraries/bootstrap/start | Start a bounded bootstrap from the current immutable baseline. |
 | [**submitLibraryChange**](LibrariesApi.md#submitlibrarychange) | **POST** /libraries/changes/submit | Submit one exact idempotent Library namespace or content change. |
@@ -171,9 +171,9 @@ example().catch(console.error);
 
 ## downloadLibraryContent
 
-> Blob downloadLibraryContent(grantId)
+> Blob downloadLibraryContent(readToken)
 
-Redeem one authorized short-lived immutable-content read grant.
+Download authorized immutable content through a signed token until expiry.
 
 ### Example
 
@@ -190,7 +190,7 @@ async function example() {
 
   const body = {
     // string
-    grantId: grantId_example,
+    readToken: readToken_example,
   } satisfies DownloadLibraryContentRequest;
 
   try {
@@ -210,7 +210,7 @@ example().catch(console.error);
 
 | Name | Type | Description  | Notes |
 |------------- | ------------- | ------------- | -------------|
-| **grantId** | `string` |  | [Defaults to `undefined`] |
+| **readToken** | `string` |  | [Defaults to `undefined`] |
 
 ### Return type
 
@@ -229,7 +229,7 @@ No authorization required
 ### HTTP response details
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-| **200** | Exact immutable bytes authorized by the one-use grant. |  -  |
+| **200** | Exact immutable bytes authorized by the signed token. |  -  |
 | **400** | Bad Request |  -  |
 | **403** | Forbidden |  -  |
 | **404** | Not Found |  -  |
@@ -747,7 +747,7 @@ example().catch(console.error);
 
 ## prepareLibraryContent
 
-> LibraryPreparedContentReturnValue prepareLibraryContent(prepareLibraryContentParameters)
+> LibraryContentPreparationReturnValue prepareLibraryContent(prepareLibraryContentParameters)
 
 Prepare exact immutable bytes for a later Library change.
 
@@ -794,7 +794,7 @@ example().catch(console.error);
 
 ### Return type
 
-[**LibraryPreparedContentReturnValue**](LibraryPreparedContentReturnValue.md)
+[**LibraryContentPreparationReturnValue**](LibraryContentPreparationReturnValue.md)
 
 ### Authorization
 
@@ -820,9 +820,9 @@ example().catch(console.error);
 
 ## prepareLibraryContentRead
 
-> LibraryContentReadGrantReturnValue prepareLibraryContentRead(prepareLibraryContentReadParameters)
+> LibraryContentReadReturnValue prepareLibraryContentRead(prepareLibraryContentReadParameters)
 
-Prepare a one-use read grant for an authorized retained content version.
+Prepare a signed read URL for an authorized retained content version until expiry.
 
 ### Example
 
@@ -867,7 +867,7 @@ example().catch(console.error);
 
 ### Return type
 
-[**LibraryContentReadGrantReturnValue**](LibraryContentReadGrantReturnValue.md)
+[**LibraryContentReadReturnValue**](LibraryContentReadReturnValue.md)
 
 ### Authorization
 
@@ -882,7 +882,7 @@ example().catch(console.error);
 ### HTTP response details
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-| **200** | One-use authorized immutable-content read grant. |  -  |
+| **200** | Signed immutable-content read URL that remains valid until its fixed expiry. |  -  |
 | **400** | Bad Request |  -  |
 | **403** | Forbidden |  -  |
 | **404** | Not Found |  -  |
