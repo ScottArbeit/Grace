@@ -1,0 +1,1773 @@
+{
+  "issue": 1054,
+  "qualityProfile": "Discovery",
+  "base": "f849d72275eab54c95736e90f50369f06f761cd6",
+  "eventualMain": "9f54fe14626cd718af88890b731f8518f9b06e34",
+  "sdk": "10.0.400",
+  "container": {
+    "name": "grace-ops-1054-sql",
+    "id": "6d5671323b103dcd3c2433fc505621cdb8a6a9a13a5aa8506616eb5be19d5730",
+    "image": "mcr.microsoft.com/mssql/server@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89",
+    "endpoint": "127.0.0.1,14339",
+    "primaryDatabase": "GraceOps1054_primary",
+    "replayDatabase": "GraceOps1054_replay",
+    "sqlVersion": "Microsoft SQL Server 2022 (RTM-CU26) (KB5093420) - 16.0.4265.3 (X64) \n\tJul  7 2026 14:37:25 \n\tCopyright (C) 2022 Microsoft Corporation\n\tDeveloper Edition (64-bit) on Linux (Ubuntu 22.04.5 LTS) <X64>"
+  },
+  "environmentContract": {
+    "OPS1054_SQL": "Fixture-only SQL connection string: Server=127.0.0.1,14339;Initial Catalog=GraceOps1054_<fresh run>;User ID=sa;Password=<ephemeral fixture secret>;Encrypt=True;TrustServerCertificate=True;Pooling=False;Connect Timeout=10",
+    "OPS1054_ARTIFACT": "Set by replay.ps1 to a new external output directory."
+  },
+  "rawColumns": [
+    "UsageFactId",
+    "CorrelationId",
+    "FactKind",
+    "OwnerId",
+    "OrganizationId",
+    "RepositoryId",
+    "StoragePoolId",
+    "Quantity",
+    "ObservedAtUtc"
+  ],
+  "aggregateColumns": [
+    "FactKind",
+    "OwnerId",
+    "OrganizationId",
+    "RepositoryId",
+    "StoragePoolId",
+    "BucketStartUtc",
+    "Quantity"
+  ],
+  "excludedSqlBookkeepingColumns": [
+    "RawUsageFact.CreatedAtUtc",
+    "UsageAggregateMinute.UpdatedAtUtc"
+  ],
+  "sourceHashes": [
+    {
+      "path": "global.json",
+      "sha256": "d56107e1dae60b2beafd6d4d999c72f43a4be3562236efbd7f116f1892e198d0"
+    },
+    {
+      "path": "src/Grace.Types/Usage.Types.fs",
+      "sha256": "65f534e4cc9acdb6cac48b9c655aa6142675fb0e27b1c69c0fc0ddfe1c7a7369"
+    },
+    {
+      "path": "src/Grace.Types/Common.Types.fs",
+      "sha256": "cac901edbbffb72a368086cd10d9c00b40b42ab715fde0900962b0a43d15387b"
+    },
+    {
+      "path": "src/Grace.Shared/Constants.Shared.fs",
+      "sha256": "f39394d6210b1752bf6ca2addbeaef259f30857dcc2dd4d2d683972555b5f817"
+    },
+    {
+      "path": "src/Grace.Shared/Utilities.Shared.fs",
+      "sha256": "0ba341b274e562e437051fceafee3f5bf015781510ff27d6f3fc40ba439fca88"
+    },
+    {
+      "path": "src/Grace.Types/Grace.Types.fsproj",
+      "sha256": "54d98dfbcc36c5fc63a91b89ee3761057a2a0ebceb4752280c86ddd8b080f2f3"
+    },
+    {
+      "path": "src/Grace.Operations.Data/OperationsData.fs",
+      "sha256": "af7e6ba2ab85b1d65fbdf218087718266a126d632db8fbc5a7f5851aab92a7f0"
+    },
+    {
+      "path": "src/Grace.Operations.Data/Grace.Operations.Data.fsproj",
+      "sha256": "c61c2322a468fcf779aadb080fa27198507359e246e0a6e4ef19b9c5cae6b9a6"
+    },
+    {
+      "path": "src/Grace.Operations/Operations.fs",
+      "sha256": "7c7a80e4472fd8e1c47e1f534e6f67b496841489c016db91271a456aa7f6d158"
+    },
+    {
+      "path": "src/Grace.Operations/Grace.Operations.fsproj",
+      "sha256": "60def4d4f2a48e2be9236378bc49d9952d1b1b6d251f732c5c8c38a0264f7cce"
+    }
+  ],
+  "executionFiles": [
+    {
+      "name": "Program.fs",
+      "sha256": "26e34ccf7c742fe788ca4de4602705c897392107fe91f5cf5cef00e624ea12b2",
+      "text": "/// Runs finite real-SQL controls against the existing supplied-fact store.\nmodule UsageBoundaryExperiment\n\nopen System\nopen System.IO\nopen System.Globalization\nopen System.Text.Json\nopen System.Threading\nopen System.Threading.Tasks\nopen Grace.Shared\nopen Grace.Types.Usage\nopen Grace.Operations.Data\nopen Microsoft.Data.SqlClient\nopen NodaTime\n\n/// Requires an explicit disposable fixture environment value.\nlet required name =\n    let value = Environment.GetEnvironmentVariable name\n    if String.IsNullOrWhiteSpace value then failwith $\"Missing {name}.\"\n    value\n\n/// Creates fresh connections without retaining pooled caller state between controls.\nlet connectionString = required \"OPS1054_SQL\"\n/// Locates captured input and output files outside the repository.\nlet artifact = required \"OPS1054_ARTIFACT\"\n/// Serializes exact current Grace contracts with the compiled shared options.\nlet serialize value = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)\n/// Renders evidence arrays without dropping zero or empty values.\nlet evidenceJson value = JsonSerializer.Serialize(value, JsonSerializerOptions(WriteIndented = true))\n/// Throws on a finite control mismatch.\nlet equal label expected actual = if expected <> actual then failwith $\"{label}: expected {expected}; actual {actual}\"\n/// Provides deterministic GUIDs for the finite fixture.\nlet id number = Guid.Parse(sprintf \"10540000-0000-0000-0000-%012d\" number)\n/// Constructs supplied values, deliberately unrelated to live source measurements.\nlet fact number pool quantity =\n    UsageFact.RepositoryStorageBytesMinute(id number, $\"ops1054-{number}\", id 1000, id 2000, id 3000, pool, quantity, Instant.FromUtc(2026,9,7,12,34,56))\n/// Saves a fixture once and reloads its exact bytes for every attempt and retry.\nlet captured name value =\n    let path = Path.Combine(artifact, name + \".input.json\")\n    let json = serialize value\n    if File.Exists path then equal (name + \" captured input\") json (File.ReadAllText path)\n    else File.WriteAllText(path, json)\n    JsonSerializer.Deserialize<UsageFact>(File.ReadAllText path, Constants.JsonSerializerOptions)\n\n/// Wraps public interfaces while all writes and commit/rollback use the compiled SQL scope.\nlet scope boundary =\n    let real = SqlOperationsUsageTransactionScope(connectionString) :> IOperationsUsageTransactionScope\n    { new IOperationsUsageTransactionScope with\n        /// Injects only at named effect boundaries; after-commit discards a successful result.\n        member _.ExecuteAsync(operation, token) =\n            task {\n                let! result = real.ExecuteAsync((fun transaction ct ->\n                    task {\n                        let wrapped =\n                            { new IOperationsUsageTransaction with\n                                /// Runs the real raw insert unless the before-write control is selected.\n                                member _.TryInsertRawUsageFactAsync(raw, innerToken) =\n                                    task {\n                                        if boundary = \"before-write\" then failwith \"injected:before-write\"\n                                        let! accepted = transaction.TryInsertRawUsageFactAsync(raw, innerToken)\n                                        if boundary = \"after-raw\" then failwith \"injected:after-raw\"\n                                        return accepted\n                                    }\n                                /// Runs the real aggregate update before the transaction-level precommit injection.\n                                member _.AddToUsageAggregateMinuteAsync(aggregate, innerToken) = transaction.AddToUsageAggregateMinuteAsync(aggregate, innerToken) }\n                        let! result = operation wrapped ct\n                        if boundary = \"before-commit\" then failwith \"injected:before-commit\"\n                        return result\n                    }), token)\n                if boundary = \"after-commit\" then failwith \"injected:after-commit\"\n                return result\n            } }\n\n/// Creates a fresh store and scope for every call, including retry after injected failure.\nlet submit boundary value token =\n    task {\n        let store = OperationsUsageStore(scope boundary)\n        try\n            let! result = store.StoreUsageFactAsync(value, token)\n            return match result with Ok result -> string result.Status | Error errors -> \"Invalid: \" + String.concat \"; \" errors\n        with\n        | :? OperationCanceledException -> return \"Cancelled\"\n        | ex when ex.Message.StartsWith(\"injected:\", StringComparison.Ordinal) -> return ex.Message\n    }\n\n/// Formats stable durable fields independently from the store's result object.\nlet cell (value: obj) =\n    match value with\n    | :? DateTime as dt -> DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToString(\"O\", CultureInfo.InvariantCulture)\n    | _ -> Convert.ToString(value, CultureInfo.InvariantCulture)\n\n/// Queries real committed rows through a new connection, including all immutable raw fields.\nlet rows table pool =\n    use connection = new SqlConnection(connectionString)\n    connection.Open()\n    use command = connection.CreateCommand()\n    let columns, ordering =\n        if table = \"RawUsageFact\" then \"UsageFactId, CorrelationId, FactKind, OwnerId, OrganizationId, RepositoryId, StoragePoolId, Quantity, ObservedAtUtc\", \"UsageFactId\"\n        else \"FactKind, OwnerId, OrganizationId, RepositoryId, StoragePoolId, BucketStartUtc, Quantity\", \"OwnerId, OrganizationId, RepositoryId, StoragePoolId, BucketStartUtc\"\n    command.CommandText <- $\"SELECT {columns} FROM ops.{table} WHERE StoragePoolId IN (@pool, @otherPool) ORDER BY {ordering};\"\n    command.Parameters.AddWithValue(\"@pool\", pool) |> ignore\n    command.Parameters.AddWithValue(\"@otherPool\", pool + \"-changed\") |> ignore\n    use reader = command.ExecuteReader()\n    let result = ResizeArray<string array>()\n    while reader.Read() do\n        result.Add(Array.init reader.FieldCount (fun index -> cell (reader.GetValue index)))\n    result.ToArray()\n\n/// Computes expected raw fields from explicit fixture values, without reading the store result or plan.\nlet expectedRaw (value: UsageFact) =\n    [| string value.UsageFactId; value.CorrelationId; string (int value.FactKind); string value.Scope.OwnerId; string value.Scope.OrganizationId; string value.Scope.RepositoryId; value.Resource.StoragePoolId; string value.Quantity; value.ObservedAt.ToDateTimeUtc().ToString(\"O\", CultureInfo.InvariantCulture) |]\n/// Computes the expected aggregate key and explicitly supplied total.\nlet expectedAggregate (value: UsageFact) total =\n    [| string (int value.FactKind); string value.Scope.OwnerId; string value.Scope.OrganizationId; string value.Scope.RepositoryId; value.Resource.StoragePoolId; value.ObservedAt.ToDateTimeUtc().ToString(\"O\", CultureInfo.InvariantCulture); string total |]\n/// Retains the finite checked ledger for the repository evidence bundle.\nlet ledger = ResizeArray<obj>()\n/// Checks both independent SQL queries against exact expected durable rows.\nlet check name statuses pool expectedFacts aggregateRows =\n    let expectedRawRows = expectedFacts |> Array.map expectedRaw |> Array.sortBy (fun row -> row[0])\n    let raw = rows \"RawUsageFact\" pool\n    let aggregates = rows \"UsageAggregateMinute\" pool\n    equal (name + \" raw\") (evidenceJson expectedRawRows) (evidenceJson raw)\n    equal (name + \" aggregates\") (evidenceJson aggregateRows) (evidenceJson aggregates)\n    ledger.Add(box {| Name = name; Statuses = statuses; ExpectedRaw = expectedRawRows; Raw = raw; ExpectedAggregates = aggregateRows; Aggregates = aggregates |})\n    printfn \"PASS %s: %s\" name (String.concat \", \" statuses)\n\n/// Executes each finite control once against a new, initially empty fixture database.\nlet run () = task {\n    let builder = SqlConnectionStringBuilder(connectionString)\n    if not (builder.InitialCatalog.StartsWith(\"GraceOps1054_\", StringComparison.Ordinal)) then failwith \"Fixture database must start GraceOps1054_.\"\n    if builder.DataSource <> \"127.0.0.1,14339\" then failwith \"Fixture endpoint must be 127.0.0.1,14339.\"\n    let schema = OperationsUsageSchema(connectionString, OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing)\n    do! schema.EnsureCreatedAsync(CancellationToken.None)\n    use connection = new SqlConnection(connectionString)\n    do! connection.OpenAsync()\n    use count = connection.CreateCommand()\n    count.CommandText <- \"SELECT (SELECT COUNT(*) FROM ops.RawUsageFact) + (SELECT COUNT(*) FROM ops.UsageAggregateMinute);\"\n    equal \"empty fixture\" 0 (unbox<int> (count.ExecuteScalar()))\n    use version = connection.CreateCommand()\n    version.CommandText <- \"SELECT @@VERSION;\"\n    File.WriteAllText(Path.Combine(artifact, \"sql-version.txt\"), string (version.ExecuteScalar()))\n\n    let original = fact 1 \"repeat\" 17L\n    let! first = submit \"\" (captured \"original\" original) CancellationToken.None\n    equal \"accept status\" \"Accepted\" first\n    check \"01-positive\" [|first|] \"repeat\" [|original|] [|expectedAggregate original 17L|]\n    let! repeat = submit \"\" (captured \"original\" original) CancellationToken.None\n    equal \"fresh retry\" \"AlreadyProcessed\" repeat\n    check \"02-identical-fresh-objects\" [|repeat|] \"repeat\" [|original|] [|expectedAggregate original 17L|]\n    let distinct = { original with UsageFactId = id 2; CorrelationId = \"ops1054-2\" }\n    let! added = submit \"\" (captured \"distinct\" distinct) CancellationToken.None\n    equal \"distinct accepted\" \"Accepted\" added\n    check \"03-distinct-id-adds\" [|added|] \"repeat\" [|original; distinct|] [|expectedAggregate original 34L|]\n    let changes = [| \"quantity\", {original with Quantity = 99L}; \"owner\", {original with Scope = {original.Scope with OwnerId = id 4000}}; \"organization\", {original with Scope = {original.Scope with OrganizationId = id 5000}}; \"repository\", {original with Scope = {original.Scope with RepositoryId = id 6000}}; \"pool\", {original with Resource = {StoragePoolId = \"repeat-changed\"}} |]\n    let mutable index = 0\n    while index < changes.Length do\n        let label, changed = changes[index]\n        let! result = submit \"\" (captured (\"conflict-\" + label) changed) CancellationToken.None\n        equal (label + \" conflict status\") \"AlreadyProcessed\" result\n        check (\"04-conflict-\" + label) [|result|] \"repeat\" [|original; distinct|] [|expectedAggregate original 34L|]\n        index <- index + 1\n    let invalids = [| \"zero\", {fact 10 \"invalid\" 1L with Quantity = 0L}, \"Invalid: Quantity must be greater than zero.\"; \"kind\", {fact 11 \"invalid\" 1L with FactKind = enum<UsageFactKind> 99}, \"Invalid: FactKind '99' is not supported.\"; \"seconds\", {fact 12 \"invalid\" 1L with ObservedAt = Instant.FromUtc(2026,9,7,12,34,56)}, \"Invalid: ObservedAt must be normalized to a UTC minute boundary.\" |]\n    index <- 0\n    while index < invalids.Length do\n        let label, value, expected = invalids[index]\n        let loaded = captured label value\n        let! result = submit \"\" loaded CancellationToken.None\n        equal (label + \" validation\") expected result\n        match UsageFactPersistencePlan.tryCreate loaded with Ok _ -> failwith \"Invalid plan accepted.\" | Error _ -> ()\n        check (\"05-invalid-\" + label) [|result|] \"invalid\" [||] [||]\n        index <- index + 1\n    let plan = UsageFactPersistencePlan.tryCreate original |> Result.defaultWith (String.concat \"; \" >> failwith)\n    equal \"constructor normalized\" (Instant.FromUtc(2026,9,7,12,34,0)) original.ObservedAt\n    equal \"plan timestamp\" original.ObservedAt plan.RawFact.ObservedAt\n    File.WriteAllText(Path.Combine(artifact, \"plan.json\"), serialize plan)\n    let boundaries = [| \"before-write\"; \"after-raw\"; \"before-commit\"; \"after-commit\" |]\n    index <- 0\n    while index < boundaries.Length do\n        let boundary = boundaries[index]\n        let value = fact (20 + index) boundary 23L\n        let! failed = submit boundary (captured boundary value) CancellationToken.None\n        equal (boundary + \" failure\") (\"injected:\" + boundary) failed\n        let committed = boundary = \"after-commit\"\n        check (\"06-\" + boundary + \"-residue\") [|failed|] boundary (if committed then [|value|] else [||]) (if committed then [|expectedAggregate value 23L|] else [||])\n        SqlConnection.ClearAllPools()\n        let! retry = submit \"\" (captured boundary value) CancellationToken.None\n        equal (boundary + \" restart\") (if committed then \"AlreadyProcessed\" else \"Accepted\") retry\n        check (\"06-\" + boundary + \"-restart\") [|retry|] boundary [|value|] [|expectedAggregate value 23L|]\n        index <- index + 1\n    let concurrent = fact 30 \"concurrent\" 31L\n    let start = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)\n    use ready = new CountdownEvent(2)\n    /// Waits at the shared deterministic gate before constructing independent store calls.\n    let gated () = task {\n        let value = captured \"concurrent\" concurrent\n        ready.Signal() |> ignore\n        do! start.Task\n        return! submit \"\" value CancellationToken.None\n    }\n    let a = gated ()\n    let b = gated ()\n    if not (ready.Wait(TimeSpan.FromSeconds 10.0)) then failwith \"Concurrent callers not ready.\"\n    start.SetResult()\n    let! results = Task.WhenAll(a,b).WaitAsync(TimeSpan.FromSeconds 30.0)\n    equal \"concurrent statuses\" [|\"Accepted\"; \"AlreadyProcessed\"|] (Array.sort results)\n    check \"07-concurrent-gated\" (Array.sort results) \"concurrent\" [|concurrent|] [|expectedAggregate concurrent 31L|]\n    use cancelled = new CancellationTokenSource()\n    cancelled.Cancel()\n    let! cancelledResult = submit \"\" (captured \"cancelled\" (fact 40 \"cancelled\" 37L)) cancelled.Token\n    equal \"precancelled\" \"Cancelled\" cancelledResult\n    check \"08-pre-cancelled\" [|cancelledResult|] \"cancelled\" [||] [||]\n    File.WriteAllText(Path.Combine(artifact,\"ledger.json\"), evidenceJson (ledger.ToArray()))\n    printfn \"CONTROLS %d\" ledger.Count\n}\n\nrun().GetAwaiter().GetResult()"
+    },
+    {
+      "name": "Experiment.fsproj",
+      "sha256": "df892adc404e505774d919fb381d6ae2ea530e8ebc683781e98f702c235337bd",
+      "text": "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><GenerateDocumentationFile>true</GenerateDocumentationFile></PropertyGroup>\n  <ItemGroup><Compile Include=\"Program.fs\" /></ItemGroup>\n  <ItemGroup><ProjectReference Include=\"$(GraceRoot)/src/Grace.Operations.Data/Grace.Operations.Data.fsproj\" /></ItemGroup>\n  <ItemGroup><PackageReference Update=\"FSharp.Core\" Version=\"10.1.400\" /></ItemGroup>\n</Project>"
+    },
+    {
+      "name": "global.json",
+      "sha256": "d56107e1dae60b2beafd6d4d999c72f43a4be3562236efbd7f116f1892e198d0",
+      "text": "{\r\n  \"sdk\": {\r\n    \"version\": \"10.0.400\",\r\n    \"rollForward\": \"latestPatch\"\r\n  }\r\n}\r\n"
+    },
+    {
+      "name": "replay.ps1",
+      "sha256": "d980529104aaa32324d22e7a4ec26b68b8ad22c93ae9b0bccf0c2a0ef1a57038",
+      "text": "#Requires -Version 7.6\n[CmdletBinding()]\nparam(\n    [Parameter(Mandatory)][string]$Evidence,\n    [Parameter(Mandatory)][string]$RepoRoot,\n    [Parameter(Mandatory)][string]$OutputDirectory\n)\n$ErrorActionPreference = 'Stop'\n$bundle = Get-Content -LiteralPath $Evidence -Raw | ConvertFrom-Json -Depth 100\nif ([string]::IsNullOrWhiteSpace($env:OPS1054_SQL)) { throw 'Set OPS1054_SQL to the dedicated local fixture connection string with a fresh GraceOps1054_ database.' }\nif (Test-Path -LiteralPath $OutputDirectory) { throw 'OutputDirectory must be a new external directory; no existing files are replaced.' }\n$destination = [IO.Path]::GetFullPath($OutputDirectory)\n$repository = (Resolve-Path -LiteralPath $RepoRoot).Path\nif ($destination.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Use an output directory outside the repository.' }\nforeach ($source in $bundle.sourceHashes) {\n    $actual = (Get-FileHash -LiteralPath (Join-Path $repository $source.path) -Algorithm SHA256).Hash.ToLowerInvariant()\n    if ($actual -ne $source.sha256) { throw \"Pinned source mismatch: $($source.path)\" }\n}\nNew-Item -ItemType Directory -Path $destination | Out-Null\nforeach ($file in $bundle.executionFiles) {\n    if ([IO.Path]::GetFileName($file.name) -ne $file.name) { throw 'Embedded files must have simple file names.' }\n    $path = Join-Path $destination $file.name\n    [IO.File]::WriteAllText($path, $file.text, [Text.UTF8Encoding]::new($false))\n    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw \"Embedded hash mismatch: $($file.name)\" }\n}\nPush-Location $repository\ntry {\n    dotnet build ./src/Grace.Operations.Data/Grace.Operations.Data.fsproj -c Release -v minimal *> (Join-Path $destination 'production-build.log')\n    $buildExit = $LASTEXITCODE\n    if ($buildExit -ne 0) { throw \"Production build failed: $buildExit\" }\n    dotnet build (Join-Path $destination 'Experiment.fsproj') -c Release \"-p:GraceRoot=$repository\" -p:BuildProjectReferences=false -v minimal *> (Join-Path $destination 'harness-build.log')\n    $harnessExit = $LASTEXITCODE\n    if ($harnessExit -ne 0) { throw \"Harness build failed: $harnessExit\" }\n    $env:OPS1054_ARTIFACT = $destination\n    dotnet (Join-Path $destination 'bin/Release/net10.0/Experiment.dll') *> (Join-Path $destination 'run.log')\n    $runExit = $LASTEXITCODE\n    if ($runExit -ne 0) { throw \"Experiment failed: $runExit\" }\n    $actualLedger = (Get-FileHash -LiteralPath (Join-Path $destination 'ledger.json') -Algorithm SHA256).Hash.ToLowerInvariant()\n    if ($actualLedger -ne $bundle.expectedLedgerSha256) { throw 'Replay ledger differs from the captured expected rows/statuses.' }\n    $binaryHashes = @(Get-ChildItem -LiteralPath (Join-Path $destination 'bin/Release/net10.0') -Filter '*.dll' -File | Sort-Object Name | ForEach-Object {\n        [ordered]@{ name = $_.Name; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }\n    })\n    $binaryHashes | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $destination 'binary-hashes.json') -Encoding utf8NoBOM\n    Write-Output \"PASS: 21 SQL controls, all embedded/source hashes and exact replay ledger; retained $destination\"\n} finally { Pop-Location }"
+    },
+    {
+      "name": "after-commit.input.json",
+      "sha256": "41c6b42666a8cc440def2cd38d5987c6de28234711f0d40b72b1dc733402aff4",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000023\",\r\n  \"CorrelationId\": \"ops1054-23\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"after-commit\"\r\n  },\r\n  \"Quantity\": 23,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "after-raw.input.json",
+      "sha256": "7e9f6a28be49e126fc838adb76be65af88719f4ad37e7c82006fa623d054d551",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000021\",\r\n  \"CorrelationId\": \"ops1054-21\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"after-raw\"\r\n  },\r\n  \"Quantity\": 23,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "before-commit.input.json",
+      "sha256": "00b7160860e1c789045d57720e92111d7968282e8b12dd0f355305e4ffd715e9",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000022\",\r\n  \"CorrelationId\": \"ops1054-22\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"before-commit\"\r\n  },\r\n  \"Quantity\": 23,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "before-write.input.json",
+      "sha256": "c254e126a44345c2571097d6800fd266c14ae37cbec3829eacd88075ee5c00c2",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000020\",\r\n  \"CorrelationId\": \"ops1054-20\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"before-write\"\r\n  },\r\n  \"Quantity\": 23,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "cancelled.input.json",
+      "sha256": "a935a534fe15284e1d24c4f1e9f17f0e256b5cb9455de5a60b12ed186a02aad9",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000040\",\r\n  \"CorrelationId\": \"ops1054-40\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"cancelled\"\r\n  },\r\n  \"Quantity\": 37,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "concurrent.input.json",
+      "sha256": "d7a9d9fdcae3f4d2eb173b25fe6933c17f9c812fb7b67d365dda57bbcd11691b",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000030\",\r\n  \"CorrelationId\": \"ops1054-30\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"concurrent\"\r\n  },\r\n  \"Quantity\": 31,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "conflict-organization.input.json",
+      "sha256": "436d9aaf3c58c8726e47e434289dd7831754dd0963e9c56a6a723eaa886f05cd",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000001\",\r\n  \"CorrelationId\": \"ops1054-1\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000005000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat\"\r\n  },\r\n  \"Quantity\": 17,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "conflict-owner.input.json",
+      "sha256": "a0104cb5dd13edda46e7ef13fae60b15ca931533b0960757bcfdb27e24bb06f0",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000001\",\r\n  \"CorrelationId\": \"ops1054-1\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000004000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat\"\r\n  },\r\n  \"Quantity\": 17,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "conflict-pool.input.json",
+      "sha256": "b8d9627a3f89b39d89ef3dd0cdaa55e7df98394dc038c433e5619fd814f5b682",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000001\",\r\n  \"CorrelationId\": \"ops1054-1\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat-changed\"\r\n  },\r\n  \"Quantity\": 17,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "conflict-quantity.input.json",
+      "sha256": "853886b324286723e80b3aea9620a203ed425258e47271c5084c47b300681c74",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000001\",\r\n  \"CorrelationId\": \"ops1054-1\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat\"\r\n  },\r\n  \"Quantity\": 99,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "conflict-repository.input.json",
+      "sha256": "1a6e5ca9195d44d0928c32b737051aad7b4eb422c4c977a6ec3b1d3416610830",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000001\",\r\n  \"CorrelationId\": \"ops1054-1\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000006000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat\"\r\n  },\r\n  \"Quantity\": 17,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "distinct.input.json",
+      "sha256": "a3423557ff3494a3348f5c23966297b545c21e1465ce138d4f8a676492d805b6",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000002\",\r\n  \"CorrelationId\": \"ops1054-2\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat\"\r\n  },\r\n  \"Quantity\": 17,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "kind.input.json",
+      "sha256": "8e9e8e2b0346d27bfc00b98dee34b6329c52b2515ed4f6c0b93cf9236a9e90c7",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000011\",\r\n  \"CorrelationId\": \"ops1054-11\",\r\n  \"FactKind\": 99,\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"invalid\"\r\n  },\r\n  \"Quantity\": 1,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "original.input.json",
+      "sha256": "8e4c4ef83a1f8ce59a90246a4251617065b7e34729e39bd65dd2b23434eb92e8",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000001\",\r\n  \"CorrelationId\": \"ops1054-1\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"repeat\"\r\n  },\r\n  \"Quantity\": 17,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    },
+    {
+      "name": "seconds.input.json",
+      "sha256": "c542bcce41a0762fdd4b8f7b1ac77ce40e0063f3661a137bbde00b438e3aba5b",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000012\",\r\n  \"CorrelationId\": \"ops1054-12\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"invalid\"\r\n  },\r\n  \"Quantity\": 1,\r\n  \"ObservedAt\": \"2026-09-07T12:34:56Z\"\r\n}"
+    },
+    {
+      "name": "zero.input.json",
+      "sha256": "94cb3d30b480085cb6ea4c20a42689349e6e195286e30d41b48cc587175eaca0",
+      "text": "{\r\n  \"Class\": \"UsageFact\",\r\n  \"UsageFactId\": \"10540000-0000-0000-0000-000000000010\",\r\n  \"CorrelationId\": \"ops1054-10\",\r\n  \"FactKind\": \"repositoryStorageBytesMinute\",\r\n  \"Scope\": {\r\n    \"OwnerId\": \"10540000-0000-0000-0000-000000001000\",\r\n    \"OrganizationId\": \"10540000-0000-0000-0000-000000002000\",\r\n    \"RepositoryId\": \"10540000-0000-0000-0000-000000003000\"\r\n  },\r\n  \"Resource\": {\r\n    \"StoragePoolId\": \"invalid\"\r\n  },\r\n  \"Quantity\": 0,\r\n  \"ObservedAt\": \"2026-09-07T12:34:00Z\"\r\n}"
+    }
+  ],
+  "executedBinaryHashes": [
+    {
+      "name": "Azure.Core.dll",
+      "sha256": "236383d6ab76a7c0673c045f6bf421300af210095198f40174308417284d4eec"
+    },
+    {
+      "name": "Azure.Identity.dll",
+      "sha256": "41b6a42a4abab1d9ff0f99c6f46a5509febb651afce0bab4c8ab530f90e98b75"
+    },
+    {
+      "name": "Ben.Demystifier.dll",
+      "sha256": "bd7ea4d5979649195e3e5e41d78591335d155657b9d2832e65c479ace24433a3"
+    },
+    {
+      "name": "DiffPlex.dll",
+      "sha256": "2b69f90834c498988a9e0ccd51d7fad4c0fcd416f467e14abfe9fed50e484194"
+    },
+    {
+      "name": "Experiment.dll",
+      "sha256": "91ba0778237144d239119ea0e6ca7d0653b6770e6f16cfecc91be37130675382"
+    },
+    {
+      "name": "FSharp.Control.TaskSeq.dll",
+      "sha256": "802ff5b8ae4bdd89a2e015b7d33cc33ee363e977fa02bc98984daf5a4662ce32"
+    },
+    {
+      "name": "FSharp.Core.dll",
+      "sha256": "454275e6f64f26c19f989cc0e0c43a2eaf41705fc0f456097faa1da445139394"
+    },
+    {
+      "name": "FSharp.SystemTextJson.dll",
+      "sha256": "0bac55212f42878ad0d9e0e05df5b40299f0d870cd82ca41695f3e77d9b26711"
+    },
+    {
+      "name": "FSharpPlus.dll",
+      "sha256": "9418cd623b0c4e2b71966d154944534b3db508e345a42cd76ee8ccaaf191a2ec"
+    },
+    {
+      "name": "Grace.Operations.Data.dll",
+      "sha256": "4a7e98f5583b3dc719bd922275ab6403e4c51574973d8b9b2d457ab0147906a1"
+    },
+    {
+      "name": "Grace.Operations.dll",
+      "sha256": "6838dacaf779ba15649c31584843c30816224af01f20ab2fc3a991ba1ad1178a"
+    },
+    {
+      "name": "Grace.Types.dll",
+      "sha256": "080aef5188e050bcde964adefd351c287c67f5f0df8feafb4eb899d84e32e123"
+    },
+    {
+      "name": "Humanizer.dll",
+      "sha256": "d6853075547d7e303efd60354d911a2ff18edba582cda2fa59d91a2e5dcf9e98"
+    },
+    {
+      "name": "MessagePack.Annotations.dll",
+      "sha256": "bba53a8b44184fce30178502149ada027185e17f4156baf2dc38ad6c1550cdd6"
+    },
+    {
+      "name": "MessagePack.dll",
+      "sha256": "da7762a5931644cbc6c3a44e274a75510117a70d07c48fb71e512e99e69939cc"
+    },
+    {
+      "name": "MessagePack.FSharpExtensions.dll",
+      "sha256": "dfc7891629e76074010566a21ba922d6f206ce93e6d6156283c42de2d4577c56"
+    },
+    {
+      "name": "MessagePack.NodaTime.dll",
+      "sha256": "e3414c7d86515f0e7fe8eea825128480075038294b30d4a81b7bb50e76c70ecd"
+    },
+    {
+      "name": "Microsoft.Bcl.AsyncInterfaces.dll",
+      "sha256": "1a606d942836d8bb72115892a598fa5872bf4152eb42903af7097f35474f581f"
+    },
+    {
+      "name": "Microsoft.Bcl.Cryptography.dll",
+      "sha256": "b9b076648248645d7681f1a1b541d6534ea4a332d959df0c3b0c9e6c5c3780b2"
+    },
+    {
+      "name": "Microsoft.CodeAnalysis.dll",
+      "sha256": "57994f7fa7abcc571a31c4e98b02c3eb573dae8f581f0c264cdec97f38cf1560"
+    },
+    {
+      "name": "Microsoft.CodeAnalysis.Workspaces.dll",
+      "sha256": "a2a0353c3c052d0eddbbd359dd5e0f9edd0d5a7791c57efd20a520ab2ce307ad"
+    },
+    {
+      "name": "Microsoft.Data.SqlClient.dll",
+      "sha256": "a66f0534a8d29fe93b5c0d6c30f8ba0a8982d402dc090724b66634dcfdb60964"
+    },
+    {
+      "name": "Microsoft.Data.SqlClient.Extensions.Abstractions.dll",
+      "sha256": "83ca9271c19f983192adbcbf60678ac85f40fc7bef12de3fe5a1f51e969f96e9"
+    },
+    {
+      "name": "Microsoft.Data.SqlClient.Extensions.Azure.dll",
+      "sha256": "b13b7fdff4f96b610f197e9b5f6411e73f362e66f0134c8d0036dae4b8b42c70"
+    },
+    {
+      "name": "Microsoft.Data.SqlClient.Internal.Logging.dll",
+      "sha256": "dc6de8302cf8ac480aff894f60e75e625753c893b8be5e43b28779eb65bc521b"
+    },
+    {
+      "name": "Microsoft.Extensions.Caching.Abstractions.dll",
+      "sha256": "d3e8d6b1bfe488c670c277ba27b871dea27192c60289e1d65173b21286a8eb32"
+    },
+    {
+      "name": "Microsoft.Extensions.Caching.Memory.dll",
+      "sha256": "27a3b754253c2ecbd1e695bc3dc67c8d047d9dc3219f60f7dc0b84baf5f43023"
+    },
+    {
+      "name": "Microsoft.Extensions.Configuration.Abstractions.dll",
+      "sha256": "cfdb91156d4d875ba6f540e53f96988e266ab24ab6f367150db6eb9b645cfeb3"
+    },
+    {
+      "name": "Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+      "sha256": "43497d8f23b82159295933effe92c82447469b60cdbefcca4a62232e4ebbca99"
+    },
+    {
+      "name": "Microsoft.Extensions.DependencyModel.dll",
+      "sha256": "73e69da2a4462dcdc89136a741c41631a21baf5bd1362d8b273eeb8aa451f153"
+    },
+    {
+      "name": "Microsoft.Extensions.Diagnostics.Abstractions.dll",
+      "sha256": "4d20c015406a7bf1a6478f1b6af567d972fa2ba4727de6134ff2c641f90ab36c"
+    },
+    {
+      "name": "Microsoft.Extensions.FileProviders.Abstractions.dll",
+      "sha256": "39e7fcd41d10abeffcf2b224237bed64ae98f99d94e329bd19f447451eda3abc"
+    },
+    {
+      "name": "Microsoft.Extensions.Hosting.Abstractions.dll",
+      "sha256": "fb21feb2c6aafe2607a8b1d500c2b86535cd1b48b67ef878139dc7818c70ce4d"
+    },
+    {
+      "name": "Microsoft.Extensions.Logging.Abstractions.dll",
+      "sha256": "cec836c1dff8e64701ee4fd3a710bd971fef953c90a34b577d9f4363103e6c39"
+    },
+    {
+      "name": "Microsoft.Extensions.ObjectPool.dll",
+      "sha256": "633a263d940cd83b2a54467771a287370dfbe71f37daf0e098d4ccf67d30ea38"
+    },
+    {
+      "name": "Microsoft.Extensions.Options.dll",
+      "sha256": "c734c6a9feca3a2df39597e028efea8eea796e7e5dfc815df8b5893384297728"
+    },
+    {
+      "name": "Microsoft.Extensions.Primitives.dll",
+      "sha256": "1f9f027817b0f277f45cceb0927c14e41cabfe6d52dafb5ab6bf68895294814b"
+    },
+    {
+      "name": "Microsoft.Identity.Client.Broker.dll",
+      "sha256": "c89854b2bcde4401b80552063ea9166efcc523edcddec79c9c3def04bf7c745f"
+    },
+    {
+      "name": "Microsoft.Identity.Client.dll",
+      "sha256": "f9bc295d0011112fe4d7d8a728a27a38627739df6cd144c8402b5dae03bf40af"
+    },
+    {
+      "name": "Microsoft.Identity.Client.Extensions.Msal.dll",
+      "sha256": "741cf55cadca6e0c5913bd1fad11d0cd1d82ee2afea9bd95a94843aa6fa3a9d9"
+    },
+    {
+      "name": "Microsoft.Identity.Client.NativeInterop.dll",
+      "sha256": "ab9315edf6dcc91f26f20bce51e11b75d5bd4e673b44a3784cf3752555bbdbd3"
+    },
+    {
+      "name": "Microsoft.IdentityModel.Abstractions.dll",
+      "sha256": "613fd94ff39ce6ff90666e062e93d5d5ea7fdeae93aaab2bf2cb6f5c87cea39d"
+    },
+    {
+      "name": "Microsoft.IdentityModel.JsonWebTokens.dll",
+      "sha256": "d1af130b42eaa6e8b5b45b0a48d286e7a282f2b67f5809aeb828aaa909d94891"
+    },
+    {
+      "name": "Microsoft.IdentityModel.Logging.dll",
+      "sha256": "b2b89896da6f307fe4c7fba033f4f629ce43b92cc6d28c7daa024a4e5cd68dbd"
+    },
+    {
+      "name": "Microsoft.IdentityModel.Protocols.dll",
+      "sha256": "647f131d0fd0a66802a80adc9cc38fe02aa2caf78d6f58796e758829541b16de"
+    },
+    {
+      "name": "Microsoft.IdentityModel.Protocols.OpenIdConnect.dll",
+      "sha256": "f19f659e8533ad2b0d4650779231efd0e25247df72c127b57cfdbf186be8d256"
+    },
+    {
+      "name": "Microsoft.IdentityModel.Tokens.dll",
+      "sha256": "21c943ec715d8771c3a711ad78fc109adceac0e002f67a76f3bca33d195d0f5f"
+    },
+    {
+      "name": "Microsoft.NET.StringTools.dll",
+      "sha256": "e51c8678fd602a21c249b369e833966019935132476f9434da896bef808ba3b1"
+    },
+    {
+      "name": "Microsoft.SqlServer.Server.dll",
+      "sha256": "a9dca1b42bc875f966b78b2c0880e62b838f0ed6567166d7f1f07ae4b76ec4bf"
+    },
+    {
+      "name": "MimeTypes.dll",
+      "sha256": "48f86a4d84cd6252f55950ac77d2551eae7ceab598fdbb2befe85dc275fed039"
+    },
+    {
+      "name": "Nanoid.dll",
+      "sha256": "03c411a85320ed5e0f5c86a8c32066cf111f4be5b1defcdb7fb998600b37239a"
+    },
+    {
+      "name": "NodaTime.dll",
+      "sha256": "cafa84a12852e81a8dd848f3b652747bb7b7895d0f6a7fe6bb7fc275929b7363"
+    },
+    {
+      "name": "NodaTime.Serialization.SystemTextJson.dll",
+      "sha256": "85411a9f366682cc5e11b53868485a423fece16a02dce316aee000051d2e6f93"
+    },
+    {
+      "name": "Orleans.Serialization.Abstractions.dll",
+      "sha256": "1e45afbca9a69b2593f2d3137a60fc56b7ee7b9b77f7545136f0231e24d2b377"
+    },
+    {
+      "name": "Orleans.Serialization.dll",
+      "sha256": "fd3e8f593975b45dee8f6097246a96fa29fdd4d106748628f3ad6bfc28daf05d"
+    },
+    {
+      "name": "Orleans.Serialization.NodaTime.dll",
+      "sha256": "93c65b86e65af2ba9f6b41dc987ebc28e83a2b64114640d3a257bdcd58b7e827"
+    },
+    {
+      "name": "Polly.Contrib.WaitAndRetry.dll",
+      "sha256": "3fb02f7cb4c122998cfca8931ea8477396cfe664107bbd7eb794438a4bd4a11c"
+    },
+    {
+      "name": "Polly.Core.dll",
+      "sha256": "f7f50017ca9f457b854498358ae595c2a8ab69c1fd8b915139d22bed8f7e4f2a"
+    },
+    {
+      "name": "Polly.dll",
+      "sha256": "cecb78ee944fd7cd1889c21602cc905df8f72af06a3798fb0fd75d96d436891e"
+    },
+    {
+      "name": "System.ClientModel.dll",
+      "sha256": "7e110883923e8a29bfb2dc9d9a8adb622acaacbfa153dfbb71362bdc0ef36d02"
+    },
+    {
+      "name": "System.Composition.AttributedModel.dll",
+      "sha256": "6c4d617570f09b1aa0917e87f611a23ed0654b24ac3bc610ce0f079ccabab5fb"
+    },
+    {
+      "name": "System.Composition.Convention.dll",
+      "sha256": "c1b92e811bb8de8584411715acbd7864b93ebc0b979618b7ae49c70cfbc4f9d0"
+    },
+    {
+      "name": "System.Composition.Hosting.dll",
+      "sha256": "aec9d434500a7b6ff2991b0e248160eae4654d6821373e30c3893bf932ab3618"
+    },
+    {
+      "name": "System.Composition.Runtime.dll",
+      "sha256": "0f3aa3ea1030d1e4b97f0a2109ea241ea426ef12a431abd0a12bb20902fce447"
+    },
+    {
+      "name": "System.Composition.TypedParts.dll",
+      "sha256": "c3293950c1190ef7bb1826ee7da520a4ec74a455f9c3fd6fc695c56e1c383167"
+    },
+    {
+      "name": "System.Configuration.ConfigurationManager.dll",
+      "sha256": "23a07c6bae940887065fbd1043a99edf86fea415b5f5c11b3cd0a9569c65c8ec"
+    },
+    {
+      "name": "System.Diagnostics.EventLog.dll",
+      "sha256": "751f99294da881633e0de535426496d8c792bc45716c3bf79d6d71c051148b57"
+    },
+    {
+      "name": "System.IdentityModel.Tokens.Jwt.dll",
+      "sha256": "d6026966eb5304c2e3bdb3bc091a94d204dcb27696a61cdc89d1abf5259e24ca"
+    },
+    {
+      "name": "System.IO.Hashing.dll",
+      "sha256": "53726755857b538b3676cabc39989874be072028fd5b39360a7580d73a14e562"
+    },
+    {
+      "name": "System.Memory.Data.dll",
+      "sha256": "83f4e76db9d0f4cf9ca0d1e9b188b10547c70b8f02c9fd7d169acb2520863b2f"
+    },
+    {
+      "name": "System.Security.Cryptography.Pkcs.dll",
+      "sha256": "b560390fc24e693fbcdc07c2af9cf6da8f693a8d0eb4893377f94fec81f466dc"
+    },
+    {
+      "name": "System.Security.Cryptography.ProtectedData.dll",
+      "sha256": "2e9dc3858bab3ada3acb5565f89a724347286c6ed0b56897794de6e8216fd6c4"
+    }
+  ],
+  "expectedLedgerSha256": "3ebe8c8f698d7325e3c005a6fd5d843f4df91535301a72a3ab4b68243728faf6",
+  "ledger": [
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "17"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "17"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "01-positive",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "Accepted"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "17"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "17"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "02-identical-fresh-objects",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "03-distinct-id-adds",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "Accepted"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "04-conflict-quantity",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "04-conflict-owner",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "04-conflict-organization",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "04-conflict-repository",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "2026-09-07T12:34:00Z",
+          "34"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "04-conflict-pool",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000001",
+          "ops1054-1",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ],
+        [
+          "10540000-0000-0000-0000-000000000002",
+          "ops1054-2",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "repeat",
+          "17",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "05-invalid-zero",
+      "Raw": [],
+      "Statuses": [
+        "Invalid: Quantity must be greater than zero."
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "05-invalid-kind",
+      "Raw": [],
+      "Statuses": [
+        "Invalid: FactKind '99' is not supported."
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "05-invalid-seconds",
+      "Raw": [],
+      "Statuses": [
+        "Invalid: ObservedAt must be normalized to a UTC minute boundary."
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "06-before-write-residue",
+      "Raw": [],
+      "Statuses": [
+        "injected:before-write"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-write",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-write",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000020",
+          "ops1054-20",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-write",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "06-before-write-restart",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000020",
+          "ops1054-20",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-write",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "Accepted"
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "06-after-raw-residue",
+      "Raw": [],
+      "Statuses": [
+        "injected:after-raw"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-raw",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-raw",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000021",
+          "ops1054-21",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-raw",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "06-after-raw-restart",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000021",
+          "ops1054-21",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-raw",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "Accepted"
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "06-before-commit-residue",
+      "Raw": [],
+      "Statuses": [
+        "injected:before-commit"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-commit",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-commit",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000022",
+          "ops1054-22",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-commit",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "06-before-commit-restart",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000022",
+          "ops1054-22",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "before-commit",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "Accepted"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000023",
+          "ops1054-23",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "06-after-commit-residue",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000023",
+          "ops1054-23",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "injected:after-commit"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "2026-09-07T12:34:00Z",
+          "23"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000023",
+          "ops1054-23",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "06-after-commit-restart",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000023",
+          "ops1054-23",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "after-commit",
+          "23",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "concurrent",
+          "2026-09-07T12:34:00Z",
+          "31"
+        ]
+      ],
+      "ExpectedAggregates": [
+        [
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "concurrent",
+          "2026-09-07T12:34:00Z",
+          "31"
+        ]
+      ],
+      "ExpectedRaw": [
+        [
+          "10540000-0000-0000-0000-000000000030",
+          "ops1054-30",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "concurrent",
+          "31",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Name": "07-concurrent-gated",
+      "Raw": [
+        [
+          "10540000-0000-0000-0000-000000000030",
+          "ops1054-30",
+          "1",
+          "10540000-0000-0000-0000-000000001000",
+          "10540000-0000-0000-0000-000000002000",
+          "10540000-0000-0000-0000-000000003000",
+          "concurrent",
+          "31",
+          "2026-09-07T12:34:00Z"
+        ]
+      ],
+      "Statuses": [
+        "Accepted",
+        "AlreadyProcessed"
+      ]
+    },
+    {
+      "Aggregates": [],
+      "ExpectedAggregates": [],
+      "ExpectedRaw": [],
+      "Name": "08-pre-cancelled",
+      "Raw": [],
+      "Statuses": [
+        "Cancelled"
+      ]
+    }
+  ],
+  "normalizedPlan": {
+    "RawFact": {
+      "UsageFactId": "10540000-0000-0000-0000-000000000001",
+      "CorrelationId": "ops1054-1",
+      "FactKind": "repositoryStorageBytesMinute",
+      "OwnerId": "10540000-0000-0000-0000-000000001000",
+      "OrganizationId": "10540000-0000-0000-0000-000000002000",
+      "RepositoryId": "10540000-0000-0000-0000-000000003000",
+      "StoragePoolId": "repeat",
+      "Quantity": 17,
+      "ObservedAt": "2026-09-07T12:34:00Z"
+    },
+    "Aggregate": {
+      "Key": {
+        "FactKind": "repositoryStorageBytesMinute",
+        "OwnerId": "10540000-0000-0000-0000-000000001000",
+        "OrganizationId": "10540000-0000-0000-0000-000000002000",
+        "RepositoryId": "10540000-0000-0000-0000-000000003000",
+        "StoragePoolId": "repeat",
+        "BucketStart": "2026-09-07T12:34:00Z"
+      },
+      "Quantity": 17
+    }
+  },
+  "runOutput": "PASS 01-positive: Accepted\r\nPASS 02-identical-fresh-objects: AlreadyProcessed\r\nPASS 03-distinct-id-adds: Accepted\r\nPASS 04-conflict-quantity: AlreadyProcessed\r\nPASS 04-conflict-owner: AlreadyProcessed\r\nPASS 04-conflict-organization: AlreadyProcessed\r\nPASS 04-conflict-repository: AlreadyProcessed\r\nPASS 04-conflict-pool: AlreadyProcessed\r\nPASS 05-invalid-zero: Invalid: Quantity must be greater than zero.\r\nPASS 05-invalid-kind: Invalid: FactKind '99' is not supported.\r\nPASS 05-invalid-seconds: Invalid: ObservedAt must be normalized to a UTC minute boundary.\r\nPASS 06-before-write-residue: injected:before-write\r\nPASS 06-before-write-restart: Accepted\r\nPASS 06-after-raw-residue: injected:after-raw\r\nPASS 06-after-raw-restart: Accepted\r\nPASS 06-before-commit-residue: injected:before-commit\r\nPASS 06-before-commit-restart: Accepted\r\nPASS 06-after-commit-residue: injected:after-commit\r\nPASS 06-after-commit-restart: AlreadyProcessed\r\nPASS 07-concurrent-gated: Accepted, AlreadyProcessed\r\nPASS 08-pre-cancelled: Cancelled\r\nCONTROLS 21\r\n",
+  "replay": {
+    "status": "passed",
+    "controls": 21,
+    "ledgerSha256": "3ebe8c8f698d7325e3c005a6fd5d843f4df91535301a72a3ab4b68243728faf6",
+    "extractedFiles": 20,
+    "sourceHashesVerified": 10,
+    "output": "PASS 01-positive: Accepted\r\nPASS 02-identical-fresh-objects: AlreadyProcessed\r\nPASS 03-distinct-id-adds: Accepted\r\nPASS 04-conflict-quantity: AlreadyProcessed\r\nPASS 04-conflict-owner: AlreadyProcessed\r\nPASS 04-conflict-organization: AlreadyProcessed\r\nPASS 04-conflict-repository: AlreadyProcessed\r\nPASS 04-conflict-pool: AlreadyProcessed\r\nPASS 05-invalid-zero: Invalid: Quantity must be greater than zero.\r\nPASS 05-invalid-kind: Invalid: FactKind '99' is not supported.\r\nPASS 05-invalid-seconds: Invalid: ObservedAt must be normalized to a UTC minute boundary.\r\nPASS 06-before-write-residue: injected:before-write\r\nPASS 06-before-write-restart: Accepted\r\nPASS 06-after-raw-residue: injected:after-raw\r\nPASS 06-after-raw-restart: Accepted\r\nPASS 06-before-commit-residue: injected:before-commit\r\nPASS 06-before-commit-restart: Accepted\r\nPASS 06-after-commit-residue: injected:after-commit\r\nPASS 06-after-commit-restart: AlreadyProcessed\r\nPASS 07-concurrent-gated: Accepted, AlreadyProcessed\r\nPASS 08-pre-cancelled: Cancelled\r\nCONTROLS 21\r\n",
+    "executedBinaryHashes": [
+      {
+        "name": "Azure.Core.dll",
+        "sha256": "236383d6ab76a7c0673c045f6bf421300af210095198f40174308417284d4eec"
+      },
+      {
+        "name": "Azure.Identity.dll",
+        "sha256": "41b6a42a4abab1d9ff0f99c6f46a5509febb651afce0bab4c8ab530f90e98b75"
+      },
+      {
+        "name": "Ben.Demystifier.dll",
+        "sha256": "bd7ea4d5979649195e3e5e41d78591335d155657b9d2832e65c479ace24433a3"
+      },
+      {
+        "name": "DiffPlex.dll",
+        "sha256": "2b69f90834c498988a9e0ccd51d7fad4c0fcd416f467e14abfe9fed50e484194"
+      },
+      {
+        "name": "Experiment.dll",
+        "sha256": "cca473f7d6aca21e647a6e616c6ed689e539e4811804328627b5910f664e4498"
+      },
+      {
+        "name": "FSharp.Control.TaskSeq.dll",
+        "sha256": "802ff5b8ae4bdd89a2e015b7d33cc33ee363e977fa02bc98984daf5a4662ce32"
+      },
+      {
+        "name": "FSharp.Core.dll",
+        "sha256": "454275e6f64f26c19f989cc0e0c43a2eaf41705fc0f456097faa1da445139394"
+      },
+      {
+        "name": "FSharp.SystemTextJson.dll",
+        "sha256": "0bac55212f42878ad0d9e0e05df5b40299f0d870cd82ca41695f3e77d9b26711"
+      },
+      {
+        "name": "FSharpPlus.dll",
+        "sha256": "9418cd623b0c4e2b71966d154944534b3db508e345a42cd76ee8ccaaf191a2ec"
+      },
+      {
+        "name": "Grace.Operations.Data.dll",
+        "sha256": "4a7e98f5583b3dc719bd922275ab6403e4c51574973d8b9b2d457ab0147906a1"
+      },
+      {
+        "name": "Grace.Operations.dll",
+        "sha256": "6838dacaf779ba15649c31584843c30816224af01f20ab2fc3a991ba1ad1178a"
+      },
+      {
+        "name": "Grace.Types.dll",
+        "sha256": "080aef5188e050bcde964adefd351c287c67f5f0df8feafb4eb899d84e32e123"
+      },
+      {
+        "name": "Humanizer.dll",
+        "sha256": "d6853075547d7e303efd60354d911a2ff18edba582cda2fa59d91a2e5dcf9e98"
+      },
+      {
+        "name": "MessagePack.Annotations.dll",
+        "sha256": "bba53a8b44184fce30178502149ada027185e17f4156baf2dc38ad6c1550cdd6"
+      },
+      {
+        "name": "MessagePack.dll",
+        "sha256": "da7762a5931644cbc6c3a44e274a75510117a70d07c48fb71e512e99e69939cc"
+      },
+      {
+        "name": "MessagePack.FSharpExtensions.dll",
+        "sha256": "dfc7891629e76074010566a21ba922d6f206ce93e6d6156283c42de2d4577c56"
+      },
+      {
+        "name": "MessagePack.NodaTime.dll",
+        "sha256": "e3414c7d86515f0e7fe8eea825128480075038294b30d4a81b7bb50e76c70ecd"
+      },
+      {
+        "name": "Microsoft.Bcl.AsyncInterfaces.dll",
+        "sha256": "1a606d942836d8bb72115892a598fa5872bf4152eb42903af7097f35474f581f"
+      },
+      {
+        "name": "Microsoft.Bcl.Cryptography.dll",
+        "sha256": "b9b076648248645d7681f1a1b541d6534ea4a332d959df0c3b0c9e6c5c3780b2"
+      },
+      {
+        "name": "Microsoft.CodeAnalysis.dll",
+        "sha256": "57994f7fa7abcc571a31c4e98b02c3eb573dae8f581f0c264cdec97f38cf1560"
+      },
+      {
+        "name": "Microsoft.CodeAnalysis.Workspaces.dll",
+        "sha256": "a2a0353c3c052d0eddbbd359dd5e0f9edd0d5a7791c57efd20a520ab2ce307ad"
+      },
+      {
+        "name": "Microsoft.Data.SqlClient.dll",
+        "sha256": "a66f0534a8d29fe93b5c0d6c30f8ba0a8982d402dc090724b66634dcfdb60964"
+      },
+      {
+        "name": "Microsoft.Data.SqlClient.Extensions.Abstractions.dll",
+        "sha256": "83ca9271c19f983192adbcbf60678ac85f40fc7bef12de3fe5a1f51e969f96e9"
+      },
+      {
+        "name": "Microsoft.Data.SqlClient.Extensions.Azure.dll",
+        "sha256": "b13b7fdff4f96b610f197e9b5f6411e73f362e66f0134c8d0036dae4b8b42c70"
+      },
+      {
+        "name": "Microsoft.Data.SqlClient.Internal.Logging.dll",
+        "sha256": "dc6de8302cf8ac480aff894f60e75e625753c893b8be5e43b28779eb65bc521b"
+      },
+      {
+        "name": "Microsoft.Extensions.Caching.Abstractions.dll",
+        "sha256": "d3e8d6b1bfe488c670c277ba27b871dea27192c60289e1d65173b21286a8eb32"
+      },
+      {
+        "name": "Microsoft.Extensions.Caching.Memory.dll",
+        "sha256": "27a3b754253c2ecbd1e695bc3dc67c8d047d9dc3219f60f7dc0b84baf5f43023"
+      },
+      {
+        "name": "Microsoft.Extensions.Configuration.Abstractions.dll",
+        "sha256": "cfdb91156d4d875ba6f540e53f96988e266ab24ab6f367150db6eb9b645cfeb3"
+      },
+      {
+        "name": "Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+        "sha256": "43497d8f23b82159295933effe92c82447469b60cdbefcca4a62232e4ebbca99"
+      },
+      {
+        "name": "Microsoft.Extensions.DependencyModel.dll",
+        "sha256": "73e69da2a4462dcdc89136a741c41631a21baf5bd1362d8b273eeb8aa451f153"
+      },
+      {
+        "name": "Microsoft.Extensions.Diagnostics.Abstractions.dll",
+        "sha256": "4d20c015406a7bf1a6478f1b6af567d972fa2ba4727de6134ff2c641f90ab36c"
+      },
+      {
+        "name": "Microsoft.Extensions.FileProviders.Abstractions.dll",
+        "sha256": "39e7fcd41d10abeffcf2b224237bed64ae98f99d94e329bd19f447451eda3abc"
+      },
+      {
+        "name": "Microsoft.Extensions.Hosting.Abstractions.dll",
+        "sha256": "fb21feb2c6aafe2607a8b1d500c2b86535cd1b48b67ef878139dc7818c70ce4d"
+      },
+      {
+        "name": "Microsoft.Extensions.Logging.Abstractions.dll",
+        "sha256": "cec836c1dff8e64701ee4fd3a710bd971fef953c90a34b577d9f4363103e6c39"
+      },
+      {
+        "name": "Microsoft.Extensions.ObjectPool.dll",
+        "sha256": "633a263d940cd83b2a54467771a287370dfbe71f37daf0e098d4ccf67d30ea38"
+      },
+      {
+        "name": "Microsoft.Extensions.Options.dll",
+        "sha256": "c734c6a9feca3a2df39597e028efea8eea796e7e5dfc815df8b5893384297728"
+      },
+      {
+        "name": "Microsoft.Extensions.Primitives.dll",
+        "sha256": "1f9f027817b0f277f45cceb0927c14e41cabfe6d52dafb5ab6bf68895294814b"
+      },
+      {
+        "name": "Microsoft.Identity.Client.Broker.dll",
+        "sha256": "c89854b2bcde4401b80552063ea9166efcc523edcddec79c9c3def04bf7c745f"
+      },
+      {
+        "name": "Microsoft.Identity.Client.dll",
+        "sha256": "f9bc295d0011112fe4d7d8a728a27a38627739df6cd144c8402b5dae03bf40af"
+      },
+      {
+        "name": "Microsoft.Identity.Client.Extensions.Msal.dll",
+        "sha256": "741cf55cadca6e0c5913bd1fad11d0cd1d82ee2afea9bd95a94843aa6fa3a9d9"
+      },
+      {
+        "name": "Microsoft.Identity.Client.NativeInterop.dll",
+        "sha256": "ab9315edf6dcc91f26f20bce51e11b75d5bd4e673b44a3784cf3752555bbdbd3"
+      },
+      {
+        "name": "Microsoft.IdentityModel.Abstractions.dll",
+        "sha256": "613fd94ff39ce6ff90666e062e93d5d5ea7fdeae93aaab2bf2cb6f5c87cea39d"
+      },
+      {
+        "name": "Microsoft.IdentityModel.JsonWebTokens.dll",
+        "sha256": "d1af130b42eaa6e8b5b45b0a48d286e7a282f2b67f5809aeb828aaa909d94891"
+      },
+      {
+        "name": "Microsoft.IdentityModel.Logging.dll",
+        "sha256": "b2b89896da6f307fe4c7fba033f4f629ce43b92cc6d28c7daa024a4e5cd68dbd"
+      },
+      {
+        "name": "Microsoft.IdentityModel.Protocols.dll",
+        "sha256": "647f131d0fd0a66802a80adc9cc38fe02aa2caf78d6f58796e758829541b16de"
+      },
+      {
+        "name": "Microsoft.IdentityModel.Protocols.OpenIdConnect.dll",
+        "sha256": "f19f659e8533ad2b0d4650779231efd0e25247df72c127b57cfdbf186be8d256"
+      },
+      {
+        "name": "Microsoft.IdentityModel.Tokens.dll",
+        "sha256": "21c943ec715d8771c3a711ad78fc109adceac0e002f67a76f3bca33d195d0f5f"
+      },
+      {
+        "name": "Microsoft.NET.StringTools.dll",
+        "sha256": "e51c8678fd602a21c249b369e833966019935132476f9434da896bef808ba3b1"
+      },
+      {
+        "name": "Microsoft.SqlServer.Server.dll",
+        "sha256": "a9dca1b42bc875f966b78b2c0880e62b838f0ed6567166d7f1f07ae4b76ec4bf"
+      },
+      {
+        "name": "MimeTypes.dll",
+        "sha256": "48f86a4d84cd6252f55950ac77d2551eae7ceab598fdbb2befe85dc275fed039"
+      },
+      {
+        "name": "Nanoid.dll",
+        "sha256": "03c411a85320ed5e0f5c86a8c32066cf111f4be5b1defcdb7fb998600b37239a"
+      },
+      {
+        "name": "NodaTime.dll",
+        "sha256": "cafa84a12852e81a8dd848f3b652747bb7b7895d0f6a7fe6bb7fc275929b7363"
+      },
+      {
+        "name": "NodaTime.Serialization.SystemTextJson.dll",
+        "sha256": "85411a9f366682cc5e11b53868485a423fece16a02dce316aee000051d2e6f93"
+      },
+      {
+        "name": "Orleans.Serialization.Abstractions.dll",
+        "sha256": "1e45afbca9a69b2593f2d3137a60fc56b7ee7b9b77f7545136f0231e24d2b377"
+      },
+      {
+        "name": "Orleans.Serialization.dll",
+        "sha256": "fd3e8f593975b45dee8f6097246a96fa29fdd4d106748628f3ad6bfc28daf05d"
+      },
+      {
+        "name": "Orleans.Serialization.NodaTime.dll",
+        "sha256": "93c65b86e65af2ba9f6b41dc987ebc28e83a2b64114640d3a257bdcd58b7e827"
+      },
+      {
+        "name": "Polly.Contrib.WaitAndRetry.dll",
+        "sha256": "3fb02f7cb4c122998cfca8931ea8477396cfe664107bbd7eb794438a4bd4a11c"
+      },
+      {
+        "name": "Polly.Core.dll",
+        "sha256": "f7f50017ca9f457b854498358ae595c2a8ab69c1fd8b915139d22bed8f7e4f2a"
+      },
+      {
+        "name": "Polly.dll",
+        "sha256": "cecb78ee944fd7cd1889c21602cc905df8f72af06a3798fb0fd75d96d436891e"
+      },
+      {
+        "name": "System.ClientModel.dll",
+        "sha256": "7e110883923e8a29bfb2dc9d9a8adb622acaacbfa153dfbb71362bdc0ef36d02"
+      },
+      {
+        "name": "System.Composition.AttributedModel.dll",
+        "sha256": "6c4d617570f09b1aa0917e87f611a23ed0654b24ac3bc610ce0f079ccabab5fb"
+      },
+      {
+        "name": "System.Composition.Convention.dll",
+        "sha256": "c1b92e811bb8de8584411715acbd7864b93ebc0b979618b7ae49c70cfbc4f9d0"
+      },
+      {
+        "name": "System.Composition.Hosting.dll",
+        "sha256": "aec9d434500a7b6ff2991b0e248160eae4654d6821373e30c3893bf932ab3618"
+      },
+      {
+        "name": "System.Composition.Runtime.dll",
+        "sha256": "0f3aa3ea1030d1e4b97f0a2109ea241ea426ef12a431abd0a12bb20902fce447"
+      },
+      {
+        "name": "System.Composition.TypedParts.dll",
+        "sha256": "c3293950c1190ef7bb1826ee7da520a4ec74a455f9c3fd6fc695c56e1c383167"
+      },
+      {
+        "name": "System.Configuration.ConfigurationManager.dll",
+        "sha256": "23a07c6bae940887065fbd1043a99edf86fea415b5f5c11b3cd0a9569c65c8ec"
+      },
+      {
+        "name": "System.Diagnostics.EventLog.dll",
+        "sha256": "751f99294da881633e0de535426496d8c792bc45716c3bf79d6d71c051148b57"
+      },
+      {
+        "name": "System.IdentityModel.Tokens.Jwt.dll",
+        "sha256": "d6026966eb5304c2e3bdb3bc091a94d204dcb27696a61cdc89d1abf5259e24ca"
+      },
+      {
+        "name": "System.IO.Hashing.dll",
+        "sha256": "53726755857b538b3676cabc39989874be072028fd5b39360a7580d73a14e562"
+      },
+      {
+        "name": "System.Memory.Data.dll",
+        "sha256": "83f4e76db9d0f4cf9ca0d1e9b188b10547c70b8f02c9fd7d169acb2520863b2f"
+      },
+      {
+        "name": "System.Security.Cryptography.Pkcs.dll",
+        "sha256": "b560390fc24e693fbcdc07c2af9cf6da8f693a8d0eb4893377f94fec81f466dc"
+      },
+      {
+        "name": "System.Security.Cryptography.ProtectedData.dll",
+        "sha256": "2e9dc3858bab3ada3acb5565f89a724347286c6ed0b56897794de6e8216fd6c4"
+      }
+    ]
+  },
+  "namedHarnessTypes": [],
+  "productionTypesAdded": [],
+  "limits": [
+    "Supplied fixture facts, not source measurements.",
+    "Fresh object restart, not a killed process.",
+    "Discarded successful acknowledgment, not a network outage.",
+    "Actual SQL Server Developer Linux container, not Azure SQL/Service Bus/HTTP/Orleans end-to-end.",
+    "Two gated identical calls once per run, not load or arbitrary scheduling coverage.",
+    "Current positive additive minute meter meaning is unchanged."
+  ]
+}
