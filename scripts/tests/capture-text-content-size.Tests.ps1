@@ -20,7 +20,11 @@ $script:response = @{ StatusCode = 200; Content = ($report | ConvertTo-Json -Dep
 
 # Replaces only the command's HTTP call so publication exercises real local file operations.
 function Invoke-WebRequest {
-    param($Uri, $Method, $Headers, $ContentType, $Body, $SkipHttpErrorCheck, $TimeoutSec)
+    param($Uri, $Method, $Headers, $ContentType, $Body, $SkipHttpErrorCheck, $ConnectionTimeoutSeconds, $OperationTimeoutSeconds)
+    if (-not $PSBoundParameters.ContainsKey('ConnectionTimeoutSeconds') -or $ConnectionTimeoutSeconds -ne 0 -or
+        -not $PSBoundParameters.ContainsKey('OperationTimeoutSeconds') -or $OperationTimeoutSeconds -ne 0) {
+        throw 'Observation requests must remain caller-cancellable without connection or operation deadlines.'
+    }
     if ($script:transportFailure) { throw 'Simulated transport failure.' }
     $script:lastMethod = $Method
     $script:lastUri = $Uri

@@ -47,6 +47,9 @@ The internal SystemAdmin capture/read routes use `Grace.Operations.Data` and the
 tables. SQL is not a Server startup requirement: missing configuration/schema returns unavailable on these routes.
 Preserve live diagnostic dependencies and the separate additive usage worker. Same-ID capture checks SQL before
 repository/source access; new capture checks repository scope and nondeleted state before and after enumeration.
+Both observation handlers use the existing provider-dispatched readers in `Services.Actor.fs`, with scope validation
+from `DirectoryVersion` or `WorkItem`. Pass `RequestAborted` through lookup, repository checks, collection and acceptance;
+do not add total scan or wrapper deadlines. SQL per-command behavior and short acceptance transactions remain unchanged.
 A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
 Source identity belongs to each route/table; matching GUIDs across the two sources do not identify a combined observation.
 

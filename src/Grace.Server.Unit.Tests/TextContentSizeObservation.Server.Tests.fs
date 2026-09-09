@@ -99,29 +99,41 @@ type TextContentSizeObservationTests() =
             Assert.That(calls, Is.Empty)
         }
 
-    /// Requires both repository checks before accepting and always returns the SQL winner instead of the local reading.
-    [<Test>]
-    member _.``new capture checks scope around source and returns accepted winner``() =
+    /// Requires both repository checks and the caller token, preserving the SQL winner's zero and complete precise window.
+    [<TestCase(0L)>]
+    [<TestCase(1L)>]
+    member _.``new capture checks scope around source and returns accepted winner``(winnerBytes: int64) =
         task {
             let effects = ResizeArray<string>()
-            let winner = { reading with DeclaredTextContentUtf8Bytes = 1L; EnumerationFinishedAt = reading.EnumerationStartedAt }
+            use cancellation = new CancellationTokenSource()
+
+            let winner =
+                { reading with
+                    DeclaredTextContentUtf8Bytes = winnerBytes
+                    EnumerationStartedAt = reading.EnumerationStartedAt.PlusNanoseconds 123456789L
+                    EnumerationFinishedAt = reading.EnumerationFinishedAt.PlusNanoseconds 123456790L
+                }
 
             let! result =
                 captureWith
-                    (fun _ ->
+                    (fun token ->
+                        Assert.That(token, Is.EqualTo cancellation.Token)
                         effects.Add "lookup"
                         Task.FromResult(Ok None))
-                    (fun _ ->
+                    (fun token ->
+                        Assert.That(token, Is.EqualTo cancellation.Token)
                         effects.Add "repository"
                         Task.FromResult(()))
-                    (fun _ ->
+                    (fun token ->
+                        Assert.That(token, Is.EqualTo cancellation.Token)
                         effects.Add "source"
                         Task.FromResult reading)
-                    (fun candidate _ ->
+                    (fun candidate token ->
+                        Assert.That(token, Is.EqualTo cancellation.Token)
                         effects.Add "accept"
                         Assert.That(candidate, Is.EqualTo reading)
                         Task.FromResult(Ok winner))
-                    CancellationToken.None
+                    cancellation.Token
 
             Assert.That((result = Ok winner), Is.True)
 

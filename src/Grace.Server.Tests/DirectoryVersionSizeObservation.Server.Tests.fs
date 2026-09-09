@@ -152,6 +152,10 @@ type DirectoryVersionSizeObservationHttpTests() =
             Assert.That(original.Scope.OwnerId, Is.EqualTo(Guid.Parse ownerId))
             Assert.That(original.Scope.OrganizationId, Is.EqualTo(Guid.Parse organizationId))
             Assert.That(original.Scope.RepositoryId, Is.EqualTo repositoryId)
+            Assert.That(original.ObservationId, Is.EqualTo id)
+            Assert.That(original.Scope.OwnerId, Is.EqualTo(Guid.Parse ownerId))
+            Assert.That(original.Scope.OrganizationId, Is.EqualTo(Guid.Parse organizationId))
+            Assert.That(original.Scope.RepositoryId, Is.EqualTo repositoryId)
             Assert.That(original.EnumerationFinishedAt, Is.GreaterThanOrEqualTo original.EnumerationStartedAt)
             let! _ = container.DeleteItemAsync<obj>(document.id, PartitionKey(string repositoryId))
             let! retry, _ = capture id parameters

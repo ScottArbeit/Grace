@@ -61,7 +61,7 @@ function Test-TextContentObservationResponse {
     finally { $document.Dispose() }
 }
 
-# Reads one bounded admin observation and publishes validated JSON in the destination directory.
+# Reads one caller-cancellable admin observation and publishes validated JSON in the destination directory.
 function Invoke-TextContentObservation {
     param([hashtable] $BoundParameters)
 
@@ -91,7 +91,8 @@ function Invoke-TextContentObservation {
     $route = "/admin/text-content-size/observations/$observationId"
     $request = @{ Uri = [uri]::new($serverUri, $route); Method = 'Post';
         Headers = @{ Authorization = "Bearer $($env:GRACE_TOKEN)" }; ContentType = 'application/json';
-        Body = ($scope | ConvertTo-Json -Compress); SkipHttpErrorCheck = $true; TimeoutSec = 45 }
+        Body = ($scope | ConvertTo-Json -Compress); SkipHttpErrorCheck = $true;
+        ConnectionTimeoutSeconds = 0; OperationTimeoutSeconds = 0 }
     if ($mode -eq 'Read') {
         $query = @('OwnerId', 'OrganizationId', 'RepositoryId') | ForEach-Object { "$_=$($scope[$_])" }
         $request.Uri = [uri]::new($serverUri, $route + '?' + ($query -join '&'))

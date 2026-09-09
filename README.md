@@ -82,6 +82,8 @@ validation profiles, review expectations, and cleanup steps.
 
 See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion and retained TextContent declarations, and durable source-specific observation capture/read for both.
 
+Observation capture reads until source exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its operator commands also set no connection or operation timeout. After an uncertain response, retry the same ObservationId to retrieve any committed result.
+
 ## Running Grace locally
 
 The fastest way to understand Grace is to run it locally and poke at it.

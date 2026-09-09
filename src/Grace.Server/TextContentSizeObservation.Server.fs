@@ -18,7 +18,7 @@ open Microsoft.Extensions.Configuration
 
 /// Captures and reads immutable completed declarations through the SystemAdmin routes.
 module TextContentSizeObservation =
-    /// Reads prior SQL state first, then checks current repository scope on both sides of a new bounded collection.
+    /// Reads prior SQL state first, then checks current repository scope on both sides of a caller-cancellable collection.
     let internal captureWith
         (lookup: CancellationToken -> Task<Result<TextContentSizeObservation option, string>>)
         (checkRepository: CancellationToken -> Task<unit>)
@@ -85,11 +85,9 @@ module TextContentSizeObservation =
                                 )
                             )
 
-                    match TextContentSizeDiagnosis.validateParameters parameters with
+                    match WorkItem.validateTextContentSizeDiagnosticParameters parameters with
                     | Error message -> return! RequestErrors.BAD_REQUEST (GraceError.Create message correlationId) next context
                     | Ok scope ->
-                        use deadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted)
-                        deadline.CancelAfter(TimeSpan.FromSeconds 30.)
                         let configuration = context.GetService<IConfiguration>()
                         let connectionString = configuration[getConfigKey "grace__operations__sql__connectionstring"]
 
@@ -107,25 +105,25 @@ module TextContentSizeObservation =
                                             (checkRepository scope correlationId)
                                             (fun token ->
                                                 task {
-                                                    let! reading = TextContentSizeDiagnosis.readFromContainer ApplicationContext.cosmosContainer scope token
+                                                    let! total, count, started, finished = readTextContentSize scope token
 
                                                     return
                                                         {
                                                             ObservationId = observationId
-                                                            Scope = reading.Scope
-                                                            DeclaredTextContentUtf8Bytes = reading.DeclaredTextContentUtf8Bytes
-                                                            DistinctTextContentCount = reading.DistinctTextContentCount
-                                                            EnumerationStartedAt = reading.EnumerationStartedAt
-                                                            EnumerationFinishedAt = reading.EnumerationFinishedAt
+                                                            Scope = scope
+                                                            DeclaredTextContentUtf8Bytes = total
+                                                            DistinctTextContentCount = count
+                                                            EnumerationStartedAt = started
+                                                            EnumerationFinishedAt = finished
                                                         }
                                                 })
                                             (TextContentSizeObservations.accept connectionString)
-                                            deadline.Token
+                                            context.RequestAborted
 
                                     return Result.map Some accepted
                                 }
                             else
-                                lookup deadline.Token
+                                lookup context.RequestAborted
 
                         match result with
                         | Error message -> return! RequestErrors.CONFLICT (GraceError.Create message correlationId) next context

@@ -149,6 +149,7 @@ type TextContentSizeObservationHttpTests() =
             Assert.That(original.ObservationId, Is.EqualTo id)
             Assert.That(original.DeclaredTextContentUtf8Bytes, Is.EqualTo 10L)
             Assert.That(original.DistinctTextContentCount, Is.EqualTo 2L)
+            Assert.That(original.ObservationId, Is.EqualTo id)
             Assert.That(original.Scope.OwnerId, Is.EqualTo(Guid.Parse ownerId))
             Assert.That(original.Scope.OrganizationId, Is.EqualTo(Guid.Parse organizationId))
             Assert.That(original.Scope.RepositoryId, Is.EqualTo repositoryId)

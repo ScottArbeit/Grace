@@ -222,11 +222,11 @@ The shared `DirectoryVersionSizeObservation` record contains `ObservationId`, th
 | Invalid identifier, missing scope, name selector or invalid source | HTTP 400 without an observation. |
 | ID already bound to another owner, organization or repository | HTTP 409 without stored values. |
 | Missing GET | HTTP 404. |
-| Source/SQL/deadline failure or cancellation | HTTP 503 without a successful observation. An unsuccessful response does not promise that SQL did not commit. |
+| Source/SQL failure or cancellation | HTTP 503 without a successful observation. An unsuccessful response does not promise that SQL did not commit. |
 
-Both routes require current SystemAdmin authorization before parsing or storage access. A same-ID retry first checks SQL and returns a matching stored observation without accessing the repository or source. A new collection requires an existing, nondeleted repository in the complete requested scope before and immediately after the unchanged bounded DirectoryVersion scan. Historical observations remain readable after repository deletion. No name resolution is supported.
+Both routes require current SystemAdmin authorization before parsing or storage access. A same-ID retry first checks SQL and returns a matching stored observation without accessing the repository or source. A new collection requires an existing, nondeleted repository in the complete requested scope before and immediately after the DirectoryVersion scan. Historical observations remain readable after repository deletion. No name resolution is supported.
 
-The scan retains its existing 32-page, 10,000-document, 100,000-reference, 256-page-hint limits and linked 30-second deadline. Its enumeration window remains non-atomic. The repository recheck and SQL commit are not a distributed transaction.
+The capture uses `DirectoryVersion.validateSizeDiagnosticParameters` and the existing `Services.Actor.fs` provider-dispatched reader with the manifest validator. It reads until exhaustion, caller cancellation or failure without a total-page, document, reference or elapsed-time ceiling. The 256-document page size controls pagination only. The HTTP request cancellation token passes through lookup, both repository checks, collection and acceptance. SQL per-command behavior remains unchanged. The enumeration window remains non-atomic; the repository recheck and SQL commit are not a distributed transaction.
 
 ### SQL acceptance and runtime
 
@@ -256,7 +256,7 @@ pwsh ./scripts/capture-directory-version-size.ps1 -ObservationId "$observationId
 pwsh ./scripts/capture-directory-version-size.ps1 -Mode Read -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './observation.json'
 ```
 
-The script validates the returned ID, all scope IDs, nonnegative 64-bit quantities and complete UTC window before publishing the original JSON through a temporary file in the output directory. Window ordering retains all nine fractional digits. Transport, HTTP and response-validation failures leave prior output intact. The output directory must already exist.
+The script validates the returned ID, all scope IDs, nonnegative 64-bit quantities and complete UTC window before publishing the original JSON through a temporary file in the output directory. Window ordering retains all nine fractional digits. Transport, HTTP and response-validation failures leave prior output intact. The output directory must already exist. It sets connection and operation timeouts to zero; Ctrl+C cancels the request. Cancellation can follow a committed row, so retain the same ObservationId for a retry.
 
 ### Algorithm evidence and boundaries
 
@@ -279,7 +279,7 @@ A SystemAdmin can capture and read an immutable retained TextContent declaration
 
 Success returns `GraceReturnValue<TextContentSizeObservation>` with `ObservationId`, `Scope`, `DeclaredTextContentUtf8Bytes`, `DistinctTextContentCount`, `EnumerationStartedAt` and `EnumerationFinishedAt`. The two quantities are nonnegative 64-bit integers; known zero and all Instant fractional digits are preserved. HTTP 400 rejects invalid IDs, scope, names or malformed source; 409 rejects conflicting scope without stored values; a missing read is 404; unavailable SQL/source, deadline and cancellation return 503 without a successful observation.
 
-Authorization precedes parsing. A matching prior SQL row bypasses the source even after repository deletion. New capture verifies current repository scope and nondeleted state before and after the unchanged bounded retained scan, then enters the short acceptance transaction. Its original non-atomic window and 32-page, 10,000-document, 100,000-reference, 256-page-hint and 30-second limits remain. A same-ID retry returns the original quantities and window; choose a new ID to recollect.
+Authorization precedes parsing. A matching prior SQL row bypasses the source even after repository deletion. New capture verifies current repository scope and nondeleted state before and after the retained scan, then enters the short acceptance transaction. Scope validation uses `WorkItem.validateTextContentSizeDiagnosticParameters`; `Services.Actor.fs` selects the configured provider and returns the declaration quantity, distinct count and full read window. The capture retains the verified scope and requested ObservationId. Collection runs until exhaustion, caller cancellation or failure without total-work or elapsed-time ceilings; the 256-document page size controls pagination only. The request token passes through all effects, and SQL per-command behavior remains unchanged. The window is non-atomic. A same-ID retry returns the original quantities and window; choose a new ID to recollect.
 
 The worker initializer creates `ops.TextContentSizeObservation` through the existing Operations SQL setting. No Server startup dependency or AppHost change is added. Its row is separate from DirectoryVersion observations, raw usage facts and minute aggregates. Identical GUIDs on the two source routes address separate observations, with no combined identity or total.
 
@@ -303,9 +303,11 @@ pwsh ./scripts/capture-text-content-size.ps1 -ObservationId "$observationId" -Ow
 pwsh ./scripts/capture-text-content-size.ps1 -Mode Read -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './text-observation.json'
 ```
 
-The script rejects a DirectoryVersion response, validates the source-specific quantities, ID, complete scope and precise UTC window, then publishes the original JSON atomically. HTTP, transport and validation failures preserve prior output. Capture may have committed despite a failed response: retry the same ID. Read failures direct another read of that ID. There are no automatic retries.
+The script rejects a DirectoryVersion response, validates the source-specific quantities, ID, complete scope and precise UTC window, then publishes the original JSON atomically. Connection and operation timeouts are zero; Ctrl+C cancels the request. HTTP, transport and validation failures preserve prior output. Capture may have committed despite a failed response: retry the same ID. Read failures direct another read of that ID. There are no automatic retries.
 
 The [algorithm applicability record](design/Operations.TextContentObservation-Applicability.json) maps this table and its fields to the predecessor's captured SQL experiment. Locking, absent-or-complete state, scope binding, time representation, commit ordering and retry behavior are unchanged. It reuses the recorded 25 controls and extracted replay without claiming a new experiment. Actual TextContent Data checks use isolated SQL; hosted acceptance runs in isolated GitHub Validate, followed by Windows validation of the actual hosted envelope. No new DebugAzure deployment or unsupported crash guarantee is claimed.
+
+PR #1059's refresh consumes the reviewed PR #1052 readers and also updates its inherited DirectoryVersion observation caller from PR #1057. Both Data modules, observation DTOs, SQL schemas and historical JSON records remain unchanged. Historical scan ceilings in the applicability record describe that earlier run; the current capture behavior above supersedes them. The recorded 19 TextContent Data controls and 25 SQL preflight controls remain applicable to the unchanged acceptance sequence; they are reused evidence, not a fresh SQL replay.
 
 ## Later decisions and preservation
 
