@@ -206,6 +206,8 @@ All incomplete or rejected outcomes return a nonzero exit code. A destination cr
 
 ## Deferred capabilities
 
-Explicit same-parent file rename follows the [accepted design and experiment](Libraries.Design.md#explicit-file-rename-accepted-next-slice). Automatic recognition of a local Explorer rename remains deferred.
+Explicit same-parent file rename follows the [delivered design](Libraries.Design.md#explicit-file-rename-delivered). Automatic recognition of a local Explorer rename remains deferred.
+
+Durable local pause/resume is accepted and [Plan-ready](Libraries.Design.md#pause-and-resume-accepted-next-slice), but the commands are not implemented yet. The planned behavior stops capture and transfer while retaining participation, saved objects and pending work; only explicit resume clears pause. Resume uses the existing feed and preserves state if catalog changes or rebaseline is required. The [56-case experiment](design/Libraries.Pause-Experiment.md) establishes bounded readiness, not production command or live Watch acceptance.
 
 Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.

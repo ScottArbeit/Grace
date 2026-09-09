@@ -68,7 +68,7 @@ Logs are retained in `C:/Source/Grace-artifacts/issue-1073-redesign/`: `cli-cand
 
 The first translated run exposed an old baseline guard comparing a newly derived path; the initial hosted run exposed validation of a not-yet-created object parent. Both were corrected in their owning production seams, with fresh-tree and baseline interruption coverage retained. Earlier failing logs remain diagnostic evidence and do not describe the final candidate.
 
-Windows execution is required for filesystem cases. Required current-revision GitHub Validate, fresh R1, bounded R2 if repairs are required, and Shape Review remain controller gates. Local Fast/Full is not run as a duplicate broad gate.
+Windows execution is required for filesystem cases. The [completed candidate record](https://github.com/ScottArbeit/Grace/pull/1074#issuecomment-5594738877) records R1 PASS, no required repairs/R2, Shape Review 31/31 with zero concerns/questions and successful current-head Validate for `0781cd415b5762a1abafd65e5885b2f6ac6e24e5`. The [landing record](https://github.com/ScottArbeit/Grace/pull/1074#issuecomment-5596476390) verifies merge `043c7a59bf1bb0fb421067ec3ae09556ec4088b9`, identical tested tree and completed issue cleanup. Local Fast/Full was not run as a duplicate broad gate.
 
 ## Declaration and scope review
 
