@@ -11,6 +11,8 @@ open Grace.Types.Repository
 open Grace.Types.TextContent
 open Microsoft.Extensions.Configuration
 open System
+open System.Collections.Generic
+open System.Globalization
 open System.IO
 open System.IO.Compression
 open System.Text
@@ -92,6 +94,23 @@ module TextContentStorage =
     /// Compresses unchanged strict UTF-8 text bytes for the immutable repository object representation.
     let compressText (text: string) = text |> strictUtf8.GetBytes |> gzip
 
+    /// Records the original text facts in the same conditional commit as its compressed payload.
+    let private createMetadata (reference: TextContent) =
+        dict [ "grace_textcontent_format", "1"
+               "grace_utf8_byte_length", reference.Utf8ByteLength.ToString(CultureInfo.InvariantCulture)
+               "grace_blake3_hash", reference.Blake3Hash ]
+
+    /// Requires exact supported evidence before an existing object can satisfy a write retry.
+    let verifyMetadata (reference: TextContent) (metadata: IDictionary<string, string>) =
+        let matches =
+            createMetadata reference
+            |> Seq.forall (fun pair ->
+                match metadata.TryGetValue pair.Key with
+                | true, value -> String.Equals(value, pair.Value, StringComparison.Ordinal)
+                | _ -> false)
+
+        if matches then Ok() else Error "Text content metadata verification failed."
+
     /// Decompresses and verifies immutable text bytes before exposing their strict UTF-8 text.
     let verifyCompressedText maximum (reference: TextContent) (compressed: Stream) =
         try
@@ -134,7 +153,7 @@ module TextContentStorage =
         | ex -> Error $"Text content verification failed: {ex.Message}"
 
     /// Downloads, bounds, decompresses, decodes, and verifies one immutable text object before it is returned.
-    let read (repositoryDto: RepositoryDto) (reference: TextContent) (correlationId: CorrelationId) =
+    let private readStored requireMetadata (repositoryDto: RepositoryDto) (reference: TextContent) (correlationId: CorrelationId) =
         task {
             try
                 match repositoryDto.ObjectStorageProvider, getMaximumCharacters () with
@@ -145,7 +164,14 @@ module TextContentStorage =
                     let! download = blobClient.DownloadStreamingAsync()
                     use compressed = download.Value.Content
 
-                    match verifyCompressedText maximum reference compressed with
+                    let verified =
+                        (if requireMetadata then
+                             verifyMetadata reference download.Value.Details.Metadata
+                         else
+                             Ok())
+                        |> Result.bind (fun () -> verifyCompressedText maximum reference compressed)
+
+                    match verified with
                     | Ok text -> return Ok text
                     | Error error -> return Error(GraceError.Create error correlationId)
                 | _ -> return Error(GraceError.Create "Text content storage is only implemented for Azure Blob Storage." correlationId)
@@ -156,7 +182,10 @@ module TextContentStorage =
             | ex -> return Error(GraceError.Create $"Text content verification failed: {ex.Message}" correlationId)
         }
 
-    /// Writes one immutable compressed text object or proves that the retry object already contains the exact same bytes.
+    /// Reads event-backed content using the existing reference even when storage metadata is absent.
+    let read repositoryDto reference correlationId = readStored false repositoryDto reference correlationId
+
+    /// Writes immutable bytes and original evidence, or verifies both from one stored revision on retry.
     let write repositoryDto repositoryId workItemId correlationId text =
         task {
             match validateText text with
@@ -176,14 +205,14 @@ module TextContentStorage =
                     let compressed = compressText text
                     use content = new MemoryStream(compressed)
                     let conditions = BlobRequestConditions(IfNoneMatch = Azure.ETag.All)
-                    let options = BlobUploadOptions(Conditions = conditions)
+                    let options = BlobUploadOptions(Conditions = conditions, Metadata = createMetadata reference)
 
                     try
                         let! _ = blobClient.UploadAsync(content, options)
                         return Ok(description, true)
                     with
                     | :? RequestFailedException as ex when ex.Status = 409 || ex.Status = 412 ->
-                        match! read repositoryDto reference correlationId with
+                        match! readStored true repositoryDto reference correlationId with
                         | Ok existing when String.Equals(existing, text, StringComparison.Ordinal) -> return Ok(description, false)
                         | Ok _ -> return Error(GraceError.Create "Text-content retry identity already contains different content." correlationId)
                         | Error error -> return Error error

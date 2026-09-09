@@ -220,6 +220,22 @@ The saved JSON uses Grace's `ReturnValue`, `EventTime`, `CorrelationId`, and `Pr
 
 No usage fact, SQL row, counter change, content object, cache, reminder, or runtime diagnostic state is created. The route does not read blobs and does not verify a repository-wide snapshot. The only saved diagnostic is the caller's local output file.
 
+## TextContent upload evidence
+
+[Issue #1079](https://github.com/ScottArbeit/Grace/issues/1079) stores original text facts on every new compressed TextContent object. This preserves verifiable evidence when an uncertain description operation leaves an upload without a WorkItem event. The existing repository container and `text-content/{TextContentId:N}` key identify the object; equal text with distinct IDs still identifies separate objects.
+
+| Blob metadata | Stored value |
+| --- | --- |
+| `grace_textcontent_format` | `1` |
+| `grace_utf8_byte_length` | Original strict UTF-8 byte length as invariant decimal |
+| `grace_blake3_hash` | Existing lowercase BLAKE3 hash of the original UTF-8 bytes |
+
+The conditional upload commits metadata with the compressed body using `IfNoneMatch=*`. A conflicting write verifies the three exact values and original body against the expected TextContent reference using one download response. Missing, malformed, unsupported or conflicting evidence fails the retry without changing the object. Metadata is provider-mutable, so separate unconditioned properties and body reads must never establish retry success. Ordinary event-backed reads continue verifying their existing reference without requiring metadata.
+
+Description success remains independent of Operations. Existing cleanup removes only newly created objects after a known rejection; uncertain outcomes retain their body and evidence. Superseding or clearing a description retains earlier objects. There is no metadata repair, backfill, new owner or deletion policy. The [captured provider experiment and reproducible source](design/Operations.TextContent-Metadata-Preflight.md) distinguish provider results from hosted acceptance and modeled failures.
+
+This evidence is a prerequisite for later measurement. It does not establish complete membership, confirmed deletion coverage, a repository snapshot or an elapsed usage interval. Issue #829 remains unmet. Retained declarations, observed objects and overlapping content classes must not be added into a repository total or `RepositoryStorageBytesMinute`.
+
 ## TextContent declaration diagnostic
 
 [Issue #1051](https://github.com/ScottArbeit/Grace/issues/1051) adds an explicit SystemAdmin diagnostic for distinct logical UTF-8 bytes declared by surviving WorkItem events. This helps a maintainer inspect retained text independently from DirectoryVersion declarations. A description that was superseded or cleared still contributes its earlier TextContent references while its events survive. Folding only the current description would omit those references.
