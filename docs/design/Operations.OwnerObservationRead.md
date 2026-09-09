@@ -80,7 +80,7 @@ The second evaluation reloads assignments through existing callbacks. It does no
 
 ## Requirement and test mapping
 
-All rows below are required for the **single next public tracer**, currently unimplemented and not yet assigned a later issue number. OOR-D01 through OOR-D07 are their decision sources. The implementation paths are likely owned paths for that later charter, not permission to edit them in Issue #1066. A failing current-route lookup or absent method/command is the initial negative result; positive checks must execute the named boundary rather than assert source text alone.
+All rows below are required for the **single public tracer in Issue #1068 / PR #1069**. OOR-D01 through OOR-D07 are their decision sources. The implementation paths belong to that issue's charter, not permission to edit them in Issue #1066. A failing current-route lookup or absent method/command is the initial negative result; positive checks must execute the named boundary rather than assert source text alone.
 
 | ID | Required behavior | Likely implementation seam | Meaningful acceptance check and current evidence |
 | --- | --- | --- | --- |
@@ -154,7 +154,7 @@ The bundle requires the captured compiled dependency set, or a separately record
 
 **Plan-ready** applies to this selected contract: audience, historical ownership, failure behavior, representation, supported clients and exclusions are settled; current implementation paths and every required test boundary are mapped; the codec and permission-order decisions have executed distinguishing controls. The algorithm result is **simplified**: one read-only request with two existing permission evaluations, accepting the post-check delivery interval and existing request-identity freshness, avoids another permission state machine. Restart and retry require a new read; there is no write residue.
 
-The next value-bearing tracer is the complete OOR-R01-R12 path: an authenticated owner administrator obtains the exact retained DirectoryVersion observation through HTTP, F# SDK, CLI and the supported Node facade, with current schema/generation and integrated tests. It reuses the established SQL read and leaves capture restricted to the existing operator routes. Select one later issue and its exact base only after this reviewed checkpoint; do not split public propagation into an indefinitely unfinished follow-up.
+Issue #1068 / PR #1069 implements the complete OOR-R01-R12 path: an authenticated owner administrator obtains the exact retained DirectoryVersion observation through HTTP, F# SDK, CLI and the supported Node facade, with current schema/generation and integrated tests. It reuses the established SQL read and leaves capture restricted to the existing operator routes. Its refresh charter records the selected base and combined Library/client validation; public propagation remains part of that single implementation.
 
 Missing hosted HTTP/F# SDK/CLI/full OpenAPI/facade checks are the next implementation's acceptance work, not evidence already earned here. No public owner visibility is implemented or deployed by Issue #1066. Broad .NET builds/tests, local Fast/Full and Aspire were not run for this documentation slice. Actual-file Markdown lint, JSON parsing, source/dependency/embedded-output checks, fresh extraction and generated compilation are its local validation. Required final-head GitHub Validate and independent R1/Shape Review remain controller-owned delivery gates.
 
