@@ -20,7 +20,7 @@ module internal LibraryLocalState =
             RepositoryId: Guid
             WorkingCopyId: Guid
             Catalog: LibraryCatalogDto
-            CursorEpoch: string
+            CursorEpoch: LibraryCursorEpoch
             AppliedCursor: string
             NextPageToken: string option
             State: string
@@ -104,7 +104,7 @@ module internal LibraryLocalState =
                     RepositoryId = repositoryId
                     WorkingCopyId = Guid.Parse(reader.GetString(0))
                     Catalog = deserialize<LibraryCatalogDto> (reader.GetString(1))
-                    CursorEpoch = reader.GetString(2)
+                    CursorEpoch = LibraryCursorEpoch.parse (reader.GetString(2))
                     AppliedCursor = reader.GetString(3)
                     State = reader.GetString(4)
                     Paused = reader.GetInt64(7) <> 0L
@@ -134,7 +134,7 @@ module internal LibraryLocalState =
                 "$copy", box (state.WorkingCopyId.ToString("D"))
                 "$paused", box (if state.Paused then 1 else 0)
                 "$catalog", box (serialize state.Catalog)
-                "$epoch", box state.CursorEpoch
+                "$epoch", box (LibraryCursorEpoch.toString state.CursorEpoch)
                 "$cursor", box state.AppliedCursor
                 "$next",
                 (state.NextPageToken
@@ -234,7 +234,7 @@ module internal LibraryLocalState =
             "UPDATE library_repository_state SET cursor_epoch=$epoch,applied_cursor=$cursor,next_page_token=$next,lifecycle_state=$state,baseline_json=$baseline WHERE repository_id=$repository;"
             [
                 "$repository", box (state.RepositoryId.ToString("D"))
-                "$epoch", box state.CursorEpoch
+                "$epoch", box (LibraryCursorEpoch.toString state.CursorEpoch)
                 "$cursor", box state.AppliedCursor
                 "$next",
                 (state.NextPageToken
@@ -605,7 +605,7 @@ module internal LibraryLocalState =
                      |> Option.defaultValue (box DBNull.Value))
                     "$repository", box (expected.RepositoryId.ToString("D"))
                     "$cursor", box expected.AppliedCursor
-                    "$epoch", box expected.CursorEpoch
+                    "$epoch", box (LibraryCursorEpoch.toString expected.CursorEpoch)
                     "$catalog", box (serialize expected.Catalog)
                 ]
 
@@ -626,7 +626,7 @@ module internal LibraryLocalState =
                     "$paused", box (if expected.Paused then 1 else 0)
                     "$repository", box (expected.RepositoryId.ToString("D"))
                     "$cursor", box expected.AppliedCursor
-                    "$epoch", box expected.CursorEpoch
+                    "$epoch", box (LibraryCursorEpoch.toString expected.CursorEpoch)
                     "$catalog", box (serialize expected.Catalog)
                 ]
 

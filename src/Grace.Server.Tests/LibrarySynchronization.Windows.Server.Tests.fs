@@ -179,7 +179,9 @@ module LibrarySynchronizationWindowsServerTests =
 
                         let altered =
                             if mode = 1 then
-                                { page with CursorEpoch = "changed-fixture-epoch" }
+                                { page with CursorEpoch = LibraryCursorEpoch.parse "ebf72ec5-aacd-438b-b74a-10ea4b30da2b" }
+                            elif mode = 3 then
+                                page
                             else
                                 { page with
                                     Rebaseline =
@@ -193,6 +195,17 @@ module LibrarySynchronizationWindowsServerTests =
                                 }
 
                         bytes <- System.Text.Encoding.UTF8.GetBytes(serialize { envelope with ReturnValue = altered })
+
+                        if mode = 3 then
+                            bytes <-
+                                System.Text.Encoding.UTF8.GetBytes(
+                                    System
+                                        .Text
+                                        .Encoding
+                                        .UTF8
+                                        .GetString(bytes)
+                                        .Replace(LibraryCursorEpoch.toString page.CursorEpoch, "malformed-epoch")
+                                )
 
                     if replayGap then
                         bytes <- gapPage.Value
@@ -580,7 +593,7 @@ module LibrarySynchronizationWindowsServerTests =
         }
 
     /// Retains exact local state when resume encounters changed remote catalog, epoch or service-floor requirements.
-    [<TestCase("catalog"); TestCase("epoch"); TestCase("rebaseline")>]
+    [<TestCase("catalog"); TestCase("epoch"); TestCase("rebaseline"); TestCase("malformedEpoch")>]
     let ``resume stops active with retained state when remote participation boundary changes`` scenario =
         task {
             if not (OperatingSystem.IsWindows()) then
@@ -611,7 +624,11 @@ module LibrarySynchronizationWindowsServerTests =
                 let! _ = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
                 ()
             else
-                proxy.ChangeNextFeed(if scenario = "epoch" then 1 else 2)
+                proxy.ChangeNextFeed(
+                    if scenario = "epoch" then 1
+                    elif scenario = "malformedEpoch" then 3
+                    else 2
+                )
 
             let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "resume")
             Assert.That(blocked.ExitCode, Is.Not.Zero)

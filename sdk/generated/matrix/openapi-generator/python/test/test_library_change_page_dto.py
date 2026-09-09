@@ -37,7 +37,7 @@ class TestLibraryChangePageDto(unittest.TestCase):
         if include_optional:
             return LibraryChangePageDto(
                 outcome = 'accepted',
-                cursor_epoch = '0',
+                cursor_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3',
                 changes = [
                     grace_generated_openapi_probe.models.library_change_dto.LibraryChangeDto(
                         operation_id = '', 
@@ -60,14 +60,14 @@ class TestLibraryChangePageDto(unittest.TestCase):
                 next_page_token = '0',
                 rebaseline = grace_generated_openapi_probe.models.library_rebaseline_dto.LibraryRebaselineDto(
                     reason = '', 
-                    current_epoch = '0', 
+                    current_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3', 
                     service_floor_cursor = '0', 
                     recommended_bootstrap = True, )
             )
         else:
             return LibraryChangePageDto(
                 outcome = 'accepted',
-                cursor_epoch = '0',
+                cursor_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3',
                 changes = [
                     grace_generated_openapi_probe.models.library_change_dto.LibraryChangeDto(
                         operation_id = '', 
@@ -90,7 +90,7 @@ class TestLibraryChangePageDto(unittest.TestCase):
                 next_page_token = '0',
                 rebaseline = grace_generated_openapi_probe.models.library_rebaseline_dto.LibraryRebaselineDto(
                     reason = '', 
-                    current_epoch = '0', 
+                    current_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3', 
                     service_floor_cursor = '0', 
                     recommended_bootstrap = True, ),
         )

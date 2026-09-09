@@ -43,7 +43,7 @@ class TestLibraryChangePageReturnValue(unittest.TestCase):
                     },
                 return_value = grace_generated_openapi_probe.models.library_change_page_dto.LibraryChangePageDto(
                     outcome = 'accepted', 
-                    cursor_epoch = '0', 
+                    cursor_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3', 
                     changes = [
                         grace_generated_openapi_probe.models.library_change_dto.LibraryChangeDto(
                             operation_id = '', 

@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **outcome** | [**models::LibraryOutcomeKind**](LibraryOutcomeKind.md) |  | 
-**cursor_epoch** | **String** | Opaque repository epoch. Clients compare only exact equality. | 
+**cursor_epoch** | **uuid::Uuid** | Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning. | 
 **changes** | [**Vec<models::LibraryChangeDto>**](LibraryChangeDto.md) |  | 
 **last_cursor** | **String** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **has_more** | **bool** |  | 

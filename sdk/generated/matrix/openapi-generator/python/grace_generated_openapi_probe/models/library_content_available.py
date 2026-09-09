@@ -33,7 +33,7 @@ class LibraryContentAvailable(BaseModel):
     """ # noqa: E501
     event_name: StrictStr = Field(alias="EventName")
     repository_id: UUID = Field(alias="RepositoryId")
-    cursor_epoch: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository epoch. Clients compare only exact equality.", alias="CursorEpoch")
+    cursor_epoch: UUID = Field(description="Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.", alias="CursorEpoch")
     available_after_cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="AvailableAfterCursor")
     library_catalog_version: UUID = Field(alias="LibraryCatalogVersion")
     occurred_at: datetime = Field(alias="OccurredAt")
@@ -45,6 +45,16 @@ class LibraryContentAvailable(BaseModel):
         """Validates the enum"""
         if value not in set(['LibraryContentAvailable.v1']):
             raise ValueError("must be one of enum values ('LibraryContentAvailable.v1')")
+        return value
+
+    @field_validator('cursor_epoch')
+    def cursor_epoch_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", value):
+            raise ValueError(r"must validate the regular expression /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/")
         return value
 
     model_config = ConfigDict(

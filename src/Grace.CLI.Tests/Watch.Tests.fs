@@ -1719,7 +1719,7 @@ module WatchTests =
         let wake =
             Grace.Types.Library.LibraryContentAvailable.Create(
                 repositoryId,
-                "received-epoch",
+                Grace.Types.Library.LibraryCursorEpoch(Guid.Parse("6ba22f87-5de4-4b4e-bd1e-34b4e738852e")),
                 "received-cursor",
                 Guid.NewGuid(),
                 getCurrentInstant (),

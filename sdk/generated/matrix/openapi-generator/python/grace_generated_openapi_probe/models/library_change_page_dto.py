@@ -18,9 +18,10 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
+from uuid import UUID
 from grace_generated_openapi_probe.models.library_change_dto import LibraryChangeDto
 from grace_generated_openapi_probe.models.library_outcome_kind import LibraryOutcomeKind
 from grace_generated_openapi_probe.models.library_rebaseline_dto import LibraryRebaselineDto
@@ -33,13 +34,23 @@ class LibraryChangePageDto(BaseModel):
     LibraryChangePageDto
     """ # noqa: E501
     outcome: LibraryOutcomeKind = Field(alias="Outcome")
-    cursor_epoch: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository epoch. Clients compare only exact equality.", alias="CursorEpoch")
+    cursor_epoch: UUID = Field(description="Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.", alias="CursorEpoch")
     changes: List[LibraryChangeDto] = Field(alias="Changes")
     last_cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="LastCursor")
     has_more: StrictBool = Field(alias="HasMore")
     next_page_token: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque token for continuing one immutable page sequence.", alias="NextPageToken")
     rebaseline: LibraryRebaselineDto = Field(alias="Rebaseline")
     __properties: ClassVar[List[str]] = ["Outcome", "CursorEpoch", "Changes", "LastCursor", "HasMore", "NextPageToken", "Rebaseline"]
+
+    @field_validator('cursor_epoch')
+    def cursor_epoch_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", value):
+            raise ValueError(r"must validate the regular expression /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,

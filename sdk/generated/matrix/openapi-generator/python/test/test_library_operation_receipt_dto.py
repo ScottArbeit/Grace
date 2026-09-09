@@ -66,7 +66,7 @@ class TestLibraryOperationReceiptDto(unittest.TestCase):
                     previous_version = null, ),
                 rebaseline = grace_generated_openapi_probe.models.library_rebaseline_dto.LibraryRebaselineDto(
                     reason = '', 
-                    current_epoch = '0', 
+                    current_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3', 
                     service_floor_cursor = '0', 
                     recommended_bootstrap = True, )
             )
@@ -102,7 +102,7 @@ class TestLibraryOperationReceiptDto(unittest.TestCase):
                     previous_version = null, ),
                 rebaseline = grace_generated_openapi_probe.models.library_rebaseline_dto.LibraryRebaselineDto(
                     reason = '', 
-                    current_epoch = '0', 
+                    current_epoch = '62ECB020-8429-30cc-01FF-CCfeEe150AC3', 
                     service_floor_cursor = '0', 
                     recommended_bootstrap = True, ),
         )

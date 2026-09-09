@@ -48,7 +48,7 @@ export interface LibraryChangePageDto {
      */
     outcome: LibraryOutcomeKind;
     /**
-     * Opaque repository epoch. Clients compare only exact equality.
+     * Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
      * @type {string}
      * @memberof LibraryChangePageDto
      */

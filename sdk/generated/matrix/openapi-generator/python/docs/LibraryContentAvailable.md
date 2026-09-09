@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **event_name** | **str** |  | 
 **repository_id** | **UUID** |  | 
-**cursor_epoch** | **str** | Opaque repository epoch. Clients compare only exact equality. | 
+**cursor_epoch** | **UUID** | Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning. | 
 **available_after_cursor** | **str** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **library_catalog_version** | **UUID** |  | 
 **occurred_at** | **datetime** |  | 

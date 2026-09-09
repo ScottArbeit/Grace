@@ -182,7 +182,7 @@ type NotificationServerTests() =
             let payload =
                 LibraryContentAvailable.Create(
                     repositoryId,
-                    "epoch-token",
+                    LibraryCursorEpoch.parse "d6dd8c9f-3e63-4d27-90ad-7dcdfbba7f4e",
                     "cursor-token",
                     Guid.Parse("22222222-2222-2222-2222-222222222222"),
                     NodaTime.Instant.FromUtc(2026, 8, 27, 20, 0),
@@ -287,7 +287,7 @@ type NotificationServerTests() =
             let payload =
                 LibraryContentAvailable.Create(
                     repositoryId,
-                    "epoch-token",
+                    LibraryCursorEpoch.parse "d6dd8c9f-3e63-4d27-90ad-7dcdfbba7f4e",
                     "cursor-token",
                     Guid.Parse("44444444-4444-4444-4444-444444444444"),
                     NodaTime.Instant.FromUtc(2026, 8, 27, 20, 5),

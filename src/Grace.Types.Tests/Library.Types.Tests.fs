@@ -31,6 +31,48 @@ type LibraryTypesTests() =
         | Ok actual -> Assert.That(box actual, Is.EqualTo(box expected))
         | Error error -> Assert.Fail($"Expected success but received: {error}")
 
+    /// Keeps GUID epochs scalar on the wire, including the valid empty GUID, without changing signed cursors.
+    [<TestCase("28AA5FE8-2242-48FE-A02A-C5A34A72D937"); TestCase("00000000-0000-0000-0000-000000000000")>]
+    member _.``epoch JSON uses canonical GUID D text and round trips`` text =
+        let epoch = LibraryCursorEpoch.parse text
+        let json = Grace.Shared.Utilities.serialize epoch
+        use document = System.Text.Json.JsonDocument.Parse(json)
+        Assert.That(document.RootElement.ValueKind, Is.EqualTo(System.Text.Json.JsonValueKind.String))
+        Assert.That(document.RootElement.GetString(), Is.EqualTo(text.ToLowerInvariant()))
+        Assert.That(Grace.Shared.Utilities.deserialize<LibraryCursorEpoch> json, Is.EqualTo(epoch))
+        Assert.That(LibraryCursorEpoch.toString epoch, Is.EqualTo(text.ToLowerInvariant()))
+        let dto = { Reason = "cursorExpired"; CurrentEpoch = epoch; ServiceFloorCursor = "signed-opaque-cursor"; RecommendedBootstrap = true }
+        let encodedDto = Grace.Shared.Utilities.serialize dto
+        Assert.That(Grace.Shared.Utilities.deserialize<LibraryRebaselineDto> encodedDto, Is.EqualTo(dto))
+
+    /// Rejects malformed and alternate GUID spellings through the production JSON decoder.
+    [<TestCase("\"not-an-epoch\"");
+      TestCase("\"28aa5fe8224248fea02ac5a34a72d937\"");
+      TestCase("\"{28aa5fe8-2242-48fe-a02a-c5a34a72d937}\"");
+      TestCase("\" 28aa5fe8-2242-48fe-a02a-c5a34a72d937 \"");
+      TestCase("null");
+      TestCase("17");
+      TestCase("{}")>]
+    member _.``epoch JSON rejects malformed and non D values`` json =
+        Assert.Throws<System.Text.Json.JsonException>(
+            Action (fun () ->
+                Grace.Shared.Utilities.deserialize<LibraryCursorEpoch> json
+                |> ignore)
+        )
+        |> ignore
+
+        let encodedDto =
+            "{\"Reason\":\"cursorExpired\",\"CurrentEpoch\":"
+            + json
+            + ",\"ServiceFloorCursor\":\"signed-opaque-cursor\",\"RecommendedBootstrap\":true}"
+
+        Assert.Throws<System.Text.Json.JsonException>(
+            Action (fun () ->
+                Grace.Shared.Utilities.deserialize<LibraryRebaselineDto> encodedDto
+                |> ignore)
+        )
+        |> ignore
+
     /// Confirms repository creation facts produce a stable, non-null empty Library catalog.
     [<Test>]
     member _.``repository creation facts produce one stable empty Library catalog``() =

@@ -26,7 +26,7 @@ module internal LibrarySynchronization =
             Paused: bool
             State: string
             LibraryCatalogVersion: Guid option
-            CursorEpoch: string option
+            CursorEpoch: LibraryCursorEpoch option
             AppliedCursor: string option
             PendingOperationCount: int
         }

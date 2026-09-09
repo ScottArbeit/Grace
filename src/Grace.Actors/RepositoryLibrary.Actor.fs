@@ -775,7 +775,7 @@ type RepositoryLibraryActor
                 let payload =
                     LibraryContentAvailable.Create(
                         repositoryId,
-                        control.Epoch.ToString("D"),
+                        LibraryCursorEpoch.ofGuid control.Epoch,
                         LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch cursor,
                         record.Change.LibraryCatalogVersion,
                         record.Change.AcceptedAt,
@@ -1909,7 +1909,7 @@ type RepositoryLibraryActor
                     {
                         BootstrapId = bootstrapId
                         BoundaryCursor = LibraryTokens.cursor libraryTokenKey repositoryId manifest.Epoch manifest.BoundaryCursor
-                        CursorEpoch = manifest.Epoch.ToString("D")
+                        CursorEpoch = LibraryCursorEpoch.ofGuid manifest.Epoch
                         LibraryCatalog = manifest.Catalog
                         Items = items
                         NextPageToken =
@@ -1956,7 +1956,7 @@ type RepositoryLibraryActor
                                 {
                                     BootstrapId = bootstrapId
                                     BoundaryCursor = LibraryTokens.cursor libraryTokenKey repositoryId manifest.Epoch manifest.BoundaryCursor
-                                    CursorEpoch = manifest.Epoch.ToString("D")
+                                    CursorEpoch = LibraryCursorEpoch.ofGuid manifest.Epoch
                                     LibraryCatalog = manifest.Catalog
                                     Items = items
                                     NextPageToken =
@@ -2024,7 +2024,7 @@ type RepositoryLibraryActor
                     return
                         {
                             Outcome = OutcomeKind.Accepted
-                            CursorEpoch = epoch.ToString("D")
+                            CursorEpoch = LibraryCursorEpoch.ofGuid epoch
                             Changes = changes
                             LastCursor = LibraryTokens.cursor libraryTokenKey repositoryId epoch lastPosition
                             HasMore = hasMore
@@ -2041,7 +2041,7 @@ type RepositoryLibraryActor
                     return
                         {
                             Outcome = OutcomeKind.RebaselineRequired
-                            CursorEpoch = control.Epoch.ToString("D")
+                            CursorEpoch = LibraryCursorEpoch.ofGuid control.Epoch
                             Changes = Array.empty
                             LastCursor = LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch control.CommittedCursor
                             HasMore = false
@@ -2050,7 +2050,7 @@ type RepositoryLibraryActor
                                 Some
                                     {
                                         Reason = "cursorOutsideReplayWindow"
-                                        CurrentEpoch = control.Epoch.ToString("D")
+                                        CurrentEpoch = LibraryCursorEpoch.ofGuid control.Epoch
                                         ServiceFloorCursor = LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch floor
                                         RecommendedBootstrap = true
                                     }

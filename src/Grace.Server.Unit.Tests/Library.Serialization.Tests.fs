@@ -21,6 +21,65 @@ type LibrarySerializationTests() =
         let serializer = serviceProvider.GetRequiredService<Serializer<'T>>()
         serializer.Deserialize(serializer.SerializeToArray(value))
 
+    /// Exercises each required epoch-bearing DTO through production JSON, including null and missing fields that F# otherwise defaults.
+    let assertEpochJson (epochField: string) (value: 'T) =
+        let json = Utilities.serialize value
+        Assert.That(Utilities.deserialize<'T> json, Is.EqualTo(box value))
+        let insensitiveOptions = System.Text.Json.JsonSerializerOptions(Constants.JsonSerializerOptions)
+        insensitiveOptions.PropertyNameCaseInsensitive <- true
+        let differentlyCased = json.Replace($"\"{epochField}\"", $"\"{epochField.ToLowerInvariant()}\"")
+        Assert.That(System.Text.Json.JsonSerializer.Deserialize<'T>(differentlyCased, insensitiveOptions), Is.EqualTo(box value))
+
+        let firstNull =
+            $"{{\"{epochField.ToLowerInvariant()}\":null,"
+            + json.Substring(1)
+
+        Assert.That(System.Text.Json.JsonSerializer.Deserialize<'T>(firstNull, insensitiveOptions), Is.EqualTo(box value))
+
+        let lastNull =
+            json.Substring(0, json.LastIndexOf('}'))
+            + $",\"{epochField.ToLowerInvariant()}\":null}}"
+
+        Assert.Throws<System.Text.Json.JsonException>(
+            Action (fun () ->
+                System.Text.Json.JsonSerializer.Deserialize<'T>(lastNull, insensitiveOptions)
+                |> ignore)
+        )
+        |> ignore
+
+        for invalid in
+            [
+                "null"
+                "17"
+                "{}"
+                "\"invalid\""
+                "\"28aa5fe8224248fea02ac5a34a72d937\""
+                "\"{28aa5fe8-2242-48fe-a02a-c5a34a72d937}\""
+                "\" 28aa5fe8-2242-48fe-a02a-c5a34a72d937 \""
+                "missing"
+            ] do
+            let altered =
+                System
+                    .Text
+                    .Json
+                    .Nodes
+                    .JsonNode
+                    .Parse(json)
+                    .AsObject()
+
+            if invalid = "missing" then
+                altered.Remove(epochField) |> ignore
+            else
+                altered[epochField] <- System.Text.Json.Nodes.JsonNode.Parse(invalid)
+
+            Assert.Throws<System.Text.Json.JsonException>(
+                Action (fun () ->
+                    Utilities.deserialize<'T> (altered.ToJsonString())
+                    |> ignore),
+                $"{typeof<'T>.Name}: {invalid}"
+            )
+            |> ignore
+
     /// Verifies material values across the complete final Library actor request and response graph.
     [<Test>]
     member _.PopulatedFinalLibraryRpcGraphRoundTripsThroughProductionOrleansSerialization() =
@@ -126,7 +185,13 @@ type LibrarySerializationTests() =
                 Rebaseline = None
             }
 
-        let rebaseline = { Reason = "cursorExpired"; CurrentEpoch = "epoch-rebaseline"; ServiceFloorCursor = "cursor-9"; RecommendedBootstrap = true }
+        let rebaseline =
+            {
+                Reason = "cursorExpired"
+                CurrentEpoch = LibraryCursorEpoch.parse "a1ee241b-ac92-44b4-adf7-f7b59be55177"
+                ServiceFloorCursor = "cursor-9"
+                RecommendedBootstrap = true
+            }
 
         let catalog =
             {
@@ -164,7 +229,7 @@ type LibrarySerializationTests() =
             {
                 BootstrapId = Guid.Parse("3021c4f0-ecaa-4a04-b131-10719a40ec0c")
                 BoundaryCursor = "cursor-17"
-                CursorEpoch = "epoch-material"
+                CursorEpoch = LibraryCursorEpoch.parse "28aa5fe8-2242-48fe-a02a-c5a34a72d937"
                 LibraryCatalog = catalog
                 Items = [| item |]
                 NextPageToken = Some "bootstrap-page-2"
@@ -329,7 +394,14 @@ type LibrarySerializationTests() =
         let contentLocation = { SchemaVersion = 2; Content = content; AuthorizedScope = preparation.AuthorizedScope; Manifest = manifest }
 
         let contentAvailable =
-            LibraryContentAvailable.Create(repositoryId, "epoch-material", item.LastChangeCursor, catalogVersion, timestamp, "correlation-serializer")
+            LibraryContentAvailable.Create(
+                repositoryId,
+                LibraryCursorEpoch.parse "28aa5fe8-2242-48fe-a02a-c5a34a72d937",
+                item.LastChangeCursor,
+                catalogVersion,
+                timestamp,
+                "correlation-serializer"
+            )
 
         let properties = Dictionary<string, string>()
         properties["eventName"] <- contentAvailable.EventName
@@ -345,6 +417,24 @@ type LibrarySerializationTests() =
                 CorrelationId = contentAvailable.CorrelationId
                 ApplicationProperties = properties
             }
+
+        assertEpochJson "CursorEpoch" bootstrap
+        assertEpochJson "CursorEpoch" changePage
+        assertEpochJson "CurrentEpoch" rebaseline
+        assertEpochJson "CursorEpoch" contentAvailable
+
+        let invalidNestedEpoch = System.Text.Json.Nodes.JsonNode.Parse(Utilities.serialize rebaselinePage)
+        invalidNestedEpoch["Rebaseline"]["CurrentEpoch"] <- null
+
+        Assert.Throws<System.Text.Json.JsonException>(
+            Action (fun () ->
+                Utilities.deserialize<LibraryChangePageDto> (invalidNestedEpoch.ToJsonString())
+                |> ignore)
+        )
+        |> ignore
+
+        let unchangedNullPolicy = { rebaseline with Reason = null }
+        Assert.That(Utilities.deserialize<LibraryRebaselineDto> (Utilities.serialize unchangedNullPolicy), Is.EqualTo(unchangedNullPolicy))
 
         Assert.Multiple(
             Action (fun () ->

@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **reason** | **String** |  | 
-**current_epoch** | **String** | Opaque repository epoch. Clients compare only exact equality. | 
+**current_epoch** | **uuid::Uuid** | Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning. | 
 **service_floor_cursor** | **String** | Opaque repository cursor. Clients must not parse or compare its contents. | 
 **recommended_bootstrap** | **bool** |  | 
 

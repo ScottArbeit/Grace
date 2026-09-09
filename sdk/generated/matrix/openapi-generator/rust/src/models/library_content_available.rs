@@ -18,9 +18,9 @@ pub struct LibraryContentAvailable {
     pub event_name: EventName,
     #[serde(rename = "RepositoryId")]
     pub repository_id: uuid::Uuid,
-    /// Opaque repository epoch. Clients compare only exact equality.
+    /// Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     #[serde(rename = "CursorEpoch")]
-    pub cursor_epoch: String,
+    pub cursor_epoch: uuid::Uuid,
     /// Opaque repository cursor. Clients must not parse or compare its contents.
     #[serde(rename = "AvailableAfterCursor")]
     pub available_after_cursor: String,
@@ -35,7 +35,7 @@ pub struct LibraryContentAvailable {
 
 impl LibraryContentAvailable {
     /// Content-free best-effort wake. Authorized clients pull durable changes after receipt.
-    pub fn new(event_name: EventName, repository_id: uuid::Uuid, cursor_epoch: String, available_after_cursor: String, library_catalog_version: uuid::Uuid, occurred_at: chrono::DateTime<chrono::FixedOffset>, correlation_id: String) -> LibraryContentAvailable {
+    pub fn new(event_name: EventName, repository_id: uuid::Uuid, cursor_epoch: uuid::Uuid, available_after_cursor: String, library_catalog_version: uuid::Uuid, occurred_at: chrono::DateTime<chrono::FixedOffset>, correlation_id: String) -> LibraryContentAvailable {
         LibraryContentAvailable {
             event_name,
             repository_id,

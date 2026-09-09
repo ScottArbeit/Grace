@@ -1121,6 +1121,15 @@ module CommandOutputContractRegistryTests =
             Is.EqualTo("string")
         )
 
+        let epochSchema =
+            properties
+                .GetProperty("CursorEpoch")
+                .GetProperty("anyOf")
+                .EnumerateArray()
+            |> Seq.find (fun schema -> schema.GetProperty("type").GetString() = "string")
+
+        Assert.That(epochSchema.GetProperty("format").GetString(), Is.EqualTo("uuid"))
+
     /// Keeps rename introspection tied to the retained operation result emitted by the actual command.
     [<Test>]
     let ``library rename schema describes the retained operation outcome`` () =
