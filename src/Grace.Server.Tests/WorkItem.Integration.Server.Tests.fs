@@ -373,10 +373,15 @@ module private WorkItemIntegrationHelpers =
             return response
         }
 
-    /// Builds a deterministic work item for integration setup fixture for the server integration work Item Integration assertions.
+    /// Creates a fixture work item and preserves the server's error body when creation fails.
     let createWorkItemAsync (repositoryId: string) (title: string) =
         task {
             let! workItemId, response = createWorkItemWithIdResponseAsync Client repositoryId title
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                raise (HttpRequestException($"Work item {workItemId} create returned HTTP {int response.StatusCode}: {body}", null, response.StatusCode))
+
             response.EnsureSuccessStatusCode() |> ignore
             return workItemId
         }
