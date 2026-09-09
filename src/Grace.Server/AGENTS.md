@@ -56,9 +56,10 @@ Source identity belongs to each route/table; matching GUIDs across the two sourc
 ## Artifact declaration diagnostic
 
 `POST /admin/artifact-size/diagnose` requires SystemAdmin before parsing and reuses explicit three-ID repository
-parameters. `ArtifactSizeDiagnosis` reads retained Artifact snapshots from the existing Cosmos container, checks the
+parameters. `Artifact.DiagnoseSize` uses the provider-dispatched reader in `Services.Actor.fs`, checks the
 nondeleted repository scope before and after enumeration, and returns declared bytes plus distinct Artifact count
-only after complete bounded reads. Zero is explicit; empty State contributes nothing; malformed or incomplete source
+only after complete reads. Use `RequestAborted` without total scan or wrapper deadlines; unsupported providers fail
+before Cosmos container access. Zero is explicit; empty State contributes nothing; malformed or incomplete source
 returns no quantity. The one response record is server-local and the route is intentionally excluded from public
 OpenAPI generation. It has no Blob, SQL, usage, producer or startup dependency. Preserve the two existing diagnostics
 and observation handlers. Hosted acceptance must use actual positive and zero public Artifact Create calls; seeded

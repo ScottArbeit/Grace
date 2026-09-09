@@ -22,12 +22,14 @@ $script:calls = 0
 
 # Replaces only HTTP transport; validates the actual route, credentials and explicit scope sent by the command.
 function Invoke-WebRequest {
-    param([uri]$Uri,[string]$Method,[hashtable]$Headers,[string]$ContentType,[string]$Body,[switch]$SkipHttpErrorCheck,[int]$TimeoutSec)
+    param([uri]$Uri,[string]$Method,[hashtable]$Headers,[string]$ContentType,[string]$Body,[switch]$SkipHttpErrorCheck,[int]$ConnectionTimeoutSeconds,[int]$OperationTimeoutSeconds)
     $script:calls++
     if ($script:transportFailure) { throw 'Simulated transport failure.' }
     if ($Uri.AbsolutePath -cne '/admin/artifact-size/diagnose' -or $Method -cne 'Post' -or
         $Headers.Authorization -cne 'Bearer test-only' -or $ContentType -cne 'application/json' -or
-        -not $SkipHttpErrorCheck -or $TimeoutSec -ne 45) { throw 'Unexpected diagnostic request.' }
+        -not $SkipHttpErrorCheck -or -not $PSBoundParameters.ContainsKey('ConnectionTimeoutSeconds') -or
+        -not $PSBoundParameters.ContainsKey('OperationTimeoutSeconds') -or $ConnectionTimeoutSeconds -ne 0 -or
+        $OperationTimeoutSeconds -ne 0) { throw 'Unexpected diagnostic request.' }
     $sent = $Body | ConvertFrom-Json -AsHashtable
     if ($sent.Count -ne 3) { throw 'Diagnostic must send only the three scope identifiers.' }
     foreach ($name in @('OwnerId','OrganizationId','RepositoryId')) {

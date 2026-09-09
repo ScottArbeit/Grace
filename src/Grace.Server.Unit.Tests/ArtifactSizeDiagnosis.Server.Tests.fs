@@ -7,7 +7,8 @@ open System.Text.Json
 open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
-open Grace.Server.ArtifactSizeDiagnosis
+open Grace.Server.Artifact
+open Grace.Actors.Services
 open Grace.Shared.Utilities
 open Grace.Shared.Parameters.Repository
 open Grace.Types.Artifact
@@ -15,7 +16,7 @@ open Grace.Types.Usage
 open Grace.Types.Common
 open NUnit.Framework
 
-/// Checks retained Artifact declaration projection, complete bounds and repository revalidation without hosting.
+/// Checks retained Artifact declaration projection, complete enumeration and repository revalidation without hosting.
 [<Parallelizable(ParallelScope.All)>]
 type ArtifactSizeDiagnosisTests() =
     let scope: UsageFactScope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
@@ -50,22 +51,34 @@ type ArtifactSizeDiagnosisTests() =
     /// Decodes the exact current serializer output before exercising the production enumeration.
     let row (events: ArtifactEvent array) =
         use json = JsonDocument.Parse(serialize {| State = events |})
-        decodeDocument json.RootElement
+        decodeArtifactSizeDocument json.RootElement
 
     /// Supplies complete pages afresh on each enumeration attempt.
     let enumerate (pages: ArtifactEvent array array array) =
         let mutable index = 0
 
-        enumerateWith
-            (fun _ ->
-                let page = pages[index]
-                index <- index + 1
-                Task.FromResult(page, index < pages.Length))
-            scope
-            CancellationToken.None
+        task {
+            let! total, count, started, finished =
+                enumerateArtifactSizeWith
+                    (fun _ ->
+                        let page = pages[index]
+                        index <- index + 1
+                        Task.FromResult(page, index < pages.Length))
+                    scope
+                    CancellationToken.None
+
+            return
+                {
+                    Scope = scope
+                    DeclaredArtifactBytes = total
+                    DistinctArtifactCount = count
+                    EnumerationStartedAt = started
+                    EnumerationFinishedAt = finished
+                }
+        }
 
     /// Requires the intended error and rejects any partial diagnostic result.
-    let failure (expected: Type) (run: unit -> Task<ArtifactSizeDiagnostic>) =
+    let failure (expected: Type) (run: unit -> Task<'a>) =
         task {
             let! outcome =
                 task {
@@ -77,7 +90,7 @@ type ArtifactSizeDiagnosisTests() =
                 }
 
             match outcome with
-            | Choice1Of2 result -> Assert.Fail($"Unexpected quantity {result.DeclaredArtifactBytes}.")
+            | Choice1Of2 result -> Assert.Fail($"Unexpected successful result {result}.")
             | Choice2Of2 error -> Assert.That(expected.IsInstanceOfType error, Is.True, error.ToString())
         }
 
@@ -104,14 +117,20 @@ type ArtifactSizeDiagnosisTests() =
             Assert.That(result.DistinctArtifactCount, Is.EqualTo 3L)
             Assert.That(result.Scope, Is.EqualTo scope)
             Assert.That(result.EnumerationFinishedAt, Is.GreaterThanOrEqualTo result.EnumerationStartedAt)
-            Assert.That((project scope history).Value.BlobDeleted, Is.True)
+
+            Assert.That(
+                (projectArtifactSize scope history)
+                    .Value
+                    .BlobDeleted,
+                Is.True
+            )
 
             let restored =
                 row [| created
                        snapshot ArtifactEventNames.LogicalDeleted deleted
                        snapshot ArtifactEventNames.Undeleted metadata |]
 
-            Assert.That((project scope restored).Value, Is.EqualTo metadata)
+            Assert.That((projectArtifactSize scope restored).Value, Is.EqualTo metadata)
 
             let changed =
                 row [| created
@@ -161,7 +180,11 @@ type ArtifactSizeDiagnosisTests() =
 
         use json = JsonDocument.Parse(node.ToJsonString())
 
-        Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument json.RootElement |> ignore))
+        Assert.Throws<InvalidDataException>(
+            Action (fun () ->
+                decodeArtifactSizeDocument json.RootElement
+                |> ignore)
+        )
         |> ignore
 
     /// Refuses absent State and malformed state arrays before typed decoding.
@@ -172,7 +195,11 @@ type ArtifactSizeDiagnosisTests() =
     member _.``malformed state cannot become known zero``(wire: string) =
         use json = JsonDocument.Parse wire
 
-        Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument json.RootElement |> ignore))
+        Assert.Throws<InvalidDataException>(
+            Action (fun () ->
+                decodeArtifactSizeDocument json.RootElement
+                |> ignore)
+        )
         |> ignore
 
     /// Accepts current empty optional metadata and rejects invalid required scalar fields.
@@ -184,7 +211,12 @@ type ArtifactSizeDiagnosisTests() =
         optional.["State"].[0].["WorkItemId"] <- JsonValue.Create(string Guid.Empty)
 
         use optionalJson = JsonDocument.Parse(optional.ToJsonString())
-        Assert.That((decodeDocument optionalJson.RootElement).Length, Is.EqualTo 1)
+
+        Assert.That(
+            (decodeArtifactSizeDocument optionalJson.RootElement)
+                .Length,
+            Is.EqualTo 1
+        )
 
         for field, value in
             [
@@ -200,7 +232,11 @@ type ArtifactSizeDiagnosisTests() =
             node.["State"].[0].[field] <- JsonNode.Parse value
             use json = JsonDocument.Parse(node.ToJsonString())
 
-            Assert.Throws<InvalidDataException>(Action(fun () -> decodeDocument json.RootElement |> ignore))
+            Assert.Throws<InvalidDataException>(
+                Action (fun () ->
+                    decodeArtifactSizeDocument json.RootElement
+                    |> ignore)
+            )
             |> ignore
 
     /// Rejects inconsistent stream identity, scope, immutable path/time and event ordering before publishing any sum.
@@ -259,33 +295,81 @@ type ArtifactSizeDiagnosisTests() =
                  typeof<InvalidDataException>)
             (fun () -> enumerate [| [| row [| first |]; row [| second |] |] |])
 
-    /// Exhaustion at each fixed limit succeeds; one more document, event or continuation fails.
+    /// Complete traversal succeeds both at and beyond each former cap without truncating the projected quantity.
     [<TestCase("pages", false)>]
     [<TestCase("pages", true)>]
     [<TestCase("documents", false)>]
     [<TestCase("documents", true)>]
     [<TestCase("events", false)>]
     [<TestCase("events", true)>]
-    member _.``fixed bounds require complete exhaustion``(kind: string, exceeded: bool) =
+    member _.``enumeration completes beyond former bounds``(kind: string, exceeded: bool) =
         task {
             let extra = if exceeded then 1 else 0
+            let finalArtifact = { created with ArtifactId = Guid.NewGuid() }
 
             let pages =
                 match kind with
-                | "pages" -> Array.create (32 + extra) [||]
-                | "documents" -> [| Array.create (10000 + extra) [||] |]
+                | "pages" -> Array.append (Array.create (31 + extra) [| [| created |] |]) [| [| [| finalArtifact |] |] |]
+                | "documents" ->
+                    [|
+                        Array.append (Array.create (9999 + extra) [| created |]) [| [| finalArtifact |] |]
+                    |]
                 | _ ->
                     [|
                         [|
-                            Array.append [| created |] (Array.create (99999 + extra) { created with Event = ArtifactEventNames.LogicalDeleted })
+                            Array.concat [| [| created |]
+                                            Array.create (99998 + extra) { created with Event = ArtifactEventNames.LogicalDeleted }
+                                            [|
+                                                { created with Event = ArtifactEventNames.Undeleted; Size = 14L }
+                                            |] |]
                         |]
                     |]
 
-            if exceeded then
-                do! failure typeof<InvalidOperationException> (fun () -> enumerate pages)
-            else
-                let! result = enumerate pages
-                Assert.That(result.DistinctArtifactCount, Is.EqualTo(if kind = "events" then 1L else 0L))
+            let! result = enumerate pages
+            Assert.That(result.DistinctArtifactCount, Is.EqualTo(if kind = "events" then 1L else 2L))
+            Assert.That(result.DeclaredArtifactBytes, Is.EqualTo(if kind = "events" then 14L else 26L))
+        }
+
+    /// Unsupported providers fail before any Cosmos container is requested.
+    [<TestCase("MongoDB")>]
+    [<TestCase("Unknown")>]
+    member _.``unsupported provider never acquires Cosmos``(name: string) =
+        task {
+            let provider = if name = "MongoDB" then MongoDB else Unknown
+            let mutable acquired = false
+
+            do!
+                failure typeof<NotSupportedException> (fun () ->
+                    readArtifactSizeWith
+                        provider
+                        (fun () ->
+                            acquired <- true
+                            Unchecked.defaultof<Microsoft.Azure.Cosmos.Container>)
+                        scope
+                        CancellationToken.None)
+
+            Assert.That(acquired, Is.False)
+        }
+
+    /// Caller cancellation prevents even acquiring the selected Cosmos source.
+    [<Test>]
+    member _.``cancelled provider read never acquires Cosmos``() =
+        task {
+            use cancellation = new CancellationTokenSource()
+            cancellation.Cancel()
+            let mutable acquired = false
+
+            do!
+                failure typeof<OperationCanceledException> (fun () ->
+                    readArtifactSizeWith
+                        AzureCosmosDb
+                        (fun () ->
+                            acquired <- true
+                            Unchecked.defaultof<Microsoft.Azure.Cosmos.Container>)
+                        scope
+                        cancellation.Token)
+
+            Assert.That(acquired, Is.False)
         }
 
     /// Discards quantities on provider faults and cancellation before, during or after page consumption.
@@ -314,7 +398,7 @@ type ArtifactSizeDiagnosisTests() =
                          typeof<IOException>
                      else
                          typeof<OperationCanceledException>)
-                    (fun () -> enumerateWith readPage scope token.Token)
+                    (fun () -> enumerateArtifactSizeWith readPage scope token.Token)
         }
 
     /// Verifies both repository checks and suppresses an already collected quantity when final scope or cancellation changes.
@@ -347,7 +431,7 @@ type ArtifactSizeDiagnosisTests() =
                 }
 
             if kind = "complete" then
-                let! result = diagnoseWith check collect token.Token
+                let! result = diagnoseArtifactSizeWith check collect token.Token
                 Assert.That(result.DeclaredArtifactBytes, Is.EqualTo 13L)
             else
                 do!
@@ -356,7 +440,7 @@ type ArtifactSizeDiagnosisTests() =
                              typeof<OperationCanceledException>
                          else
                              typeof<InvalidDataException>)
-                        (fun () -> diagnoseWith check collect token.Token)
+                        (fun () -> diagnoseArtifactSizeWith check collect token.Token)
 
             Assert.That(calls.ToArray(), Is.EqualTo(box (if kind = "before" then [| "check" |] else [| "check"; "collect"; "check" |])))
         }
@@ -367,15 +451,15 @@ type ArtifactSizeDiagnosisTests() =
         let parameters =
             GetRepositoryParameters(OwnerId = string scope.OwnerId, OrganizationId = string scope.OrganizationId, RepositoryId = string scope.RepositoryId)
 
-        Assert.That(validateParameters parameters = Ok scope, Is.True)
+        Assert.That(validateArtifactSizeDiagnosticParameters parameters = Ok scope, Is.True)
         parameters.OwnerName <- "name"
-        Assert.That(Result.isError (validateParameters parameters), Is.True)
+        Assert.That(Result.isError (validateArtifactSizeDiagnosticParameters parameters), Is.True)
         parameters.OwnerName <- ""
         parameters.OrganizationName <- "name"
-        Assert.That(Result.isError (validateParameters parameters), Is.True)
+        Assert.That(Result.isError (validateArtifactSizeDiagnosticParameters parameters), Is.True)
         parameters.OrganizationName <- ""
         parameters.RepositoryName <- "name"
-        Assert.That(Result.isError (validateParameters parameters), Is.True)
+        Assert.That(Result.isError (validateArtifactSizeDiagnosticParameters parameters), Is.True)
         parameters.RepositoryName <- ""
         parameters.RepositoryId <- string Guid.Empty
-        Assert.That(Result.isError (validateParameters parameters), Is.True)
+        Assert.That(Result.isError (validateArtifactSizeDiagnosticParameters parameters), Is.True)

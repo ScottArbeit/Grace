@@ -7,7 +7,8 @@ open System.Net.Http
 open System.Text
 open System.Text.Json
 open System.Text.Json.Nodes
-open Grace.Server.ArtifactSizeDiagnosis
+open Grace.Server.Artifact
+open Grace.Actors.Services
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
@@ -165,11 +166,11 @@ type ArtifactSizeDiagnosisHttpTests() =
 
             let positiveDocument =
                 artifactDocuments
-                |> Array.find (fun doc -> (decodeDocument doc).[0].ArtifactId = positive.ArtifactId)
+                |> Array.find (fun doc -> (decodeArtifactSizeDocument doc).[0].ArtifactId = positive.ArtifactId)
 
             let zeroDocument =
                 artifactDocuments
-                |> Array.find (fun doc -> (decodeDocument doc).[0].ArtifactId = zero.ArtifactId)
+                |> Array.find (fun doc -> (decodeArtifactSizeDocument doc).[0].ArtifactId = zero.ArtifactId)
 
             Assert.That(
                 zeroDocument.GetProperty("State").[0]
@@ -178,7 +179,7 @@ type ArtifactSizeDiagnosisHttpTests() =
                 Is.Zero
             )
 
-            let realEvents = decodeDocument positiveDocument
+            let realEvents = decodeArtifactSizeDocument positiveDocument
             let inserted = ResizeArray<string>()
 
             /// Seeds duplicate and lifecycle envelopes using the real public event shape; this does not execute actor cleanup.

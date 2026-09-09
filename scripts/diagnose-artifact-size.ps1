@@ -56,7 +56,7 @@ function Test-ArtifactSizeResponse {
     finally { $document.Dispose() }
 }
 
-# Reads one bounded admin diagnostic and publishes validated JSON in the destination directory.
+# Reads one caller-cancellable admin diagnostic and publishes validated JSON in the destination directory.
 function Invoke-ArtifactSizeDiagnosis {
     param([hashtable] $BoundParameters)
 
@@ -79,7 +79,7 @@ function Invoke-ArtifactSizeDiagnosis {
     }
     $response = Invoke-WebRequest -Uri ([uri]::new($serverUri, '/admin/artifact-size/diagnose')) `
         -Method Post -Headers @{ Authorization = "Bearer $($env:GRACE_TOKEN)" } -ContentType 'application/json' `
-        -Body ($scope | ConvertTo-Json -Compress) -SkipHttpErrorCheck -TimeoutSec 45
+        -Body ($scope | ConvertTo-Json -Compress) -SkipHttpErrorCheck -ConnectionTimeoutSeconds 0 -OperationTimeoutSeconds 0
     if ($response.StatusCode -ne 200) { throw "Grace Server returned HTTP $($response.StatusCode); no diagnostic was saved." }
     Test-ArtifactSizeResponse -Json $response.Content -Scope $scope
     $temporary = Join-Path $parent ".$([IO.Path]::GetFileName($destination)).$([guid]::NewGuid().ToString('N')).tmp"

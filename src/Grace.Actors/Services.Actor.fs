@@ -2204,6 +2204,201 @@ module Services =
     /// Reads retained declarations through the configured actor storage provider until exhaustion, cancellation or failure.
     let readTextContentSize scope cancellationToken = readTextContentSizeWith actorStateStorageProvider (fun () -> cosmosContainer) scope cancellationToken
 
+    /// Requires current snapshot fields that determine declaration quantity and immutable source identity.
+    let internal decodeArtifactSizeDocument (document: JsonElement) =
+        /// Checks field presence before typed deserialization can apply defaults.
+        let require (name: string) (element: JsonElement) =
+            let mutable value = Unchecked.defaultof<JsonElement>
+
+            if
+                element.ValueKind <> JsonValueKind.Object
+                || not (element.TryGetProperty(name, &value))
+            then
+                raise (InvalidDataException "Artifact source is missing a required field.")
+
+            value
+
+        let state = require "State" document
+
+        if state.ValueKind <> JsonValueKind.Array then
+            raise (InvalidDataException "Artifact State must be an array.")
+
+        for snapshot in state.EnumerateArray() do
+            for name in
+                [
+                    "ArtifactId"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                ] do
+                let value = require name snapshot
+                let mutable id = Guid.Empty
+
+                if value.ValueKind <> JsonValueKind.String
+                   || not (value.TryGetGuid(&id))
+                   || id = Guid.Empty then
+                    raise (InvalidDataException "Artifact source identity is invalid.")
+
+            for name in [ "Size"; "CreatedAtUnixTimeTicks" ] do
+                let value = require name snapshot
+                let mutable number = 0L
+
+                if value.ValueKind <> JsonValueKind.Number
+                   || not (value.TryGetInt64(&number))
+                   || (name = "Size" && number < 0L) then
+                    raise (InvalidDataException "Artifact declaration is invalid.")
+
+            for name in [ "Event"; "BlobPath" ] do
+                let value = require name snapshot
+
+                if
+                    value.ValueKind <> JsonValueKind.String
+                    || String.IsNullOrWhiteSpace(value.GetString())
+                then
+                    raise (InvalidDataException "Artifact source identity is invalid.")
+
+        try
+            JsonSerializer.Deserialize<Grace.Types.Artifact.ArtifactEvent array>(state.GetRawText(), Constants.JsonSerializerOptions)
+        with
+        | :? JsonException as error -> raise (InvalidDataException("Artifact source could not be decoded.", error))
+
+    /// Projects one surviving stream and rejects a change of identity or scope inside it.
+    let internal projectArtifactSize (scope: UsageFactScope) (events: Grace.Types.Artifact.ArtifactEvent array) =
+        if isNull events then raise (InvalidDataException "Artifact State is missing.")
+
+        if events.Length = 0 then
+            None
+        else
+            let first = events[0]
+
+            if first.Event
+               <> Grace.Types.Artifact.ArtifactEventNames.Created then
+                raise (InvalidDataException "Artifact stream must start with Created.")
+
+            let mutable projected = Grace.Types.Artifact.ArtifactMetadata.Default
+
+            for index in 0 .. events.Length - 1 do
+                let snapshot = events[index]
+
+                if snapshot.ArtifactId = Guid.Empty
+                   || snapshot.ArtifactId <> first.ArtifactId
+                   || snapshot.OwnerId <> scope.OwnerId
+                   || snapshot.OrganizationId <> scope.OrganizationId
+                   || snapshot.RepositoryId <> scope.RepositoryId
+                   || snapshot.BlobPath <> first.BlobPath
+                   || snapshot.CreatedAtUnixTimeTicks
+                      <> first.CreatedAtUnixTimeTicks
+                   || snapshot.Size < 0L then
+                    raise (InvalidDataException "Artifact stream identity or scope conflicts.")
+
+                if
+                    not
+                        (
+                            List.contains
+                                snapshot.Event
+                                [
+                                    Grace.Types.Artifact.ArtifactEventNames.Created
+                                    Grace.Types.Artifact.ArtifactEventNames.LogicalDeleted
+                                    Grace.Types.Artifact.ArtifactEventNames.Undeleted
+                                    Grace.Types.Artifact.ArtifactEventNames.BlobDeleted
+                                    Grace.Types.Artifact.ArtifactEventNames.WorkItemLinkRemoved
+                                ]
+                        )
+                    || (index > 0
+                        && snapshot.Event = Grace.Types.Artifact.ArtifactEventNames.Created)
+                then
+                    raise (InvalidDataException "Artifact event order is invalid.")
+
+                try
+                    projected <- Grace.Types.Artifact.ArtifactMetadata.UpdateDto snapshot projected
+                with
+                | :? ArgumentException as error -> raise (InvalidDataException("Artifact snapshot contains an invalid metadata value.", error))
+
+            Some projected
+
+    /// Reads to exhaustion and returns no partial quantity when a provider or cancellation fails.
+    let internal enumerateArtifactSizeWith
+        (readPage: CancellationToken -> Task<Grace.Types.Artifact.ArtifactEvent array array * bool>)
+        (scope: UsageFactScope)
+        (token: CancellationToken)
+        =
+        task {
+            let started = getCurrentInstant ()
+            let distinct = Dictionary<Guid, Grace.Types.Artifact.ArtifactMetadata>()
+            let mutable total = 0L
+            let mutable more = true
+
+            while more do
+                token.ThrowIfCancellationRequested()
+
+                let! rows, hasMore = readPage token
+                token.ThrowIfCancellationRequested()
+
+                for row in rows do
+                    token.ThrowIfCancellationRequested()
+
+                    match projectArtifactSize scope row with
+                    | None -> ()
+                    | Some artifact ->
+                        match distinct.TryGetValue artifact.ArtifactId with
+                        | true, previous ->
+                            if previous.Size <> artifact.Size
+                               || previous.BlobPath <> artifact.BlobPath
+                               || previous.CreatedAt <> artifact.CreatedAt then
+                                raise (InvalidDataException "Repeated Artifact identity conflicts.")
+                        | _ ->
+                            total <- Checked.op_Addition total artifact.Size
+                            distinct.Add(artifact.ArtifactId, artifact)
+
+                more <- hasMore
+
+            token.ThrowIfCancellationRequested()
+
+            return total, int64 distinct.Count, started, getCurrentInstant ()
+        }
+
+    /// Queries every Artifact document in the existing repository partition, including empty State shells.
+    let internal readArtifactSizeFromContainer (container: Container) (scope: UsageFactScope) cancellationToken =
+        task {
+            let query =
+                QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey")
+                    .WithParameter("@grainType", Grace.Actors.Constants.StateName.Artifact)
+                    .WithParameter("@partitionKey", string scope.RepositoryId)
+
+            let options = QueryRequestOptions(PartitionKey = PartitionKey(string scope.RepositoryId), MaxItemCount = 256)
+            use iterator = container.GetItemQueryIterator<JsonElement>(query, requestOptions = options)
+
+            return!
+                enumerateArtifactSizeWith
+                    (fun token ->
+                        task {
+                            let! page = iterator.ReadNextAsync token
+                            token.ThrowIfCancellationRequested()
+
+                            return
+                                page.Resource
+                                |> Seq.map decodeArtifactSizeDocument
+                                |> Seq.toArray,
+                                iterator.HasMoreResults
+                        })
+                    scope
+                    cancellationToken
+        }
+
+    /// Selects actor storage before acquiring a container for retained Artifact declarations.
+    let internal readArtifactSizeWith provider getContainer scope (cancellationToken: CancellationToken) =
+        task {
+            match provider with
+            | AzureCosmosDb ->
+                cancellationToken.ThrowIfCancellationRequested()
+                return! readArtifactSizeFromContainer (getContainer ()) scope cancellationToken
+            | MongoDB
+            | Unknown -> return raise (NotSupportedException "Artifact size diagnosis is not supported by the configured actor state storage provider.")
+        }
+
+    /// Reads retained Artifact declarations through the configured provider until exhaustion, cancellation or failure.
+    let readArtifactSize scope cancellationToken = readArtifactSizeWith actorStateStorageProvider (fun () -> cosmosContainer) scope cancellationToken
+
     /// Returns root directory version by directory version id data from Services storage or actor state.
     let internal getRootDirectoryVersionByDirectoryVersionId (repositoryId: RepositoryId) (directoryVersionId: DirectoryVersionId) correlationId =
         task {
