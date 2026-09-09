@@ -28,6 +28,7 @@
         { "method": "GET", "path": "/admin/artifact-size/observations/%s" },
         { "method": "POST", "path": "/admin/text-content-size/diagnose" },
         { "method": "POST", "path": "/admin/artifact-size/diagnose" },
+        { "method": "POST", "path": "/admin/library-content-size/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/diagnose" },
         { "method": "POST", "path": "/admin/manifest-contribution/repair" }
       ]

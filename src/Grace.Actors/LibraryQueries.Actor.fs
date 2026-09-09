@@ -8,8 +8,11 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open System
 open System.Collections.Generic
+open System.IO
 open System.Text.Json
 open System.Threading
+open System.Threading.Tasks
+open NodaTime
 
 /// Runs the bounded full-partition SQL reads that Orleans point storage cannot express.
 module LibraryQueries =
@@ -264,6 +267,202 @@ module LibraryQueries =
                     gap <- true
 
             return results.ToArray()
+        }
+
+    /// Reads the existing committed boundary without activating the Library actor or repairing its pending turn.
+    let readDiagnosticControl (services: IServiceProvider) (repositoryId: RepositoryId) (token: CancellationToken) =
+        task {
+            token.ThrowIfCancellationRequested()
+
+            let! stored =
+                (LibraryRecords.read<LibraryControlDocument>
+                    services
+                    LibraryRecords.ControlStorageName
+                    "Grace.Library.Control.v2"
+                    (LibraryRecords.key [ repositoryId.ToString("D") ]))
+                    .WaitAsync(token)
+
+            match stored with
+            | Some (control, _) when
+                control.SchemaVersion = 1
+                && control.Epoch <> Guid.Empty
+                && control.CommittedCursor >= 0L
+                && control.ReplayFloor > 0L
+                && control.ReplayFloor - 1L
+                   <= control.CommittedCursor
+                && control.ItemRecordCount >= 0
+                && control.SlotRecordCount >= 0
+                && control.HistoryThrough >= 0L
+                && control.HistoryThrough <= control.CommittedCursor
+                && control.NotifyThrough >= 0L
+                && control.NotifyThrough <= control.CommittedCursor
+                && not (isNull (box control.Catalog))
+                && control.Catalog.RepositoryId = repositoryId
+                && control.Catalog.Version <> Guid.Empty
+                && not (isNull control.Catalog.Libraries)
+                ->
+                return control
+            | _ -> return raise (InvalidDataException "An existing valid Library control record is required.")
+        }
+
+    /// Validates an immutable declared manifest without reading payloads or counting reference multiplicity.
+    let validateDiagnosticLocation (descriptor: LibraryContentVersionDto) (location: LibraryContentLocationDocument) =
+        if isNull (box location)
+           || location.SchemaVersion <> 1
+           || location.Content <> descriptor
+           || isNull (box location.Manifest)
+           || String.IsNullOrWhiteSpace location.AuthorizedScope then
+            raise (InvalidDataException "The committed Library content mapping is incomplete or conflicting.")
+
+        let manifest = location.Manifest
+
+        if descriptor.Size <= 0L
+           || not (ContentAddress.isValidAddress descriptor.Blake3Hash)
+           || not (ContentAddress.isValidAddress descriptor.Sha256Hash)
+           || descriptor.ContentVersionId
+              <> LibraryDecision.contentVersionId descriptor.Blake3Hash
+           || manifest.Class <> "FileManifest"
+           || manifest.Size <> descriptor.Size
+           || manifest.FileContentHash <> descriptor.Blake3Hash
+           || String.IsNullOrWhiteSpace manifest.StoragePoolId
+           || String.IsNullOrWhiteSpace manifest.ChunkingSuiteId
+           || isNull manifest.Blocks
+           || manifest.Blocks.Count = 0 then
+            raise (InvalidDataException "The committed Library content declaration is invalid.")
+
+        let mutable offset = 0L
+
+        for block in manifest.Blocks do
+            if
+                isNull (box block)
+                || block.Offset <> offset
+                || block.Size <= 0L
+                || not (ContentAddress.isValidAddress block.Address)
+            then
+                raise (InvalidDataException "The Library manifest does not describe contiguous valid content ranges.")
+
+            offset <- Checked.op_Addition offset block.Size
+
+        if offset <> manifest.Size
+           || ContentAddress.computeManifestAddressForManifest manifest
+              <> manifest.ManifestAddress then
+            raise (InvalidDataException "The Library manifest identity does not match its complete declaration.")
+
+        manifest
+
+    /// Exhausts the fixed accepted prefix, rejecting gaps and conflicts before returning any quantity.
+    let enumerateDiagnosticContentWith
+        (boundary: int64)
+        (readPage: int64 -> CancellationToken -> Task<LibraryAcceptedChangeRecord array>)
+        (readLocation: LibraryContentVersionId -> CancellationToken -> Task<LibraryContentLocationDocument option>)
+        (token: CancellationToken)
+        =
+        task {
+            let manifests = Dictionary<StoragePoolId * ManifestAddress, FileManifest>()
+            let mutable position = 0L
+            let mutable total = 0L
+
+            while position < boundary do
+                token.ThrowIfCancellationRequested()
+                let! rows = readPage position token
+
+                if rows.Length = 0 then
+                    raise (InvalidDataException "Committed Library history has a missing cursor.")
+
+                let mutable index = 0
+
+                while index < rows.Length do
+                    token.ThrowIfCancellationRequested()
+                    let row = rows[index]
+
+                    if row.SchemaVersion <> 1
+                       || row.Cursor <> position + 1L
+                       || row.Cursor > boundary then
+                        raise (InvalidDataException "Committed Library history is not the exact selected prefix.")
+
+                    if row.Change.Item.ItemKind <> ItemKind.File
+                       && row.Change.Item.ItemKind <> ItemKind.Directory then
+                        raise (InvalidDataException "Committed Library history has an unknown item kind.")
+
+                    match row.Change.Item.Content with
+                    | None when
+                        row.Change.Item.ItemKind = ItemKind.File
+                        && row.Change.Item.Tombstone.IsNone
+                        ->
+                        raise (InvalidDataException "A live Library file is missing its committed content declaration.")
+                    | None -> ()
+                    | Some _ when row.Change.Item.ItemKind <> ItemKind.File ->
+                        raise (InvalidDataException "A Library directory has an invalid content declaration.")
+                    | Some descriptor ->
+                        let! stored = readLocation descriptor.ContentVersionId token
+
+                        let location =
+                            stored
+                            |> Option.defaultWith (fun () -> raise (InvalidDataException "A committed Library content mapping is missing."))
+
+                        let manifest = validateDiagnosticLocation descriptor location
+                        let identity = manifest.StoragePoolId, manifest.ManifestAddress
+
+                        match manifests.TryGetValue identity with
+                        | true, previous when previous <> manifest -> raise (InvalidDataException "A Library manifest identity has conflicting declarations.")
+                        | true, _ -> ()
+                        | false, _ ->
+                            total <- Checked.op_Addition total manifest.Size
+                            manifests.Add(identity, manifest)
+
+                    position <- row.Cursor
+                    index <- index + 1
+
+            token.ThrowIfCancellationRequested()
+            return total, int64 manifests.Count
+        }
+
+    /// Requires all selected source containers, even at zero, then reads permanent history through the captured control.
+    let readDiagnosticContent (services: IServiceProvider) (repositoryId: RepositoryId) (token: CancellationToken) =
+        task {
+            let started = SystemClock.Instance.GetCurrentInstant()
+            let db = database services
+
+            let names =
+                [|
+                    LibraryRecords.ControlContainerName
+                    LibraryRecords.ChangesContainerName
+                    LibraryRecords.CurrentContainerName
+                |]
+
+            let mutable index = 0
+
+            while index < names.Length do
+                let! _ =
+                    db
+                        .GetContainer(names[index])
+                        .ReadContainerAsync(cancellationToken = token)
+
+                index <- index + 1
+
+            let! control = readDiagnosticControl services repositoryId token
+
+            let! total, count =
+                enumerateDiagnosticContentWith
+                    control.CommittedCursor
+                    (fun after token -> readChanges services repositoryId after control.CommittedCursor 200 token)
+                    (fun contentId token ->
+                        task {
+                            let! stored =
+                                (LibraryRecords.read<LibraryContentLocationDocument>
+                                    services
+                                    LibraryRecords.CurrentStorageName
+                                    "Grace.Library.Content.v2"
+                                    (LibraryRecords.key [ repositoryId.ToString("D")
+                                                          "content"
+                                                          contentId.ToString("D") ]))
+                                    .WaitAsync(token)
+
+                            return stored |> Option.map fst
+                        })
+                    token
+
+            return total, count, control.Epoch, control.CommittedCursor, started
         }
 
     /// Establishes query-client visibility of the last committed item before baseline enumeration.

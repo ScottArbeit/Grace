@@ -74,6 +74,12 @@ lifecycle documents supplement that test without claiming executed cleanup.
 
 ## Validation
 
+`POST /admin/library-content-size/diagnose` is an internal SystemAdmin read. Require permission before parsing and again
+before serialization, explicit three-ID scope, a live nondeleted repository before/after collection, and an unchanged
+epoch with no committed-position regression. The server-local result is the only new response shape. Preserve exact
+Int64 JSON and nanosecond times; no source failure or cancellation may publish a partial quantity. The operator saves
+the full envelope byte-for-byte. It has no SQL observation, public SDK/CLI, broker, mutation or provisioning dependency.
+
 - Update or add tests covering new endpoints or handlers and run
   `dotnet test --no-build`.
 - Rebuild the solution with `dotnet build --configuration Release` to catch
