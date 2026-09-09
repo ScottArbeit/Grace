@@ -12,6 +12,14 @@ The [complete executable evidence](Operations.Artifact-Measurement-Experiment.js
 
 ## Supported experiment and boundaries
 
+### September 8 applicability refresh
+
+This PR is rebased on main `16897c7fd1fd65dbdb90cbecfe778e0eb20cdbbf`, which includes landed PR #1059 and the newer Library work. The original JSON bundle and provider captures remain unchanged. Artifact Types, the Artifact actor and the Artifact server producer are byte-identical to the experiment base. WorkItem changes add the separate TextContent diagnostic; its Artifact production paths are unchanged. The newer Library changes add an unrelated ItemKind declaration in Common.Types.fs without changing these Artifact inputs. These comparisons preserve the captured source meaning without claiming another provider run or unchanged whole-assembly hashes.
+
+The finite bounds below belong to the disposable experiment. The current production direction follows the accepted DirectoryVersion and TextContent changes: the existing Artifact server module owns its response and HTTP operation, actor Services dispatches the read by storage provider, and enumeration runs to exhaustion, cancellation or failure without arbitrary total caps. That production diagnostic remains a separate PR.
+
+### Original execution
+
 The Discovery base is `439e99e0b77d9b35c676c912ed1427060c15d96b`, the reviewed PR #1059 candidate. Eventual delivery preserves the existing delta against main `9f54fe14626cd718af88890b731f8518f9b06e34`. Execution uses Windows PowerShell 7.6, .NET SDK 10.0.400, and the current compiled Grace Actors/Shared/Types output from the assigned Issue #1060 worktree. Cosmos 3.62.1 and Azure Storage Blobs 12.29.1 use isolated local emulators with pinned image digests recorded in JSON.
 
 | Seam | Executed or modeled |
@@ -104,6 +112,6 @@ Fourteen relevant source dependency hashes and 137 build-output DLL hashes were 
 
 ## Smallest next recommendation
 
-At the next checkpoint, consider one bounded SystemAdmin diagnostic named **retained Artifact declared bytes**. It would enumerate retained Artifact state behind the existing server storage boundary, project each stream, bind owner/organization/repository, count each Artifact once, and report only a finished observation window. Keep declared bytes and distinct Artifact count together, including zero. State explicitly that missing objects, cleanup residue and unattached Artifacts affect coverage differently.
+The next SystemAdmin diagnostic is **retained Artifact declared bytes**. It enumerates retained Artifact state through the existing storage-provider selection, projects each stream, binds owner/organization/repository, counts each Artifact once, and reports only a finished observation window. Keep declared bytes and distinct Artifact count together, including zero. State explicitly that missing objects, cleanup residue and unattached Artifacts affect coverage differently.
 
-The experiment justifies that source meaning; it does not implement or pre-approve the diagnostic contract. Select its producer validation, scope checks and finite read limits in a separate readiness decision. Observed Artifact-prefix object bytes remain a separate investigation. Defer repository totals, usage permissions, scheduling, durable observations, billing, metadata repair, automatic cleanup/recovery, Library coverage and generalized measurement abstractions.
+The experiment justifies that source meaning; it does not implement the diagnostic contract. PR #1063 owns producer validation, scope checks and caller-cancellable enumeration under the accepted no-arbitrary-cap direction. Observed Artifact-prefix object bytes remain a separate investigation. Defer repository totals, usage permissions, scheduling, durable observations, billing, metadata repair, automatic cleanup/recovery, Library coverage and generalized measurement abstractions.
