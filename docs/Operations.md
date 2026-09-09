@@ -222,11 +222,11 @@ The shared `DirectoryVersionSizeObservation` record contains `ObservationId`, th
 | Invalid identifier, missing scope, name selector or invalid source | HTTP 400 without an observation. |
 | ID already bound to another owner, organization or repository | HTTP 409 without stored values. |
 | Missing GET | HTTP 404. |
-| Source/SQL/deadline failure or cancellation | HTTP 503 without a successful observation. An unsuccessful response does not promise that SQL did not commit. |
+| Source/SQL failure or cancellation | HTTP 503 without a successful observation. An unsuccessful response does not promise that SQL did not commit. |
 
-Both routes require current SystemAdmin authorization before parsing or storage access. A same-ID retry first checks SQL and returns a matching stored observation without accessing the repository or source. A new collection requires an existing, nondeleted repository in the complete requested scope before and immediately after the unchanged bounded DirectoryVersion scan. Historical observations remain readable after repository deletion. No name resolution is supported.
+Both routes require current SystemAdmin authorization before parsing or storage access. A same-ID retry first checks SQL and returns a matching stored observation without accessing the repository or source. A new collection requires an existing, nondeleted repository in the complete requested scope before and immediately after the DirectoryVersion scan. Historical observations remain readable after repository deletion. No name resolution is supported.
 
-The scan retains its existing 32-page, 10,000-document, 100,000-reference, 256-page-hint limits and linked 30-second deadline. Its enumeration window remains non-atomic. The repository recheck and SQL commit are not a distributed transaction.
+The capture uses `DirectoryVersion.validateSizeDiagnosticParameters` and the existing `Services.Actor.fs` provider-dispatched reader with the manifest validator. It reads until exhaustion, caller cancellation or failure without a total-page, document, reference or elapsed-time ceiling. The 256-document page size controls pagination only. The HTTP request cancellation token passes through lookup, both repository checks, collection and acceptance. SQL per-command behavior remains unchanged. The enumeration window remains non-atomic; the repository recheck and SQL commit are not a distributed transaction.
 
 ### SQL acceptance and runtime
 
@@ -256,13 +256,15 @@ pwsh ./scripts/capture-directory-version-size.ps1 -ObservationId "$observationId
 pwsh ./scripts/capture-directory-version-size.ps1 -Mode Read -ObservationId "$observationId" -OwnerId "$ownerId" -OrganizationId "$organizationId" -RepositoryId "$repositoryId" -OutputPath './observation.json'
 ```
 
-The script validates the returned ID, all scope IDs, nonnegative 64-bit quantities and complete UTC window before publishing the original JSON through a temporary file in the output directory. Window ordering retains all nine fractional digits. Transport, HTTP and response-validation failures leave prior output intact. The output directory must already exist.
+The script validates the returned ID, all scope IDs, nonnegative 64-bit quantities and complete UTC window before publishing the original JSON through a temporary file in the output directory. Window ordering retains all nine fractional digits. Transport, HTTP and response-validation failures leave prior output intact. The output directory must already exist. It sets connection and operation timeouts to zero; Ctrl+C cancels the request. Cancellation can follow a committed row, so retain the same ObservationId for a retry.
 
 ### Algorithm evidence and boundaries
 
 The [captured SQL preflight](design/Operations.DirectoryVersionObservation-Preflight.json) records a **proven** result: 25 controls over real isolated SQL Server, including zero, nanosecond round trips, full scope collisions, skipped source on retry, source failure, before-write/precommit rollback, discarded postcommit acknowledgment, fresh connections, gated different windows and pre-cancellation. Seven complete rows were independently queried, captured and parsed. An extracted replay reproduced every source and result hash against baseline `6cb54792c8a7d54ba37fff83b0e192371e4898b6`.
 
 The initial real-SQL controls passed before production edits. Artifact packaging, the complete multi-fragment SQL JSON capture, deterministic replay and captured baseline dependency hashes were completed after the first production draft. The recorded dependency hashes describe that later baseline-backed replay, not the earlier run. Failure callbacks and discarded acknowledgment simulate effect interruption; real SQL proves the transaction and durable rows. No process-kill, network-outage, power-loss, load or corruption claim is made.
+
+PR #1057's current-main refresh updates the reader location and removes capture/operator deadlines while preserving the Data module, DTO, SQL schema and historical JSON byte-for-byte. The captured 25 SQL controls remain applicable to the unchanged lookup/check/collect/recheck/accept sequence. This is reused evidence, not a fresh SQL replay; any scan ceilings in the historical record describe that earlier execution only.
 
 Focused tests cover Types validation/serialization, no-Aspire orchestration/error ordering, actual production Data concurrency, operator validation/publication, AppHost forwarding and hosted HTTP/Cosmos/SQL capture/retry/new-ID/read behavior. The hosted suite also checks authorization, invalid input, absent/colliding IDs, failed source, historical reads after deletion and unchanged usage tables. Local hosted execution is deferred to the isolated GitHub Validate runner because another active task shares the local Aspire container-cleanup prefixes. DebugAzure evidence is configuration-only; no Azure deployment was performed.
 

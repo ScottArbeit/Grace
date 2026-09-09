@@ -18,7 +18,7 @@ open Microsoft.Extensions.Configuration
 
 /// Captures and reads immutable completed declarations through the SystemAdmin routes.
 module DirectoryVersionSizeObservation =
-    /// Reads prior SQL state first, then checks current repository scope on both sides of a new bounded collection.
+    /// Reads prior SQL state first, then checks current repository scope on both sides of a caller-cancellable collection.
     let internal captureWith
         (lookup: CancellationToken -> Task<Result<DirectoryVersionSizeObservation option, string>>)
         (checkRepository: CancellationToken -> Task<unit>)
@@ -85,11 +85,9 @@ module DirectoryVersionSizeObservation =
                                 )
                             )
 
-                    match DirectoryVersionSizeDiagnosis.validateParameters parameters with
+                    match DirectoryVersion.validateSizeDiagnosticParameters parameters with
                     | Error message -> return! RequestErrors.BAD_REQUEST (GraceError.Create message correlationId) next context
                     | Ok scope ->
-                        use deadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted)
-                        deadline.CancelAfter(TimeSpan.FromSeconds 30.)
                         let configuration = context.GetService<IConfiguration>()
                         let connectionString = configuration[getConfigKey "grace__operations__sql__connectionstring"]
 
@@ -107,9 +105,9 @@ module DirectoryVersionSizeObservation =
                                             (checkRepository scope correlationId)
                                             (fun token ->
                                                 task {
-                                                    let! reading =
-                                                        DirectoryVersionSizeDiagnosis.readFromContainer
-                                                            ApplicationContext.cosmosContainer
+                                                    let! total, count, started, finished =
+                                                        readDirectoryVersionSize
+                                                            Grace.Actors.DirectoryVersion.validateManifestBackedFileForSaveBoundary
                                                             scope
                                                             correlationId
                                                             token
@@ -117,20 +115,20 @@ module DirectoryVersionSizeObservation =
                                                     return
                                                         {
                                                             ObservationId = observationId
-                                                            Scope = reading.Scope
-                                                            DeclaredLogicalBytes = reading.DeclaredLogicalBytes
-                                                            DistinctContentCount = reading.DistinctContentCount
-                                                            EnumerationStartedAt = reading.EnumerationStartedAt
-                                                            EnumerationFinishedAt = reading.EnumerationFinishedAt
+                                                            Scope = scope
+                                                            DeclaredLogicalBytes = total
+                                                            DistinctContentCount = count
+                                                            EnumerationStartedAt = started
+                                                            EnumerationFinishedAt = finished
                                                         }
                                                 })
                                             (DirectoryVersionSizeObservations.accept connectionString)
-                                            deadline.Token
+                                            context.RequestAborted
 
                                     return Result.map Some accepted
                                 }
                             else
-                                lookup deadline.Token
+                                lookup context.RequestAborted
 
                         match result with
                         | Error message -> return! RequestErrors.CONFLICT (GraceError.Create message correlationId) next context
