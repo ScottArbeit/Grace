@@ -31,3 +31,11 @@ Focused local validation passed on Windows:
 The live Watch case proves initial capture, paused local saves and incoming isolation while B continues, resumed latest saved bytes with a compatible remote rename, restart without rewriting completed files, and unchanged VC Reference state. Earlier failed runs remain in the local evidence directory rather than being reported as passing proof.
 
 Artifacts are retained under `C:/Source/Grace-artifacts/issue-1075/`; the PR records exact commands and the candidate revision. Local Fast/Full was not run. Independent review, Shape Review and final-head GitHub Validate are still pending. No power-loss, arbitrary process-termination, full offline Watch or other-platform guarantee is claimed.
+
+## Main composition
+
+The [composition charter](https://github.com/ScottArbeit/Grace/issues/1075#issuecomment-5598766821) updates the delivery base to `8b418ac04e154b129809f673a2be2eecc4c6558e`. The merge preserves the Library candidate `d0503c5b585eaea873d628a7599aac401fd68a2d` and the landed Owner observation command. The three conflicts were limited to inventory counts and adjacent CLI guidance.
+
+After a fresh CLI restore and matching Release build, the combined Library/output/Owner client selection passed **138 executed tests with no failures** (`composition-cli.trx`). One existing Owner entry-point test is excluded on Windows because its temporary-profile isolation requires Linux; it remains a CI check. The command-tree and registry checks confirm 218 total entries, 209 routed entries, 197 JSON-ready entries and 198 schema-eligible entries.
+
+Library production, Watch, hosted Library tests, Library SDK/types/validation and the root lease remain identical to `d0503c5b`; the 34-plus-1 hosted evidence above retains its applicability. All 74 incoming paths outside the five overlapping documentation/registry paths match the new main exactly. `composition-preservation.json` records the comparisons. The integrated build has zero warnings and errors. No additional hosted or algorithm run was needed for these additive command-registration changes.

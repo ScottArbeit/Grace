@@ -26,6 +26,8 @@
     <Compile Include="ConnectZipStaging.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
     <Compile Include="Artifact.SDK.Tests.fs" />
+    <Compile Include="OwnerObservation.SDK.Tests.fs" />
+    <Compile Include="OwnerObservation.CLI.Tests.fs" />
     <Compile Include="ClientIdentity.SDK.Tests.fs" />
     <Compile Include="Storage.SDK.Tests.fs" />
     <Compile Include="SelectProjection.CLI.Parsing.Tests.fs" />

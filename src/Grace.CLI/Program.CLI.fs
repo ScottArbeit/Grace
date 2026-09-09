@@ -641,7 +641,15 @@ module GraceCommand =
 
     let private ownerHelpSections =
         [
-            { Heading = "Create and inspect"; CommandNames = [ "create"; "get" ] }
+            {
+                Heading = "Create and inspect"
+                CommandNames =
+                    [
+                        "create"
+                        "get"
+                        "get-directory-version-observation"
+                    ]
+            }
             {
                 Heading = "Settings"
                 CommandNames =
@@ -1413,6 +1421,9 @@ module GraceCommand =
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
+                    else if parseResult.CommandResult.Command.Name = "get-directory-version-observation" then
+                        // Historical observation selectors are explicit and do not require a local repository.
+                        returnValue <- parseResult.Invoke()
                     else if configurationFileExists () then
                         match tryGetJsonConfigurationError parseResult with
                         | Some error ->

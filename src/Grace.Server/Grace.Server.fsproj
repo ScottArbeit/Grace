@@ -112,6 +112,7 @@
 		<Compile Include="TextContentSizeObservation.Server.fs" />
     <Compile Include="ArtifactSizeObservation.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
+        <Compile Include="OwnerObservationRead.Server.fs" />
 		<Compile Include="DirectoryVersionSizeObservation.Server.fs" />
 		<Compile Include="Cache.Server.fs" />
 		<Compile Include="Diff.Server.fs" />

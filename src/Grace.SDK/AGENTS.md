@@ -40,6 +40,10 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
 
 ## Notes
 
+- `Owner.GetDirectoryVersionObservation` requires an observation GUID and all three explicit recorded scope IDs.
+  It uses GET and the existing reader to reconstruct exact int64 and Instant fields. It never fills selectors from
+  current configuration or resolves names.
+
 - Added SDK modules for WorkItem, Policy, Review, Queue, and PromotionSet
   APIs (January 6, 2026).
 - Queue SDK adds pause/resume/dequeue helpers aligned to server routes

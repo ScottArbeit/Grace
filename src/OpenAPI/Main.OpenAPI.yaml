@@ -229,6 +229,8 @@ paths:
     $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1undelete'
   /owner/get:
     $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1get'
+  /owner/usage/directory-version-observations/{observationId}:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1usage~1directory-version-observations~1{observationId}'
 
   /repository/create:
     $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1create'

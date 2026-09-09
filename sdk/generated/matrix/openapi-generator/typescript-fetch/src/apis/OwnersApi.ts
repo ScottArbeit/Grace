@@ -44,6 +44,11 @@ import {
     OwnerCommandReturnValueToJSON,
 } from '../models/OwnerCommandReturnValue';
 import {
+    type OwnerObservationReturnValue,
+    OwnerObservationReturnValueFromJSON,
+    OwnerObservationReturnValueToJSON,
+} from '../models/OwnerObservationReturnValue';
+import {
     type OwnerReturnValue,
     OwnerReturnValueFromJSON,
     OwnerReturnValueToJSON,
@@ -84,6 +89,13 @@ export interface DeleteOwnerRequest {
 
 export interface GetOwnerRequest {
     getOwnerParameters: GetOwnerParameters;
+}
+
+export interface GetOwnerDirectoryVersionObservationRequest {
+    observationId: string;
+    ownerId: string;
+    organizationId: string;
+    repositoryId: string;
 }
 
 export interface ListOwnerOrganizationsRequest {
@@ -283,6 +295,94 @@ export class OwnersApi extends runtime.BaseAPI {
      */
     async getOwner(requestParameters: GetOwnerRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<OwnerReturnValue> {
         const response = await this.getOwnerRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for getOwnerDirectoryVersionObservation without sending the request
+     */
+    async getOwnerDirectoryVersionObservationRequestOpts(requestParameters: GetOwnerDirectoryVersionObservationRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['observationId'] == null) {
+            throw new runtime.RequiredError(
+                'observationId',
+                'Required parameter "observationId" was null or undefined when calling getOwnerDirectoryVersionObservation().'
+            );
+        }
+
+        if (requestParameters['ownerId'] == null) {
+            throw new runtime.RequiredError(
+                'ownerId',
+                'Required parameter "ownerId" was null or undefined when calling getOwnerDirectoryVersionObservation().'
+            );
+        }
+
+        if (requestParameters['organizationId'] == null) {
+            throw new runtime.RequiredError(
+                'organizationId',
+                'Required parameter "organizationId" was null or undefined when calling getOwnerDirectoryVersionObservation().'
+            );
+        }
+
+        if (requestParameters['repositoryId'] == null) {
+            throw new runtime.RequiredError(
+                'repositoryId',
+                'Required parameter "repositoryId" was null or undefined when calling getOwnerDirectoryVersionObservation().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        if (requestParameters['ownerId'] != null) {
+            queryParameters['OwnerId'] = requestParameters['ownerId'];
+        }
+
+        if (requestParameters['organizationId'] != null) {
+            queryParameters['OrganizationId'] = requestParameters['organizationId'];
+        }
+
+        if (requestParameters['repositoryId'] != null) {
+            queryParameters['RepositoryId'] = requestParameters['repositoryId'];
+        }
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/owner/usage/directory-version-observations/{observationId}`;
+        urlPath = urlPath.replace('{observationId}', encodeURIComponent(String(requestParameters['observationId'])));
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     * Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+     * Read retained DirectoryVersion declarations.
+     */
+    async getOwnerDirectoryVersionObservationRaw(requestParameters: GetOwnerDirectoryVersionObservationRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<OwnerObservationReturnValue>> {
+        const requestOptions = await this.getOwnerDirectoryVersionObservationRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => OwnerObservationReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+     * Read retained DirectoryVersion declarations.
+     */
+    async getOwnerDirectoryVersionObservation(requestParameters: GetOwnerDirectoryVersionObservationRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<OwnerObservationReturnValue> {
+        const response = await this.getOwnerDirectoryVersionObservationRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

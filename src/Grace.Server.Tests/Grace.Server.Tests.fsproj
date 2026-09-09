@@ -23,6 +23,7 @@
     <Compile Include="General.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeObservation.Server.Tests.fs" />
+    <Compile Include="OwnerObservationRead.Server.Tests.fs" />
     <Compile Include="TextContentSizeObservation.Server.Tests.fs" />
     <Compile Include="ArtifactSizeObservation.Server.Tests.fs" />
     <Compile Include="TextContentSizeDiagnosis.Server.Tests.fs" />

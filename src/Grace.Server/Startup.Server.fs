@@ -1499,6 +1499,7 @@ module Application =
                 subRoute
                     "/owner"
                     [
+                        GET [ routef "/usage/directory-version-observations/%s" OwnerObservationRead.Read ]
                         POST [ route "/create" (composeHandlers requireSystemOperateOrAdmin Owner.Create)
                                |> addMetadata typeof<Owner.CreateOwnerParameters>
 

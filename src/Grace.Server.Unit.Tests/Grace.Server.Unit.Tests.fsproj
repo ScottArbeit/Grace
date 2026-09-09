@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Include="TestCommon.fs" />
+    <Compile Include="OwnerObservationRead.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="DirectoryVersionSizeObservation.Server.Tests.fs" />
     <Compile Include="TextContentSizeObservation.Server.Tests.fs" />

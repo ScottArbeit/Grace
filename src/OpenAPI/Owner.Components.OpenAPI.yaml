@@ -1,3 +1,49 @@
+    OwnerDirectoryVersionObservation:
+      type: object
+      description: Retained completed DirectoryVersion metadata declarations. Zero is a completed reading, not missing data. This is not complete storage, elapsed usage or a charge.
+      required: [ObservationId, Scope, DeclaredLogicalBytes, DistinctContentCount, EnumerationStartedAt, EnumerationFinishedAt]
+      properties:
+        ObservationId:
+          type: string
+          format: uuid
+        Scope:
+          type: object
+          required: [OwnerId, OrganizationId, RepositoryId]
+          properties:
+            OwnerId: { type: string, format: uuid }
+            OrganizationId: { type: string, format: uuid }
+            RepositoryId: { type: string, format: uuid }
+        DeclaredLogicalBytes:
+          type: string
+          pattern: '^(0|[1-9][0-9]*)$'
+          description: Declared logical bytes as an exact decimal integer in [0, 9223372036854775807].
+          example: '9007199254740993'
+        DistinctContentCount:
+          type: string
+          pattern: '^(0|[1-9][0-9]*)$'
+          description: Distinct content declarations as an exact decimal integer in [0, 9223372036854775807].
+          example: '0'
+        EnumerationStartedAt:
+          type: string
+          description: Original enumeration start in UTC, using NodaTime Instant ISO serialization, years -9998 through 9999 and up to nine fractional-second digits. Preserve the string; JavaScript Date loses precision.
+          example: '2026-09-07T01:02:03.123456789Z'
+        EnumerationFinishedAt:
+          type: string
+          description: Original enumeration finish in UTC, using NodaTime Instant ISO serialization, years -9998 through 9999 and up to nine fractional-second digits. This is not the read time or a freshness guarantee.
+          example: '2026-09-07T01:02:04.987654321Z'
+    OwnerObservationReturnValue:
+      type: object
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      properties:
+        ReturnValue:
+          $ref: '#/OwnerDirectoryVersionObservation'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties: {}
     OwnerParameters:
       description: Parameters shared by public endpoints in the /owner route family.
       type: object

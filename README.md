@@ -84,7 +84,7 @@ for one, ask to start tracked implementation, or otherwise request tracker setup
 See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
 validation profiles, review expectations, and cleanup steps.
 
-See [Grace Operations](./docs/Operations.md) for the current usage-measurement design, discovery evidence, explicit SystemAdmin diagnostics for DirectoryVersion, retained TextContent and retained Artifact declarations, and durable source-specific observation capture/read for all three. Each observation retains its own declaration meaning and does not contribute to billable minute usage.
+See [Grace Operations](./docs/Operations.md) for the usage-measurement design, SystemAdmin diagnostics and durable source-specific observation capture/read. Owner administrators can read a known retained DirectoryVersion observation through HTTP, F# SDK, CLI and the Node facade with exact quantities and timestamps. Each source retains its own declaration meaning and does not contribute to billable minute usage.
 
 Artifact diagnosis uses the configured actor storage provider and runs until exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its save command sets no connection or operation timeout; Ctrl+C cancels the request and preserves prior output.
 

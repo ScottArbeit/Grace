@@ -4,11 +4,63 @@ open Grace.SDK.Common
 open Grace.Shared.Parameters.Owner
 open Grace.Types.Owner
 open Grace.Types.Common
+open Grace.Types.UsageObservation
+open Grace.Shared.Parameters.Repository
 open System
 open System.Threading.Tasks
 
 /// SDK entry point for owner profile, visibility, lifecycle, and lookup endpoints.
 type Owner() =
+
+    /// Reads one retained declaration using explicit historical scope, preserving all quantity and timestamp digits.
+    static member GetDirectoryVersionObservation
+        (
+            observationId: Guid,
+            parameters: GetRepositoryParameters
+        ) : Task<GraceResult<DirectoryVersionSizeObservation>> =
+        task {
+            /// Requires a supplied nonempty GUID without reading current configuration.
+            let validId (value: string) =
+                match Guid.TryParse value with
+                | true, id -> id <> Guid.Empty
+                | _ -> false
+
+            if isNull (box parameters) then
+                return Error(GraceError.Create "Explicit owner, organization and repository IDs are required." "")
+            elif observationId = Guid.Empty
+                 || not (
+                     validId parameters.OwnerId
+                     && validId parameters.OrganizationId
+                     && validId parameters.RepositoryId
+                 )
+                 || [
+                     parameters.OwnerName
+                     parameters.OrganizationName
+                     parameters.RepositoryName
+                    ]
+                    |> List.exists (String.IsNullOrEmpty >> not) then
+                return
+                    Error(
+                        GraceError.Create
+                            "Use a nonempty ObservationId and explicit owner, organization and repository GUIDs without name selectors."
+                            parameters.CorrelationId
+                    )
+            else
+                let query =
+                    [
+                        "OwnerId", parameters.OwnerId
+                        "OrganizationId", parameters.OrganizationId
+                        "RepositoryId", parameters.RepositoryId
+                    ]
+                    |> List.map (fun (key, value) -> $"{key}={Uri.EscapeDataString value}")
+                    |> String.concat "&"
+
+                return!
+                    getServer<GetRepositoryParameters, DirectoryVersionSizeObservation> (
+                        ensureCorrelationIdIsSet parameters,
+                        $"owner/usage/directory-version-observations/{observationId:D}?{query}"
+                    )
+        }
 
     /// <summary>
     /// Registers an owner profile that can contain organizations and repositories.
