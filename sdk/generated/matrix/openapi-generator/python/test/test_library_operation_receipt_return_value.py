@@ -45,13 +45,7 @@ class TestLibraryOperationReceiptReturnValue(unittest.TestCase):
                     operation_id = '', 
                     request_hash = '', 
                     outcome = 'accepted', 
-                    library_catalog_version = '', 
-                    recorded_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
-                    principal_id = '', 
                     change = null, 
-                    cursor = null, 
-                    item = null, 
-                    conflict = null, 
                     reason_code = '', 
                     current_library_catalog = null, 
                     rebaseline = null, )

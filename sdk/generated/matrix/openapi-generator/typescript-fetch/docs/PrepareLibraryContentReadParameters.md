@@ -16,6 +16,7 @@ Name | Type
 `repositoryName` | string
 `itemId` | string
 `contentVersionId` | string
+`contentRevision` | string
 
 ## Example
 
@@ -34,6 +35,7 @@ const example = {
   "repositoryName": null,
   "itemId": null,
   "contentVersionId": null,
+  "contentRevision": null,
 } satisfies PrepareLibraryContentReadParameters
 
 console.log(example)

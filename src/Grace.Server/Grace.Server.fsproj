@@ -84,7 +84,6 @@
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
 		<Compile Include="Library.Persistence.Server.fs" />
-		<Compile Include="Library.Coordinator.Server.fs" />
 		<Compile Include="AnnotationMaterialization.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
                 
@@ -110,8 +109,6 @@
                 <Compile Include="ManifestContributionAccounting.Server.fs" />
                 <Compile Include="ManifestContributionDiagnosis.Server.fs" />
                 <Compile Include="ManifestContributionRepair.Server.fs" />
-		<Compile Include="DirectoryVersionSizeDiagnosis.Server.fs" />
-		<Compile Include="TextContentSizeDiagnosis.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Cache.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
@@ -162,7 +159,7 @@
 		<PackageReference Include="Microsoft.OpenApi" Version="3.10.0" />
 		<PackageReference Include="Microsoft.Orleans.Clustering.AzureStorage" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.AzureStorage" Version="10.2.2" />
-		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="10.2.2" />
+		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="10.2.2-hpk.1" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Memory" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Redis" Version="10.2.2" />
 		<PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="10.2.2" />

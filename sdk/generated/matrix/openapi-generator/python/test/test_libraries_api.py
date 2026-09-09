@@ -44,7 +44,7 @@ class TestLibrariesApi(unittest.TestCase):
     def test_download_library_content(self) -> None:
         """Test case for download_library_content
 
-        Redeem one authorized short-lived immutable-content read grant.
+        Download authorized immutable content through a signed token until expiry.
         """
         pass
 
@@ -107,7 +107,7 @@ class TestLibrariesApi(unittest.TestCase):
     def test_prepare_library_content_read(self) -> None:
         """Test case for prepare_library_content_read
 
-        Prepare a one-use read grant for an authorized retained content version.
+        Prepare a signed read URL for an authorized retained content version until expiry.
         """
         pass
 

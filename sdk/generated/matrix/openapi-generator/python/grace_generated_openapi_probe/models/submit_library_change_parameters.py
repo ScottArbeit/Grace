@@ -53,8 +53,8 @@ class SubmitLibraryChangeParameters(BaseModel):
     creation_slot_expectation: Optional[LibraryCreationSlotExpectationDto] = Field(default=None, alias="CreationSlotExpectation")
     destination_parent: Optional[LibraryParentDto] = Field(default=None, alias="DestinationParent")
     destination_name: Optional[StrictStr] = Field(default=None, alias="DestinationName")
-    prepared_content_id: Optional[UUID] = Field(default=None, alias="PreparedContentId")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "OperationId", "LibraryCatalogVersion", "ChangeKind", "ItemKind", "ItemId", "NamespacePrecondition", "ContentPrecondition", "CreationSlotExpectation", "DestinationParent", "DestinationName", "PreparedContentId"]
+    upload_session_id: Optional[UUID] = Field(default=None, alias="UploadSessionId")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "OperationId", "LibraryCatalogVersion", "ChangeKind", "ItemKind", "ItemId", "NamespacePrecondition", "ContentPrecondition", "CreationSlotExpectation", "DestinationParent", "DestinationName", "UploadSessionId"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -137,7 +137,7 @@ class SubmitLibraryChangeParameters(BaseModel):
             "CreationSlotExpectation": LibraryCreationSlotExpectationDto.from_dict(obj["CreationSlotExpectation"]) if obj.get("CreationSlotExpectation") is not None else None,
             "DestinationParent": LibraryParentDto.from_dict(obj["DestinationParent"]) if obj.get("DestinationParent") is not None else None,
             "DestinationName": obj.get("DestinationName"),
-            "PreparedContentId": obj.get("PreparedContentId")
+            "UploadSessionId": obj.get("UploadSessionId")
         })
         return _obj
 

@@ -34,7 +34,6 @@
     <Compile Include="StorageAuthorizationResources.Unit.Tests.fs" />
     <Compile Include="ValidateIds.Decisions.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
-    <Compile Include="Library.Coordinator.Server.Tests.fs" />
     <Compile Include="AnnotationMaterialization.Server.Tests.fs" />
     <Compile Include="NormalFileMaterialization.Server.Tests.fs" />
     <Compile Include="StoragePoolRouting.Server.Tests.fs" />
@@ -55,6 +54,8 @@
     <Compile Include="Diff.Actor.Tests.fs" />
     <Compile Include="PersonalAccessToken.Actor.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
+    <Compile Include="Library.Serialization.Tests.fs" />
+    <Compile Include="Library.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />

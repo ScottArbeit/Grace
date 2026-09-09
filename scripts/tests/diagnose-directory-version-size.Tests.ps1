@@ -19,7 +19,14 @@ $report = @{ ReturnValue = @{ Scope = $scope; DeclaredLogicalBytes = 0L; Distinc
 $script:response = @{ StatusCode = 200; Content = ($report | ConvertTo-Json -Depth 8) }
 
 # Replaces only the command's HTTP call so publication exercises real local file operations.
-function Invoke-WebRequest { return $script:response }
+function Invoke-WebRequest {
+    param($Uri, $Method, $Headers, $ContentType, $Body, [switch] $SkipHttpErrorCheck,
+        [int] $ConnectionTimeoutSeconds = -1, [int] $OperationTimeoutSeconds = -1)
+    if ($ConnectionTimeoutSeconds -ne 0 -or $OperationTimeoutSeconds -ne 0) { throw 'The request must have no finite timeout.' }
+    if ($script:cancelRequest) { throw [OperationCanceledException]::new('Caller cancelled') }
+    return $script:response
+}
+$script:cancelRequest = $false
 
 # Requires malformed or failed responses to preserve the last saved diagnostic without staging residue.
 function Assert-PreservedFailure {
@@ -37,6 +44,9 @@ try {
     $saved = Get-Content $destination -Raw | ConvertFrom-Json
     if ($saved.ReturnValue.DeclaredLogicalBytes -ne 0 -or $saved.ReturnValue.DistinctContentCount -ne 1) { throw 'Known zero was not saved.' }
     Write-Output 'PASS: complete scoped zero saves and reopens'
+    $script:cancelRequest = $true
+    Assert-PreservedFailure 'caller cancellation'
+    $script:cancelRequest = $false
     $script:response.StatusCode = 503
     Assert-PreservedFailure 'HTTP failure'
     $script:response.StatusCode = 200
@@ -55,7 +65,7 @@ try {
     }
     $parameters.OwnerId = [guid]::Empty.ToString()
     Assert-PreservedFailure 'invalid request ID'
-    Write-Output 'PASS: 10 script publication assertions'
+    Write-Output 'PASS: 11 script publication assertions and unlimited request timeouts'
 }
 finally {
     $env:GRACE_SERVER_URI = $oldUri

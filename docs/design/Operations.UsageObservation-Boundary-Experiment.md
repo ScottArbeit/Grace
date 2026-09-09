@@ -8,6 +8,14 @@ This result helps Grace preserve useful observations without turning an operator
 
 ## Question, revision, and environment
 
+### September 8 applicability refresh
+
+PR #1055 now incorporates main at `8aa4ead87b2d4df984e0cc24ac38b768f805b089`, including the revised DirectoryVersion and TextContent diagnostics. Its review against that base contains only this report, the original JSON evidence bundle and the Operations readiness note. Both retired standalone diagnostic server modules are absent.
+
+The captured run and hashes below remain historical evidence, preserved unchanged. Nine of the ten pinned source files still match this base byte-for-byte, including the SQL store, usage contract, serializer and project files. The only changed file is `Common.Types.fs`: Orleans field IDs were added to `ManifestEligibilityPolicy`, `ContentBlock` and `FileManifest`, outside the supplied-fact behavior exercised here. The existing 21 SQL controls and extracted replay remain applicable; this refresh does not claim another SQL execution. Current-head GitHub Validate checks the refreshed composition.
+
+### Original experiment environment
+
 Question: which current supplied-fact ingestion guarantees can the next durable source-specific observation reuse, and which capture/measurement semantics still need a decision?
 
 - Source base: `f849d72275eab54c95736e90f50369f06f761cd6`, the reviewed PR #1052 candidate. Eventual delivery comparison: main `9f54fe14626cd718af88890b731f8518f9b06e34`. The approved stack is preserved; this issue adds only its three documentation/evidence paths.

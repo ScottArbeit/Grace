@@ -17,22 +17,16 @@ pub struct LibraryNamespaceDto {
     pub parent: Box<models::LibraryParentDto>,
     #[serde(rename = "Name")]
     pub name: String,
-    #[serde(rename = "NormalizedPath")]
-    pub normalized_path: String,
     #[serde(rename = "NamespaceVersion")]
     pub namespace_version: uuid::Uuid,
-    #[serde(rename = "SlotVersion")]
-    pub slot_version: uuid::Uuid,
 }
 
 impl LibraryNamespaceDto {
-    pub fn new(parent: models::LibraryParentDto, name: String, normalized_path: String, namespace_version: uuid::Uuid, slot_version: uuid::Uuid) -> LibraryNamespaceDto {
+    pub fn new(parent: models::LibraryParentDto, name: String, namespace_version: uuid::Uuid) -> LibraryNamespaceDto {
         LibraryNamespaceDto {
             parent: Box::new(parent),
             name,
-            normalized_path,
             namespace_version,
-            slot_version,
         }
     }
 }

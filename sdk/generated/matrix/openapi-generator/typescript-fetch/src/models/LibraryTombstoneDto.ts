@@ -13,13 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
-import type { LibraryItemKind } from './LibraryItemKind';
+import type { LibraryNamespaceDto } from './LibraryNamespaceDto';
 import {
-    LibraryItemKindFromJSON,
-    LibraryItemKindFromJSONTyped,
-    LibraryItemKindToJSON,
-    LibraryItemKindToJSONTyped,
-} from './LibraryItemKind';
+    LibraryNamespaceDtoFromJSON,
+    LibraryNamespaceDtoFromJSONTyped,
+    LibraryNamespaceDtoToJSON,
+    LibraryNamespaceDtoToJSONTyped,
+} from './LibraryNamespaceDto';
 
 /**
  * 
@@ -27,18 +27,6 @@ import {
  * @interface LibraryTombstoneDto
  */
 export interface LibraryTombstoneDto {
-    /**
-     * 
-     * @type {string}
-     * @memberof LibraryTombstoneDto
-     */
-    itemId: string;
-    /**
-     * 
-     * @type {LibraryItemKind}
-     * @memberof LibraryTombstoneDto
-     */
-    itemKind: LibraryItemKind;
     /**
      * 
      * @type {Date}
@@ -59,10 +47,10 @@ export interface LibraryTombstoneDto {
     deleteCursor: string;
     /**
      * 
-     * @type {string}
+     * @type {LibraryNamespaceDto}
      * @memberof LibraryTombstoneDto
      */
-    lastNamespaceVersion: string;
+    lastNamespace: LibraryNamespaceDto;
     /**
      * 
      * @type {string}
@@ -71,18 +59,14 @@ export interface LibraryTombstoneDto {
     lastContentVersionId: string;
 }
 
-
-
 /**
  * Check if a given object implements the LibraryTombstoneDto interface.
  */
 export function instanceOfLibraryTombstoneDto(value: object): value is LibraryTombstoneDto {
-    if (!('itemId' in value) || value['itemId'] === undefined) return false;
-    if (!('itemKind' in value) || value['itemKind'] === undefined) return false;
     if (!('deletedAt' in value) || value['deletedAt'] === undefined) return false;
     if (!('deletedBy' in value) || value['deletedBy'] === undefined) return false;
     if (!('deleteCursor' in value) || value['deleteCursor'] === undefined) return false;
-    if (!('lastNamespaceVersion' in value) || value['lastNamespaceVersion'] === undefined) return false;
+    if (!('lastNamespace' in value) || value['lastNamespace'] === undefined) return false;
     if (!('lastContentVersionId' in value) || value['lastContentVersionId'] === undefined) return false;
     return true;
 }
@@ -97,12 +81,10 @@ export function LibraryTombstoneDtoFromJSONTyped(json: any, ignoreDiscriminator:
     }
     return {
         
-        'itemId': json['ItemId'],
-        'itemKind': LibraryItemKindFromJSON(json['ItemKind']),
         'deletedAt': (new Date(json['DeletedAt'])),
         'deletedBy': json['DeletedBy'],
         'deleteCursor': json['DeleteCursor'],
-        'lastNamespaceVersion': json['LastNamespaceVersion'],
+        'lastNamespace': LibraryNamespaceDtoFromJSON(json['LastNamespace']),
         'lastContentVersionId': json['LastContentVersionId'],
     };
 }
@@ -118,12 +100,10 @@ export function LibraryTombstoneDtoToJSONTyped(value?: LibraryTombstoneDto | nul
 
     return {
         
-        'ItemId': value['itemId'],
-        'ItemKind': LibraryItemKindToJSON(value['itemKind']),
         'DeletedAt': value['deletedAt'].toISOString(),
         'DeletedBy': value['deletedBy'],
         'DeleteCursor': value['deleteCursor'],
-        'LastNamespaceVersion': value['lastNamespaceVersion'],
+        'LastNamespace': LibraryNamespaceDtoToJSON(value['lastNamespace']),
         'LastContentVersionId': value['lastContentVersionId'],
     };
 }

@@ -18,7 +18,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
 from uuid import UUID
@@ -36,20 +36,12 @@ class LibraryItemDto(BaseModel):
     """ # noqa: E501
     item_id: UUID = Field(alias="ItemId")
     item_kind: LibraryItemKind = Field(alias="ItemKind")
-    state: StrictStr = Field(alias="State")
     last_change_cursor: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="LastChangeCursor")
-    library_catalog_version: UUID = Field(alias="LibraryCatalogVersion")
     namespace: LibraryNamespaceDto = Field(alias="Namespace")
     content: LibraryContentVersionDto = Field(alias="Content")
+    content_revision: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="ContentRevision")
     tombstone: LibraryTombstoneDto = Field(alias="Tombstone")
-    __properties: ClassVar[List[str]] = ["ItemId", "ItemKind", "State", "LastChangeCursor", "LibraryCatalogVersion", "Namespace", "Content", "Tombstone"]
-
-    @field_validator('state')
-    def state_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['live', 'tombstoned']):
-            raise ValueError("must be one of enum values ('live', 'tombstoned')")
-        return value
+    __properties: ClassVar[List[str]] = ["ItemId", "ItemKind", "LastChangeCursor", "Namespace", "Content", "ContentRevision", "Tombstone"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -113,11 +105,10 @@ class LibraryItemDto(BaseModel):
         _obj = cls.model_validate({
             "ItemId": obj.get("ItemId"),
             "ItemKind": obj.get("ItemKind"),
-            "State": obj.get("State"),
             "LastChangeCursor": obj.get("LastChangeCursor"),
-            "LibraryCatalogVersion": obj.get("LibraryCatalogVersion"),
             "Namespace": LibraryNamespaceDto.from_dict(obj["Namespace"]) if obj.get("Namespace") is not None else None,
             "Content": LibraryContentVersionDto.from_dict(obj["Content"]) if obj.get("Content") is not None else None,
+            "ContentRevision": obj.get("ContentRevision"),
             "Tombstone": LibraryTombstoneDto.from_dict(obj["Tombstone"]) if obj.get("Tombstone") is not None else None
         })
         return _obj

@@ -168,8 +168,10 @@ docs/LibraryChangePageReturnValue.md
 docs/LibraryConflictProvenanceDto.md
 docs/LibraryContentAvailable.md
 docs/LibraryContentPreconditionDto.md
-docs/LibraryContentReadGrantDto.md
-docs/LibraryContentReadGrantReturnValue.md
+docs/LibraryContentPreparationDto.md
+docs/LibraryContentPreparationReturnValue.md
+docs/LibraryContentReadDto.md
+docs/LibraryContentReadReturnValue.md
 docs/LibraryContentVersionDto.md
 docs/LibraryCreationSlotExpectationDto.md
 docs/LibraryItemDto.md
@@ -184,8 +186,6 @@ docs/LibraryOperationReceiptReturnValue.md
 docs/LibraryOutcomeKind.md
 docs/LibraryParameters.md
 docs/LibraryParentDto.md
-docs/LibraryPreparedContentDto.md
-docs/LibraryPreparedContentReturnValue.md
 docs/LibraryRebaselineDto.md
 docs/LibraryRejectionReason.md
 docs/LibraryRepositoryStatusDto.md
@@ -490,8 +490,10 @@ src/models/LibraryChangePageReturnValue.ts
 src/models/LibraryConflictProvenanceDto.ts
 src/models/LibraryContentAvailable.ts
 src/models/LibraryContentPreconditionDto.ts
-src/models/LibraryContentReadGrantDto.ts
-src/models/LibraryContentReadGrantReturnValue.ts
+src/models/LibraryContentPreparationDto.ts
+src/models/LibraryContentPreparationReturnValue.ts
+src/models/LibraryContentReadDto.ts
+src/models/LibraryContentReadReturnValue.ts
 src/models/LibraryContentVersionDto.ts
 src/models/LibraryCreationSlotExpectationDto.ts
 src/models/LibraryItemDto.ts
@@ -506,8 +508,6 @@ src/models/LibraryOperationReceiptReturnValue.ts
 src/models/LibraryOutcomeKind.ts
 src/models/LibraryParameters.ts
 src/models/LibraryParentDto.ts
-src/models/LibraryPreparedContentDto.ts
-src/models/LibraryPreparedContentReturnValue.ts
 src/models/LibraryRebaselineDto.ts
 src/models/LibraryRejectionReason.ts
 src/models/LibraryRepositoryStatusDto.ts

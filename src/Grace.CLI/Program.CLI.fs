@@ -583,6 +583,7 @@ module GraceCommand =
     let private libraryHelpSections =
         [
             { Heading = "Configure Libraries"; CommandNames = [ "list"; "get"; "add"; "remove" ] }
+            { Heading = "Synchronize files"; CommandNames = [ "sync" ] }
         ]
 
     let private branchHelpSections =
@@ -1285,6 +1286,9 @@ module GraceCommand =
                         let groupedHelpSections =
                             if isRootHelp then
                                 Some rootHelpSections
+                            elif helpCommand.Name = "sync"
+                                 && tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive = Some "library" then
+                                Some [ { Heading = "Synchronize files"; CommandNames = [ "enable"; "run"; "status" ] } ]
                             else
                                 match groupedHelpSectionsByCommandName.TryGetValue(helpCommand.Name) with
                                 | true, sections -> Some sections

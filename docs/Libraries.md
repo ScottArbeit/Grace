@@ -1,6 +1,6 @@
 # Libraries
 
-Libraries are Grace's repository-ordered remote namespace and immutable-byte service. Product V1 provides the complete remote contract while deliberately leaving local filesystem participation for later work.
+Libraries let authorized Windows working copies share ordinary nonempty files through a repository-ordered namespace and immutable-byte service. Each copy retains saved input, materialized edit bases, and completed progress locally.
 
 An authorized remote client can:
 
@@ -9,10 +9,10 @@ An authorized remote client can:
 - Read current items and namespace slots.
 - Bootstrap current state and then pull ordered change pages.
 - Recover the stable receipt for a previously submitted operation.
-- Read retained immutable content through a short-lived, one-use grant.
+- Read retained immutable content through a signed URL that remains valid until its fixed expiry.
 - Read content-free repository synchronization status.
 
-Product V1 does not include local SQLite state, filesystem publication, `library sync enable`, `library sync disable`, `library sync run`, local synchronization status, or Watch-driven synchronization.
+Local Product V1 supports Windows 11, two authorized copies of one repository, and one unchanged Library root. A new copy enables into an empty local Library directory and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
 
 ## Library ownership
 
@@ -47,7 +47,7 @@ Each change request provides:
 - The exact current Library catalog version.
 - The change and item kinds.
 - The exact namespace, content, or destination-slot preconditions required by that change kind.
-- A prepared-content ID when complete bytes are required.
+- An upload session ID when complete bytes are required.
 
 The accepted order is:
 
@@ -55,10 +55,10 @@ The accepted order is:
 1. Check the Product V1 item-head and namespace-slot bounds before reservation.
 1. Reserve the complete deterministic command.
 1. Create the immutable repository change.
-1. Repair current-state, history, and receipt projections from that change.
-1. Advance the applied-through position and clear pending work.
-1. Complete the stable durable receipt.
-1. Attempt a best-effort content-free wake.
+1. Retain one permanent content reference and complete its manifest workflow for a content-bearing change.
+1. Write the current item, affected slots, and stable receipt.
+1. Acknowledge the tracked content add, advance the committed cursor, and clear pending work.
+1. Resume compact history and best-effort content-free wake progress from the accepted change.
 
 Only a caught-up authorized command with exact catalog, item, namespace, content, and slot preconditions can create one accepted repository change. Each repository is limited to 100,000 current item-head documents and 100,000 current namespace-slot documents. A command that would exceed either bound is rejected before it reserves the control document.
 
@@ -66,9 +66,11 @@ Retrying the same operation ID with the same request returns the same receipt. R
 
 ## Bootstrap, changes, and status
 
-Bootstrap pages read one immutable current-state baseline. Clients keep the returned cursor epoch and boundary cursor, apply each page in order, and continue with the opaque page token until it is absent.
+Bootstrap pages read one immutable current-state baseline. The Windows client persists all selected metadata and opaque continuation tokens before installing files. Page order is unrelated to parent order. Once metadata is complete, the client validates the live parent graph, installs parents before children and reads each selected immutable content revision. Tombstones require no local filesystem effect or historical-parent lookup.
 
-After bootstrap, clients call `/libraries/changes/get` with their opaque cursor. Change pages contain repository-ordered accepted changes. A `rebaselineRequired` result means the client must discard its incremental position and start from a new bootstrap baseline.
+After every required item is installed and verified, the client commits the selected baseline boundary as its applied cursor and calls `/libraries/changes/get`. Changes accepted after baseline selection then arrive through the existing ordered feed. A `rebaselineRequired` response stops this Windows client and preserves its work; automatic rebaseline of a participating copy remains deferred.
+
+An incomplete acquisition whose continuation returns HTTP 410 can restart before any Library content is installed, provided the root remains empty and the catalog unchanged. Each successful continuation renews the next fifteen-minute token. The client treats tokens as opaque. Complete metadata remains usable after page-token expiry and continues to select its original retained content revisions.
 
 `LibraryRepositoryStatusDto` is content-free. It reports whether projections are caught up, whether rebaseline is required, whether work is blocked, pending-operation count and age, projection lag, and the last completion time. It does not expose container keys, ETags, grants, local paths, content names, or internal cursor numbers.
 
@@ -76,15 +78,15 @@ After bootstrap, clients call `/libraries/changes/get` with their opaque cursor.
 
 ## Library CLI
 
-The CLI exposes catalog operations only. Use the existing repository locator options by ID or name.
+Use the existing repository locator options by ID or name for catalog operations. Local synchronization targets the repository configured for the current working copy.
 
 PowerShell:
 
 ```powershell
 grace library list --repository-id $repositoryId
 grace library get shared --repository-id $repositoryId
-grace library add shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
-grace library remove shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
+grace library add shared --repository-id $repositoryId
+grace library remove shared --repository-id $repositoryId
 ```
 
 bash / zsh:
@@ -92,11 +94,51 @@ bash / zsh:
 ```bash
 grace library list --repository-id "$repository_id"
 grace library get shared --repository-id "$repository_id"
-grace library add shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
-grace library remove shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
+grace library add shared --repository-id "$repository_id"
+grace library remove shared --repository-id "$repository_id"
 ```
 
-Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. Local synchronization commands remain deferred.
+Both add and remove accept optional `--expected-version` and `--operation-id`. When the version is omitted, the CLI reads the catalog once and submits its version. When the operation ID is omitted, the CLI generates one ID for that invocation. Explicit values pass through unchanged. A failed lookup prevents submission; a stale catalog result remains visible without rereading or retrying. The server still checks version, permissions, path and emptiness.
+
+For an exact scripted retry, retain all request details, including the same explicit version and operation ID. A new invocation with a generated ID is a new request. An omitted-version lookup may obtain a different version, so reusing only an operation ID does not preserve an earlier request.
+
+PowerShell:
+
+```powershell
+grace library add shared --repository-id $repositoryId --expected-version $catalogVersion --operation-id $operationId
+```
+
+bash / zsh:
+
+```bash
+grace library add shared --repository-id "$repository_id" --expected-version "$catalog_version" --operation-id "$operation_id"
+```
+
+Library commands support the standard human and `cli-json-v1` output modes. The top-level `sync` command and `synchronize` alias do not exist. Run these commands in each configured Windows working copy:
+
+```powershell
+grace library sync enable
+grace library sync run
+grace library sync status --output Json
+```
+
+Enable A, create nonempty files and nested directories in its Library, and run synchronization in A. A fresh B can then enable into its empty local Library root. B installs the selected content and catches up with later accepted changes before normal saved-file capture starts. Edit a file in B and run synchronization in B and A. `grace watch` invokes this same finite synchronization path from its existing timer, including interrupted onboarding.
+
+`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. Catalog changes and rebaseline responses stop application and retain saved work.
+
+Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation or catalog adoption.
+
+Saved bytes are captured before upload. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling.
+
+Zero-byte local files are excluded before pending input or upload preparation. They remain present: truncating a tracked file to zero does not submit an update or deletion, and a later nonempty save retains its previous materialized edit base. Incoming changes cannot overwrite or delete an excluded empty file. Such a change leaves synchronization blocked and its applied cursor unchanged until the local obstruction is resolved. A previously captured nonempty source and frozen request remain available after a later zero-length save; installing its accepted result cannot overwrite that empty file.
+
+A saved edit during an incoming file rename retains its original item and revision, including saves at either path during interrupted application. Grace removes changed old-path bytes only when those exact positive bytes are already accepted and retained by their pending operation. An edit submitted after the server deletes its item retains the `ItemTombstoned` rejection, saved bytes, and pending request; synchronization does not resurrect the item or manufacture a conflict sibling for that rejection.
+
+Local state uses exactly three Library tables in `.grace/grace-local.db`: repository participation/catalog/progress including baseline selection, materialized items, and pending/terminal operations including selected baseline item work. A Library connection uses WAL, foreign keys, and FULL synchronization. Baseline item completion commits the verified item and terminal work together without advancing the applied cursor. A separate transaction commits the boundary after all required work is verified. Genuine accepted-change completion then commits item, operation and cursor together. Restart reuses frozen requests and verifies already-published bytes, avoiding another logical operation or completed-file rewrite.
+
+An empty change page with `HasMore=true` retains its continuation and reports `catchingUp`. Page continuation is stored with repository progress. Each completed item clears the previous page token atomically, so interruption midway through a page resumes from the last applied cursor. A rebaseline response blocks synchronization and retains saved work; Product V1 does not run an automatic repair or bootstrap over existing files.
+
+Library application shares root exclusion with Branch, Connect, and Watch while retaining its own completion. It creates no Save, Reference, DirectoryVersion, Attachment, or WDU completion. Terminal operations retain exact Watch echo evidence until classification and safe bounded pruning.
 
 ## HTTP, SDK, and generated clients
 
@@ -106,13 +148,13 @@ The remote contract has 15 HTTP operations under `/libraries`:
 - Bootstrap: start and continue.
 - Ordered state: get changes, operation receipts, current items, namespace slots, and status.
 - Changes: prepare content and submit a change.
-- Immutable reads: prepare a one-use read grant and redeem it.
+- Immutable reads: prepare a signed read URL and download its accepted content until expiry.
 
 `Grace.SDK.Libraries` is the handwritten .NET facade. The static OpenAPI sources are `src/OpenAPI/Libraries.Components.OpenAPI.yaml` and `src/OpenAPI/Libraries.Paths.OpenAPI.yaml`. The standard generator produces TypeScript, Python, and Rust raw clients behind their existing facade boundary.
 
 ## Server configuration
 
-Grace Server requires `grace__libraries__token_secret`. The value is a base64-encoded key containing at least 32 bytes. It protects opaque cursor, page, and read-grant tokens and must be stable across server instances that serve the same deployment.
+Grace Server requires `grace__libraries__token_secret`. The value is a base64-encoded key containing at least 32 bytes. It protects opaque cursor, page, and content-read tokens and must be stable across server instances that serve the same deployment.
 
 PowerShell:
 
@@ -129,12 +171,6 @@ export grace__libraries__token_secret="$(openssl rand -base64 32)"
 
 The Aspire local topology generates this value for the development run and provisions the six Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
 
-## Deferred local behavior
+## Deferred capabilities
 
-Local synchronization arrives in a later issue. Until then:
-
-- Watch does not subscribe to or apply Library change pages.
-- Working Directory Update never publishes Library content into configured Libraries.
-- No local database records Library cursors, baselines, or item state.
-- No foreground or background command copies files into or out of Libraries.
-- The Library catalog remains remote repository state, not per-working-copy configuration.
+Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.

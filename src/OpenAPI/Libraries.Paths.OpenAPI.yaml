@@ -179,7 +179,7 @@
           application/json:
             schema: { $ref: './Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentParameters' }
       responses:
-        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryPreparedContentResponse' }
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryContentPreparationResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '403': { $ref: './Responses.OpenAPI.yaml#/403' }
@@ -190,7 +190,7 @@
     post:
       tags:
         - Libraries
-      summary: Prepare a one-use read grant for an authorized retained content version.
+      summary: Prepare a signed read URL for an authorized retained content version until expiry.
       operationId: PrepareLibraryContentRead
       requestBody:
         required: true
@@ -198,22 +198,22 @@
           application/json:
             schema: { $ref: './Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentReadParameters' }
       responses:
-        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryContentReadGrantResponse' }
+        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryContentReadResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '403': { $ref: './Responses.OpenAPI.yaml#/403' }
         '404': { $ref: './Responses.OpenAPI.yaml#/404' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
-  /libraries/content/{grantId}:
+  /libraries/content/{readToken}:
     get:
       tags:
         - Libraries
-      summary: Redeem one authorized short-lived immutable-content read grant.
+      summary: Download authorized immutable content through a signed token until expiry.
       operationId: DownloadLibraryContent
       security: []
       parameters:
-        - name: grantId
+        - name: readToken
           in: path
           required: true
           schema:
@@ -222,7 +222,7 @@
             maxLength: 2048
       responses:
         '200':
-          description: Exact immutable bytes authorized by the one-use grant.
+          description: Exact immutable bytes authorized by the signed token.
           content:
             application/octet-stream:
               schema:

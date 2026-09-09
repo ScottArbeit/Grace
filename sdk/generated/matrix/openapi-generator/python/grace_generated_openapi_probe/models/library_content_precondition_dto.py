@@ -20,6 +20,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,7 +32,8 @@ class LibraryContentPreconditionDto(BaseModel):
     """ # noqa: E501
     item_id: UUID = Field(alias="ItemId")
     expected_content_version_id: UUID = Field(alias="ExpectedContentVersionId")
-    __properties: ClassVar[List[str]] = ["ItemId", "ExpectedContentVersionId"]
+    expected_content_revision: Annotated[str, Field(min_length=1, strict=True, max_length=2048)] = Field(description="Opaque repository cursor. Clients must not parse or compare its contents.", alias="ExpectedContentRevision")
+    __properties: ClassVar[List[str]] = ["ItemId", "ExpectedContentVersionId", "ExpectedContentRevision"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -85,7 +87,8 @@ class LibraryContentPreconditionDto(BaseModel):
 
         _obj = cls.model_validate({
             "ItemId": obj.get("ItemId"),
-            "ExpectedContentVersionId": obj.get("ExpectedContentVersionId")
+            "ExpectedContentVersionId": obj.get("ExpectedContentVersionId"),
+            "ExpectedContentRevision": obj.get("ExpectedContentRevision")
         })
         return _obj
 
