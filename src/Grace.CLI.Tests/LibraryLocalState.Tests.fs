@@ -2,6 +2,7 @@ namespace Grace.CLI.Tests
 
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.CLI.LibraryOperation
 open Grace.CLI.LibraryLocalState
 open Grace.Shared.Utilities
 open Grace.Types.Library
@@ -22,6 +23,56 @@ module LibraryLocalStateTests =
         let root = Path.Combine(Path.GetTempPath(), $"grace-library-local-{Guid.NewGuid():N}")
         Directory.CreateDirectory(root) |> ignore
         root, Path.Combine(root, "grace-local.db")
+
+    /// Supplies the small nonempty payload used by SQLite-only accepted-operation fixtures.
+    let private sampleBytes = [| 0uy; 127uy; 255uy |]
+
+    /// Builds an immutable content reference without writing objects in SQLite-only tests.
+    let private objectReference bytes =
+        let content = LibraryFilesystem.content bytes
+        { ObjectPath = "fixture-object"; Content = { Size = content.Size; Sha256Hash = content.Sha256Hash; Blake3Hash = content.Blake3Hash } }
+
+    /// Constructs a prepared incoming record for tests of completion and echo authority.
+    let private incoming cursor source target previous echo (change: LibraryChangeDto) =
+        let checkpoint =
+            {
+                ExpectedCursor = cursor
+                ExpectedAncestry = previous |> Option.toArray
+                ExpectedTarget = TargetObservation.Absent
+                SourcePath = source
+                TargetPath = target
+                Echo = echo
+            }
+
+        {
+            OperationId = change.OperationId
+            CatalogVersion = change.LibraryCatalogVersion
+            CreatedAtTicks = 1L
+            Work = OperationWork.Incoming(change, source, previous, ApplicationProgress.Prepared checkpoint)
+        }
+
+    /// Gives a selected rename a receipt and prepared checkpoint without duplicating the accepted change.
+    let private acceptedRename cursor (change: LibraryChangeDto) (operation: PendingOperation) =
+        let checkpoint =
+            {
+                ExpectedCursor = cursor
+                ExpectedAncestry = operation.MaterializedBase |> Option.toArray
+                ExpectedTarget = TargetObservation.Absent
+                SourcePath = operation.SourcePath
+                TargetPath = operation.TargetPath
+                Echo = EchoState.Pending
+            }
+
+        match operation.Work with
+        | OperationWork.ExplicitRename (intent, _) ->
+            { operation with
+                Work =
+                    OperationWork.ExplicitRename(
+                        intent,
+                        RenameProgress.Accepted("frozen namespace request", { RequestHash = "hash"; Change = change }, ApplicationProgress.Prepared checkpoint)
+                    )
+            }
+        | _ -> invalidOp "Expected a selected rename."
 
     /// Supplies one exact accepted create with opaque cursors and independent content identity.
     let private prepared () =
@@ -48,7 +99,7 @@ module LibraryLocalStateTests =
                 Baseline = None
             }
 
-        let bytes = [| 0uy; 127uy; 255uy |]
+        let bytes = sampleBytes
         let source = LibraryFilesystem.content bytes
 
         let item =
@@ -84,28 +135,24 @@ module LibraryLocalStateTests =
         let pending =
             {
                 OperationId = change.OperationId
-                Direction = "local"
-                Rename = false
-                Receipt = None
-                SourcePath = "Library/item.bin"
-                SourceBytes = Some bytes
-                MaterializedBase = None
-                OriginatingCreateId = None
-                Parent = parent
-                Name = "item.bin"
-                ItemKind = ItemKind.File
-                RequestJson = Some "exact-submitted-request"
-                Uploaded = true
-                Accepted = Some change
-                BaselineItem = None
-                Prepared = true
-                ExpectedCatalogVersion = state.Catalog.Version
-                ExpectedCursor = state.AppliedCursor
-                ExpectedAncestry = [||]
-                ExpectedTarget = None
-                TargetPath = "Library/item.bin"
-                Terminal = false
-                EchoPending = false
+                CatalogVersion = state.Catalog.Version
+                Work =
+                    OperationWork.SavedFile(
+                        { SourcePath = "Library/item.bin"; Object = objectReference bytes; Base = SavedBase.NewFile { Parent = parent; Name = "item.bin" } },
+                        SavedFileProgress.Accepted(
+                            "exact-submitted-request",
+                            { RequestHash = "hash"; Change = change },
+                            ApplicationProgress.Prepared
+                                {
+                                    ExpectedCursor = state.AppliedCursor
+                                    ExpectedAncestry = [||]
+                                    ExpectedTarget = TargetObservation.Absent
+                                    SourcePath = "Library/item.bin"
+                                    TargetPath = "Library/item.bin"
+                                    Echo = EchoState.Clear
+                                }
+                        )
+                    )
                 CreatedAtTicks = 1L
             }
 
@@ -121,13 +168,14 @@ module LibraryLocalStateTests =
 
             let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
             configuration.RootDirectory <- root
+            configuration.ObjectDirectory <- Path.Combine(root, ".grace", "objects")
             configuration.GraceStatusFile <- db
             do! initialize db
             let initial, first = prepared ()
             configuration.RepositoryId <- initial.RepositoryId
             enable db initial
             insertOperation db initial.RepositoryId first
-            File.WriteAllBytes(Path.Combine(root, first.SourcePath), first.SourceBytes.Value)
+            File.WriteAllBytes(Path.Combine(root, first.SourcePath), sampleBytes)
             complete db initial first
             setState db (readRepository db initial.RepositoryId).Value "current"
             return configuration, (readRepository db initial.RepositoryId).Value, first.Accepted.Value.Item
@@ -151,13 +199,13 @@ module LibraryLocalStateTests =
 
             Assert.That(
                 selected.RequestJson.IsNone
-                && selected.SourceBytes.IsNone
+                && selected.SourceObject.IsNone
                 && not selected.Uploaded,
                 Is.True
             )
 
             Assert.That(selected.MaterializedBase, Is.EqualTo(Some item))
-            Assert.That(selected.Name, Is.EqualTo("n\u00e9w.bin"))
+            Assert.That(selected.Placement.Name, Is.EqualTo("n\u00e9w.bin"))
 
             throws<InvalidOperationException> (fun () ->
                 LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" "other.bin"
@@ -195,7 +243,7 @@ module LibraryLocalStateTests =
                     Conflict = None
                 }
 
-            let prepared = { selected with Accepted = Some change; Prepared = true; EchoPending = true }
+            let prepared = acceptedRename before.AppliedCursor change selected
             let source = Path.Combine(configuration.RootDirectory, "Library/item.bin")
             let destination = Path.Combine(configuration.RootDirectory, "Library/new.bin")
 
@@ -322,7 +370,7 @@ module LibraryLocalStateTests =
             let! configuration, before, _ = renameCopy ()
             let db = configuration.GraceStatusFile
             let selected = LibrarySynchronization.selectRenameWith ignore configuration "Library/item.bin" "new.bin"
-            let request = { selected with RequestJson = Some "frozen namespace request" }
+            let request = LibraryOperation.freezeRequest "frozen namespace request" selected
             updateOperation db before.RepositoryId selected request
 
             let receipt =
@@ -336,7 +384,7 @@ module LibraryLocalStateTests =
                     Rebaseline = None
                 }
 
-            let rejected = { request with Receipt = Some receipt }
+            let rejected = LibraryOperation.receive receipt request
             updateOperation db before.RepositoryId request rejected
             let items = readItems db before.RepositoryId
             use connection = openConnection db
@@ -371,27 +419,30 @@ module LibraryLocalStateTests =
             Assert.That(
                 (LibrarySynchronization.renameResult terminal None)
                     .Outcome,
-                Is.EqualTo("rejected")
+                Is.EqualTo(LibrarySynchronization.RenameOutcome.Rejected(RejectionCode.Unknown "NamespaceVersionMismatch"))
             )
 
             Assert.That(
                 (LibrarySynchronization.renameResult selected None)
                     .Outcome,
-                Is.EqualTo("ambiguous")
+                Is.EqualTo(LibrarySynchronization.RenameOutcome.Ambiguous None)
             )
 
             let _, accepted = prepared ()
 
             Assert.That(
-                (LibrarySynchronization.renameResult { selected with Accepted = accepted.Accepted } None)
+                (LibrarySynchronization.renameResult (acceptedRename before.AppliedCursor accepted.Accepted.Value selected) None)
                     .Outcome,
-                Is.EqualTo("acceptedButObstructed")
+                Is.EqualTo(LibrarySynchronization.RenameOutcome.AcceptedButObstructed None)
             )
 
             Assert.That(
-                (LibrarySynchronization.renameResult { selected with Accepted = accepted.Accepted; Terminal = true } None)
+                (LibrarySynchronization.renameResult
+                    (acceptedRename before.AppliedCursor accepted.Accepted.Value selected
+                     |> LibraryOperation.complete)
+                    None)
                     .Outcome,
-                Is.EqualTo("completed")
+                Is.EqualTo(LibrarySynchronization.RenameOutcome.Completed)
             )
 
             throws<InvalidOperationException> (fun () -> retireRejectedRename db before.RepositoryId rejected)
@@ -403,7 +454,7 @@ module LibraryLocalStateTests =
                 Is.False
             )
 
-            let saved = { rejected with OperationId = Guid.NewGuid(); Rename = false; SourceBytes = Some [| 1uy |]; Receipt = None }
+            let saved = { accepted with OperationId = Guid.NewGuid() }
             insertOperation db before.RepositoryId saved
             throws<InvalidOperationException> (fun () -> retireRejectedRename db before.RepositoryId saved)
 
@@ -436,7 +487,7 @@ module LibraryLocalStateTests =
                             else
                                 "UPDATE library_operations SET operation_json=$changed;"
 
-                        command.Parameters.AddWithValue("$changed", serialize { pending with EchoPending = true })
+                        command.Parameters.AddWithValue("$changed", serialize (LibraryOperation.setEcho true pending))
                         |> ignore
 
                         command.ExecuteNonQuery() |> ignore)
@@ -533,10 +584,22 @@ module LibraryLocalStateTests =
             enable db state
             insertOperation db state.RepositoryId pending
 
-            throws<InvalidOperationException> (fun () -> updateOperation db state.RepositoryId pending { pending with SourceBytes = Some [| 42uy |] })
+            let changedObject =
+                match pending.Work with
+                | OperationWork.SavedFile (intent, progress) ->
+                    { pending with Work = OperationWork.SavedFile({ intent with Object = objectReference [| 42uy |] }, progress) }
+                | _ -> invalidOp "Expected a saved file fixture."
+
+            throws<InvalidOperationException> (fun () -> updateOperation db state.RepositoryId pending changedObject)
             |> ignore
 
-            throws<InvalidOperationException> (fun () -> updateOperation db state.RepositoryId pending { pending with RequestJson = Some "replacement-request" })
+            let changedRequest =
+                match pending.Work with
+                | OperationWork.SavedFile (intent, SavedFileProgress.Accepted (_, receipt, progress)) ->
+                    { pending with Work = OperationWork.SavedFile(intent, SavedFileProgress.Accepted("replacement-request", receipt, progress)) }
+                | _ -> invalidOp "Expected an accepted saved file fixture."
+
+            throws<InvalidOperationException> (fun () -> updateOperation db state.RepositoryId pending changedRequest)
             |> ignore
 
             throws<InvalidOperationException> (fun () -> complete db { state with AppliedCursor = "unrelated-predecessor" } pending)
@@ -562,7 +625,7 @@ module LibraryLocalStateTests =
             let _, db = location ()
             do! initialize db
             let initial, first = prepared ()
-            let first = { first with EchoPending = true }
+            let first = LibraryOperation.setEcho true first
             enable db initial
             insertOperation db initial.RepositoryId first
             complete db initial first
@@ -585,8 +648,7 @@ module LibraryLocalStateTests =
                         Item = { first.Accepted.Value.Item with LastChangeCursor = $"opaque-{ordinal}"; ContentRevision = Some $"opaque-{ordinal}" }
                     }
 
-                let next =
-                    { first with OperationId = operationId; Accepted = Some nextChange; ExpectedCursor = current.AppliedCursor; CreatedAtTicks = ordinal }
+                let next = { incoming current.AppliedCursor first.SourcePath first.TargetPath None EchoState.Pending nextChange with CreatedAtTicks = ordinal }
 
                 insertOperation db initial.RepositoryId next
                 complete db current next
@@ -618,10 +680,11 @@ module LibraryLocalStateTests =
             let target = Path.Combine(root, "Library", "item.bin")
             let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
             configuration.RootDirectory <- root
+            configuration.ObjectDirectory <- Path.Combine(root, ".grace", "objects")
             configuration.GraceStatusFile <- db
             do! initialize db
             let initial, first = prepared ()
-            let first = { first with EchoPending = true; CreatedAtTicks = -1000000L }
+            let first = { LibraryOperation.setEcho true first with CreatedAtTicks = -1000000L }
             configuration.RepositoryId <- initial.RepositoryId
             enable db initial
             insertOperation db initial.RepositoryId first
@@ -630,12 +693,15 @@ module LibraryLocalStateTests =
             let dependent =
                 { first with
                     OperationId = Guid.NewGuid()
-                    SourceBytes = Some [| 99uy |]
-                    OriginatingCreateId = Some first.OperationId
-                    Accepted = None
-                    Prepared = false
-                    RequestJson = None
-                    EchoPending = false
+                    Work =
+                        OperationWork.SavedFile(
+                            {
+                                SourcePath = first.SourcePath
+                                Object = objectReference [| 99uy |]
+                                Base = SavedBase.PendingCreate(first.OperationId, first.Placement)
+                            },
+                            SavedFileProgress.Captured
+                        )
                     CreatedAtTicks = 1000000L
                 }
 
@@ -655,18 +721,11 @@ module LibraryLocalStateTests =
                 }
 
             let other =
-                { first with
-                    OperationId = otherId
-                    Accepted = Some otherChange
-                    SourcePath = "Library/other.bin"
-                    TargetPath = "Library/other.bin"
-                    ExpectedCursor = current.AppliedCursor
-                    CreatedAtTicks = -999999L
-                }
+                { incoming current.AppliedCursor "Library/other.bin" "Library/other.bin" None EchoState.Pending otherChange with CreatedAtTicks = -999999L }
 
             insertOperation db initial.RepositoryId other
             complete db current other
-            File.WriteAllBytes(Path.Combine(root, "Library", "other.bin"), other.SourceBytes.Value)
+            File.WriteAllBytes(Path.Combine(root, "Library", "other.bin"), sampleBytes)
             current <- (readRepository db initial.RepositoryId).Value
             let mutable last = first
 
@@ -694,11 +753,13 @@ module LibraryLocalStateTests =
                     }
 
                 let next =
-                    { first with
-                        OperationId = operationId
-                        SourceBytes = Some bytes
-                        Accepted = Some { first.Accepted.Value with OperationId = operationId; Item = item }
-                        ExpectedCursor = current.AppliedCursor
+                    { incoming
+                          current.AppliedCursor
+                          first.SourcePath
+                          first.TargetPath
+                          None
+                          EchoState.Pending
+                          { first.Accepted.Value with OperationId = operationId; Item = item } with
                         CreatedAtTicks = -(int64 ordinal)
                     }
 
@@ -776,7 +837,7 @@ module LibraryLocalStateTests =
                         not operation.Terminal
                         && operation.OperationId <> dependent.OperationId)
 
-                Assert.That(captured.SourceBytes, Is.EqualTo(Some laterBytes))
+                Assert.That(File.ReadAllBytes(LibraryFilesystem.objectPath configuration captured.SourceObject.Value), Is.EqualTo<byte>(laterBytes))
                 Assert.That(captured.MaterializedBase, Is.EqualTo(Some last.Accepted.Value.Item))
                 Assert.That(captured.RequestJson.IsNone, Is.True)
 
@@ -794,7 +855,7 @@ module LibraryLocalStateTests =
             let _, db = location ()
             do! initialize db
             let initial, first = prepared ()
-            let first = { first with EchoPending = true }
+            let first = LibraryOperation.setEcho true first
             enable db initial
             insertOperation db initial.RepositoryId first
             complete db initial first
@@ -802,8 +863,7 @@ module LibraryLocalStateTests =
             let id = Guid.NewGuid()
             let change = { first.Accepted.Value with OperationId = id; Item = { first.Accepted.Value.Item with LastChangeCursor = "not-sortable-next" } }
 
-            let next =
-                { first with OperationId = id; Accepted = Some change; ExpectedCursor = current.AppliedCursor; EchoPending = false; CreatedAtTicks = -1L }
+            let next = { incoming current.AppliedCursor first.SourcePath first.TargetPath None EchoState.Clear change with CreatedAtTicks = -1L }
 
             insertOperation db initial.RepositoryId next
             use connection = openConnection db
@@ -880,14 +940,13 @@ module LibraryLocalStateTests =
                 }
 
             let directory =
-                { template with
-                    ItemKind = ItemKind.Directory
-                    SourceBytes = None
-                    SourcePath = "Library/old"
-                    TargetPath = "Library/old"
-                    Accepted = Some { template.Accepted.Value with ChangeKind = ChangeKind.CreateDirectory; Item = folder }
-                    EchoPending = true
-                }
+                incoming
+                    initial.AppliedCursor
+                    "Library/old"
+                    "Library/old"
+                    None
+                    EchoState.Pending
+                    { template.Accepted.Value with ChangeKind = ChangeKind.CreateDirectory; Item = folder }
 
             insertOperation db initial.RepositoryId directory
             complete db initial directory
@@ -903,14 +962,13 @@ module LibraryLocalStateTests =
                 }
 
             let child =
-                { template with
-                    OperationId = childId
-                    SourcePath = "Library/old/item.bin"
-                    TargetPath = "Library/old/item.bin"
-                    Accepted = Some { template.Accepted.Value with OperationId = childId; Item = childItem }
-                    ExpectedCursor = current.AppliedCursor
-                    EchoPending = true
-                }
+                incoming
+                    current.AppliedCursor
+                    "Library/old/item.bin"
+                    "Library/old/item.bin"
+                    None
+                    EchoState.Pending
+                    { template.Accepted.Value with OperationId = childId; Item = childItem }
 
             insertOperation db initial.RepositoryId child
             complete db current child
@@ -925,14 +983,13 @@ module LibraryLocalStateTests =
                 }
 
             let unrelated =
-                { template with
-                    OperationId = unrelatedId
-                    SourcePath = "Library/unrelated.bin"
-                    TargetPath = "Library/unrelated.bin"
-                    Accepted = Some { template.Accepted.Value with OperationId = unrelatedId; Item = unrelatedItem }
-                    ExpectedCursor = current.AppliedCursor
-                    EchoPending = true
-                }
+                incoming
+                    current.AppliedCursor
+                    "Library/unrelated.bin"
+                    "Library/unrelated.bin"
+                    None
+                    EchoState.Pending
+                    { template.Accepted.Value with OperationId = unrelatedId; Item = unrelatedItem }
 
             insertOperation db initial.RepositoryId unrelated
             complete db current unrelated
@@ -946,13 +1003,13 @@ module LibraryLocalStateTests =
                 }
 
             let move =
-                { directory with
-                    OperationId = moveId
-                    MaterializedBase = Some folder
-                    TargetPath = "Library/new"
-                    Accepted = Some { directory.Accepted.Value with OperationId = moveId; ChangeKind = ChangeKind.Rename; Item = moved }
-                    ExpectedCursor = current.AppliedCursor
-                }
+                incoming
+                    current.AppliedCursor
+                    "Library/old"
+                    "Library/new"
+                    (Some folder)
+                    EchoState.Pending
+                    { directory.Accepted.Value with OperationId = moveId; ChangeKind = ChangeKind.Rename; Item = moved }
 
             insertOperation db initial.RepositoryId move
             complete db current move
@@ -1046,6 +1103,272 @@ module LibraryLocalStateTests =
                     .NextPageToken,
                 Is.EqualTo(Some "opaque-next-page")
             )
+        }
+
+    /// Keeps the shared payload-free kind explicit while leaving existing Library wire strings unchanged.
+    [<TestCase("file"); TestCase("directory")>]
+    let ``shared item kind adapters preserve Library wire values`` wire =
+        let kind = LibraryOperation.kindFromWire wire
+        Assert.That(LibraryOperation.kindToWire kind, Is.EqualTo(wire))
+        Assert.That((kind = Grace.Types.Common.ItemKind.File), Is.EqualTo((wire = "file")))
+        throws<InvalidOperationException> (fun () -> LibraryOperation.kindFromWire "unknown" |> ignore)
+
+    /// Rejects changing operation families or advancing without genuine acceptance, and keeps receipt replay idempotent.
+    [<Test>]
+    let ``typed operation transitions preserve intent checkpoint and retained receipt`` () =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let state, accepted = prepared ()
+            enable db state
+            insertOperation db state.RepositoryId accepted
+            let checkpoint = LibraryOperation.checkpoint accepted |> Option.get
+
+            let changed =
+                { accepted with Work = OperationWork.Incoming(accepted.Accepted.Value, accepted.SourcePath, None, ApplicationProgress.Prepared checkpoint) }
+
+            throws<InvalidOperationException> (fun () -> updateOperation db state.RepositoryId accepted changed)
+
+            let drifted =
+                match accepted.Work with
+                | OperationWork.SavedFile (intent, SavedFileProgress.Accepted (request, receipt, _)) ->
+                    { accepted with
+                        Work =
+                            OperationWork.SavedFile(
+                                intent,
+                                SavedFileProgress.Accepted(request, receipt, ApplicationProgress.Prepared { checkpoint with ExpectedCursor = "changed" })
+                            )
+                    }
+                | _ -> invalidOp "Expected an accepted saved file."
+
+            throws<InvalidOperationException> (fun () -> updateOperation db state.RepositoryId accepted drifted)
+            Assert.That(LibraryOperation.receive accepted.Receipt.Value accepted, Is.EqualTo(accepted))
+
+            throws<InvalidOperationException> (fun () ->
+                LibraryOperation.receive { accepted.Receipt.Value with Outcome = "rejected" } accepted
+                |> ignore)
+
+            throws<InvalidOperationException> (fun () ->
+                LibraryOperation.freezeRequest "replacement" accepted
+                |> ignore)
+
+            Assert.That(readOperations db state.RepositoryId, Is.EqualTo<PendingOperation>([| accepted |]))
+        }
+
+    /// Serializes only envelope and typed work, with one accepted change and derived SQLite indexes on insert.
+    [<Test>]
+    let ``typed operations serialize one source and derive terminal indexes on insertion`` () =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let state, accepted = prepared ()
+            enable db state
+
+            let terminal =
+                accepted
+                |> LibraryOperation.setEcho true
+                |> LibraryOperation.complete
+
+            let intent =
+                match accepted.Work with
+                | OperationWork.SavedFile (intent, _) -> intent
+                | _ -> invalidOp "Expected a saved file."
+
+            let captured = { accepted with Work = OperationWork.SavedFile(intent, SavedFileProgress.Captured) }
+
+            let uploaded =
+                captured
+                |> LibraryOperation.freezeRequest "frozen"
+                |> LibraryOperation.uploaded
+
+            let rejection =
+                {
+                    OperationId = uploaded.OperationId
+                    RequestHash = "hash"
+                    Outcome = OutcomeKind.Rejected
+                    Change = None
+                    ReasonCode = Some RejectionReason.PreparedContentExpired
+                    CurrentLibraryCatalog = None
+                    Rebaseline = None
+                }
+
+            let rejected = LibraryOperation.receive rejection uploaded
+
+            for operation in
+                [
+                    captured
+                    uploaded
+                    rejected
+                    accepted
+                    terminal
+                ] do
+                let json = serialize operation
+                use document = System.Text.Json.JsonDocument.Parse json
+
+                Assert.That(
+                    document.RootElement.EnumerateObject()
+                    |> Seq.map (fun property -> property.Name)
+                    |> Seq.toArray,
+                    Is.EquivalentTo(
+                        [|
+                            "OperationId"
+                            "CatalogVersion"
+                            "CreatedAtTicks"
+                            "Work"
+                        |]
+                    )
+                )
+
+                Assert.That(deserialize<PendingOperation> json, Is.EqualTo(operation))
+                Assert.That(json, Does.Not.Contain("SourceBytes"))
+
+                if operation.Accepted.IsSome then
+                    Assert.That(
+                        System
+                            .Text
+                            .RegularExpressions
+                            .Regex
+                            .Matches(
+                                json,
+                                "\"AcceptedAt\""
+                            )
+                            .Count,
+                        Is.EqualTo(1)
+                    )
+
+            Assert.That(rejected.Terminal, Is.False)
+            Assert.That(rejected.SourceObject, Is.EqualTo(captured.SourceObject))
+            insertOperation db state.RepositoryId terminal
+            Assert.That(readOperations db state.RepositoryId, Is.EqualTo<PendingOperation>([| terminal |]))
+            use connection = openConnection db
+            use command = connection.CreateCommand()
+            command.CommandText <- "SELECT direction || ':' || terminal || ':' || echo_pending FROM library_operations;"
+            Assert.That(command.ExecuteScalar(), Is.EqualTo("local:1:1"))
+            command.CommandText <- "UPDATE library_operations SET echo_pending=0;"
+            command.ExecuteNonQuery() |> ignore
+            throws<InvalidOperationException> (fun () -> readOperations db state.RepositoryId |> ignore)
+        }
+
+    /// Restarts capture from SQLite alone after the insert committed, then keeps a later save distinct.
+    [<Test>]
+    let ``saved object capture restart finds committed operation without caller identity`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            configuration.ObjectDirectory <- Path.Combine(configuration.RootDirectory, "configured-object-store")
+            let source = Path.Combine(configuration.RootDirectory, "Library/item.bin")
+            File.WriteAllBytes(source, Array.init 196609 (fun index -> byte (index % 251)))
+
+            throws<OperationCanceledException> (fun () ->
+                LibrarySynchronization.captureSavedWith (fun _ -> raise (OperationCanceledException())) configuration
+                |> ignore)
+
+            let pending =
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+
+            Assert.That(pending.Length, Is.EqualTo(1))
+            let saved = pending[0].SourceObject.Value
+            let locator = LibraryFilesystem.objectPath configuration saved
+            let lastWrite = File.GetLastWriteTimeUtc locator
+            Assert.That(locator.StartsWith(configuration.ObjectDirectory, StringComparison.OrdinalIgnoreCase), Is.True)
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
+
+            Assert.That(
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.filter (fun operation -> not operation.Terminal),
+                Is.EqualTo<PendingOperation>(pending)
+            )
+
+            Assert.That(File.GetLastWriteTimeUtc locator, Is.EqualTo(lastWrite))
+            File.WriteAllText(source, "a distinct later save")
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+
+            let later =
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+
+            Assert.That(later.Length, Is.EqualTo(2))
+            Assert.That(later[0], Is.EqualTo(pending[0]))
+            Assert.That(later[1].SourceObject, Is.Not.EqualTo(later[0].SourceObject))
+            Assert.That((FileInfo(locator)).Length, Is.EqualTo(196609L))
+            Assert.That((serialize later[0]).Length, Is.LessThan(10000))
+        }
+
+    /// Reuses a published object after interruption and keeps its locator independent of a renamed working file.
+    [<Test>]
+    let ``object publication interruption reuses complete content without rewriting shared object`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let relative = "Library/item.bin"
+            let source = Path.Combine(configuration.RootDirectory, relative)
+            let identity = LibraryFilesystem.stableIdentity source
+
+            throws<OperationCanceledException> (fun () ->
+                LibraryFilesystem.captureObjectWith (fun _ -> raise (OperationCanceledException())) configuration relative identity
+                |> ignore)
+
+            let reference = LibraryFilesystem.captureObject configuration relative identity
+            let locator = LibraryFilesystem.objectPath configuration reference
+            let timestamp = File.GetLastWriteTimeUtc locator
+            Assert.That(LibraryFilesystem.captureObject configuration relative identity, Is.EqualTo(reference))
+            Assert.That(File.GetLastWriteTimeUtc locator, Is.EqualTo(timestamp))
+            File.Move(source, Path.Combine(configuration.RootDirectory, "Library/renamed.bin"))
+            use verified = LibraryFilesystem.openObject configuration reference
+            Assert.That(verified.Length, Is.EqualTo(identity.Size))
+            throws<IOException> (fun () -> File.WriteAllText(locator, "must not replace leased content"))
+            pruneClassified configuration.GraceStatusFile before.RepositoryId 0
+            Assert.That(File.Exists(locator), Is.True)
+            Assert.That(Directory.GetFiles(configuration.ObjectDirectory, "library-capture-*.tmp"), Is.Empty)
+        }
+
+    /// Never repairs a committed content reference from newer working bytes, including a partial existing object.
+    [<TestCase("missing"); TestCase("corrupt")>]
+    let ``missing or corrupt saved object cannot recapture changed working bytes`` failure =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let source = Path.Combine(configuration.RootDirectory, "Library/item.bin")
+            File.WriteAllText(source, "frozen saved content")
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+
+            let pending =
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.find (fun operation -> not operation.Terminal)
+
+            let locator = LibraryFilesystem.objectPath configuration pending.SourceObject.Value
+
+            if failure = "missing" then
+                File.Delete(locator)
+            else
+                File.WriteAllText(locator, "partial")
+
+            File.WriteAllText(source, "new working content")
+            Assert.That(Action(fun () -> use stream = LibraryFilesystem.openObject configuration pending.SourceObject.Value in ()), Throws.Exception)
+
+            Assert.That(
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.find (fun operation -> not operation.Terminal),
+                Is.EqualTo(pending)
+            )
+
+            Assert.That(File.ReadAllText(source), Is.EqualTo("new working content"))
+
+            if failure = "corrupt" then
+                File.WriteAllText(source, "frozen saved content")
+
+                throws<InvalidOperationException> (fun () ->
+                    LibraryFilesystem.captureObject configuration "Library/item.bin" pending.SourceObject.Value.Content
+                    |> ignore)
+
+                Assert.That(File.ReadAllText(locator), Is.EqualTo("partial"))
         }
 
     /// Detects a stable-read interleaving and refuses to publish over bytes changed after preparation.

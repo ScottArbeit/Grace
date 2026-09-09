@@ -39,6 +39,7 @@ module LibraryBaselineTests =
             let grace = Directory.CreateDirectory(Path.Combine(root, ".grace"))
             let configuration = GraceConfiguration()
             configuration.RootDirectory <- root
+            configuration.ObjectDirectory <- Path.Combine(grace.FullName, "objects")
             configuration.GraceDirectory <- grace.FullName
             configuration.GraceStatusFile <- Path.Combine(grace.FullName, "grace-local.db")
             configuration.RepositoryId <- Guid.NewGuid()
@@ -246,13 +247,21 @@ module LibraryBaselineTests =
             )
 
             Assert.That(fixture.Reads.Value, Is.EqualTo(1))
+
+            let tombstone =
+                operations fixture
+                |> Array.find (fun operation -> operation.BaselineItem.Value.Tombstone.IsSome)
+
+            Assert.That(tombstone.Terminal, Is.True)
+            Assert.That(tombstone.Prepared, Is.False)
+            Assert.That(Grace.CLI.LibraryOperation.checkpoint tombstone, Is.EqualTo(None))
         }
 
     /// Reopens real SQLite after each interrupted stage and checks completion never rewrites published bytes.
     [<TestCase("page", 1)>]
     [<TestCase("page", 2)>]
     [<TestCase("prepare", 1)>]
-    [<TestCase("prepare", 4)>]
+    [<TestCase("prepare", 3)>]
     [<TestCase("beforePublish", 1)>]
     [<TestCase("publish", 1)>]
     [<TestCase("publish", 2)>]

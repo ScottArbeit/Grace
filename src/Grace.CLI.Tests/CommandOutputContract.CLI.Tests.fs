@@ -1098,7 +1098,7 @@ module CommandOutputContractRegistryTests =
                 .GetProperty("ReturnValue")
 
         result.GetProperty("title").GetString()
-        |> should equal "RenameResult"
+        |> should equal "RenameOutput"
 
         let properties = result.GetProperty("properties")
 
@@ -1112,7 +1112,8 @@ module CommandOutputContractRegistryTests =
                 "SourcePath"
                 "TargetPath"
                 "Outcome"
-                "Reason"
+                "ReasonCode"
+                "Diagnostic"
             ]
 
         properties

@@ -762,7 +762,7 @@ module CommandOutputContract =
         | "library.list" -> typeof<Grace.Types.Library.LibraryCatalogDto>
         | "library.add"
         | "library.remove" -> typeof<Grace.Types.Library.LibraryCatalogChangeResultDto>
-        | "library.rename" -> typeof<Grace.CLI.Command.LibrarySynchronization.RenameResult>
+        | "library.rename" -> typeof<Grace.CLI.Command.LibraryCommand.RenameOutput>
         | "library.sync.enable"
         | "library.sync.run"
         | "library.sync.status" -> typeof<Grace.CLI.Command.LibrarySynchronization.Status>

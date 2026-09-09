@@ -128,7 +128,7 @@ Enable A, create nonempty files and nested directories in its Library, and run s
 
 Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation or catalog adoption.
 
-Saved bytes are captured before upload. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling.
+Saved content is captured into Grace's existing object directory before its pending operation is recorded. Upload uses that verified snapshot even if the working file changes. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling. Missing or corrupt saved objects block synchronization and retain the pending request; Grace does not substitute newer working-file bytes.
 
 Zero-byte local files are excluded before pending input or upload preparation. They remain present: truncating a tracked file to zero does not submit an update or deletion, and a later nonempty save retains its previous materialized edit base. Incoming changes cannot overwrite or delete an excluded empty file. Such a change leaves synchronization blocked and its applied cursor unchanged until the local obstruction is resolved. A previously captured nonempty source and frozen request remain available after a later zero-length save; installing its accepted result cannot overwrite that empty file.
 
@@ -193,7 +193,7 @@ The shell examples describe the same Windows-only client. Directory rename, cros
 
 Grace saves the selected intent and exact namespace-only request before submission. It changes filenames only after server acceptance and ordered application of preceding changes. Compatible remote content edits keep their order and content history. Restart with the same source and name resumes the original request; another name cannot replace pending work.
 
-Human output and `cli-json-v1` data distinguish four outcomes:
+Human output and `cli-json-v1` data distinguish four outcomes. JSON exposes `OperationId`, `SourcePath`, `TargetPath`, `Outcome`, `ReasonCode` and `Diagnostic`. `ReasonCode` contains a stable server rejection code; `Diagnostic` contains an explanation of unresolved acceptance or incomplete local application. Neither field is set for a completed result.
 
 | Outcome | Meaning and next action |
 | --- | --- |

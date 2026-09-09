@@ -521,6 +521,97 @@ module LibrarySynchronizationWindowsServerTests =
             return copyA, copyB, repositoryId, proxy
         }
 
+    /// Proves committed object discovery, frozen-object upload and missing-reference blocking through actual CLI processes and the hosted server.
+    [<TestCase("complete"); TestCase("missing"); TestCase("corrupt")>]
+    let ``committed saved object resumes without caller identity and uploads frozen content`` scenario =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, proxy = enableCopiesAsync ("saved-object-" + scenario)
+            use proxy = proxy
+            let source = Path.Combine(copyA, "Library", "object.txt")
+            let frozenBytes = Array.init 196609 (fun index -> byte (index % 251))
+            File.WriteAllBytes(source, frozenBytes)
+            let configuration = GraceConfiguration()
+            configuration.RootDirectory <- copyA
+            configuration.ObjectDirectory <- Path.Combine(copyA, ".grace", "objects")
+            configuration.GraceStatusFile <- localDb copyA
+            configuration.RepositoryId <- repositoryId
+            let before = Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
+
+            /// Interrupts after the actual insert, discarding the caller's operation identity.
+            let interruptCapture () =
+                LibrarySynchronization.captureSavedWith (fun _ -> raise (OperationCanceledException())) configuration
+                |> ignore
+
+            Assert.That(Action interruptCapture, Throws.TypeOf<OperationCanceledException>())
+
+            let pending =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.exactlyOne
+
+            let locator = LibraryFilesystem.objectPath configuration pending.SourceObject.Value
+            let timestamp = File.GetLastWriteTimeUtc locator
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
+
+            Assert.That(
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId,
+                Is.EqualTo<Grace.CLI.LibraryLocalState.PendingOperation>([| pending |])
+            )
+
+            Assert.That(File.GetLastWriteTimeUtc locator, Is.EqualTo(timestamp))
+            File.WriteAllText(source, "distinct working bytes after committed capture")
+
+            if scenario <> "complete" then
+                if scenario = "missing" then
+                    File.Delete(locator)
+                else
+                    File.WriteAllText(locator, "corrupt partial object")
+
+                let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+                Assert.That(blocked.ExitCode, Is.Not.Zero)
+                Assert.That(proxy.ManifestUploadCount, Is.Zero)
+                Assert.That(proxy.SubmitRequestCount, Is.Zero)
+
+                Assert.That(
+                    (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                        .Value
+                        .AppliedCursor,
+                    Is.EqualTo(before.Value.AppliedCursor)
+                )
+
+                let retained =
+                    Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                    |> Array.find (fun operation -> operation.OperationId = pending.OperationId)
+
+                Assert.That(retained, Is.EqualTo(pending))
+                Assert.That(File.ReadAllText(source), Is.EqualTo("distinct working bytes after committed capture"))
+                // Restore the exact test backup explicitly; production never repairs from changed working bytes.
+                File.WriteAllBytes(locator, frozenBytes)
+
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let completed =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.find (fun operation -> operation.OperationId = pending.OperationId)
+
+            Assert.That(completed.Terminal, Is.True)
+            Assert.That(completed.SourceObject, Is.EqualTo(pending.SourceObject))
+            Assert.That(completed.Accepted.Value.Item.Content.Value.Size, Is.EqualTo(int64 frozenBytes.Length))
+            Assert.That(completed.Accepted.Value.Item.Content.Value.Sha256Hash, Is.EqualTo(pending.SourceObject.Value.Content.Sha256Hash))
+            Assert.That(File.ReadAllBytes(locator), Is.EqualTo<byte>(frozenBytes))
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(2))
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(2))
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "object.txt")), Is.EqualTo("distinct working bytes after committed capture"))
+            let finalWrite = File.GetLastWriteTimeUtc(source)
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(2))
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(2))
+            Assert.That(File.GetLastWriteTimeUtc(source), Is.EqualTo(finalWrite))
+        }
+
     /// Invokes the actual explicit command through real server acceptance, ordered predecessors, saved edits and receipt replay in two Windows copies.
     [<TestCase("normal");
       TestCase("nested");
@@ -636,8 +727,10 @@ module LibrarySynchronizationWindowsServerTests =
                                     "new.txt"
                                     cancellation.Token
 
-                            let exitCode = if result.Outcome = "completed" then 0 else 1
-                            return { ExitCode = exitCode; StandardOutput = serialize result; StandardError = "" }
+                            let exitCode = if result.Outcome = LibrarySynchronization.RenameOutcome.Completed then 0 else 1
+
+                            return
+                                { ExitCode = exitCode; StandardOutput = serialize (Grace.CLI.Command.LibraryCommand.renameOutput result); StandardError = "" }
                         finally
                             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, previousUri)
                             Directory.SetCurrentDirectory(previousDirectory)
@@ -665,7 +758,7 @@ module LibrarySynchronizationWindowsServerTests =
             )
 
             Assert.That(
-                selected.SourceBytes.IsNone
+                selected.SourceObject.IsNone
                 && not selected.Uploaded,
                 Is.True
             )
@@ -849,8 +942,10 @@ module LibrarySynchronizationWindowsServerTests =
                                     "new.txt"
                                     cancellation.Token
 
-                            let exitCode = if result.Outcome = "completed" then 0 else 1
-                            return { ExitCode = exitCode; StandardOutput = serialize result; StandardError = "" }
+                            let exitCode = if result.Outcome = LibrarySynchronization.RenameOutcome.Completed then 0 else 1
+
+                            return
+                                { ExitCode = exitCode; StandardOutput = serialize (Grace.CLI.Command.LibraryCommand.renameOutput result); StandardError = "" }
                         finally
                             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, previousUri)
                             Directory.SetCurrentDirectory(previousDirectory)
@@ -1141,7 +1236,7 @@ module LibrarySynchronizationWindowsServerTests =
                 |> Array.find (fun operation -> not operation.Terminal)
 
             Assert.That(retained.OperationId, Is.EqualTo(pending.OperationId))
-            Assert.That(retained.SourceBytes, Is.EqualTo(pending.SourceBytes))
+            Assert.That(retained.SourceObject, Is.EqualTo(pending.SourceObject))
             Assert.That(retained.RequestJson, Is.EqualTo(pending.RequestJson))
             Assert.That(retained.Accepted.IsSome, Is.True)
 
@@ -1198,7 +1293,10 @@ module LibrarySynchronizationWindowsServerTests =
                 Is.True
             )
 
-            Assert.That(prepared[1].SourceBytes.Value, Is.EqualTo<byte>(System.Text.Encoding.UTF8.GetBytes("distinct later positive")))
+            Assert.That(
+                File.ReadAllBytes(Path.Combine(copyA, ".grace", "objects", prepared[1].SourceObject.Value.ObjectPath)),
+                Is.EqualTo<byte>(System.Text.Encoding.UTF8.GetBytes("distinct later positive"))
+            )
 
             Assert.That(
                 (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
@@ -1224,7 +1322,7 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(afterZero.Length, Is.EqualTo(2))
             Assert.That(afterZero[0], Is.EqualTo(prepared[0]))
             Assert.That(afterZero[1].OperationId, Is.EqualTo(prepared[1].OperationId))
-            Assert.That(afterZero[1].SourceBytes, Is.EqualTo(prepared[1].SourceBytes))
+            Assert.That(afterZero[1].SourceObject, Is.EqualTo(prepared[1].SourceObject))
 
             Assert.That(
                 (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
@@ -1378,6 +1476,7 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(first.Accepted.Value.Item.ItemId, Is.EqualTo(original.ItemId))
             let configuration = GraceConfiguration()
             configuration.RootDirectory <- copyB
+            configuration.ObjectDirectory <- Path.Combine(copyB, ".grace", "objects")
             configuration.GraceStatusFile <- localDb copyB
             configuration.RepositoryId <- repositoryId
             let operationsBeforeCapture = Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
@@ -2033,7 +2132,7 @@ module LibrarySynchronizationWindowsServerTests =
 
                 occupiedName <- Grace.Actors.LibraryDecision.conflictName "saved.txt" saved.OperationId 0
 
-                occupyDirectoryAsync repositoryId saved.ExpectedCatalogVersion saved.Parent occupiedName
+                occupyDirectoryAsync repositoryId saved.ExpectedCatalogVersion saved.Placement.Parent occupiedName
                 |> fun work -> work.GetAwaiter().GetResult())
 
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (command "run")

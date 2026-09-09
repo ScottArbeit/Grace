@@ -244,17 +244,43 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Exposes stable command fields while separating server rejection codes from local diagnostics.
+    [<CLIMutable>]
+    type RenameOutput = { OperationId: Guid; SourcePath: string; TargetPath: string; Outcome: string; ReasonCode: string option; Diagnostic: string option }
+
+    /// Converts internal outcomes only at the CLI boundary, keeping their existing output spellings.
+    let internal renameOutput (result: LibrarySynchronization.RenameResult) =
+        let outcome, reason, diagnostic =
+            match result.Outcome with
+            | LibrarySynchronization.RenameOutcome.Completed -> "completed", None, None
+            | LibrarySynchronization.RenameOutcome.Rejected code -> "rejected", Some(Grace.CLI.LibraryOperation.rejectionCodeText code), None
+            | LibrarySynchronization.RenameOutcome.Ambiguous message -> "ambiguous", None, message
+            | LibrarySynchronization.RenameOutcome.AcceptedButObstructed message -> "acceptedButObstructed", None, message
+
+        {
+            OperationId = result.OperationId
+            SourcePath = result.SourcePath
+            TargetPath = result.TargetPath
+            Outcome = outcome
+            ReasonCode = reason
+            Diagnostic = diagnostic
+        }
+
     /// Explains the retained rename state without describing an unresolved filename change as success.
     let internal renameMessage (result: LibrarySynchronization.RenameResult) =
         let message =
             match result.Outcome with
-            | "completed" -> $"Library rename completed: '{result.SourcePath}' to '{result.TargetPath}'."
-            | "rejected" -> "Library rename rejected. This request changed no local filenames."
-            | "acceptedButObstructed" ->
+            | LibrarySynchronization.RenameOutcome.Completed -> $"Library rename completed: '{result.SourcePath}' to '{result.TargetPath}'."
+            | LibrarySynchronization.RenameOutcome.Rejected _ -> "Library rename rejected. This request changed no local filenames."
+            | LibrarySynchronization.RenameOutcome.AcceptedButObstructed _ ->
                 "Library rename accepted by the server; local application is incomplete. Resolve the obstruction and rerun the same command."
-            | _ -> "Library rename outcome is ambiguous. The selected request is retained; rerun the same command to resume."
+            | LibrarySynchronization.RenameOutcome.Ambiguous _ ->
+                "Library rename outcome is ambiguous. The selected request is retained; rerun the same command to resume."
 
-        result.Reason
+        let output = renameOutput result
+
+        output.ReasonCode
+        |> Option.orElse output.Diagnostic
         |> Option.map (fun reason -> message + " " + reason)
         |> Option.defaultValue message
 
@@ -350,11 +376,19 @@ module LibraryCommand =
                             | _ -> ()
                         | _ -> ()
 
-                        let rendered = renderOutput parseResult result
+                        let output =
+                            result
+                            |> Result.map (fun value -> GraceReturnValue.Create (renameOutput value.ReturnValue) (getCorrelationId parseResult))
+
+                        let rendered = renderOutput parseResult output
 
                         return
                             match result with
-                            | Ok result when result.ReturnValue.Outcome <> "completed" -> 1
+                            | Ok result when
+                                result.ReturnValue.Outcome
+                                <> LibrarySynchronization.RenameOutcome.Completed
+                                ->
+                                1
                             | _ -> rendered
                     }
             }

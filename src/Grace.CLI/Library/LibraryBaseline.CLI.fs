@@ -1,6 +1,9 @@
 namespace Grace.CLI.Command
 
+open Grace.CLI
+
 open Grace.CLI.LibraryLocalState
+open Grace.CLI.LibraryOperation
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Library
@@ -320,7 +323,7 @@ module internal LibraryBaseline =
             do! check remote configuration expected
             let mutable operation = original
 
-            if not operation.Prepared then
+            if not operation.Prepared && item.Tombstone.IsNone then
                 if item.Tombstone.IsNone then
                     let target = fullPath configuration relative
                     requireParents configuration target
@@ -329,13 +332,17 @@ module internal LibraryBaseline =
                        |> Option.isSome then
                         invalidOp "Unprepared baseline target is occupied."
 
-                let prepared =
-                    { operation with
-                        Prepared = true
+                let preparation =
+                    {
+                        ExpectedCursor = expected.AppliedCursor
+                        SourcePath = relative
                         TargetPath = relative
-                        EchoPending = item.Tombstone.IsNone
+                        Echo = EchoState.Pending
+                        ExpectedTarget = TargetObservation.Absent
                         ExpectedAncestry = materializedParents configuration item
                     }
+
+                let prepared = LibraryOperation.prepare preparation operation
 
                 updateOperation configuration.GraceStatusFile configuration.RepositoryId operation prepared
                 operation <- prepared

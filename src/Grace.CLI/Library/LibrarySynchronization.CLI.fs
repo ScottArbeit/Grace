@@ -2,6 +2,7 @@ namespace Grace.CLI.Command
 
 open Grace.CLI
 open Grace.CLI.LibraryLocalState
+open Grace.CLI.LibraryOperation
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -270,9 +271,16 @@ module internal LibrarySynchronization =
                 invalidOp "Library catalog or applied predecessor changed; synchronization has stopped before local effects."
         }
 
-    /// Reports the selected rename separately from unrelated synchronization progress.
-    [<CLIMutable>]
-    type RenameResult = { OperationId: Guid; SourcePath: string; TargetPath: string; Outcome: string; Reason: string option }
+    /// Separates completed filenames, retained rejection and uncertain or obstructed progress.
+    [<RequireQualifiedAccess>]
+    type RenameOutcome =
+        | Completed
+        | Rejected of RejectionCode
+        | Ambiguous of string option
+        | AcceptedButObstructed of string option
+
+    /// Reports the selected rename using a typed internal outcome until the CLI output boundary.
+    type RenameResult = { OperationId: Guid; SourcePath: string; TargetPath: string; Outcome: RenameOutcome }
 
     /// Selects one clean materialized file under root exclusion, or resumes its unchanged durable namespace intent.
     let internal selectRenameWith afterIntent (configuration: GraceConfiguration) sourcePath newName =
@@ -292,7 +300,7 @@ module internal LibrarySynchronization =
             |> Array.tryFindBack (fun operation ->
                 operation.Rename
                 && pathsEqual operation.SourcePath source
-                && operation.Name = name)
+                && operation.Placement.Name = name)
 
         match matching with
         | Some operation when not operation.Terminal -> operation
@@ -348,7 +356,7 @@ module internal LibrarySynchronization =
 
                 parent <- Path.GetDirectoryName(parent)
 
-            let actual = LibraryFilesystem.stableRead sourceFull
+            let actual = LibraryFilesystem.stableIdentity sourceFull
 
             if actual.Size <= 0L
                || Some $"{actual.Blake3Hash}:{actual.Sha256Hash}:{actual.Size}"
@@ -366,28 +374,8 @@ module internal LibrarySynchronization =
             let operation =
                 {
                     OperationId = Guid.NewGuid()
-                    Direction = "local"
-                    Rename = true
-                    Receipt = None
-                    SourcePath = source
-                    SourceBytes = None
-                    MaterializedBase = Some item
-                    OriginatingCreateId = None
-                    Parent = ns.Parent
-                    Name = name
-                    ItemKind = ItemKind.File
-                    RequestJson = None
-                    Uploaded = false
-                    Accepted = None
-                    BaselineItem = None
-                    Prepared = false
-                    ExpectedCatalogVersion = current.Catalog.Version
-                    ExpectedCursor = current.AppliedCursor
-                    ExpectedAncestry = ancestry items item
-                    ExpectedTarget = None
-                    TargetPath = target
-                    Terminal = false
-                    EchoPending = false
+                    CatalogVersion = current.Catalog.Version
+                    Work = OperationWork.ExplicitRename({ SourcePath = source; TargetPath = target; MaterializedItem = item }, RenameProgress.Selected)
                     CreatedAtTicks = DateTime.UtcNow.Ticks
                 }
 
@@ -399,28 +387,22 @@ module internal LibrarySynchronization =
     let internal renameResult (operation: PendingOperation) reason =
         let outcome =
             if operation.Terminal && operation.Accepted.IsSome then
-                "completed"
-            elif operation.Receipt
-                 |> Option.exists (fun receipt -> receipt.Outcome = "rejected") then
-                "rejected"
+                RenameOutcome.Completed
+            elif (LibraryOperation.rejection operation).IsSome then
+                RenameOutcome.Rejected(
+                    (LibraryOperation.rejection operation)
+                        .Value
+                        .ReasonCode
+                )
             elif operation.Accepted.IsSome then
-                "acceptedButObstructed"
+                RenameOutcome.AcceptedButObstructed reason
             else
-                "ambiguous"
+                RenameOutcome.Ambiguous reason
 
-        {
-            OperationId = operation.OperationId
-            SourcePath = operation.SourcePath
-            TargetPath = operation.TargetPath
-            Outcome = outcome
-            Reason =
-                operation.Receipt
-                |> Option.bind (fun receipt -> receipt.ReasonCode)
-                |> Option.orElse reason
-        }
+        { OperationId = operation.OperationId; SourcePath = operation.SourcePath; TargetPath = operation.TargetPath; Outcome = outcome }
 
     /// Captures all observable saved files whose parent is materialized, before incoming metadata can replace their base.
-    let internal captureSaved (configuration: GraceConfiguration) =
+    let internal captureSavedWith afterInsert (configuration: GraceConfiguration) =
         let current = state configuration
         let items = readItems configuration.GraceStatusFile configuration.RepositoryId
         let mutable operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
@@ -531,22 +513,24 @@ module internal LibrarySynchronization =
 
                             if prepared.Length = 1 then Some prepared[0] else None)
 
-                    let itemKind = if Directory.Exists(path) then ItemKind.Directory else ItemKind.File
+                    let itemKind =
+                        if Directory.Exists(path) then
+                            Grace.Types.Common.ItemKind.Directory
+                        else
+                            Grace.Types.Common.ItemKind.File
 
-                    let bytes =
-                        if itemKind = ItemKind.File then
-                            Some((LibraryFilesystem.stableRead path).Bytes)
+                    let observed =
+                        if itemKind = Grace.Types.Common.ItemKind.File then
+                            Some(LibraryFilesystem.stableIdentity path)
                         else
                             None
 
                     let unchanged =
-                        match prior, bytes with
+                        match prior, observed with
                         | Some item, None -> item.ItemKind = ItemKind.Directory
-                        | Some item, Some bytes ->
+                        | Some item, Some captured ->
                             item.Content
                             |> Option.exists (fun content ->
-                                let captured = LibraryFilesystem.content bytes in
-
                                 content.Blake3Hash = captured.Blake3Hash
                                 && content.Sha256Hash = captured.Sha256Hash
                                 && content.Size = captured.Size)
@@ -573,7 +557,9 @@ module internal LibrarySynchronization =
                                      operation.MaterializedBase
                                      |> Option.exists (fun item -> item.ItemId = prior.ItemId))))
                         |> Array.tryLast
-                        |> Option.exists (fun operation -> operation.SourceBytes = bytes)
+                        |> Option.exists (fun operation ->
+                            (operation.SourceObject
+                             |> Option.map (fun value -> value.Content)) = observed)
 
                     let publishedPending =
                         operations
@@ -591,10 +577,8 @@ module internal LibrarySynchronization =
                                        else
                                            change.Item.Content
                                            |> Option.exists (fun descriptor ->
-                                               bytes
+                                               observed
                                                |> Option.exists (fun source ->
-                                                   let source = LibraryFilesystem.content source
-
                                                    descriptor.Blake3Hash = source.Blake3Hash
                                                    && descriptor.Sha256Hash = source.Sha256Hash
                                                    && descriptor.Size = source.Size)))))
@@ -610,7 +594,10 @@ module internal LibrarySynchronization =
                             && operation.ExpectedCatalogVersion = current.Catalog.Version
                             && pathsEqual operation.TargetPath relative)
 
-                    if not (bytes |> Option.exists Array.isEmpty)
+                    if not (
+                        observed
+                        |> Option.exists (fun value -> value.Size = 0L)
+                       )
                        && not unchanged
                        && not pendingSource
                        && not unpreparedRenameTarget
@@ -628,44 +615,44 @@ module internal LibrarySynchronization =
                                     && pathsEqual operation.SourcePath relative)
                                 |> Option.map (fun operation -> operation.OperationId)
 
+                        let placement = { Parent = parent; Name = Path.GetFileName(path) }
+
+                        let work =
+                            match observed with
+                            | None -> OperationWork.DirectoryCreate({ SourcePath = relative; Placement = placement }, DirectoryProgress.Selected)
+                            | Some observed ->
+                                let saved = LibraryFilesystem.captureObject configuration relative observed
+
+                                let sourceBase =
+                                    match prior, origin with
+                                    | Some item, _ -> SavedBase.MaterializedItem item
+                                    | _, Some id -> SavedBase.PendingCreate(id, placement)
+                                    | _ -> SavedBase.NewFile placement
+
+                                OperationWork.SavedFile({ SourcePath = relative; Object = saved; Base = sourceBase }, SavedFileProgress.Captured)
+
                         let operation =
-                            {
-                                OperationId = Guid.NewGuid()
-                                Direction = "local"
-                                Rename = false
-                                Receipt = None
-                                SourcePath = relative
-                                SourceBytes = bytes
-                                MaterializedBase = prior
-                                OriginatingCreateId = origin
-                                Parent = parent
-                                Name = Path.GetFileName(path)
-                                ItemKind = itemKind
-                                RequestJson = None
-                                Uploaded = false
-                                Accepted = None
-                                BaselineItem = None
-                                Prepared = false
-                                ExpectedCatalogVersion = current.Catalog.Version
-                                ExpectedCursor = current.AppliedCursor
-                                ExpectedAncestry = Array.empty
-                                ExpectedTarget = None
-                                TargetPath = ""
-                                Terminal = false
-                                EchoPending = false
-                                CreatedAtTicks = DateTime.UtcNow.Ticks
-                            }
+                            { OperationId = Guid.NewGuid(); CatalogVersion = current.Catalog.Version; Work = work; CreatedAtTicks = DateTime.UtcNow.Ticks }
 
                         insertOperation configuration.GraceStatusFile configuration.RepositoryId operation
+                        afterInsert operation
                         operations <- Array.append operations [| operation |]
                         captured <- true
 
         captured
 
+    /// Captures saved changes after complete object publication, without injecting an interruption.
+    let internal captureSaved configuration = captureSavedWith ignore configuration
+
     /// Freezes saved content or an explicit namespace intent; create successors resolve only from their exact terminal originating create.
     let private submitLocal (configuration: GraceConfiguration) correlationId (operation: PendingOperation) =
         task {
             let mutable operation = operation
+
+            use objectLease =
+                operation.SourceObject
+                |> Option.map (LibraryFilesystem.openObject configuration)
+                |> Option.toObj
 
             if operation.Accepted.IsNone then
                 let prior =
@@ -690,9 +677,9 @@ module internal LibrarySynchronization =
 
                 let mutable prepared = None
 
-                if operation.SourceBytes.IsSome
+                if operation.SourceObject.IsSome
                    && not operation.Uploaded then
-                    let content = LibraryFilesystem.content operation.SourceBytes.Value
+                    let content = operation.SourceObject.Value.Content
                     let parameters = scoped configuration correlationId (PrepareLibraryContentParameters())
                     parameters.OperationId <- operation.OperationId
                     parameters.Blake3Hash <- content.Blake3Hash
@@ -709,14 +696,14 @@ module internal LibrarySynchronization =
                             let request = scoped configuration correlationId (SubmitLibraryChangeParameters())
                             request.OperationId <- operation.OperationId
                             request.LibraryCatalogVersion <- operation.ExpectedCatalogVersion
-                            request.ItemKind <- operation.ItemKind
+                            request.ItemKind <- LibraryOperation.kindToWire operation.Kind
 
                             match prior with
                             | Some item when operation.Rename ->
                                 request.ChangeKind <- ChangeKind.Rename
                                 request.ItemId <- Nullable(item.ItemId)
                                 request.NamespacePrecondition <- Some { ItemId = item.ItemId; ExpectedNamespaceVersion = item.Namespace.Value.NamespaceVersion }
-                                request.DestinationName <- operation.Name
+                                request.DestinationName <- operation.Placement.Name
                             | Some item ->
                                 request.ChangeKind <- ChangeKind.UpdateContent
                                 request.ItemId <- Nullable(item.ItemId)
@@ -730,14 +717,14 @@ module internal LibrarySynchronization =
                                         }
                             | None ->
                                 request.ChangeKind <-
-                                    if operation.ItemKind = ItemKind.Directory then
+                                    if operation.Kind = Grace.Types.Common.ItemKind.Directory then
                                         ChangeKind.CreateDirectory
                                     else
                                         ChangeKind.CreateFile
 
                                 let slotParameters = scoped configuration correlationId (GetLibraryNamespaceSlotParameters())
-                                slotParameters.Parent <- Some operation.Parent
-                                slotParameters.Name <- operation.Name
+                                slotParameters.Parent <- Some operation.Placement.Parent
+                                slotParameters.Name <- operation.Placement.Name
                                 let! result = Libraries.GetNamespaceSlot slotParameters
                                 let slot = value result
 
@@ -753,7 +740,7 @@ module internal LibrarySynchronization =
                             validateChangeShape request
                             |> Result.defaultWith invalidOp
 
-                            let updated = { operation with RequestJson = Some(serialize request) }
+                            let updated = LibraryOperation.freezeRequest (serialize request) operation
                             updateOperation configuration.GraceStatusFile configuration.RepositoryId operation updated
                             operation <- updated
                             return request
@@ -765,22 +752,13 @@ module internal LibrarySynchronization =
                        <> prepared.UploadSessionId then
                         invalidOp "Prepared Library session changed after the request was frozen."
 
-                    let stagingPath = Path.Combine(configuration.GraceDirectory, $"library-upload-{operation.OperationId:N}.tmp")
+                    let objectPath = LibraryFilesystem.objectPath configuration operation.SourceObject.Value
 
-                    try
-                        do
-                            use stream = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None)
-                            stream.Write(operation.SourceBytes.Value)
-                            stream.Flush(true)
+                    let! uploaded =
+                        LibraryManifestUpload.uploadPrepared configuration operation.OperationId prepared operation.SourcePath objectPath correlationId
 
-                        let! uploaded =
-                            LibraryManifestUpload.uploadPrepared configuration operation.OperationId prepared operation.SourcePath stagingPath correlationId
-
-                        value uploaded |> ignore
-                    finally
-                        if File.Exists(stagingPath) then File.Delete(stagingPath)
-
-                    let updated = { operation with Uploaded = true }
+                    value uploaded |> ignore
+                    let updated = LibraryOperation.uploaded operation
                     updateOperation configuration.GraceStatusFile configuration.RepositoryId operation updated
                     operation <- updated
                 | None -> ()
@@ -801,7 +779,7 @@ module internal LibrarySynchronization =
                    || receipt.RequestHash <> expectedHash then
                     invalidOp "Library receipt does not match the frozen request."
 
-                let received = { operation with Receipt = Some receipt; Accepted = receipt.Change }
+                let received = LibraryOperation.receive receipt operation
                 updateOperation configuration.GraceStatusFile configuration.RepositoryId operation received
 
                 match receipt.Change with
@@ -856,34 +834,8 @@ module internal LibrarySynchronization =
                 |> Option.defaultValue
                     {
                         OperationId = change.OperationId
-                        Direction = "remote"
-                        Rename = false
-                        Receipt = None
-                        SourcePath = priorPath
-                        SourceBytes = None
-                        MaterializedBase = previous
-                        OriginatingCreateId = None
-                        Parent =
-                            (change.Item.Namespace
-                             |> Option.orElseWith (fun () ->
-                                 change.Item.Tombstone
-                                 |> Option.map (fun value -> value.LastNamespace)))
-                                .Value
-                                .Parent
-                        Name = Path.GetFileName(target)
-                        ItemKind = change.Item.ItemKind
-                        RequestJson = None
-                        Uploaded = false
-                        Accepted = Some change
-                        BaselineItem = None
-                        Prepared = false
-                        ExpectedCatalogVersion = expected.Catalog.Version
-                        ExpectedCursor = expected.AppliedCursor
-                        ExpectedAncestry = Array.empty
-                        ExpectedTarget = None
-                        TargetPath = targetRelative
-                        Terminal = false
-                        EchoPending = false
+                        CatalogVersion = expected.Catalog.Version
+                        Work = OperationWork.Incoming(change, priorPath, previous, ApplicationProgress.AwaitingPreparation)
                         CreatedAtTicks = DateTime.UtcNow.Ticks
                     }
 
@@ -913,15 +865,29 @@ module internal LibrarySynchronization =
                 requireNonemptyTarget ()
                 let actual = LibraryFilesystem.fingerprint target
 
+                let retainedSourceObjects = ResizeArray<FileStream>()
+
+                use retainedSources =
+                    { new IDisposable with
+                        /// Releases saved-object readers only after target publication and source removal finish.
+                        member _.Dispose() =
+                            retainedSourceObjects
+                            |> Seq.iter (fun stream -> stream.Dispose())
+                    }
+
                 let saved =
                     operations
                     |> Array.exists (fun pending ->
                         pending.Direction = "local"
                         && not pending.Terminal
                         && pathsEqual pending.SourcePath targetRelative
-                        && pending.SourceBytes
-                           |> Option.exists (fun bytes ->
-                               let content = LibraryFilesystem.content bytes in actual = Some $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}"))
+                        && pending.SourceObject
+                           |> Option.exists (fun reference ->
+                               if actual = Some(LibraryOperation.fingerprint reference.Content) then
+                                   retainedSourceObjects.Add(LibraryFilesystem.openObject configuration reference)
+                                   true
+                               else
+                                   false))
 
                 if not operation.Prepared then
                     if operation.Rename && actual.IsSome then
@@ -939,24 +905,26 @@ module internal LibrarySynchronization =
                        && not saved then
                         invalidOp "Library target contains uncaptured local bytes."
 
-                    let prepared =
-                        { operation with
-                            Accepted = Some change
-                            Prepared = true
-                            ExpectedCatalogVersion = expected.Catalog.Version
+                    let echoPending =
+                        if change.Item.Tombstone.IsSome then
+                            actual.IsSome
+                        elif change.Item.ItemKind = ItemKind.Directory then
+                            actual.IsNone || priorPath <> targetRelative
+                        else
+                            actual <> expectedContent
+                            || priorPath <> targetRelative
+
+                    let preparation =
+                        {
                             ExpectedCursor = expected.AppliedCursor
                             ExpectedAncestry = ancestry items change.Item
-                            ExpectedTarget = actual
+                            ExpectedTarget = LibraryOperation.targetObservation actual
+                            SourcePath = priorPath
                             TargetPath = targetRelative
-                            EchoPending =
-                                if change.Item.Tombstone.IsSome then
-                                    actual.IsSome
-                                elif change.Item.ItemKind = ItemKind.Directory then
-                                    actual.IsNone || priorPath <> targetRelative
-                                else
-                                    actual <> expectedContent
-                                    || priorPath <> targetRelative
+                            Echo = if echoPending then EchoState.Pending else EchoState.Clear
                         }
+
+                    let prepared = LibraryOperation.prepare preparation operation
 
                     updateOperation configuration.GraceStatusFile configuration.RepositoryId operation prepared
                     operation <- prepared
@@ -1033,11 +1001,10 @@ module internal LibrarySynchronization =
                                     && pathsEqual pending.SourcePath priorPath
                                     && (pending.MaterializedBase
                                         |> Option.exists (fun item -> item.ItemId = change.Item.ItemId))
-                                    && (pending.SourceBytes
-                                        |> Option.exists (fun bytes ->
-                                            bytes.Length > 0
-                                            && let content = LibraryFilesystem.content bytes in
-                                               actual = Some $"{content.Blake3Hash}:{content.Sha256Hash}:{content.Size}"))
+                                    && (pending.SourceObject
+                                        |> Option.exists (fun reference ->
+                                            use verified = LibraryFilesystem.openObject configuration reference
+                                            actual = Some(LibraryOperation.fingerprint reference.Content)))
                                     && (pending.Accepted
                                         |> Option.exists (fun accepted ->
                                             accepted.OperationId = pending.OperationId
@@ -1047,6 +1014,9 @@ module internal LibrarySynchronization =
                             match saved with
                             | None -> invalidOp "Moved Library source has no exact accepted saved content."
                             | Some saved ->
+                                // Keep the verified shared object alive through the caller's removal effect.
+                                let verified = LibraryFilesystem.openObject configuration saved.SourceObject.Value
+                                retainedSourceObjects.Add(verified)
                                 revalidate ()
 
                                 let persisted =
@@ -1069,7 +1039,7 @@ module internal LibrarySynchronization =
                     if not saved then
                         invalidOp "Library target changed after preparation without a durable saved source."
 
-                    let refreshed = { operation with ExpectedTarget = actual }
+                    let refreshed = LibraryOperation.refreshTarget actual operation
                     updateOperation configuration.GraceStatusFile configuration.RepositoryId operation refreshed
                     operation <- refreshed
                     revalidate ()
@@ -1165,7 +1135,7 @@ module internal LibrarySynchronization =
                    <> finalExpected then
                     invalidOp "Library final filesystem state changed before atomic local completion."
 
-                complete configuration.GraceStatusFile expected operation
+                LibraryLocalState.complete configuration.GraceStatusFile expected operation
         }
 
     /// Keeps the existing deterministic interruption seam for callers without a cancellation request.

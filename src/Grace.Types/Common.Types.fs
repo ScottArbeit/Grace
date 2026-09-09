@@ -22,6 +22,12 @@ open MessagePack
 /// Contains common helpers.
 module Common =
 
+    /// Distinguishes files from directories without carrying a versioned directory-entry payload.
+    [<RequireQualifiedAccess>]
+    type ItemKind =
+        | File
+        | Directory
+
     // Domain nouns
     /// The Id of the branch.
     type BranchId = Guid

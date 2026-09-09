@@ -20,12 +20,32 @@ module LibraryCommandTests =
       TestCase("ambiguous", "ambiguous");
       TestCase("acceptedButObstructed", "local application is incomplete")>]
     let ``rename human output distinguishes every retained outcome`` outcome expected =
+        let typedOutcome =
+            match outcome with
+            | "completed" -> LibrarySynchronization.RenameOutcome.Completed
+            | "rejected" -> LibrarySynchronization.RenameOutcome.Rejected LibraryOperation.RejectionCode.SlotOccupied
+            | "ambiguous" -> LibrarySynchronization.RenameOutcome.Ambiguous(Some "detail")
+            | _ -> LibrarySynchronization.RenameOutcome.AcceptedButObstructed(Some "detail")
+
         let result: LibrarySynchronization.RenameResult =
-            { OperationId = Guid.NewGuid(); SourcePath = "Library/a.txt"; TargetPath = "Library/b.txt"; Outcome = outcome; Reason = Some "detail" }
+            { OperationId = Guid.NewGuid(); SourcePath = "Library/a.txt"; TargetPath = "Library/b.txt"; Outcome = typedOutcome }
 
         let message = LibraryCommand.renameMessage result
         Assert.That(message, Does.Contain(expected))
-        Assert.That(message, Does.Contain("detail"))
+        let output = LibraryCommand.renameOutput result
+        Assert.That(output.Outcome, Is.EqualTo(outcome))
+        Assert.That(output.ReasonCode, Is.EqualTo(if outcome = "rejected" then Some RejectionReason.SlotOccupied else None))
+
+        Assert.That(
+            output.Diagnostic,
+            Is.EqualTo(
+                if outcome = "ambiguous"
+                   || outcome = "acceptedButObstructed" then
+                    Some "detail"
+                else
+                    None
+            )
+        )
 
         if outcome <> "completed" then
             Assert.That(message, Does.Not.Contain("completed:"))
