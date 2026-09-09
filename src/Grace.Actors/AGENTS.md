@@ -37,6 +37,11 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
 
 ## Validation
 
+`LibraryQueries.readDiagnosticContent` reads existing control directly through `LibraryRecords`, then the permanent
+accepted prefix and immutable content mappings. Never call `RepositoryLibraryActor.currentControl` or other repair
+paths from a diagnostic. Validate source existence even at cursor zero, preserve exact cursor-gap rejection, and
+recheck the epoch/nonregression before publishing. Its manifest bytes are declarations, not payload-presence evidence.
+
 - Add activation and idempotency tests for new grains or state transitions.
 - Run `dotnet test --no-build` focusing on actor-related fixtures, then smoke `dotnet build --configuration Release`
   for the solution.

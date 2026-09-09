@@ -1972,6 +1972,7 @@ module Application =
                                route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersion.DiagnoseSize)
                                route "/text-content-size/diagnose" (composeHandlers requireSystemAdmin WorkItem.DiagnoseTextContentSize)
                                route "/artifact-size/diagnose" (composeHandlers requireSystemAdmin Artifact.DiagnoseSize)
+                               route "/library-content-size/diagnose" (composeHandlers requireSystemAdmin Library.DiagnoseContentSize)
                                route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
                                route "/manifest-contribution/repair" (composeHandlers requireSystemAdmin ManifestContributionRepair.Repair)
 #if DEBUG

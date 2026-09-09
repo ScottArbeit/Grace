@@ -4720,7 +4720,9 @@ type StorageManifestUploadSessionRoutes() =
                     state
                     "grace-library-changes"
                     "Grace.Library.Change.v2"
-                    (fun record -> record.Cursor = 200L)
+                    (fun record ->
+                        record.Cursor = 200L
+                        && record.Change.OperationId = cursor200OperationId)
                     "Library accepted change cursor 200"
 
             let! _ = AspireTestHost.startGraceServerAsync state "Library change-page visibility gap"

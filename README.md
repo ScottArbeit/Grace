@@ -61,6 +61,8 @@ Grace is written primarily in **F#**, and uses:
 
 ## Development process
 
+System administrators can inspect [committed Library content declarations](docs/Operations.md#committed-library-content-declarations) with `scripts/diagnose-library-content-size.ps1`. The result includes historical accepted content and its selected epoch/cursor; it does not establish complete repository storage or charges.
+
 Grace development uses a task-record-first process that keeps human and agent work reviewable:
 
 1. Read the root `AGENTS.md`, then the closest project `AGENTS.md`.

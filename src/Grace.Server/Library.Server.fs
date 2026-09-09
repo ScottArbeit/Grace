@@ -12,10 +12,14 @@ open Grace.Types.DirectoryVersion
 open Grace.Types.Library
 open Grace.Types.Repository
 open Grace.Types.UploadSession
+open Grace.Types.Usage
+open Grace.Types.Authorization
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open NodaTime
 open System
+open System.IO
+open System.Threading
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -23,6 +27,122 @@ open System.Threading.Tasks
 
 /// Implements the authenticated HTTP boundary for repository-owned remote Libraries.
 module Library =
+
+    /// Binds one complete committed Library declaration scan to its repository, selected epoch and non-interval read window.
+    type LibraryContentSizeDiagnostic =
+        {
+            Scope: UsageFactScope
+            DeclaredLogicalBytes: int64
+            DistinctManifestCount: int64
+            Epoch: Guid
+            CommittedCursor: int64
+            EnumerationStartedAt: Instant
+            EnumerationFinishedAt: Instant
+        }
+
+    /// Rechecks current SystemAdmin permission and cancellation immediately before serializing a completed diagnostic.
+    let internal publishContentSize (result: LibraryContentSizeDiagnostic) : HttpHandler =
+        AuthorizationMiddleware.requiresPermission Operation.SystemAdmin (fun _ -> task { return Resource.System })
+        >=> (fun next context ->
+            task {
+                context.RequestAborted.ThrowIfCancellationRequested()
+                return! json (GraceReturnValue.Create result (Services.getCorrelationId context)) next context
+            })
+
+    /// Discards a completed scan when access, live scope, epoch or the accepted prefix regresses before publication.
+    let internal diagnoseContentSizeWith
+        (checkScope: CancellationToken -> Task<unit>)
+        (collect: CancellationToken -> Task<LibraryContentSizeDiagnostic>)
+        (readBoundary: CancellationToken -> Task<Guid * int64>)
+        (token: CancellationToken)
+        =
+        task {
+            token.ThrowIfCancellationRequested()
+            do! checkScope token
+            let! result = collect token
+            do! checkScope token
+            let! epoch, cursor = readBoundary token
+
+            if epoch <> result.Epoch
+               || cursor < result.CommittedCursor then
+                raise (InvalidDataException "The selected Library epoch or committed prefix changed.")
+
+            token.ThrowIfCancellationRequested()
+            return { result with EnumerationFinishedAt = SystemClock.Instance.GetCurrentInstant() }
+        }
+
+    /// Serves the internal SystemAdmin declaration diagnostic without activating Library repair or accepting partial quantities.
+    let DiagnoseContentSize: HttpHandler =
+        fun next context ->
+            task {
+                let correlationId = Services.getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<Grace.Shared.Parameters.Repository.GetRepositoryParameters>()
+
+                    match DirectoryVersion.validateSizeDiagnosticParameters parameters with
+                    | Error message -> return! RequestErrors.BAD_REQUEST (GraceError.Create message correlationId) next context
+                    | Ok scope ->
+                        let repositoryActor = Repository.CreateActorProxy scope.OrganizationId scope.RepositoryId correlationId
+
+                        let! result =
+                            diagnoseContentSizeWith
+                                (fun token ->
+                                    task {
+                                        let! repository =
+                                            (repositoryActor.Get correlationId)
+                                                .WaitAsync(token)
+
+                                        if repository.RepositoryId <> scope.RepositoryId
+                                           || repository.OwnerId <> scope.OwnerId
+                                           || repository.OrganizationId <> scope.OrganizationId
+                                           || repository.UpdatedAt.IsNone
+                                           || repository.DeletedAt.IsSome then
+                                            raise (InvalidDataException "Repository is missing, deleted or outside the requested scope.")
+                                    })
+                                (fun token ->
+                                    task {
+                                        let! total, count, epoch, cursor, started =
+                                            Grace.Actors.LibraryQueries.readDiagnosticContent context.RequestServices scope.RepositoryId token
+
+                                        return
+                                            {
+                                                Scope = scope
+                                                DeclaredLogicalBytes = total
+                                                DistinctManifestCount = count
+                                                Epoch = epoch
+                                                CommittedCursor = cursor
+                                                EnumerationStartedAt = started
+                                                EnumerationFinishedAt = started
+                                            }
+                                    })
+                                (fun token ->
+                                    task {
+                                        let! control = Grace.Actors.LibraryQueries.readDiagnosticControl context.RequestServices scope.RepositoryId token
+                                        return control.Epoch, control.CommittedCursor
+                                    })
+                                context.RequestAborted
+
+                        return! publishContentSize result next context
+                with
+                | :? JsonException ->
+                    return! RequestErrors.BAD_REQUEST (GraceError.Create "The request body must be valid repository-scope JSON." correlationId) next context
+                | :? InvalidDataException ->
+                    return!
+                        RequestErrors.BAD_REQUEST
+                            (GraceError.Create "Repository scope or committed Library source is invalid; no quantity was produced." correlationId)
+                            next
+                            context
+                | :? OperationCanceledException ->
+                    return!
+                        ServerErrors.SERVICE_UNAVAILABLE
+                            (GraceError.Create "Library enumeration was cancelled; no quantity was produced." correlationId)
+                            next
+                            context
+                | _ ->
+                    return!
+                        ServerErrors.SERVICE_UNAVAILABLE (GraceError.Create "Library enumeration failed; no quantity was produced." correlationId) next context
+            }
 
     /// Returns the authenticated principal recorded by accepted operations.
     let private principalId (context: HttpContext) =
