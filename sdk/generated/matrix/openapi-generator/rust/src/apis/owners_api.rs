@@ -42,6 +42,18 @@ pub enum GetOwnerError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`get_owner_directory_version_observation`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetOwnerDirectoryVersionObservationError {
+    Status400(models::GraceError),
+    Status401(),
+    Status403(),
+    Status404(models::GraceError),
+    Status503(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`list_owner_organizations`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -216,6 +228,52 @@ pub async fn get_owner(configuration: &configuration::Configuration, get_owner_p
     } else {
         let content = resp.text().await?;
         let entity: Option<GetOwnerError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+pub async fn get_owner_directory_version_observation(configuration: &configuration::Configuration, observation_id: &str, owner_id: &str, organization_id: &str, repository_id: &str) -> Result<models::OwnerObservationReturnValue, Error<GetOwnerDirectoryVersionObservationError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_path_observation_id = observation_id;
+    let p_query_owner_id = owner_id;
+    let p_query_organization_id = organization_id;
+    let p_query_repository_id = repository_id;
+
+    let uri_str = format!("{}/owner/usage/directory-version-observations/{observationId}", configuration.base_path, observationId=crate::apis::urlencode(p_path_observation_id));
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    req_builder = req_builder.query(&[("OwnerId", &p_query_owner_id.to_string())]);
+    req_builder = req_builder.query(&[("OrganizationId", &p_query_organization_id.to_string())]);
+    req_builder = req_builder.query(&[("RepositoryId", &p_query_repository_id.to_string())]);
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::OwnerObservationReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::OwnerObservationReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetOwnerDirectoryVersionObservationError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

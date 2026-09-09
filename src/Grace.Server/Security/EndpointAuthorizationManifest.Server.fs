@@ -31,6 +31,7 @@ module EndpointAuthorizationManifest =
     let definitions: EndpointSecurityDefinition list =
         [
             endpoint "GET" "/" AllowAnonymous
+            endpoint "GET" "/owner/usage/directory-version-observations/%s" (Authorized(OwnerAdmin, Owner))
             endpoint "POST" "/authorize/check-permission" Authenticated
             endpoint "POST" "/authorize/grant-role" (Authorized(SystemAdmin, System))
             endpoint "POST" "/authorize/list-path-permissions" (Authorized(RepositoryAdmin, Repository))

@@ -48,6 +48,13 @@ class TestOwnersApi(unittest.TestCase):
         """
         pass
 
+    def test_get_owner_directory_version_observation(self) -> None:
+        """Test case for get_owner_directory_version_observation
+
+        Read retained DirectoryVersion declarations.
+        """
+        pass
+
     def test_list_owner_organizations(self) -> None:
         """Test case for list_owner_organizations
 

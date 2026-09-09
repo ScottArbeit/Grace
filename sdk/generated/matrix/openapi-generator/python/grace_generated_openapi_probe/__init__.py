@@ -238,7 +238,10 @@ __all__ = [
     "OrganizationType",
     "OutboundUrlSafety",
     "OwnerCommandReturnValue",
+    "OwnerDirectoryVersionObservation",
+    "OwnerDirectoryVersionObservationScope",
     "OwnerDto",
+    "OwnerObservationReturnValue",
     "OwnerParameters",
     "OwnerReturnValue",
     "OwnerType",
@@ -568,7 +571,10 @@ from grace_generated_openapi_probe.models.organization_return_value import Organ
 from grace_generated_openapi_probe.models.organization_type import OrganizationType as OrganizationType
 from grace_generated_openapi_probe.models.outbound_url_safety import OutboundUrlSafety as OutboundUrlSafety
 from grace_generated_openapi_probe.models.owner_command_return_value import OwnerCommandReturnValue as OwnerCommandReturnValue
+from grace_generated_openapi_probe.models.owner_directory_version_observation import OwnerDirectoryVersionObservation as OwnerDirectoryVersionObservation
+from grace_generated_openapi_probe.models.owner_directory_version_observation_scope import OwnerDirectoryVersionObservationScope as OwnerDirectoryVersionObservationScope
 from grace_generated_openapi_probe.models.owner_dto import OwnerDto as OwnerDto
+from grace_generated_openapi_probe.models.owner_observation_return_value import OwnerObservationReturnValue as OwnerObservationReturnValue
 from grace_generated_openapi_probe.models.owner_parameters import OwnerParameters as OwnerParameters
 from grace_generated_openapi_probe.models.owner_return_value import OwnerReturnValue as OwnerReturnValue
 from grace_generated_openapi_probe.models.owner_type import OwnerType as OwnerType

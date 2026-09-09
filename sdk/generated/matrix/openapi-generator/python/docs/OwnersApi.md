@@ -7,6 +7,7 @@ Method | HTTP request | Description
 [**create_owner**](OwnersApi.md#create_owner) | **POST** /owner/create | Create an owner.
 [**delete_owner**](OwnersApi.md#delete_owner) | **POST** /owner/delete | Delete an owner.
 [**get_owner**](OwnersApi.md#get_owner) | **POST** /owner/get | Get an owner.
+[**get_owner_directory_version_observation**](OwnersApi.md#get_owner_directory_version_observation) | **GET** /owner/usage/directory-version-observations/{observationId} | Read retained DirectoryVersion declarations.
 [**list_owner_organizations**](OwnersApi.md#list_owner_organizations) | **POST** /owner/listOrganizations | List the organizations for an owner.
 [**set_owner_description**](OwnersApi.md#set_owner_description) | **POST** /owner/setDescription | Set the owner&#39;s description.
 [**set_owner_name**](OwnersApi.md#set_owner_name) | **POST** /owner/setName | Set the name of an owner.
@@ -255,6 +256,95 @@ Name | Type | Description  | Notes
 **200** | OK |  -  |
 **400** | Bad Request |  -  |
 **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **get_owner_directory_version_observation**
+> OwnerObservationReturnValue get_owner_directory_version_observation(observation_id, owner_id, organization_id, repository_id)
+
+Read retained DirectoryVersion declarations.
+
+Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.owner_observation_return_value import OwnerObservationReturnValue
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.OwnersApi(api_client)
+    observation_id = UUID('38400000-8cf0-11bd-b23e-10b96e4ef00d') # UUID | Nonempty known observation GUID.
+    owner_id = UUID('38400000-8cf0-11bd-b23e-10b96e4ef00d') # UUID | Nonempty recorded owner GUID.
+    organization_id = UUID('38400000-8cf0-11bd-b23e-10b96e4ef00d') # UUID | Nonempty recorded organization GUID.
+    repository_id = UUID('38400000-8cf0-11bd-b23e-10b96e4ef00d') # UUID | Nonempty recorded repository GUID, retained after deletion or transfer.
+
+    try:
+        # Read retained DirectoryVersion declarations.
+        api_response = api_instance.get_owner_directory_version_observation(observation_id, owner_id, organization_id, repository_id)
+        print("The response of OwnersApi->get_owner_directory_version_observation:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling OwnersApi->get_owner_directory_version_observation: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **observation_id** | **UUID**| Nonempty known observation GUID. | 
+ **owner_id** | **UUID**| Nonempty recorded owner GUID. | 
+ **organization_id** | **UUID**| Nonempty recorded organization GUID. | 
+ **repository_id** | **UUID**| Nonempty recorded repository GUID, retained after deletion or transfer. | 
+
+### Return type
+
+[**OwnerObservationReturnValue**](OwnerObservationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Immutable retained declarations with exact decimal and UTC strings. |  -  |
+**400** | Bad Request |  -  |
+**401** | Authentication required before input resolution. |  -  |
+**403** | Permission denied or evaluation failed. No observation is disclosed. |  -  |
+**404** | Observation missing or scope conflict. No stored values are disclosed. |  -  |
+**503** | Read failed or was cancelled before publication. Retry repeats the read and permission checks. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

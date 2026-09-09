@@ -2509,6 +2509,67 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /owner/usage/directory-version-observations/{observationId}:
+    get:
+      tags:
+        - Owners
+      operationId: GetOwnerDirectoryVersionObservation
+      summary: Read retained DirectoryVersion declarations.
+      description: Requires current OwnerAdmin permission on the recorded owner, including existing system-role inheritance. Supply the known ID and all recorded scope IDs. No names or current-entity fallback. Rechecks permission after SQL; this is not an atomic revocation guarantee. Quantities describe retained metadata declarations, not complete storage or charges.
+      parameters:
+        - name: observationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Nonempty known observation GUID.
+        - name: OwnerId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Nonempty recorded owner GUID.
+        - name: OrganizationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Nonempty recorded organization GUID.
+        - name: RepositoryId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Nonempty recorded repository GUID, retained after deletion or transfer.
+      responses:
+        '200':
+          description: Immutable retained declarations with exact decimal and UTC strings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerObservationReturnValue'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          description: Authentication required before input resolution.
+        '403':
+          description: Permission denied or evaluation failed. No observation is disclosed.
+        '404':
+          description: Observation missing or scope conflict. No stored values are disclosed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraceError'
+        '503':
+          description: Read failed or was cancelled before publication. Retry repeats the read and permission checks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraceError'
   /repository/create:
     post:
       tags:
@@ -8366,6 +8427,71 @@ components:
         Properties:
           Path: /owner/get
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerDirectoryVersionObservation:
+      type: object
+      description: Retained completed DirectoryVersion metadata declarations. Zero is a completed reading, not missing data. This is not complete storage, elapsed usage or a charge.
+      required:
+        - ObservationId
+        - Scope
+        - DeclaredLogicalBytes
+        - DistinctContentCount
+        - EnumerationStartedAt
+        - EnumerationFinishedAt
+      properties:
+        ObservationId:
+          type: string
+          format: uuid
+        Scope:
+          type: object
+          required:
+            - OwnerId
+            - OrganizationId
+            - RepositoryId
+          properties:
+            OwnerId:
+              type: string
+              format: uuid
+            OrganizationId:
+              type: string
+              format: uuid
+            RepositoryId:
+              type: string
+              format: uuid
+        DeclaredLogicalBytes:
+          type: string
+          pattern: ^(0|[1-9][0-9]*)$
+          description: Declared logical bytes as an exact decimal integer in [0, 9223372036854775807].
+          example: '9007199254740993'
+        DistinctContentCount:
+          type: string
+          pattern: ^(0|[1-9][0-9]*)$
+          description: Distinct content declarations as an exact decimal integer in [0, 9223372036854775807].
+          example: '0'
+        EnumerationStartedAt:
+          type: string
+          description: Original enumeration start in UTC, using NodaTime Instant ISO serialization, years -9998 through 9999 and up to nine fractional-second digits. Preserve the string; JavaScript Date loses precision.
+          example: '2026-09-07T01:02:03.123456789Z'
+        EnumerationFinishedAt:
+          type: string
+          description: Original enumeration finish in UTC, using NodaTime Instant ISO serialization, years -9998 through 9999 and up to nine fractional-second digits. This is not the read time or a freshness guarantee.
+          example: '2026-09-07T01:02:04.987654321Z'
+    OwnerObservationReturnValue:
+      type: object
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/OwnerDirectoryVersionObservation'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties: {}
     RepositoryCommandReturnValue:
       description: Grace response envelope returned by repository command endpoints.
       type: object

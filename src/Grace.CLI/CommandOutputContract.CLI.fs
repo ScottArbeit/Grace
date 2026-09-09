@@ -818,6 +818,23 @@ module CommandOutputContract =
     /// Selects a derived contract only for commands with a real JSON success path.
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match envelopeContract with
+        | ExistingGraceResultEnvelope _ when identity.CommandId = "owner.get-directory-version-observation" ->
+            supportedReturnValueContract
+                "DirectoryVersionSizeObservation"
+                "Existing observation with route-local exact decimal and UTC strings."
+                (box (
+                    JsonSerializer.Deserialize<JsonElement>(
+                        """{"type":"object","required":["ObservationId","Scope","DeclaredLogicalBytes","DistinctContentCount","EnumerationStartedAt","EnumerationFinishedAt"],"properties":{"ObservationId":{"type":"string","format":"uuid"},"Scope":{"type":"object","required":["OwnerId","OrganizationId","RepositoryId"],"properties":{"OwnerId":{"type":"string","format":"uuid"},"OrganizationId":{"type":"string","format":"uuid"},"RepositoryId":{"type":"string","format":"uuid"}}},"DeclaredLogicalBytes":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Declared logical bytes, in [0,9223372036854775807]."},"DistinctContentCount":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Distinct content declarations, in [0,9223372036854775807]."},"EnumerationStartedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."},"EnumerationFinishedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."}}}"""
+                    )
+                ))
+                (box (
+                    JsonSerializer.Deserialize<JsonElement>(
+                        """{"ObservationId":"11111111-1111-1111-1111-111111111111","Scope":{"OwnerId":"22222222-2222-2222-2222-222222222222","OrganizationId":"33333333-3333-3333-3333-333333333333","RepositoryId":"44444444-4444-4444-4444-444444444444"},"DeclaredLogicalBytes":"9007199254740993","DistinctContentCount":"0","EnumerationStartedAt":"2026-09-07T01:02:03.123456789Z","EnumerationFinishedAt":"2026-09-07T01:02:04.987654321Z"}"""
+                    )
+                ))
+                [
+                    "Retained metadata declarations; not complete storage, interval accounting or a charge. All four IDs are required; no current configuration fallback."
+                ]
         | ExistingGraceResultEnvelope _
         | ConditionalGraceResultEnvelope _ -> typeDerivedReturnValueContract identity.CommandId
         | SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
@@ -1114,6 +1131,7 @@ module CommandOutputContract =
 
     let entries =
         [
+            row [ "owner" ] "get-directory-version-observation" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto

@@ -45,6 +45,10 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 ## Recent Patterns
 
+- `owner get-directory-version-observation` requires four explicit historical IDs. Its local `JsonElement` projection
+  preserves decimal quantity and UTC timestamp strings through the common renderer and `--select`. Keep the registry
+  schema/examples synchronized; the shared serializer stays unchanged.
+
 - `grace library sync enable/run/status` owns Windows Library participation in exactly three tables in the existing local database. Keep its frozen requests, materialized edit bases, filesystem guards, and completion transaction in the Library modules. Library work shares root exclusion with WDU but must never create a WDU completion. Watch consumes `LibraryContentAvailable.v1` only as a pull hint.
 - `LibraryOperation` stores one typed intent/progress value per operation; derive SQL routing, completion and echo columns from it. Saved-file content must exist as a complete verified immutable object under the configured object directory before SQLite commit. Keep its locator fixed across rename, upload from that object, retain rejected saved work, and block missing/corrupt references instead of substituting working bytes. Operation pruning must not delete shared objects.
 - Populated-Library onboarding acquires complete metadata before effects. Repository state retains its baseline selection, operations retain baseline items separately from accepted changes, and materialized items appear only after verified effects. Commit the baseline boundary separately after all required work; gate capture through initial catch-up. Keep incomplete-token restart restricted to an unchanged catalog and empty local root. There is no migration contract for old development-only Library schemas.

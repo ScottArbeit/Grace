@@ -149,6 +149,7 @@ All URIs are relative to *http://localhost:5000*
 *OwnersApi* | [**createOwner**](docs/OwnersApi.md#createowner) | **POST** /owner/create | Create an owner.
 *OwnersApi* | [**deleteOwner**](docs/OwnersApi.md#deleteowner) | **POST** /owner/delete | Delete an owner.
 *OwnersApi* | [**getOwner**](docs/OwnersApi.md#getowner) | **POST** /owner/get | Get an owner.
+*OwnersApi* | [**getOwnerDirectoryVersionObservation**](docs/OwnersApi.md#getownerdirectoryversionobservation) | **GET** /owner/usage/directory-version-observations/{observationId} | Read retained DirectoryVersion declarations.
 *OwnersApi* | [**listOwnerOrganizations**](docs/OwnersApi.md#listownerorganizations) | **POST** /owner/listOrganizations | List the organizations for an owner.
 *OwnersApi* | [**setOwnerDescription**](docs/OwnersApi.md#setownerdescription) | **POST** /owner/setDescription | Set the owner\&#39;s description.
 *OwnersApi* | [**setOwnerName**](docs/OwnersApi.md#setownername) | **POST** /owner/setName | Set the name of an owner.
@@ -388,7 +389,10 @@ All URIs are relative to *http://localhost:5000*
 - [OrganizationType](docs/OrganizationType.md)
 - [OutboundUrlSafety](docs/OutboundUrlSafety.md)
 - [OwnerCommandReturnValue](docs/OwnerCommandReturnValue.md)
+- [OwnerDirectoryVersionObservation](docs/OwnerDirectoryVersionObservation.md)
+- [OwnerDirectoryVersionObservationScope](docs/OwnerDirectoryVersionObservationScope.md)
 - [OwnerDto](docs/OwnerDto.md)
+- [OwnerObservationReturnValue](docs/OwnerObservationReturnValue.md)
 - [OwnerParameters](docs/OwnerParameters.md)
 - [OwnerReturnValue](docs/OwnerReturnValue.md)
 - [OwnerType](docs/OwnerType.md)

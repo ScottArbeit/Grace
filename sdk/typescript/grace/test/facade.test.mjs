@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createServer } from "node:http";
 import {
   GraceClient,
   GraceError,
@@ -10,6 +11,67 @@ import {
   GRACE_CLIENT_VERSION,
   GRACE_HEADER_NAMES,
 } from "../dist/index.js";
+
+// A captured HTTP envelope can be replayed through the supported facade's real GET transport.
+if (process.env.GRACE_OWNER_OBSERVATION_LIVE_URL) {
+  test("owner observation live hosted GET retains exact strings", async () => {
+    const expected = JSON.parse(await readFile(process.env.GRACE_OWNER_OBSERVATION_FIXTURE, "utf8"));
+    const url = new URL(process.env.GRACE_OWNER_OBSERVATION_LIVE_URL);
+    const client = new GraceClient({ baseUrl: url.origin, auth: process.env.GRACE_OWNER_OBSERVATION_TOKEN });
+    const response = await client.request({ method: "GET", path: url.pathname, query: url.searchParams, correlationId: "owner-observation-node" });
+    assert.equal(response.status, 200);
+    assert.equal(response.correlationId, "owner-observation-node");
+    assert.deepEqual(response.body.ReturnValue, expected.ReturnValue);
+    for (const field of ["DeclaredLogicalBytes", "DistinctContentCount", "EnumerationStartedAt", "EnumerationFinishedAt"]) {
+      assert.equal(typeof response.body.ReturnValue[field], "string");
+    }
+    const mismatched = new URLSearchParams(url.searchParams);
+    mismatched.set("RepositoryId", "ffffffff-ffff-ffff-ffff-ffffffffffff");
+    await assert.rejects(client.request({ method: "GET", path: url.pathname, query: mismatched }), error => {
+      assert.ok(error instanceof GraceError);
+      assert.equal(error.status, 404);
+      assert.ok(!JSON.stringify(error.body).includes("DeclaredLogicalBytes"));
+      return true;
+    });
+  });
+}
+
+test("owner observation GET retains exact HTTP strings", async () => {
+  const fixtures = process.env.GRACE_OWNER_OBSERVATION_FIXTURE
+    ? [JSON.parse(await readFile(process.env.GRACE_OWNER_OBSERVATION_FIXTURE, "utf8"))]
+    : ["0", "9007199254740993", "9223372036854775807"].map(quantity => ({ ReturnValue: {
+        ObservationId: "11111111-1111-1111-1111-111111111111",
+        Scope: { OwnerId: "22222222-2222-2222-2222-222222222222", OrganizationId: "33333333-3333-3333-3333-333333333333", RepositoryId: "44444444-4444-4444-4444-444444444444" },
+        DeclaredLogicalBytes: quantity, DistinctContentCount: quantity,
+        EnumerationStartedAt: "2026-09-07T01:02:03.123456789Z", EnumerationFinishedAt: "2026-09-07T01:02:04.987654321Z",
+      } }));
+  for (const fixture of fixtures) {
+    const observation = fixture.ReturnValue;
+    let requests = 0;
+    const server = createServer((request, response) => {
+      requests++;
+      assert.equal(request.method, "GET");
+      const url = new URL(request.url, "http://localhost");
+      assert.equal(url.pathname, `/owner/usage/directory-version-observations/${observation.ObservationId}`);
+      assert.equal(request.headers.authorization, "Bearer fixture-token");
+      for (const [key, value] of Object.entries(observation.Scope)) assert.equal(url.searchParams.get(key), value);
+      response.writeHead(requests === 1 ? 200 : 403, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(requests === 1 ? fixture : { Error: "Forbidden." }));
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = new GraceClient({ baseUrl: `http://127.0.0.1:${server.address().port}`, auth: "fixture-token" });
+      const request = { method: "GET", path: `/owner/usage/directory-version-observations/${observation.ObservationId}`, query: observation.Scope };
+      const result = await client.request(request);
+      assert.deepEqual(result.body, fixture);
+      for (const field of ["DeclaredLogicalBytes", "DistinctContentCount", "EnumerationStartedAt", "EnumerationFinishedAt"]) assert.equal(typeof result.body.ReturnValue[field], "string");
+      await assert.rejects(client.request(request), GraceError);
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  }
+});
 
 test("public exports stay facade-first", async () => {
   const exports = Object.keys(await import("../dist/index.js")).sort();

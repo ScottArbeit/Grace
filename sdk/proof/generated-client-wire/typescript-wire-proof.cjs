@@ -78,6 +78,30 @@ for (const [field, value] of Object.entries({
 })) {
   assert.throws(() => TypedReferenceApiDtoFromJSON({ ...sentinel, [field]: value }), /canonical/);
 }
+console.log('TypeScript PascalCase BranchApiDto wire round trip passed');
+
+// Exercise the full generated owner model; an optional file supplies a captured actual HTTP envelope.
+const {
+  OwnerDirectoryVersionObservationFromJSON,
+  OwnerDirectoryVersionObservationToJSON,
+} = require(path.join(generatedRoot, 'dist', 'models', 'OwnerDirectoryVersionObservation.js'));
+const ownerInputs = process.argv[3]
+  ? [JSON.parse(require('node:fs').readFileSync(process.argv[3], 'utf8'))]
+  : ['0', '9007199254740993', '9223372036854775807'].map(quantity => ({ ReturnValue: {
+      ObservationId: '11111111-1111-1111-1111-111111111111',
+      Scope: { OwnerId: real.OwnerId, OrganizationId: real.OrganizationId, RepositoryId: real.RepositoryId },
+      DeclaredLogicalBytes: quantity, DistinctContentCount: quantity,
+      EnumerationStartedAt: '2026-09-07T01:02:03.123456789Z',
+      EnumerationFinishedAt: '2026-09-07T01:02:04.987654321Z',
+    } }));
+for (const envelope of ownerInputs) {
+  const observation = envelope.ReturnValue;
+  for (const field of ['DeclaredLogicalBytes', 'DistinctContentCount', 'EnumerationStartedAt', 'EnumerationFinishedAt']) {
+    assert.equal(typeof observation[field], 'string', `${field} must arrive as an exact JSON string`);
+  }
+  assert.deepEqual(OwnerDirectoryVersionObservationToJSON(OwnerDirectoryVersionObservationFromJSON(observation)), observation);
+}
+console.log(`Owner observation generated codec passed: ${ownerInputs.length} ${process.argv[3] ? 'captured HTTP envelope' : 'synthetic full-schema controls'}`);
 
 const libraryPreparation = {
   UploadSessionId: '77777777-7777-7777-7777-777777777777',
