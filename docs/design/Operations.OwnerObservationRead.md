@@ -6,6 +6,14 @@ An owner administrator should be able to read one previously captured DirectoryV
 
 ## Scope and selected decisions
 
+### September 9 main rebase applicability
+
+This documentation PR is rebased onto main `28c3789e31a1443cf01007d0b2175f2162181113`, which includes landed PR #1065 and the newer Library rename implementation. The original experiment JSON remains unchanged. The DirectoryVersion observation declaration/validator, SQL lookup, usage contract, authorization definitions, shared serializer and permission evaluator match the previously reviewed candidate. The newer Library ItemKind declaration does not affect these inputs. Historical codec and permission results remain applicable without claiming another execution or identical compiled assemblies.
+
+The source diagnostics and capture callers now use their existing server owners, provider-aware Services readers and request cancellation. The selected owner route reads an already-stored row and does not perform those scans. Its audience, stored-scope binding, two permission checks, failure behavior and exact string representation remain unchanged. PR #1069 owns the implementation and the known JSON response-writer repair.
+
+### Original decision record
+
 The design target is Product V1. This documentation/evidence slice uses the Discovery quality contract. Evidence is pinned to selected base `97d73103c6cd531dea40997ed00270c429d36faa`, which includes the reviewed source-specific observation work. Eventual main is `9f54fe14626cd718af88890b731f8518f9b06e34`. The inherited delivery remains an unmerged main-target stack; this document selects no new base, integration branch or delivery strategy.
 
 These defaults were selected by the controller under Scott's explicit overnight delegation and accepted D1-D5 direction. They are accepted choices for this contract, not a claim that Scott answered each detail separately. Earlier alternative recommendations in disposable research notes are superseded by this single selection.
@@ -124,7 +132,7 @@ Disposition here describes the later tracer. The present issue changes only this
 | Documentation/help | Update `docs/Operations.md`, this contract's implementation status, TypeScript README and actual CLI help. Review README/CONTRIBUTING/nearby AGENTS for behavior claims; change only affected guidance in the later issue. | R12. Current docs-only slice has no new available command, setup or contributor workflow. |
 | Events, actors, usage accounting, watch/search, Cache, Libraries | N/A: no observation mutation, publication event, index, content materialization, accounting fact or Library behavior is selected. | R03, R04, R07. Preserve all these runtime paths and inherited observations. |
 
-The `Startup.Server.fs` route, Server and test fsproj files, OpenAPI projection/manifest files and generator matrix are shared write surfaces. The separate Library candidate changes public generation and shared code; the next implementation controller must settle composition and inspect current source before freezing its base. This design's evidence does not certify combined Library/Operations delivery.
+The `Startup.Server.fs` route, Server and test fsproj files, OpenAPI projection/manifest files and generator matrix are shared write surfaces. The Library implementation is now landed. PR #1069 must preserve both current Library and owner-observation authored contracts and checks, regenerate their combined projections and clients, and validate the resulting composition. This design's historical evidence does not certify that combined delivery.
 
 The current full generator matrix accepts raw TypeScript/Python/Rust outputs only with `--skip-validate-spec`; Kiota and NSwag remain rejected for existing full-schema problems. The minimal experiment uses no validation-skip flag and cannot remove those limitations. Before production edits, the next charter must pin the admissible composed source, current full-generation policy and available toolchain, then reserve the complete generation write set. Regenerate the accepted matrix and its checks without silently promoting clients or changing that policy. A new generator failure requiring global schema repair is an owner stop, not an enabling cleanup hidden in this tracer.
 
