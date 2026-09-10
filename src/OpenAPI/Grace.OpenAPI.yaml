@@ -3189,7 +3189,7 @@ paths:
   /storage/getContentBlockUploadUri:
     post:
       summary: Gets an upload URI for a ContentBlock payload.
-      description: Gets an object-storage upload URI without probing whether the ContentBlock already exists.
+      description: Prepares session-owned staging and returns a grant capped at the retry deadline. The URI fragment carries a URL-escaped graceContentBlockETag; the ContentBlock client must decode it and send a single PUT with that exact If-Match value.
       operationId: GetContentBlockUploadUri
       requestBody:
         required: true
@@ -3207,7 +3207,7 @@ paths:
               examples:
                 signedContentBlockUploadUri:
                   summary: Raw ContentBlock upload URI
-                  value: https://storage.example.net/grace/staging/repositories/ab6f35ef-6e01-440b-8f9b-c343a5272095/upload-sessions/6a67b2a9f6fb45c6a7f89ce5f39f2e14/content-blocks/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example#graceStorageAccount=gracestaging001
+                  value: https://storage.example.net/grace/staging/repositories/ab6f35ef-6e01-440b-8f9b-c343a5272095/upload-sessions/6a67b2a9f6fb45c6a7f89ce5f39f2e14/content-blocks/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example#graceStorageAccount=gracestaging001&graceContentBlockETag=%220x1234%22
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -6047,6 +6047,7 @@ components:
         - NextPageToken
         - Rebaseline
     LibraryContentPreparationDto:
+      description: Preparation binding with the upload session's shared one-hour inactivity deadline, extended only by real progress or recovery.
       type: object
       properties:
         UploadSessionId:
@@ -8749,29 +8750,6 @@ components:
         - Expired
         - RetentionPending
         - StateDeleted
-    BlockUploadIntent:
-      description: Registered intent to upload a logical ContentBlock range.
-      type: object
-      properties:
-        ContentBlockAddress:
-          $ref: '#/components/schemas/ContentBlockAddress'
-        LogicalOffset:
-          type: integer
-          format: int64
-        LogicalLength:
-          type: integer
-          format: int64
-        ExpectedPayloadLength:
-          type: integer
-          format: int64
-        RegisteredAt:
-          $ref: '#/components/schemas/Instant'
-      required:
-        - ContentBlockAddress
-        - LogicalOffset
-        - LogicalLength
-        - ExpectedPayloadLength
-        - RegisteredAt
     ContentBlockStoragePlacement:
       description: Object-storage placement metadata for a confirmed ContentBlock payload.
       type: object
@@ -8789,6 +8767,34 @@ components:
         - StorageAccountName
         - StorageContainerName
         - ObjectKey
+    BlockUploadIntent:
+      description: Registered intent to upload a logical ContentBlock range.
+      type: object
+      properties:
+        ContentBlockAddress:
+          $ref: '#/components/schemas/ContentBlockAddress'
+        LogicalOffset:
+          type: integer
+          format: int64
+        LogicalLength:
+          type: integer
+          format: int64
+        ExpectedPayloadLength:
+          type: integer
+          format: int64
+        RegisteredAt:
+          $ref: '#/components/schemas/Instant'
+        PreparedPlacement:
+          description: Durable staging placement and exact ETag required before an upload grant is issued.
+          nullable: true
+          $ref: '#/components/schemas/ContentBlockStoragePlacement'
+      required:
+        - ContentBlockAddress
+        - LogicalOffset
+        - LogicalLength
+        - ExpectedPayloadLength
+        - RegisteredAt
+        - PreparedPlacement
     ContentBlockMetadataRange:
       description: Physical range metadata for ContentBlock reconstruction, reuse, and compaction.
       type: object
@@ -8906,6 +8912,21 @@ components:
         - PhysicalLength
         - MetadataVersion
         - ClaimedAt
+    LibraryUploadPreparation:
+      description: Library operation binding; expiry comes from the session RetryExpiresAt.
+      type: object
+      properties:
+        OperationId:
+          type: string
+          format: uuid
+        PrincipalId:
+          type: string
+        ExpectedSha256:
+          type: string
+      required:
+        - OperationId
+        - PrincipalId
+        - ExpectedSha256
     UploadSessionDto:
       description: Server state snapshot for a manifest upload session.
       type: object
@@ -8970,6 +8991,17 @@ components:
         LastOperationId:
           nullable: true
           $ref: '#/components/schemas/UploadSessionOperationId'
+        RetryExpiresAt:
+          description: Shared inactivity deadline, or null after the retry window closes.
+          nullable: true
+          $ref: '#/components/schemas/Instant'
+        RetryWindowAdvancedAt:
+          description: Last durable progress or recovery grant used to establish the retry deadline.
+          nullable: true
+          $ref: '#/components/schemas/Instant'
+        LibraryPreparation:
+          nullable: true
+          $ref: '#/components/schemas/LibraryUploadPreparation'
       required:
         - Class
         - UploadSessionId
@@ -8993,6 +9025,9 @@ components:
         - CleanupReminderScheduledAt
         - CleanupReminderOperationId
         - LastOperationId
+        - RetryExpiresAt
+        - RetryWindowAdvancedAt
+        - LibraryPreparation
     StartUploadSession:
       description: Event payload recorded when a manifest upload session starts.
       type: object
@@ -9021,6 +9056,9 @@ components:
           type: string
         OperationId:
           $ref: '#/components/schemas/UploadSessionOperationId'
+        LibraryPreparation:
+          nullable: true
+          $ref: '#/components/schemas/LibraryUploadPreparation'
       required:
         - UploadSessionId
         - OwnerId
@@ -9147,6 +9185,32 @@ components:
             - ClaimedRanges
       required:
         - ReuseRangesClaimed
+    UploadSessionRetryWindowRecoveredEvent:
+      type: object
+      properties:
+        retryWindowRecovered:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - retryWindowRecovered
+    UploadSessionRetryWindowClosedEvent:
+      type: string
+      enum:
+        - retryWindowClosed
+    UploadSessionBlockUploadPreparedEvent:
+      type: object
+      properties:
+        blockUploadPrepared:
+          type: object
+          properties:
+            address:
+              $ref: '#/components/schemas/ContentBlockAddress'
+            placement:
+              $ref: '#/components/schemas/ContentBlockStoragePlacement'
+          required:
+            - address
+            - placement
+      required:
+        - blockUploadPrepared
     UploadSessionEventType:
       description: Upload-session event union payload. Event objects contain the fields for one emitted union case.
       oneOf:
@@ -9158,6 +9222,9 @@ components:
         - $ref: '#/components/schemas/UploadSessionBlockUploadConfirmedEvent'
         - $ref: '#/components/schemas/UploadSessionDedupeDiscoveryIssuedEvent'
         - $ref: '#/components/schemas/UploadSessionReuseRangesClaimedEvent'
+        - $ref: '#/components/schemas/UploadSessionRetryWindowRecoveredEvent'
+        - $ref: '#/components/schemas/UploadSessionRetryWindowClosedEvent'
+        - $ref: '#/components/schemas/UploadSessionBlockUploadPreparedEvent'
     ClientType:
       description: The Grace client identity type/version recorded for diagnostics. Client identity headers are not authentication proof and must not be used as authorization evidence.
       type: string

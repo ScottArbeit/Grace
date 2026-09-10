@@ -340,9 +340,21 @@ stateDiagram-v2
     StateDeleted --> [*]
 ```
 
-After finalization, abandon, or expiration, the actor schedules a repository-configured reminder to delete its physical
-state after the diagnostic and retry window. That cleanup deletes only upload coordination state. It does not delete
-accepted `FileManifest` records, `ContentBlock` payloads, `ContentBlockMetadata`, or contribution accounting.
+The upload retry window ends one hour after Start, a newly confirmed block address, a newly claimed range, or first
+manifest completion. Replay, polling, discovery, intents and URI issuance do not advance that clock. Library preparations
+use the same deadline. Immutable deadline reminders retain a full hour after observed process recovery or substantially
+overdue processing; ordinary actor activation does not extend it.
+
+After the window closes, the session releases its recorded upload holds through `ContentBlockMetadataActor`. That owner
+may delete a whole block only when no hold and no completed-manifest metadata remain. Metadata at zero active count
+still protects the entire block. Completed sessions retain holds while their selected manifest metadata merge is pending;
+unused extra uploads may be released. Accepted manifests and contribution accounting remain unchanged.
+
+Staging and permanent block publication create only empty placeholders with `IfNoneMatch`. The owning actor persists
+the placeholder ETag before granting or sending a conditional single PUT. Payload uses exact `IfMatch`; a delayed request
+cannot recreate deleted bytes. Staging SAS expiry is capped by the retry deadline. Cleanup failures preserve inventory,
+and retirement history rejects delayed acquisition after release. Delayed empty creation can leave zero-byte overhead.
+See the [preflight results and boundaries](../design/UploadCleanup.Preflight.md).
 
 ## Manifest Contribution Accounting
 

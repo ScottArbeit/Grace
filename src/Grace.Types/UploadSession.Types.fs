@@ -42,8 +42,6 @@ module UploadSession =
             PrincipalId: PrincipalId
             [<Id(2u)>]
             ExpectedSha256: string
-            [<Id(3u)>]
-            ExpiresAt: Instant
         }
 
     /// Represents start upload session.
@@ -120,6 +118,8 @@ module UploadSession =
             ExpectedPayloadLength: int64
             [<Id(4u)>]
             RegisteredAt: Instant
+            [<Id(5u)>]
+            PreparedPlacement: ContentBlockStoragePlacement option
         }
 
     /// Represents confirmed block upload.
@@ -279,6 +279,9 @@ module UploadSession =
         | BlockUploadConfirmed of operationId: UploadSessionOperationId * confirmedBlock: ConfirmedBlockUpload
         | DedupeDiscoveryIssued of operationId: UploadSessionOperationId * discovery: DedupeDiscoverySnapshot
         | ReuseRangesClaimed of operationId: UploadSessionOperationId * claimedRanges: ClaimedReuseRange array
+        | RetryWindowRecovered of observedAt: Instant
+        | RetryWindowClosed
+        | BlockUploadPrepared of address: ContentBlockAddress * placement: ContentBlockStoragePlacement
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<UploadSessionEventType>()
@@ -345,6 +348,10 @@ module UploadSession =
             CleanupReminderOperationId: UploadSessionOperationId option
             [<Id(23u)>]
             LastOperationId: UploadSessionOperationId option
+            [<Id(24u)>]
+            RetryExpiresAt: Instant option
+            [<Id(25u)>]
+            RetryWindowAdvancedAt: Instant option
         }
 
         /// Represents the deterministic default instance used when callers need an initialized contract value.
@@ -374,11 +381,32 @@ module UploadSession =
                 CleanupReminderScheduledAt = None
                 CleanupReminderOperationId = None
                 LastOperationId = None
+                RetryExpiresAt = None
+                RetryWindowAdvancedAt = None
             }
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto uploadSessionEvent current =
+            let progressTime = uploadSessionEvent.Metadata.Timestamp
+
+            /// Resets the one shared retry deadline only for a newly persisted progress event.
+            let advance (session: UploadSessionDto) =
+                { session with RetryExpiresAt = Some(progressTime + Duration.FromHours 1); RetryWindowAdvancedAt = Some progressTime }
+
             match uploadSessionEvent.Event with
+            | UploadSessionEventType.BlockUploadPrepared (address, placement) ->
+                { current with
+                    BlockUploadIntents =
+                        current.BlockUploadIntents
+                        |> Array.map (fun intent ->
+                            if intent.ContentBlockAddress = address then
+                                { intent with PreparedPlacement = Some placement }
+                            else
+                                intent)
+                }
+            | UploadSessionEventType.RetryWindowRecovered observedAt ->
+                { current with RetryExpiresAt = Some(observedAt + Duration.FromHours 1); RetryWindowAdvancedAt = Some observedAt }
+            | UploadSessionEventType.RetryWindowClosed -> { current with RetryExpiresAt = None }
             | UploadSessionEventType.Started start ->
                 { UploadSessionDto.Default with
                     UploadSessionId = start.UploadSessionId
@@ -396,17 +424,20 @@ module UploadSession =
                     StartedAt = uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some start.OperationId
                 }
+                |> advance
             | UploadSessionEventType.Abandoned operationId ->
                 { current with
                     LifecycleState = UploadSessionLifecycleState.Abandoned
                     CompletedAt = Some uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some operationId
+                    RetryExpiresAt = None
                 }
             | UploadSessionEventType.Expired operationId ->
                 { current with
                     LifecycleState = UploadSessionLifecycleState.Expired
                     CompletedAt = Some uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some operationId
+                    RetryExpiresAt = None
                 }
             | UploadSessionEventType.Finalized (operationId, manifest) ->
                 { current with
@@ -416,6 +447,7 @@ module UploadSession =
                     CompletedAt = Some uploadSessionEvent.Metadata.Timestamp
                     LastOperationId = Some operationId
                 }
+                |> advance
             | UploadSessionEventType.CleanupReminderScheduled (operationId, reminderTime) ->
                 { current with
                     LifecycleState = UploadSessionLifecycleState.RetentionPending
@@ -435,6 +467,7 @@ module UploadSession =
                     FinalizedManifest = None
                     LibraryPreparation = None
                     LastOperationId = Some operationId
+                    RetryExpiresAt = None
                 }
             | UploadSessionEventType.BlockUploadIntentRegistered (operationId, intent) ->
                 { current with
@@ -443,6 +476,12 @@ module UploadSession =
                     LastOperationId = Some operationId
                 }
             | UploadSessionEventType.BlockUploadConfirmed (operationId, confirmedBlock) ->
+                let newAddress =
+                    current.ConfirmedBlockUploads
+                    |> Array.forall (fun block ->
+                        block.ContentBlockAddress
+                        <> confirmedBlock.ContentBlockAddress)
+
                 let existing =
                     current.ConfirmedBlockUploads
                     |> Array.filter (fun existingBlock ->
@@ -454,14 +493,26 @@ module UploadSession =
                     ConfirmedBlockUploads = Array.append existing [| confirmedBlock |]
                     LastOperationId = Some operationId
                 }
+                |> fun next -> if newAddress then advance next else next
             | UploadSessionEventType.DedupeDiscoveryIssued (operationId, discovery) ->
                 { current with LifecycleState = UploadSessionLifecycleState.Discovering; DedupeDiscovery = Some discovery; LastOperationId = Some operationId }
             | UploadSessionEventType.ReuseRangesClaimed (operationId, claimedRanges) ->
+                let newRange =
+                    claimedRanges
+                    |> Array.exists (fun range ->
+                        current.ClaimedReuseRanges
+                        |> Array.forall (fun prior ->
+                            prior.ContentBlockAddress
+                            <> range.ContentBlockAddress
+                            || prior.OrdinalStart <> range.OrdinalStart
+                            || prior.OrdinalCount <> range.OrdinalCount))
+
                 { current with
                     LifecycleState = UploadSessionLifecycleState.ClaimingRanges
                     ClaimedReuseRanges = Array.append current.ClaimedReuseRanges claimedRanges
                     LastOperationId = Some operationId
                 }
+                |> fun next -> if newRange then advance next else next
 
     /// Represents upload session decision.
     [<GenerateSerializer>]

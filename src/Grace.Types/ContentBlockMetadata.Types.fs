@@ -270,37 +270,69 @@ module ContentBlockMetadata =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
+    /// Retains repository-scoped session grain identities and exact provider conditions through interrupted publication and cleanup.
+    [<CLIMutable; GenerateSerializer>]
+    type ContentBlockUploadState =
+        {
+            [<Id(0u)>]
+            Holders: UploadSessionId array
+            [<Id(1u)>]
+            Retired: UploadSessionId array
+            [<Id(2u)>]
+            Placement: ContentBlockStoragePlacement option
+            [<Id(3u)>]
+            PreparedETag: string option
+            [<Id(4u)>]
+            Deleting: bool
+        }
+        /// Starts without uploaded bytes, holds or retired session identities.
+        static member Empty = { Holders = Array.empty; Retired = Array.empty; Placement = None; PreparedETag = None; Deleting = false }
+
     /// Represents content block metadata event type.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type ContentBlockMetadataEventType =
         | WholeRecordReplaced of operationId: string * metadata: ContentBlockMetadata
         | PhysicalRangesMerged of operationId: string * metadata: ContentBlockMetadata
         | PhysicalRangesCompacted of operationId: string * metadata: ContentBlockMetadata
         | CompactionChurnStateSet of operationId: string * churnState: ContentBlockCompactionChurnState
         | ActiveManifestCountAdjusted of adjust: AdjustContentBlockActiveManifestCount * metadata: ContentBlockMetadata
+        | UploadStateChanged of upload: ContentBlockUploadState
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
 
     /// Represents the content block metadata event contract.
     [<GenerateSerializer>]
-    type ContentBlockMetadataEvent = { Event: ContentBlockMetadataEventType; Metadata: EventMetadata }
+    type ContentBlockMetadataEvent =
+        {
+            [<Id(0u)>]
+            Event: ContentBlockMetadataEventType
+            [<Id(1u)>]
+            Metadata: EventMetadata
+        }
 
     /// Represents content block metadata dto.
     [<GenerateSerializer>]
     type ContentBlockMetadataDto =
         {
+            [<Id(0u)>]
             Metadata: ContentBlockMetadata option
+            [<Id(1u)>]
             CompactionChurnState: ContentBlockCompactionChurnState
+            [<Id(2u)>]
             LastOperationId: string option
+            [<Id(3u)>]
+            Upload: ContentBlockUploadState
         }
 
         /// Represents the normalized empty instance used before persisted state or caller input contributes values.
-        static member Empty = { Metadata = None; CompactionChurnState = ContentBlockCompactionChurnState.NoChurn; LastOperationId = None }
+        static member Empty =
+            { Metadata = None; CompactionChurnState = ContentBlockCompactionChurnState.NoChurn; LastOperationId = None; Upload = ContentBlockUploadState.Empty }
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto event _current =
             match event.Event with
+            | ContentBlockMetadataEventType.UploadStateChanged upload -> { _current with Upload = upload }
             | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) ->
                 { _current with Metadata = Some metadata; LastOperationId = Some operationId }
             | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, metadata) ->

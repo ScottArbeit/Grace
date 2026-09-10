@@ -19,11 +19,38 @@ open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
+open System.IO
+open Azure
+open Azure.Storage.Blobs.Models
 
 /// Groups Orleans actor helpers for upload session keys, proxies, state, or workflow transitions.
 module UploadSession =
 
     let private actorName = ActorName.UploadSession
+
+    /// Uses the operating-system process start, never a grain activation, to recognize a recovered retry window.
+    let private processStartedAt =
+        Instant.FromDateTimeUtc(
+            System
+                .Diagnostics
+                .Process
+                .GetCurrentProcess()
+                .StartTime.ToUniversalTime()
+        )
+
+    /// Grants one full hour when this live window predates process recovery or processing is substantially overdue.
+    let shouldRecoverRetryWindow processStart now (session: UploadSessionDto) =
+        match session.RetryExpiresAt, session.RetryWindowAdvancedAt with
+        | Some deadline, Some advanced ->
+            advanced < processStart
+            || now > deadline + Duration.FromSeconds 120L
+        | _ -> false
+
+    /// Keeps reminder identities immutable across deadline replacements and duplicate callbacks.
+    let retryReminderId sessionId (deadline: Instant) =
+        let bytes = System.Text.Encoding.UTF8.GetBytes($"upload-retry:{sessionId}:{deadline.ToUnixTimeTicks()}")
+        let hash = System.Security.Cryptography.SHA256.HashData bytes
+        Guid(hash[0..15])
 
     /// Maps a UploadSession command case to the operation name used in idempotency and diagnostics.
     let commandName command =
@@ -80,6 +107,9 @@ module UploadSession =
         | UploadSessionEventType.BlockUploadConfirmed (operationId, _) -> operationId
         | UploadSessionEventType.DedupeDiscoveryIssued (operationId, _) -> operationId
         | UploadSessionEventType.ReuseRangesClaimed (operationId, _) -> operationId
+        | UploadSessionEventType.RetryWindowRecovered _
+        | UploadSessionEventType.BlockUploadPrepared _
+        | UploadSessionEventType.RetryWindowClosed -> String.Empty
 
     /// Checks whether the operation id has already produced a persisted event.
     let private hasAppliedOperationId (events: seq<UploadSessionEvent>) operationId =
@@ -110,7 +140,10 @@ module UploadSession =
             | UploadSessionEventType.Finalized _
             | UploadSessionEventType.CleanupReminderScheduled _
             | UploadSessionEventType.PhysicalStateDeleted _ -> true
+            | UploadSessionEventType.RetryWindowRecovered _
+            | UploadSessionEventType.RetryWindowClosed -> true
             | UploadSessionEventType.BlockUploadIntentRegistered _
+            | UploadSessionEventType.BlockUploadPrepared _
             | UploadSessionEventType.BlockUploadConfirmed _
             | UploadSessionEventType.DedupeDiscoveryIssued _
             | UploadSessionEventType.ReuseRangesClaimed _ -> false)
@@ -126,7 +159,7 @@ module UploadSession =
     /// Coordinates cleanup events logic for the UploadSession actor.
     let private cleanupEvents (session: UploadSessionDto) operationId (metadata: EventMetadata) =
         let cleanupOperationId = createCleanupOperationId operationId
-        let reminderTime = metadata.Timestamp.Plus(DefaultPhysicalDeletionReminderDuration)
+        let reminderTime = metadata.Timestamp.Plus(Duration.FromHours 1)
 
         [
             { Event = UploadSessionEventType.CleanupReminderScheduled(cleanupOperationId, reminderTime); Metadata = metadata }
@@ -1437,6 +1470,7 @@ module UploadSession =
                                 LogicalLength = intent.LogicalLength
                                 ExpectedPayloadLength = intent.ExpectedPayloadLength
                                 RegisteredAt = metadata.Timestamp
+                                PreparedPlacement = None
                             }
 
                         let events =
@@ -1476,11 +1510,31 @@ module UploadSession =
 
         let log = loggerFactory.CreateLogger("UploadSession.Actor")
         let mutable uploadSessionDto = UploadSessionDto.Default
+        let mutable persistenceFailed = false
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         /// Requests deactivation without exposing the inherited protected call to a task state machine.
         member private this.DeactivateActorOnIdle() = this.DeactivateOnIdle()
+
+        /// Stops a failed working buffer from authorizing another publication, release or retry grant.
+        member private _.EnsureUsable() =
+            if persistenceFailed then
+                invalidOp "UploadSession state write failed; retry on a fresh activation."
+
+        /// Poisons the activation on both rejected writes and writes whose response was lost.
+        member private this.WriteState() =
+            task {
+                this.EnsureUsable()
+
+                try
+                    do! state.WriteStateAsync()
+                with
+                | ex ->
+                    persistenceFailed <- true
+                    this.DeactivateActorOnIdle()
+                    return raise ex
+            }
 
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
@@ -1499,7 +1553,7 @@ module UploadSession =
                 for uploadSessionEvent in events do
                     state.State.Add(uploadSessionEvent)
 
-                do! state.WriteStateAsync()
+                do! this.WriteState()
 
                 uploadSessionDto <- applyEvents events uploadSessionDto
             }
@@ -1520,11 +1574,119 @@ module UploadSession =
                     state.State.Add(retainedEvents[index])
                     index <- index + 1
 
-                do! state.WriteStateAsync()
+                do! this.WriteState()
 
                 uploadSessionDto <-
                     state.State
                     |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+            }
+
+        /// Persists a missing immutable deadline reminder without replacing an existing delivery.
+        member private this.EnsureRetryReminder (session: UploadSessionDto) deadline correlationId =
+            task {
+                this.EnsureUsable()
+                let id = retryReminderId (this.GetPrimaryKey()) deadline
+                let reminderState = createCleanupReminderState session.UploadSessionId session.RepositoryId $"retry:{id:N}" correlationId
+
+                let reminder =
+                    ReminderDto.CreateWithId
+                        id
+                        actorName
+                        this.IdentityString
+                        session.OwnerId
+                        session.OrganizationId
+                        session.RepositoryId
+                        ReminderTypes.PhysicalDeletion
+                        deadline
+                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                        correlationId
+
+                let actor = Reminder.CreateActorProxy id correlationId
+                let! _ = actor.GetOrAdd reminder correlationId
+                return ()
+            }
+
+        /// Closes an observed expired window before cleanup can release any upload holds.
+        member private this.ObserveRetryWindow now correlationId =
+            task {
+                this.EnsureUsable()
+                let metadata = { EventMetadata.New correlationId "system" with Timestamp = now }
+
+                if shouldRecoverRetryWindow processStartedAt now uploadSessionDto then
+                    do! this.ApplyEvents [ { Event = UploadSessionEventType.RetryWindowRecovered now; Metadata = metadata } ]
+                elif uploadSessionDto.RetryExpiresAt
+                     |> Option.exists (fun deadline -> deadline <= now) then
+                    let expiredEvents =
+                        if uploadSessionDto.FinalizedManifestAddress.IsSome then
+                            []
+                        else
+                            [
+                                { Event = UploadSessionEventType.Expired $"retry-expired:{uploadSessionDto.UploadSessionId:N}"; Metadata = metadata }
+                            ]
+                            @ cleanupEvents uploadSessionDto $"retry-expired:{uploadSessionDto.UploadSessionId:N}" metadata
+
+                    do!
+                        this.ApplyEvents(
+                            expiredEvents
+                            @ [
+                                { Event = UploadSessionEventType.RetryWindowClosed; Metadata = metadata }
+                            ]
+                        )
+
+                match uploadSessionDto.RetryExpiresAt with
+                | Some deadline -> do! this.EnsureRetryReminder uploadSessionDto deadline correlationId
+                | None -> ()
+            }
+
+        /// Releases recorded block intents only after terminal state and any selected manifest metadata are durable.
+        member private this.CleanupUploads(metadata: EventMetadata) =
+            task {
+                this.EnsureUsable()
+
+                if uploadSessionDto.RetryExpiresAt.IsSome then
+                    invalidOp "The upload retry window must close before cleanup."
+
+                let addresses =
+                    uploadSessionDto.BlockUploadIntents
+                    |> Array.map (fun intent -> intent.ContentBlockAddress)
+                    |> Array.distinct
+
+                let mutable index = 0
+                let mutable failure = None
+
+                while index < addresses.Length do
+                    let address = addresses[index]
+
+                    let actor =
+                        orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                            ContentBlockMetadataActorKey.Create uploadSessionDto.StoragePoolId address,
+                            metadata.CorrelationId
+                        )
+
+                    let selectedByManifest =
+                        uploadSessionDto.FinalizedManifest
+                        |> Option.exists (fun manifest ->
+                            manifest.Blocks
+                            |> Seq.exists (fun block -> block.Address = address))
+
+                    let! existing = actor.Get metadata.CorrelationId
+
+                    if selectedByManifest && existing.IsNone then
+                        failure <- Some(graceError metadata.CorrelationId "Completed manifest metadata merge is pending; its upload hold is retained.")
+                    else
+                        let! result = actor.ReleaseUpload (this.GetPrimaryKey()) metadata
+
+                        match result with
+                        | Error error -> failure <- Some error
+                        | Ok () -> ()
+
+                    index <- index + 1
+
+                match failure with
+                | Some error -> return Error error
+                | None ->
+                    let! result = deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId
+                    return result |> Result.map (fun _ -> ())
             }
 
         /// Coordinates prevalidate finalized content block metadata logic for the UploadSession actor.
@@ -1808,16 +1970,9 @@ module UploadSession =
         /// Schedules schedule finalize cleanup reminder work for the UploadSession actor.
         member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
-                let reminderState =
-                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId finalize.OperationId metadata.CorrelationId
-
-                do!
-                    (this :> IGraceReminderWithGuidKey)
-                        .ScheduleReminderAsync
-                        ReminderTypes.PhysicalDeletion
-                        DefaultPhysicalDeletionReminderDuration
-                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                        metadata.CorrelationId
+                match decision.Session.RetryExpiresAt with
+                | Some deadline -> do! this.EnsureRetryReminder decision.Session deadline metadata.CorrelationId
+                | None -> ()
             }
 
         /// Validates finalize cleanup reminder before the operation continues.
@@ -1860,21 +2015,33 @@ module UploadSession =
                     match reminder.ReminderType, reminder.State with
                     | ReminderTypes.PhysicalDeletion, ReminderState.UploadSessionPhysicalDeletion reminderState ->
                         this.correlationId <- reminderState.CorrelationId
-
+                        this.EnsureUsable()
                         let metadata = EventMetadata.New reminderState.CorrelationId "system"
                         let command = UploadSessionCommand.DeletePhysicalState reminderState.OperationId
 
-                        match decideCommand state.State uploadSessionDto command metadata with
-                        | Ok decision ->
-                            match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
-                            | Error error -> return Error error
-                            | Ok _ ->
-                                if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                        if uploadSessionDto.LifecycleState = UploadSessionLifecycleState.NotStarted
+                           || uploadSessionDto.LifecycleState = UploadSessionLifecycleState.StateDeleted then
+                            return Ok()
+                        elif uploadSessionDto.RetryExpiresAt
+                             |> Option.exists (fun deadline -> reminder.ReminderTime < deadline) then
+                            do! this.EnsureRetryReminder uploadSessionDto uploadSessionDto.RetryExpiresAt.Value metadata.CorrelationId
+                            return Ok()
+                        else
+                            do! this.ObserveRetryWindow metadata.Timestamp metadata.CorrelationId
 
-                                do! this.CompactPhysicalStateEvents()
-                                this.DeactivateActorOnIdle()
+                            if uploadSessionDto.RetryExpiresAt.IsSome then
                                 return Ok()
-                        | Error error -> return Error error
+                            else
+                                match decideCommand state.State uploadSessionDto command metadata with
+                                | Ok decision ->
+                                    match! this.CleanupUploads metadata with
+                                    | Error error -> return Error error
+                                    | Ok () ->
+                                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                                        do! this.CompactPhysicalStateEvents()
+                                        this.DeactivateActorOnIdle()
+                                        return Ok()
+                                | Error error -> return Error error
                     | reminderType, reminderState ->
                         return
                             Error(
@@ -1885,8 +2052,57 @@ module UploadSession =
                 }
 
         interface IUploadSessionActor with
+            /// Prepares only an empty staging object and commits its ETag before returning an upload grant condition.
+            member this.PrepareBlockUpload address metadata =
+                task {
+                    do! this.ObserveRetryWindow (getCurrentInstant ()) metadata.CorrelationId
+
+                    let active =
+                        uploadSessionDto.RetryExpiresAt.IsSome
+                        && uploadSessionDto.FinalizedManifestAddress.IsNone
+
+                    let intent =
+                        uploadSessionDto.BlockUploadIntents
+                        |> Array.tryFind (fun intent -> intent.ContentBlockAddress = address)
+
+                    if not active || intent.IsNone then
+                        return Error(graceError metadata.CorrelationId "A live upload intent is required before preparing staging bytes.")
+                    else
+                        match resolveUploadSessionStoragePoolRoute uploadSessionDto.RepositoryId uploadSessionDto.StoragePoolId metadata.CorrelationId with
+                        | Error error -> return Error error
+                        | Ok route ->
+                            let placement = getContentBlockStagingPlacement route uploadSessionDto.RepositoryId uploadSessionDto.UploadSessionId address None
+
+                            match! getAzureContentBlockClientForPlacement placement metadata.CorrelationId with
+                            | Error error -> return Error error
+                            | Ok blob ->
+                                try
+                                    use empty = new MemoryStream(Array.empty<byte>)
+
+                                    try
+                                        let! _ = blob.UploadAsync(empty, conditions = BlobRequestConditions(IfNoneMatch = ETag.All))
+                                        ()
+                                    with
+                                    | :? RequestFailedException as ex when ex.Status = 409 || ex.Status = 412 -> ()
+
+                                    let! properties = blob.GetPropertiesAsync()
+                                    let prepared = { placement with ETag = Some(string properties.Value.ETag) }
+                                    do! this.ApplyEvents [ { Event = UploadSessionEventType.BlockUploadPrepared(address, prepared); Metadata = metadata } ]
+                                    return Ok prepared
+                                with
+                                | :? RequestFailedException as ex ->
+                                    return Error(graceError metadata.CorrelationId $"Staging preparation requires retry: {ex.Message}")
+                }
+
+            member this.GetForRetry correlationId =
+                task {
+                    do! this.ObserveRetryWindow (getCurrentInstant ()) correlationId
+                    return uploadSessionDto
+                }
+
             /// Reports whether this UploadSession actor has persisted state.
             member this.Exists correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
 
                 (uploadSessionDto.UploadSessionId
@@ -1895,11 +2111,13 @@ module UploadSession =
 
             /// Returns the current UploadSession actor state snapshot.
             member this.Get correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
                 uploadSessionDto |> returnTask
 
             /// Returns the persisted UploadSession event stream for replay or audit.
             member this.GetEvents correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<UploadSessionEvent>)
@@ -1908,12 +2126,31 @@ module UploadSession =
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 task {
+                    this.EnsureUsable()
+                    let metadata = { metadata with Timestamp = getCurrentInstant () }
+                    do! this.ObserveRetryWindow metadata.Timestamp metadata.CorrelationId
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Constants.CurrentCommandProperty, commandName command)
 
                     match decideCommand state.State uploadSessionDto command metadata with
                     | Ok decision ->
                         match command with
+                        | UploadSessionCommand.ConfirmBlockUploaded confirmation when not decision.WasIdempotentReplay ->
+                            let actor =
+                                orleansClient.GetGrain<IContentBlockMetadataActor>(
+                                    ContentBlockMetadataActorKey.Create uploadSessionDto.StoragePoolId confirmation.ContentBlockAddress
+                                )
+
+                            match! actor.PublishUpload (this.GetPrimaryKey()) confirmation.StoragePlacement confirmation.Payload metadata with
+                            | Error error -> return Error error
+                            | Ok placement ->
+                                let confirmed = UploadSessionCommand.ConfirmBlockUploaded { confirmation with StoragePlacement = placement }
+
+                                match decideCommand state.State uploadSessionDto confirmed metadata with
+                                | Error error -> return Error error
+                                | Ok publishedDecision ->
+                                    do! this.ApplyEvents publishedDecision.Events
+                                    return Ok(GraceReturnValue.Create publishedDecision metadata.CorrelationId)
                         | UploadSessionCommand.FinalizeManifest finalize ->
                             if decision.WasIdempotentReplay then
                                 match validateFinalizeReplayManifestAgainstDurableState decision.Session finalize metadata with
@@ -1975,6 +2212,15 @@ module UploadSession =
 
                                             return Ok returnValue
                         | _ ->
+                            match command with
+                            | UploadSessionCommand.Start _ when not decision.WasIdempotentReplay ->
+                                do! this.EnsureRetryReminder decision.Session decision.Session.RetryExpiresAt.Value metadata.CorrelationId
+                            | UploadSessionCommand.DeletePhysicalState _ ->
+                                match! this.CleanupUploads metadata with
+                                | Error error -> invalidOp error.Error
+                                | Ok () -> ()
+                            | _ -> ()
+
                             if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
                             match command with

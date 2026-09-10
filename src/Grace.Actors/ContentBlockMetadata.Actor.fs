@@ -14,6 +14,9 @@ open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
+open System.IO
+open Azure
+open Azure.Storage.Blobs.Models
 
 /// Groups Orleans actor helpers for content block metadata actor key keys, proxies, state, or workflow transitions.
 module ContentBlockMetadataActorKey =
@@ -53,6 +56,7 @@ module ContentBlockMetadata =
         | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, _) -> operationId
         | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, _) -> operationId
         | ContentBlockMetadataEventType.ActiveManifestCountAdjusted (adjust, _) -> adjust.OperationId
+        | ContentBlockMetadataEventType.UploadStateChanged _ -> String.Empty
 
     /// Checks whether the operation id has already produced a persisted event.
     let private hasAppliedOperationId (events: seq<ContentBlockMetadataEvent>) operationId =
@@ -78,6 +82,57 @@ module ContentBlockMetadata =
 
     /// Coordinates grace error logic for the ContentBlockMetadata actor.
     let private graceError correlationId message = GraceError.Create message correlationId
+
+    /// Rejects a delayed acquire after release and preserves the original physical placement on replay.
+    let acquireUpload sessionId placement (upload: ContentBlockUploadState) =
+        /// Ignores physical revisions while preserving the selected storage object.
+        let samePlacement (left: ContentBlockStoragePlacement) right = { left with ETag = None } = { right with ETag = None }
+
+        if sessionId = UploadSessionId.Empty then
+            Error "An upload hold requires a session identity."
+        elif upload.Retired |> Array.contains sessionId then
+            Error "This upload hold has already been released."
+        elif upload.Deleting then
+            Error "ContentBlock cleanup is still pending; retry with a live upload after cleanup."
+        elif upload.Placement
+             |> Option.exists (fun prior -> not (samePlacement prior placement)) then
+            Error "The ContentBlock upload placement conflicts with its persisted placement."
+        else
+            Ok
+                { upload with
+                    Holders =
+                        Array.append upload.Holders [| sessionId |]
+                        |> Array.distinct
+                    Placement = Some { placement with ETag = None }
+                }
+
+    /// Records release even before acquisition arrives, so stale requests cannot restore an expired hold.
+    let retireUpload sessionId (upload: ContentBlockUploadState) =
+        { upload with
+            Holders = upload.Holders |> Array.filter ((<>) sessionId)
+            Retired =
+                Array.append upload.Retired [| sessionId |]
+                |> Array.distinct
+        }
+
+    /// Whole-block cleanup never interprets zero active counts as absence of completed metadata.
+    let canDeleteUpload (dto: ContentBlockMetadataDto) =
+        dto.Metadata.IsNone
+        && dto.Upload.Holders.Length = 0
+
+    /// Verifies the content address and exact decoded chunks when a previous upload response was lost.
+    let validateUploadBytes address (expected: byte array) (actual: byte array) =
+        match ContentBlockFormat.decode expected, ContentBlockFormat.decode actual with
+        | Ok proposed, Ok stored ->
+            match ContentBlockFormat.validateAddress address proposed, ContentBlockFormat.validateAddress address stored with
+            | Ok (), Ok () when
+                proposed.Address = stored.Address
+                && proposed.Payload = stored.Payload
+                && proposed.Chunks = stored.Chunks
+                ->
+                Ok()
+            | _ -> Error "Stored ContentBlock does not match the validated upload."
+        | _ -> Error "Empty or invalid ContentBlock bytes cannot confirm an upload."
 
     /// Validates range before the operation continues.
     let private validateRange correlationId (range: ContentBlockMetadataRange) =
@@ -763,14 +818,19 @@ module ContentBlockMetadata =
     /// Implements the Orleans grain for content block metadata actor.
     type ContentBlockMetadataActor
         (
-            [<PersistentState(StateName.ContentBlockMetadata, Constants.GraceActorStorage)>] state: IPersistentState<List<ContentBlockMetadataEvent>>
+            [<PersistentState(StateName.ContentBlockMetadata, Constants.GraceActorStorage)>] state: IPersistentState<List<ContentBlockMetadataEvent>>,
+            loggerFactory: ILoggerFactory
         ) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("ContentBlockMetadata.Actor")
         let mutable metadataDto = ContentBlockMetadataDto.Empty
+        let mutable persistenceFailed = false
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
+
+        /// Requests a fresh activation after a failed persistence attempt.
+        member private this.DeactivateAfterFailure() = this.DeactivateOnIdle()
 
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
@@ -786,17 +846,151 @@ module ContentBlockMetadata =
         /// Replays persisted ContentBlockMetadata events into an in-memory state snapshot.
         member private this.ApplyEvents(events: ContentBlockMetadataEvent list) =
             task {
+                this.EnsureUsable()
+
                 for metadataEvent in events do
+                    match metadataEvent.Event with
+                    | ContentBlockMetadataEventType.UploadStateChanged _ ->
+                        state.State.RemoveAll (fun prior ->
+                            match prior.Event with
+                            | ContentBlockMetadataEventType.UploadStateChanged _ -> true
+                            | _ -> false)
+                        |> ignore
+                    | _ -> ()
+
                     state.State.Add(metadataEvent)
 
-                do! state.WriteStateAsync()
+                try
+                    do! state.WriteStateAsync()
+                with
+                | ex ->
+                    persistenceFailed <- true
+                    this.DeactivateAfterFailure()
+                    return raise ex
 
                 metadataDto <- applyEvents events metadataDto
+            }
+
+        /// A failed or uncertain write poisons this activation before another external effect can run.
+        member private _.EnsureUsable() =
+            if persistenceFailed then
+                invalidOp "ContentBlock state write failed; retry on a fresh activation."
+
+        /// Replaces obsolete upload snapshots in the same durable write while retaining metadata events and all retired identities.
+        member private this.SaveUpload upload metadata =
+            this.ApplyEvents [ { Event = ContentBlockMetadataEventType.UploadStateChanged upload; Metadata = metadata } ]
+
+        /// Publishes one block through a single conditional Put Blob after durable preparation.
+        member private this.PublishUpload sessionId placement (payload: byte array) (metadata: EventMetadata) =
+            task {
+                this.EnsureUsable()
+                let address = this.GetPrimaryKeyString().Split('|')[1]
+
+                match validateUploadBytes address payload payload, acquireUpload sessionId placement metadataDto.Upload with
+                | Error error, _
+                | _, Error error -> return Error(graceError metadata.CorrelationId error)
+                | Ok (), Ok acquired ->
+                    do! this.SaveUpload acquired metadata
+
+                    match! getAzureContentBlockClientForPlacement placement metadata.CorrelationId with
+                    | Error error -> return Error error
+                    | Ok blob ->
+                        try
+                            let! exists = blob.ExistsAsync()
+
+                            if not exists.Value then
+                                if metadataDto.Metadata.IsSome then
+                                    invalidOp "Completed ContentBlock payload is missing."
+
+                                use empty = new MemoryStream(Array.empty<byte>)
+
+                                try
+                                    let! _ = blob.UploadAsync(empty, conditions = BlobRequestConditions(IfNoneMatch = ETag.All))
+                                    ()
+                                with
+                                | :? RequestFailedException as ex when ex.Status = 409 || ex.Status = 412 -> ()
+
+                            let! current = blob.DownloadContentAsync()
+                            let bytes = current.Value.Content.ToArray()
+
+                            if bytes.Length > 0 then
+                                match validateUploadBytes address payload bytes with
+                                | Error error -> return Error(graceError metadata.CorrelationId error)
+                                | Ok () ->
+                                    do! this.SaveUpload { metadataDto.Upload with PreparedETag = Some(string current.Value.Details.ETag) } metadata
+                                    return Ok { placement with ETag = Some(string current.Value.Details.ETag) }
+                            else
+                                if metadataDto.Metadata.IsSome then
+                                    invalidOp "Completed ContentBlock contains an empty placeholder."
+
+                                let etag = current.Value.Details.ETag
+                                do! this.SaveUpload { metadataDto.Upload with PreparedETag = Some(string etag) } metadata
+                                use stream = new MemoryStream(payload, writable = false)
+                                let! published = blob.UploadAsync(stream, conditions = BlobRequestConditions(IfMatch = etag))
+                                do! this.SaveUpload { metadataDto.Upload with PreparedETag = Some(string published.Value.ETag) } metadata
+                                return Ok { placement with ETag = Some(string published.Value.ETag) }
+                        with
+                        | :? RequestFailedException as ex ->
+                            return Error(graceError metadata.CorrelationId $"ContentBlock publication requires retry and reconciliation: {ex.Message}")
+            }
+
+        /// Keeps deletion reserved until HEAD confirms completion, including a payload that wins the first race.
+        member private this.ReleaseUpload sessionId (metadata: EventMetadata) =
+            task {
+                this.EnsureUsable()
+                let retired = retireUpload sessionId metadataDto.Upload
+                do! this.SaveUpload retired metadata
+
+                if
+                    not (canDeleteUpload metadataDto)
+                    || retired.Placement.IsNone
+                then
+                    return Ok()
+                else
+                    do! this.SaveUpload { retired with Deleting = true } metadata
+
+                    match! getAzureContentBlockClientForPlacement retired.Placement.Value metadata.CorrelationId with
+                    | Error error -> return Error error
+                    | Ok blob ->
+                        try
+                            let mutable absent = false
+                            let mutable attempts = 0
+
+                            while not absent && attempts < 3 do
+                                attempts <- attempts + 1
+                                let! exists = blob.ExistsAsync()
+
+                                if not exists.Value then
+                                    absent <- true
+                                else
+                                    let! properties = blob.GetPropertiesAsync()
+                                    let etag = properties.Value.ETag
+                                    do! this.SaveUpload { metadataDto.Upload with PreparedETag = Some(string etag) } metadata
+
+                                    try
+                                        let! _ = blob.DeleteAsync(conditions = BlobRequestConditions(IfMatch = etag))
+                                        absent <- true
+                                    with
+                                    | :? RequestFailedException as ex when ex.Status = 404 || ex.Status = 412 -> ()
+
+                            if absent then
+                                do! this.SaveUpload { metadataDto.Upload with Deleting = false; PreparedETag = None } metadata
+                                return Ok()
+                            else
+                                return Error(graceError metadata.CorrelationId "ContentBlock cleanup remains pending after concurrent provider changes.")
+                        with
+                        | :? RequestFailedException as ex ->
+                            return Error(graceError metadata.CorrelationId $"ContentBlock cleanup remains pending: {ex.Message}")
             }
 
         /// Runs ContentBlockMetadata command decisions, applies emitted events, and persists the result.
         member private this.HandleCommand (command: ContentBlockMetadataCommand) (eventMetadata: EventMetadata) =
             task {
+                this.EnsureUsable()
+
+                if metadataDto.Upload.Deleting then
+                    invalidOp "ContentBlock cleanup must finish before metadata admission."
+
                 this.correlationId <- eventMetadata.CorrelationId
                 RequestContext.Set(Constants.CurrentCommandProperty, commandName command)
 
@@ -829,20 +1023,28 @@ module ContentBlockMetadata =
             }
 
         interface IContentBlockMetadataActor with
+            /// Serializes temporary ownership with guarded payload publication.
+            member this.PublishUpload sessionId placement payload metadata = this.PublishUpload sessionId placement payload metadata
+            /// Retires only the requesting scoped session and retries eligible cleanup.
+            member this.ReleaseUpload sessionId metadata = this.ReleaseUpload sessionId metadata
+
             /// Reports whether this ContentBlockMetadata actor has persisted state.
             member this.Exists correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
 
                 metadataDto.Metadata.IsSome |> returnTask
 
             /// Returns the current ContentBlockMetadata actor state snapshot.
             member this.Get correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
 
                 metadataDto.Metadata |> returnTask
 
             /// Returns the persisted ContentBlockMetadata event stream for replay or audit.
             member this.GetEvents correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<ContentBlockMetadataEvent>)
@@ -850,6 +1052,7 @@ module ContentBlockMetadata =
 
             /// Reports whether requested logical ranges are present in content-block metadata.
             member this.GetRangePresence query correlationId =
+                this.EnsureUsable()
                 this.correlationId <- correlationId
 
                 match metadataDto.Metadata with

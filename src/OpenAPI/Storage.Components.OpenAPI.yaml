@@ -163,6 +163,9 @@ StartUploadSession:
       type: string
     OperationId:
       $ref: '#/UploadSessionOperationId'
+    LibraryPreparation:
+      nullable: true
+      $ref: '#/LibraryUploadPreparation'
   required:
     - UploadSessionId
     - OwnerId
@@ -524,6 +527,17 @@ UploadSessionDto:
     LastOperationId:
       nullable: true
       $ref: '#/UploadSessionOperationId'
+    RetryExpiresAt:
+      description: Shared inactivity deadline, or null after the retry window closes.
+      nullable: true
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    RetryWindowAdvancedAt:
+      description: Last durable progress or recovery grant used to establish the retry deadline.
+      nullable: true
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    LibraryPreparation:
+      nullable: true
+      $ref: '#/LibraryUploadPreparation'
   required:
     - Class
     - UploadSessionId
@@ -547,6 +561,22 @@ UploadSessionDto:
     - CleanupReminderScheduledAt
     - CleanupReminderOperationId
     - LastOperationId
+    - RetryExpiresAt
+    - RetryWindowAdvancedAt
+    - LibraryPreparation
+
+LibraryUploadPreparation:
+  description: Library operation binding; expiry comes from the session RetryExpiresAt.
+  type: object
+  properties:
+    OperationId:
+      type: string
+      format: uuid
+    PrincipalId:
+      type: string
+    ExpectedSha256:
+      type: string
+  required: [OperationId, PrincipalId, ExpectedSha256]
 
 UploadSessionLifecycleState:
   description: Lifecycle state for a manifest upload session.
@@ -581,12 +611,17 @@ BlockUploadIntent:
       format: int64
     RegisteredAt:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    PreparedPlacement:
+      description: Durable staging placement and exact ETag required before an upload grant is issued.
+      nullable: true
+      $ref: '#/ContentBlockStoragePlacement'
   required:
     - ContentBlockAddress
     - LogicalOffset
     - LogicalLength
     - ExpectedPayloadLength
     - RegisteredAt
+    - PreparedPlacement
 
 ConfirmedBlockUpload:
   description: Confirmed object-storage placement for an uploaded ContentBlock.
@@ -711,6 +746,33 @@ UploadSessionEventType:
     - $ref: '#/UploadSessionBlockUploadConfirmedEvent'
     - $ref: '#/UploadSessionDedupeDiscoveryIssuedEvent'
     - $ref: '#/UploadSessionReuseRangesClaimedEvent'
+    - $ref: '#/UploadSessionRetryWindowRecoveredEvent'
+    - $ref: '#/UploadSessionRetryWindowClosedEvent'
+    - $ref: '#/UploadSessionBlockUploadPreparedEvent'
+
+UploadSessionRetryWindowRecoveredEvent:
+  type: object
+  properties:
+    retryWindowRecovered:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+  required: [retryWindowRecovered]
+
+UploadSessionRetryWindowClosedEvent:
+  type: string
+  enum: [retryWindowClosed]
+
+UploadSessionBlockUploadPreparedEvent:
+  type: object
+  properties:
+    blockUploadPrepared:
+      type: object
+      properties:
+        address:
+          $ref: '#/ContentBlockAddress'
+        placement:
+          $ref: '#/ContentBlockStoragePlacement'
+      required: [address, placement]
+  required: [blockUploadPrepared]
 
 UploadSessionStartedEvent:
   type: object

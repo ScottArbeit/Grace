@@ -628,7 +628,15 @@ module Services =
 
                 while index < distinctAddresses.Length
                       && firstError.IsNone do
-                    let placement = getContentBlockStagingPlacement route session.RepositoryId session.UploadSessionId distinctAddresses[index] None
+                    let placement =
+                        session.BlockUploadIntents
+                        |> Array.tryPick (fun intent ->
+                            if intent.ContentBlockAddress = distinctAddresses[index] then
+                                intent.PreparedPlacement
+                            else
+                                None)
+                        |> Option.defaultWith (fun () ->
+                            getContentBlockStagingPlacement route session.RepositoryId session.UploadSessionId distinctAddresses[index] None)
 
                     match! deleteAzureContentBlockPlacementIfExists placement correlationId with
                     | Ok deleted -> if deleted then deletedCount <- deletedCount + 1
@@ -742,10 +750,20 @@ module Services =
             return UriWithSharedAccessSignature($"{sasUri}")
         }
 
-    let createAzureContentBlockSasUriForObjectKey
+    /// Caps staging grants at the upload retry boundary while retaining the normal maximum SAS duration.
+    let contentBlockSasExpiry (now: DateTimeOffset) (retryExpiresAt: Instant option) =
+        let maximum = now.AddMinutes SharedAccessSignatureExpiration
+
+        retryExpiresAt
+        |> Option.map (fun deadline -> min maximum (deadline.ToDateTimeOffset()))
+        |> Option.defaultValue maximum
+
+    /// Signs a routed object grant with an optional upload deadline that cannot be extended by URI issuance.
+    let createAzureContentBlockSasUriForObjectKeyUntil
         (route: StoragePoolRouting.StoragePoolRoute)
         (objectKey: string)
         (permission: BlobSasPermissions)
+        (retryExpiresAt: Instant option)
         (correlationId: CorrelationId)
         =
         task {
@@ -770,7 +788,7 @@ module Services =
                     let blobSasBuilder =
                         BlobSasBuilder(
                             permissions = permission,
-                            expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                            expiresOn = contentBlockSasExpiry DateTimeOffset.UtcNow retryExpiresAt,
                             StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
                             BlobContainerName = blobContainerClient.Name,
                             BlobName = objectKey,
@@ -826,6 +844,10 @@ module Services =
 
                     return Ok(UriWithSharedAccessSignature($"{sasUri}"))
         }
+
+    /// Signs read grants using their existing bounded lifetime.
+    let createAzureContentBlockSasUriForObjectKey route objectKey permission correlationId =
+        createAzureContentBlockSasUriForObjectKeyUntil route objectKey permission None correlationId
 
     let createAzureContentBlockSasUri
         (route: StoragePoolRouting.StoragePoolRoute)

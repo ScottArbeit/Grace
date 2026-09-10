@@ -25,6 +25,7 @@ open Orleans.Clustering.AzureStorage
 open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.Serialization
+open Orleans.Serialization.NodaTime
 open System
 open System.Collections.Generic
 open System.IO
@@ -37,6 +38,28 @@ open System.Net.Http.Headers
 
 /// Reads persisted actor snapshots needed by the Library restart scenario.
 module private LibraryActorSnapshots =
+
+    /// Restarts the shared server after an offline fixture mutation or assertion, including a failed capture.
+    let whileServerStopped state description action =
+        task {
+            do! AspireTestHost.stopGraceServerAsync state description
+
+            let! outcome =
+                task {
+                    try
+                        let! value = action ()
+                        return Ok value
+                    with
+                    | error -> return Error error
+                }
+
+            let! _ = AspireTestHost.startGraceServerAsync state description
+
+            match outcome with
+            | Ok value -> return value
+            | Error error -> return raise error
+        }
+
     /// Builds the exact one-, two-, or three-level provider partition key stored with a Library document.
     let private partitionKey (document: Dictionary<string, JsonElement>) =
         let builder = PartitionKeyBuilder()
@@ -198,8 +221,8 @@ module private LibraryActorSnapshots =
             return ()
         }
 
-    /// Sends one normal counter command through the real Aspire-hosted Orleans actor without activating the Library actor.
-    let addCounterReferenceThroughSilo (state: TestHostState) repositoryId storagePoolId manifestAddress operationId metadata =
+    /// Runs a focused actor operation through the real Aspire-hosted Orleans client.
+    let withSiloClient (state: TestHostState) (run: IClusterClient -> Threading.Tasks.Task<'T>) =
         task {
             let! azureStorageConnectionString, clusterId, serviceId = AspireTestHost.getOrleansClientConfigurationAsync state
 
@@ -217,6 +240,9 @@ module private LibraryActorSnapshots =
                         |> ignore
 
                         clientBuilder.Services.AddSerializer (fun serializerBuilder ->
+                            serializerBuilder.AddNodaTimeSerializers()
+                            |> ignore
+
                             serializerBuilder.AddJsonSerializer(
                                 isSupported =
                                     (fun valueType ->
@@ -232,17 +258,17 @@ module private LibraryActorSnapshots =
             do! host.StartAsync(startTimeout.Token)
             let client = host.Services.GetRequiredService<IClusterClient>()
 
-            let actor = client.GetGrain<IRepositoryContentCounterActor>(RepositoryContentCounter.primaryKey repositoryId storagePoolId manifestAddress)
-
-            let command = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
-
-            let! result =
-                actor.Handle command metadata
-                |> fun invocation -> invocation.WaitAsync(TimeSpan.FromSeconds(30.0))
+            let! result = (run client).WaitAsync(TimeSpan.FromSeconds(90.0))
 
             do! host.StopAsync()
             return result
         }
+
+    /// Sends a normal counter command without activating the Library actor.
+    let addCounterReferenceThroughSilo state repositoryId storagePoolId manifestAddress operationId metadata =
+        withSiloClient state (fun client ->
+            let actor = client.GetGrain<IRepositoryContentCounterActor>(RepositoryContentCounter.primaryKey repositoryId storagePoolId manifestAddress)
+            actor.Handle (RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)) metadata)
 
 /// Groups shared helpers for storage placement test helpers.
 module private StoragePlacementTestHelpers =
@@ -1355,7 +1381,13 @@ type StorageManifestUploadSessionRoutes() =
             let blockBlobClient = BlockBlobClient(uploadUri)
             use payloadStream = new MemoryStream(payload, writable = false)
             let options = BlobUploadOptions()
-            options.Conditions <- BlobRequestConditions(IfNoneMatch = Azure.ETag.All)
+
+            let preparedETag =
+                uploadUri.Fragment.TrimStart('#').Split('&')
+                |> Array.find (fun value -> value.StartsWith("graceContentBlockETag=", StringComparison.Ordinal))
+                |> fun value -> Uri.UnescapeDataString(value.Substring("graceContentBlockETag=".Length))
+
+            options.Conditions <- BlobRequestConditions(IfMatch = Azure.ETag preparedETag)
             let! response = blockBlobClient.UploadAsync(payloadStream, options)
             return response.Value.ETag.ToString()
         }
@@ -1499,6 +1531,7 @@ type StorageManifestUploadSessionRoutes() =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
+
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
@@ -1771,7 +1804,7 @@ type StorageManifestUploadSessionRoutes() =
                 let! _ = putContentBlockWithSas block.Payload uploadUri
                 Assert.Fail("Expected conditional CAS retry to fail instead of overwriting existing content.")
             with
-            | :? Azure.RequestFailedException as ex -> Assert.That(ex.Status, Is.EqualTo(int HttpStatusCode.Conflict))
+            | :? Azure.RequestFailedException as ex -> Assert.That(ex.Status, Is.EqualTo(int HttpStatusCode.PreconditionFailed))
 
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
@@ -2877,7 +2910,17 @@ type StorageManifestUploadSessionRoutes() =
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
 
             let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
-            Assert.That(body, Does.Contain("does not match the staged validated payload"))
+            Assert.That(body, Does.Contain("Stored ContentBlock does not match the validated upload."))
+
+            let! unchanged =
+                (finalContentBlockClientFromUploadUri uploadUri stagedBlock.Address)
+                    .DownloadContentAsync()
+
+            Assert.That(
+                unchanged.Value.Content.ToArray(),
+                Is.EqualTo(box existingFinalBlock.Payload),
+                "Rejection must not overwrite the different physical encoding."
+            )
         }
 
     /// Verifies the confirm content block upload rejects invalid final CAS blob instead of treating it as success scenario.
@@ -2951,8 +2994,13 @@ type StorageManifestUploadSessionRoutes() =
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
 
             let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
-            Assert.That(body, Does.Contain("Existing final ContentBlock"))
-            Assert.That(body, Does.Contain("invalid"))
+            Assert.That(body, Does.Contain("Empty or invalid ContentBlock bytes cannot confirm an upload."))
+
+            let! unchanged =
+                (finalContentBlockClientFromUploadUri uploadUri block.Address)
+                    .DownloadContentAsync()
+
+            Assert.That(unchanged.Value.Content.ToArray(), Is.EqualTo(box invalidFinalPayload), "Corrupt content must not be silently replaced or confirmed.")
         }
 
     /// Verifies the content block upload URI rejects retention pending session with retained intent scenario.
@@ -3600,9 +3648,10 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
-    /// Verifies the confirm content block upload returns bad request when staged block blob is missing scenario.
-    [<Test>]
-    member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsMissing() =
+    /// Rejects both a genuinely missing staged blob and an unfilled prepared placeholder using their observed physical state.
+    [<TestCase(true)>]
+    [<TestCase(false)>]
+    member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsMissing(deletePreparedBlob: bool) =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -3655,9 +3704,29 @@ type StorageManifestUploadSessionRoutes() =
             confirm.Payload <- block.Payload
 
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some "etag-missing-block")
+            // The physical read must decide whether the staged blob is missing or unfilled.
+            confirm.Payload <- Array.empty
+
+            let staged = contentBlockClientFromPlacementViaUploadUri (Uri uploadUriBody) confirm.StoragePlacement
+            let! prepared = staged.GetPropertiesAsync()
+            Assert.That(prepared.Value.ContentLength, Is.Zero)
+
+            if deletePreparedBlob then
+                let! _ = staged.DeleteAsync()
+                let! absent = staged.ExistsAsync()
+                Assert.That(absent.Value, Is.False, "The missing-blob case must remove the prepared placeholder.")
 
             let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
-            Assert.That(body, Does.Contain("could not be read from object storage"))
+
+            Assert.That(
+                body,
+                Does.Contain(
+                    if deletePreparedBlob then
+                        "could not be read from object storage"
+                    else
+                        "ContentBlock payload length mismatch."
+                )
+            )
         }
 
     /// Verifies the confirm content block upload returns bad request when staged block blob is corrupt scenario.
@@ -4015,42 +4084,33 @@ type StorageManifestUploadSessionRoutes() =
 
             expiredSubmit.CorrelationId <- correlationId
             let state = HostState.Value
-            do! AspireTestHost.stopGraceServerAsync state "Library preparation expiry boundary"
 
-            let expiredAt =
-                NodaTime.SystemClock.Instance.GetCurrentInstant()
-                - NodaTime.Duration.FromSeconds(1L)
+            do!
+                LibraryActorSnapshots.whileServerStopped state "Library preparation expiry boundary" (fun () ->
+                    task {
+                        let expireUpload uploadSessionId =
+                            LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
+                                state
+                                state.CosmosContainerName
+                                "UploadSession"
+                                (fun events ->
+                                    events
+                                    |> Seq.fold (fun current event -> UploadSessionDto.UpdateDto event current) UploadSessionDto.Default
+                                    |> fun value -> value.UploadSessionId = uploadSessionId)
+                                (fun events ->
+                                    events
+                                    |> Seq.map (fun event ->
+                                        match event.Event with
+                                        | UploadSessionEventType.CleanupReminderScheduled _ -> { event with Event = UploadSessionEventType.RetryWindowClosed }
+                                        | _ -> event)
+                                    |> List<UploadSessionEvent>)
+                                $"UploadSession {uploadSessionId:D} preparation expiry"
 
-            let expireUpload uploadSessionId =
-                LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
-                    state
-                    state.CosmosContainerName
-                    "UploadSession"
-                    (fun events ->
-                        events
-                        |> Seq.fold (fun current event -> UploadSessionDto.UpdateDto event current) UploadSessionDto.Default
-                        |> fun value -> value.UploadSessionId = uploadSessionId)
-                    (fun events ->
-                        events
-                        |> Seq.map (fun event ->
-                            match event.Event with
-                            | UploadSessionEventType.Started start when start.UploadSessionId = uploadSessionId ->
-                                { event with
-                                    Event =
-                                        UploadSessionEventType.Started
-                                            { start with
-                                                LibraryPreparation =
-                                                    start.LibraryPreparation
-                                                    |> Option.map (fun binding -> { binding with ExpiresAt = expiredAt })
-                                            }
-                                }
-                            | _ -> event)
-                        |> List<UploadSessionEvent>)
-                    $"UploadSession {uploadSessionId:D} preparation expiry"
+                        let! _ = expireUpload prepared.UploadSessionId
+                        let! _ = expireUpload expiredPreparation.UploadSessionId
+                        return ()
+                    })
 
-            let! _ = expireUpload prepared.UploadSessionId
-            let! _ = expireUpload expiredPreparation.UploadSessionId
-            let! _ = AspireTestHost.startGraceServerAsync state "Library preparation expiry boundary"
             let! expiredReceipt = submitAsync expiredSubmit
             let! expiredReplay = submitAsync expiredSubmit
             let! acceptedAfterExpiry = submitAsync submit
@@ -4114,57 +4174,61 @@ type StorageManifestUploadSessionRoutes() =
             use! interruptedResponse = interruptedSubmit
             let! interruptedBody = interruptedResponse.Content.ReadAsStringAsync()
             Assert.That(interruptedResponse.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError), interruptedBody)
-            do! AspireTestHost.stopGraceServerAsync state "Library post-acknowledgement interruption"
 
-            let! capturedControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+            let! capturedReceipt, capturedCounter, capturedWorkflow =
+                LibraryActorSnapshots.whileServerStopped state "Library post-acknowledgement interruption" (fun () ->
+                    task {
+                        let! capturedControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
 
-            let! capturedReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
+                        let! capturedReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
 
-            let! capturedCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
-            let! capturedWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+                        let! capturedCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                        let! capturedWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
-            let capturedControl =
-                capturedControls
-                |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
+                        let capturedControl =
+                            capturedControls
+                            |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
 
-            let capturedPendingRecord =
-                match capturedControl.Pending with
-                | Some (LibraryPendingDecision.ItemChange record) when record.Change.OperationId = updateYOperationId -> record
-                | _ -> invalidOp "Expected the interrupted Library item decision to remain pending."
+                        let capturedPendingRecord =
+                            match capturedControl.Pending with
+                            | Some (LibraryPendingDecision.ItemChange record) when record.Change.OperationId = updateYOperationId -> record
+                            | _ -> invalidOp "Expected the interrupted Library item decision to remain pending."
 
-            let capturedReceipt =
-                capturedReceipts
-                |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
+                        let capturedReceipt =
+                            capturedReceipts
+                            |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
 
-            let capturedCounter =
-                capturedCounters
-                |> Array.find (fun counter ->
-                    counter.RepositoryId = Guid.Parse repositoryId
-                    && counter.StoragePoolId = manifestY.StoragePoolId
-                    && counter.ManifestAddress = manifestY.ManifestAddress)
+                        let capturedCounter =
+                            capturedCounters
+                            |> Array.find (fun counter ->
+                                counter.RepositoryId = Guid.Parse repositoryId
+                                && counter.StoragePoolId = manifestY.StoragePoolId
+                                && counter.ManifestAddress = manifestY.ManifestAddress)
 
-            let capturedWorkflow =
-                capturedWorkflows
-                |> Array.find (fun workflow ->
-                    workflow.RepositoryId = Guid.Parse repositoryId
-                    && workflow.StoragePoolId = manifestY.StoragePoolId
-                    && workflow.ManifestAddress = manifestY.ManifestAddress)
+                        let capturedWorkflow =
+                            capturedWorkflows
+                            |> Array.find (fun workflow ->
+                                workflow.RepositoryId = Guid.Parse repositoryId
+                                && workflow.StoragePoolId = manifestY.StoragePoolId
+                                && workflow.ManifestAddress = manifestY.ManifestAddress)
 
-            let contentVersionY = Grace.Actors.LibraryDecision.contentVersionId manifestY.FileContentHash
-            let trackedOperationY = Grace.Actors.LibraryTransfer.counterOperationId updateYOperationId contentVersionY
+                        let contentVersionY = Grace.Actors.LibraryDecision.contentVersionId manifestY.FileContentHash
+                        let trackedOperationY = Grace.Actors.LibraryTransfer.counterOperationId updateYOperationId contentVersionY
 
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(capturedReceipt.RequestHash, Is.EqualTo(capturedPendingRecord.RequestHash))
-                    Assert.That(capturedReceipt.Outcome, Is.EqualTo(LibraryOperationOutcome.AcceptedChange capturedPendingRecord.Cursor))
-                    Assert.That(capturedCounter.Count, Is.EqualTo(1L))
-                    Assert.That(capturedCounter.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(capturedWorkflow.StartOperationId, Is.EqualTo(Some $"{trackedOperationY}:fanout"))
-                    Assert.That(capturedWorkflow.CounterRevision, Is.EqualTo(capturedCounter.Revision))
-                    Assert.That(capturedWorkflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed)))
-            )
+                        Assert.Multiple(
+                            Action (fun () ->
+                                Assert.That(capturedReceipt.RequestHash, Is.EqualTo(capturedPendingRecord.RequestHash))
+                                Assert.That(capturedReceipt.Outcome, Is.EqualTo(LibraryOperationOutcome.AcceptedChange capturedPendingRecord.Cursor))
+                                Assert.That(capturedCounter.Count, Is.EqualTo(1L))
+                                Assert.That(capturedCounter.PendingTrackedAdd, Is.EqualTo(None))
+                                Assert.That(capturedWorkflow.StartOperationId, Is.EqualTo(Some $"{trackedOperationY}:fanout"))
+                                Assert.That(capturedWorkflow.CounterRevision, Is.EqualTo(capturedCounter.Revision))
+                                Assert.That(capturedWorkflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed)))
+                        )
 
-            let! _ = AspireTestHost.startGraceServerAsync state "Library intervening normal counter add"
+                        return capturedReceipt, capturedCounter, capturedWorkflow
+                    })
+
             let interveningOperationId = RepositoryContentCounterOperationId $"library-intervening:{Guid.NewGuid():N}"
             let interveningMetadata = EventMetadata.New (generateCorrelationId ()) testUserId
 
@@ -4713,19 +4777,16 @@ type StorageManifestUploadSessionRoutes() =
                 elif cursor = 200L then cursor200OperationId <- operationId
                 elif cursor = 201L then cursor201OperationId <- operationId
 
-            do! AspireTestHost.stopGraceServerAsync state "Library change-page visibility gap"
-
             let! retainedCursor200 =
-                LibraryActorSnapshots.takeFrom<LibraryAcceptedChangeRecord>
-                    state
-                    "grace-library-changes"
-                    "Grace.Library.Change.v2"
-                    (fun record ->
-                        record.Cursor = 200L
-                        && record.Change.OperationId = cursor200OperationId)
-                    "Library accepted change cursor 200"
-
-            let! _ = AspireTestHost.startGraceServerAsync state "Library change-page visibility gap"
+                LibraryActorSnapshots.whileServerStopped state "Library change-page visibility gap" (fun () ->
+                    LibraryActorSnapshots.takeFrom<LibraryAcceptedChangeRecord>
+                        state
+                        "grace-library-changes"
+                        "Grace.Library.Change.v2"
+                        (fun record ->
+                            record.Cursor = 200L
+                            && record.Change.OperationId = cursor200OperationId)
+                        "Library accepted change cursor 200")
 
             let getChanges pageToken =
                 task {
@@ -4794,4 +4855,235 @@ type StorageManifestUploadSessionRoutes() =
                     Assert.That(resumedGapPage.HasMore, Is.False)
                     Assert.That(resumedGapPage.NextPageToken, Is.EqualTo(None)))
             )
+        }
+
+    /// Exercises shared unfinished payload cleanup through HTTP confirmation and real session/block actors.
+    [<Test>]
+    member _.UnfinishedUploadCleanupProtectsOtherHoldsAndRejectsRetiredPublication() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let secondRepositoryId = repositoryIds[1]
+            let correlationId = generateCorrelationId ()
+            let sessionA = Guid.NewGuid()
+            let sessionB = sessionA
+            let bytes = Encoding.UTF8.GetBytes($"cleanup-{Guid.NewGuid():N}")
+            let block = encodeBlock bytes
+            let initialManifest = manifestFor bytes block
+            let! startedA = startManifestUploadSession repositoryId correlationId sessionA (exactUploadScope sessionA) "start-a" initialManifest "cleanup"
+            let! startedB = startManifestUploadSession secondRepositoryId correlationId sessionB (exactUploadScope sessionB) "start-b" initialManifest "cleanup"
+
+            let! confirmedA =
+                confirmUploadedBlock repositoryId correlationId sessionA (exactUploadScope sessionA) block 0L (int64 bytes.Length) "intent-a" "confirm-a"
+
+            let! _ =
+                confirmUploadedBlock secondRepositoryId correlationId sessionB (exactUploadScope sessionB) block 0L (int64 bytes.Length) "intent-b" "confirm-b"
+
+            let placement =
+                confirmedA.ReturnValue.Session.ConfirmedBlockUploads[0]
+                    .StoragePlacement
+
+            let pool = startedA.ReturnValue.Session.StoragePoolId
+            let grantParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters grantParameters repositoryId correlationId
+            grantParameters.UploadSessionId <- sessionA
+            grantParameters.ContentBlockAddress <- block.Address
+            grantParameters.AuthorizedScope <- exactUploadScope sessionA
+
+            use! initialGrantResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent grantParameters)
+            let! initialGrantBody = initialGrantResponse.Content.ReadAsStringAsync()
+            Assert.That(initialGrantResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), initialGrantBody)
+            let initialGrant = Uri initialGrantBody
+
+            // Advance the real Cosmos revision behind the active session without changing its durable events.
+            let! _ =
+                LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
+                    HostState.Value
+                    HostState.Value.CosmosContainerName
+                    Grace.Actors.Constants.StateName.UploadSession
+                    (fun events ->
+                        events
+                        |> Seq.exists (fun event ->
+                            match event.Event with
+                            | UploadSessionEventType.Started started ->
+                                started.UploadSessionId = sessionA
+                                && started.RepositoryId = startedA.ReturnValue.Session.RepositoryId
+                            | _ -> false))
+                    id
+                    "staging grant stale-write boundary"
+
+            use! staleGrantResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent grantParameters)
+
+            Assert.That(
+                staleGrantResponse.StatusCode,
+                Is.EqualTo(HttpStatusCode.InternalServerError),
+                "A stale session write must fail before delivering a grant."
+            )
+
+            let stagingPlacement =
+                confirmedA.ReturnValue.Session.BlockUploadIntents[0]
+                    .PreparedPlacement
+                    .Value
+
+            let stagingBlob = contentBlockClientFromPlacementViaUploadUri initialGrant stagingPlacement
+
+            let! failedPreparation = stagingBlob.GetPropertiesAsync()
+            Assert.That(failedPreparation.Value.ContentLength, Is.Zero, "Failed preparation may create only empty overhead.")
+
+            use! grantResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent grantParameters)
+            let! grantBody = grantResponse.Content.ReadAsStringAsync()
+            Assert.That(grantResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), grantBody)
+            let lateStagingGrant = Uri grantBody
+
+            /// Runs the public SDK producer against the signed grant with an isolated local repository configuration.
+            let sdkUpload (grant: Uri) =
+                task {
+                    let priorDirectory = Environment.CurrentDirectory
+                    let root = Path.Combine(Path.GetTempPath(), $"grace-cleanup-sdk-{Guid.NewGuid():N}")
+                    let configurationDirectory = Path.Combine(root, Grace.Shared.Constants.GraceConfigDirectory)
+
+                    Directory.CreateDirectory(configurationDirectory)
+                    |> ignore
+
+                    let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
+                    configuration.RootDirectory <- root
+                    configuration.ConfigurationDirectory <- configurationDirectory
+                    configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+
+                    Grace.Shared.Client.Configuration.saveConfigFile
+                        (Path.Combine(configurationDirectory, Grace.Shared.Constants.GraceConfigFileName))
+                        configuration
+
+                    try
+                        Environment.CurrentDirectory <- root
+                        Grace.Shared.Client.Configuration.resetConfiguration ()
+                        return! Grace.SDK.Storage.SaveContentBlockToObjectStorage block.Address block.Payload grant correlationId
+                    finally
+                        Environment.CurrentDirectory <- priorDirectory
+                        Grace.Shared.Client.Configuration.resetConfiguration ()
+                }
+
+            let withoutTag = UriBuilder(lateStagingGrant)
+            withoutTag.Fragment <- "graceStorageAccount=devstoreaccount1"
+            let! missingCondition = sdkUpload withoutTag.Uri
+            Assert.That(missingCondition |> Result.isError, Is.True, "SDK must reject a grant without the exact ETag.")
+            let! sdkPublished = sdkUpload lateStagingGrant
+
+            match sdkPublished with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok result -> Assert.That(result.ReturnValue.ETag.IsSome, Is.True)
+
+            let! sdkRepeated = sdkUpload lateStagingGrant
+            Assert.That(sdkRepeated |> Result.isError, Is.True, "The SDK PUT must carry the original IfMatch condition.")
+
+            Assert.That(
+                DateTimeOffset.Parse(queryParameter "se" lateStagingGrant),
+                Is.LessThanOrEqualTo(confirmedA.ReturnValue.Session.RetryExpiresAt.Value.ToDateTimeOffset())
+            )
+
+            let blob = contentBlockClientFromPlacementViaUploadUri initialGrant placement
+
+            let metadata = EventMetadata.New correlationId "cleanup-integration"
+
+            do!
+                LibraryActorSnapshots.withSiloClient HostState.Value (fun client ->
+                    task {
+                        let owner = client.GetGrain<IContentBlockMetadataActor>(ContentBlockMetadataActorKey.Create pool block.Address)
+                        let! captured = owner.GetEvents correlationId
+
+                        let firstHolder =
+                            captured
+                            |> Seq.pick (fun event ->
+                                match event.Event with
+                                | ContentBlockMetadataEventType.UploadStateChanged upload when upload.Holders.Length > 0 -> Some upload.Holders[0]
+                                | _ -> None)
+
+                        let preparedTag =
+                            captured
+                            |> Seq.pick (fun event ->
+                                match event.Event with
+                                | ContentBlockMetadataEventType.UploadStateChanged upload -> upload.PreparedETag
+                                | _ -> None)
+
+                        /// Drives the real terminal transition and cleanup callback for one repository-scoped session.
+                        let cleanup sessionRepositoryId sessionId =
+                            task {
+                                let preimage = $"grace.upload-session.v1\n{sessionRepositoryId}\n{sessionId:N}"
+
+                                let key =
+                                    Guid(
+                                        SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
+                                        |> Array.take 16
+                                    )
+
+                                let session = client.GetGrain<IUploadSessionActor>(key)
+                                let! beforeCleanup = session.Get correlationId
+
+                                if sessionRepositoryId = startedA.ReturnValue.Session.RepositoryId then
+                                    Assert.That(
+                                        beforeCleanup.RetryExpiresAt,
+                                        Is.EqualTo(confirmedA.ReturnValue.Session.RetryExpiresAt),
+                                        "Preparing another grant is not upload progress."
+                                    )
+
+                                let! abandoned = session.Handle (UploadSessionCommand.Abandon $"abandon:{sessionId:N}") metadata
+
+                                match abandoned with
+                                | Error error -> Assert.Fail(error.Error)
+                                | Ok _ -> ()
+
+                                let state =
+                                    Grace.Actors.UploadSession.createCleanupReminderState sessionId sessionRepositoryId $"abandon:{sessionId:N}" correlationId
+
+                                let reminder =
+                                    Grace.Types.Reminder.ReminderDto.Create
+                                        Grace.Actors.Constants.ActorName.UploadSession
+                                        "integration"
+                                        startedA.ReturnValue.Session.OwnerId
+                                        startedA.ReturnValue.Session.OrganizationId
+                                        sessionRepositoryId
+                                        ReminderTypes.PhysicalDeletion
+                                        (NodaTime.SystemClock.Instance.GetCurrentInstant())
+                                        (Grace.Types.Reminder.ReminderState.UploadSessionPhysicalDeletion state)
+                                        correlationId
+
+                                let! result = session.ReceiveReminderAsync reminder
+
+                                match result with
+                                | Error error -> Assert.Fail(error.Error)
+                                | Ok () -> ()
+
+                                let! compacted = session.Get correlationId
+                                Assert.That(compacted.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.StateDeleted))
+                                Assert.That(compacted.BlockUploadIntents, Is.Empty)
+                            }
+
+                        do! cleanup startedA.ReturnValue.Session.RepositoryId sessionA
+
+                        let! sdkLate = sdkUpload lateStagingGrant
+                        Assert.That(sdkLate |> Result.isError, Is.True, "SDK must not recreate staging through a still-valid retired grant.")
+
+                        try
+                            let! _ = putContentBlockWithSas block.Payload lateStagingGrant
+                            Assert.Fail("A still-valid staging grant must not recreate bytes after cleanup.")
+                        with
+                        | :? Azure.RequestFailedException as error -> Assert.That(error.Status, Is.EqualTo(412))
+
+                        let! firstRemaining = blob.ExistsAsync()
+                        Assert.That(firstRemaining.Value, Is.True, "Other session still owns its hold.")
+                        do! cleanup startedB.ReturnValue.Session.RepositoryId sessionB
+                        let! removed = blob.ExistsAsync()
+                        Assert.That(removed.Value, Is.False)
+                        let! late = owner.PublishUpload firstHolder placement block.Payload metadata
+                        Assert.That(late |> Result.isError, Is.True)
+                        use delayed = new MemoryStream(block.Payload)
+
+                        try
+                            let! _ = blob.UploadAsync(delayed, conditions = BlobRequestConditions(IfMatch = Azure.ETag preparedTag))
+                            Assert.Fail("Old payload ETag must not recreate deleted content.")
+                        with
+                        | :? Azure.RequestFailedException as error -> Assert.That(error.Status, Is.EqualTo(412))
+
+                        let! finalAbsent = blob.ExistsAsync()
+                        Assert.That(finalAbsent.Value, Is.False)
+                    })
         }

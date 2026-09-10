@@ -388,9 +388,11 @@ module Program =
                                         fun () ->
                                             logToConsole "Creating custom HttpClient for Cosmos DB."
 
-                                            let handler = new HttpClientHandler()
+                                            // Local debug avoids vNext emulator gateway stalls on reused connections.
+                                            // https://github.com/Azure/azure-cosmos-dotnet-v3/issues/6000
+                                            let handler = new SocketsHttpHandler(PooledConnectionLifetime = TimeSpan.FromMilliseconds(1.0))
 
-                                            handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                                            handler.SslOptions.RemoteCertificateValidationCallback <- RemoteCertificateValidationCallback(fun _ _ _ _ -> true)
 
                                             new HttpClient(handler, disposeHandler = true)
 

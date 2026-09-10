@@ -1229,6 +1229,20 @@ module AspireTestHost =
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let descriptionClearPreAppendTestGatePort, _ = startDescriptionClearPreAppendTestGate 0
 
+            // Reserve distinct ephemeral endpoints together so this test host cannot join another local silo.
+            use siloReservation = new TcpListener(IPAddress.Loopback, 0)
+            use gatewayReservation = new TcpListener(IPAddress.Loopback, 0)
+            siloReservation.Start()
+            gatewayReservation.Start()
+
+            let siloPort =
+                (siloReservation.LocalEndpoint :?> IPEndPoint)
+                    .Port
+
+            let gatewayPort =
+                (gatewayReservation.LocalEndpoint :?> IPEndPoint)
+                    .Port
+
             let graceServerResource: ProjectResource =
                 builder.Resources
                 |> Seq.tryPick (fun resource ->
@@ -1240,12 +1254,17 @@ module AspireTestHost =
             builder
                 .CreateResourceBuilder(graceServerResource)
                 .WithEnvironment("GRACE_TESTING", "1")
+                .WithEnvironment("Orleans__Endpoints__AdvertisedIPAddress", "127.0.0.1")
+                .WithEnvironment("Orleans__Endpoints__SiloPort", string siloPort)
+                .WithEnvironment("Orleans__Endpoints__GatewayPort", string gatewayPort)
                 .WithEnvironment(descriptionClearPreAppendTestGatePortEnvironmentVariable, string descriptionClearPreAppendTestGatePort)
             |> ignore
 
             let! app = builder.BuildAsync()
             appToCleanup <- Some app
             logProgress "starting Aspire AppHost resources."
+            siloReservation.Stop()
+            gatewayReservation.Stop()
             do! app.StartAsync()
             logProgress "Aspire AppHost started; waiting for resources."
 

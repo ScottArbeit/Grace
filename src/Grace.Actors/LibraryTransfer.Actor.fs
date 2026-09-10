@@ -27,7 +27,18 @@ module LibraryTransfer =
     let counterOperationId operationId contentVersionId = $"library:{operationId:N}:content:{contentVersionId:N}"
 
     /// Validates the completed upload binding before a Library content change consumes it.
-    let validatePreparedUpload (now: Instant) repositoryId operationId principalId (upload: UploadSessionDto) =
+    let rec validatePreparedUpload (now: Instant) repositoryId operationId principalId (upload: UploadSessionDto) =
+        if upload.LifecycleState = UploadSessionLifecycleState.StateDeleted
+           || (upload.LifecycleState
+               <> UploadSessionLifecycleState.NotStarted
+               && (upload.RetryExpiresAt
+                   |> Option.forall (fun deadline -> deadline <= now))) then
+            Error RejectionReason.PreparedContentExpired
+        else
+            validatePreparedUploadOpen now repositoryId operationId principalId upload
+
+    /// Checks a still-live preparation's identity and completed manifest before Library acceptance.
+    and private validatePreparedUploadOpen (now: Instant) repositoryId operationId principalId (upload: UploadSessionDto) =
         let completed =
             match upload.LifecycleState with
             | UploadSessionLifecycleState.Finalized
@@ -48,7 +59,8 @@ module LibraryTransfer =
            || binding.PrincipalId <> principalId
            || manifest.FileContentHash <> upload.FileContentHash then
             invalidOp "The completed upload does not match this Library operation."
-        elif binding.ExpiresAt <= now then
+        elif upload.RetryExpiresAt
+             |> Option.forall (fun deadline -> deadline <= now) then
             Error RejectionReason.PreparedContentExpired
         else
             Ok(binding, manifest)

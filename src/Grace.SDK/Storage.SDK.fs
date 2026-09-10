@@ -65,6 +65,12 @@ module Storage =
                     else
                         None)
 
+    /// Requires the quoted provider revision carried by a prepared ContentBlock staging grant.
+    let internal preparedContentBlockETag (uri: Uri) =
+        match tryGetFragmentValue "graceContentBlockETag" uri with
+        | Some value when not (String.IsNullOrWhiteSpace value) -> value
+        | _ -> invalidOp "ContentBlock staging upload requires its prepared ETag; request a fresh upload URI."
+
     /// Derives storage account, container, object key, and ETag from a ContentBlock SAS URI.
     let internal contentBlockPlacementFromUriUsingConfiguredEndpoint (configuredBlobEndpoint: Uri) configuredAccountName (blobUriWithSasToken: Uri) etag =
         let pathSegments =
@@ -467,7 +473,8 @@ module Storage =
 
                     let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
                     use payloadStream = new MemoryStream(payload, writable = false)
-                    let! response = blockBlobClient.UploadAsync(payloadStream)
+                    let prepared = contentBlockPlacementFromUri blobUriWithSasToken (Some(preparedContentBlockETag blobUriWithSasToken))
+                    let! response = blockBlobClient.UploadAsync(payloadStream, conditions = BlobRequestConditions(IfMatch = ETag prepared.ETag.Value))
 
                     return Ok(GraceReturnValue.Create (contentBlockPlacementFromUri blobUriWithSasToken (Some(response.Value.ETag.ToString()))) correlationId)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)

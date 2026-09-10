@@ -1508,3 +1508,229 @@ type ContentBlockMetadataActorTests() =
             |> Seq.toArray
 
         Assert.That(contentChunkActorMentions, Is.Empty)
+
+    /// Two independent uploads protect one object, and a delayed acquire cannot reverse a recorded release.
+    [<Test>]
+    member _.UploadHoldsRetireBeforeDelayedAcquireAndProtectOtherSessions() =
+        let sessionA, sessionB = Guid.NewGuid(), Guid.NewGuid()
+        let placement = placementFor contentBlockObjectKey None
+
+        let acquire id upload =
+            ContentBlockMetadataActor.acquireUpload id placement upload
+            |> Result.defaultWith failwith
+
+        let first = acquire sessionA ContentBlockUploadState.Empty
+        let duplicate = acquire sessionA first
+        Assert.That(duplicate.Holders.Length, Is.EqualTo(1))
+        let both = acquire sessionB duplicate
+        let remaining = ContentBlockMetadataActor.retireUpload sessionA both
+        Assert.That(ContentBlockMetadataActor.canDeleteUpload { ContentBlockMetadataDto.Empty with Upload = remaining }, Is.False)
+        let retired = ContentBlockMetadataActor.retireUpload sessionB remaining
+        Assert.That(ContentBlockMetadataActor.canDeleteUpload { ContentBlockMetadataDto.Empty with Upload = retired }, Is.True)
+
+        Assert.That(
+            ContentBlockMetadataActor.acquireUpload sessionA placement retired
+            |> Result.isError,
+            Is.True
+        )
+
+        let releasedBeforeArrival = ContentBlockMetadataActor.retireUpload sessionA ContentBlockUploadState.Empty
+
+        Assert.That(
+            ContentBlockMetadataActor.acquireUpload sessionA placement releasedBeforeArrival
+            |> Result.isError,
+            Is.True
+        )
+
+        Assert.That(
+            ContentBlockMetadataActor.acquireUpload sessionB { placement with ObjectKey = "other" } first
+            |> Result.isError,
+            Is.True
+        )
+
+        Assert.That(
+            ContentBlockMetadataActor.acquireUpload sessionB placement { first with Deleting = true }
+            |> Result.isError,
+            Is.True
+        )
+
+    /// Completed metadata protects an entire block even after every active range count has reached zero.
+    [<Test>]
+    member _.WholeBlockCleanupExcludesMetadataAtZeroCountAndPreservesReleaseHistory() =
+        let retired = ContentBlockMetadataActor.retireUpload (Guid.NewGuid()) ContentBlockUploadState.Empty
+        let dto = { ContentBlockMetadataDto.Empty with Upload = retired; Metadata = Some(record [| reclaimableRange |]) }
+        Assert.That(ContentBlockMetadataActor.canDeleteUpload dto, Is.False)
+
+        let changed: ContentBlockMetadataEvent =
+            {
+                Event = ContentBlockMetadataEventType.UploadStateChanged { retired with Deleting = true; PreparedETag = Some "etag" }
+                Metadata = metadata "codec"
+            }
+
+        let roundTripped = Utilities.deserialize<ContentBlockMetadataEvent> (Utilities.serialize changed)
+        let replayed = ContentBlockMetadataDto.UpdateDto roundTripped ContentBlockMetadataDto.Empty
+        Assert.That(replayed.Upload.Retired, Is.EqualTo(box retired.Retired))
+        Assert.That(replayed.Upload.Deleting, Is.True)
+        Assert.That(replayed.Upload.PreparedETag, Is.EqualTo(Some "etag"))
+
+/// Checks the real block actor's failed working-buffer boundary with a scripted persistent-state adapter.
+[<NonParallelizable>]
+type ContentBlockUploadPersistenceTests() =
+
+    /// Uses a real actor with an in-memory persistence boundary and no process-wide Context or storage configuration.
+    let createActor store =
+        Grace.Actors.ContentBlockMetadata.ContentBlockMetadataActor(store, Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
+        :> Grace.Actors.Interfaces.IContentBlockMetadataActor
+
+    /// Retains one non-upload event so snapshot replacement must preserve the metadata event stream.
+    let metadataEvent =
+        {
+            Event = ContentBlockMetadataEventType.CompactionChurnStateSet("metadata-event", ContentBlockCompactionChurnState.NoChurn)
+            Metadata = EventMetadata.New "metadata-event" "test"
+        }
+
+    /// Measures persisted bytes rather than an in-memory count, then replays the compacted current snapshot.
+    [<Test>]
+    member _.RetirementSnapshotsGrowLinearlyAndReplayAllRetiredSessions() =
+        task {
+            let mutable working = List<ContentBlockMetadataEvent>([ metadataEvent ])
+            let mutable durable = List<ContentBlockMetadataEvent>(working)
+
+            let store =
+                { new Orleans.Runtime.IPersistentState<List<ContentBlockMetadataEvent>> with
+                    member _.State
+                        with get () = working
+                        and set value = working <- value
+
+                    member _.Etag = "test-revision"
+                    member _.RecordExists = true
+
+                    member _.ReadStateAsync() =
+                        working <- List<ContentBlockMetadataEvent>(durable)
+                        System.Threading.Tasks.Task.CompletedTask
+
+                    member _.ClearStateAsync() = invalidOp "No state deletion is expected."
+
+                    member _.WriteStateAsync() =
+                        durable <- List<ContentBlockMetadataEvent>(working)
+                        System.Threading.Tasks.Task.CompletedTask
+                }
+
+            let actor = createActor store
+            let sessions = Array.init 1024 (fun _ -> Guid.NewGuid())
+            let metadata = EventMetadata.New "linear-retirement" "test"
+            let mutable firstSize = 0
+
+            for index in 0 .. sessions.Length - 1 do
+                let! result = actor.ReleaseUpload sessions[index] metadata
+                Assert.That(result |> Result.isOk, Is.True)
+
+                if index = 511 then
+                    firstSize <- Text.Encoding.UTF8.GetByteCount(Utilities.serialize durable)
+
+            let serialized = Utilities.serialize durable
+            let secondSize = Text.Encoding.UTF8.GetByteCount serialized
+            Assert.That(float secondSize / float firstSize, Is.InRange(1.8, 2.1), "Doubling retirements must not duplicate every earlier snapshot.")
+            Assert.That(durable.Count, Is.EqualTo(2), "Keep metadata and exactly one current upload snapshot.")
+            Assert.That(durable[0], Is.EqualTo(metadataEvent))
+            let restored = Utilities.deserialize<List<ContentBlockMetadataEvent>> serialized
+
+            let replayed =
+                restored
+                |> Seq.fold (fun dto event -> ContentBlockMetadataDto.UpdateDto event dto) ContentBlockMetadataDto.Empty
+
+            Assert.That(replayed.Upload.Retired, Is.EquivalentTo(sessions))
+            Assert.That(replayed.LastOperationId, Is.EqualTo(Some "metadata-event"))
+
+            Assert.That(
+                ContentBlockMetadataActor.acquireUpload sessions[0] ContentBlockStoragePlacement.Empty replayed.Upload
+                |> Result.isError,
+                Is.True
+            )
+
+            TestContext.Out.WriteLine($"Retirement bytes: 512={firstSize}; 1024={secondSize}.")
+        }
+
+    /// Neither a rejected write nor a committed write with a lost response allows this activation to continue.
+    [<TestCase(false)>]
+    [<TestCase(true)>]
+    member _.FailedWritePoisonsActualActorBeforeAnotherRelease(commitBeforeFailure: bool) =
+        task {
+            let mutable working = List<ContentBlockMetadataEvent>([ metadataEvent ])
+            let mutable durable = List<ContentBlockMetadataEvent>(working)
+            let mutable writes = 0
+
+            let store =
+                { new Orleans.Runtime.IPersistentState<List<ContentBlockMetadataEvent>> with
+                    member _.State
+                        with get () = working
+                        and set value = working <- value
+
+                    member _.Etag = "revision-one"
+                    member _.RecordExists = durable.Count > 0
+
+                    member _.ReadStateAsync() =
+                        working <- List<ContentBlockMetadataEvent>(durable)
+                        System.Threading.Tasks.Task.CompletedTask
+
+                    member _.ClearStateAsync() = invalidOp "No state deletion is expected."
+
+                    member _.WriteStateAsync() =
+                        writes <- writes + 1
+
+                        if writes < 3 || commitBeforeFailure then
+                            durable <- List<ContentBlockMetadataEvent>(working)
+
+                        if writes = 3 then
+                            System.Threading.Tasks.Task.FromException(InvalidOperationException("injected persistence outcome"))
+                        else
+                            System.Threading.Tasks.Task.CompletedTask
+                }
+
+            let actor = createActor store
+            let session = Guid.NewGuid()
+            let metadata = EventMetadata.New "failed-working-buffer" "test"
+            let earlyRetired = Guid.NewGuid()
+            let! _ = actor.ReleaseUpload earlyRetired metadata
+            let! _ = actor.ReleaseUpload (Guid.NewGuid()) metadata
+            let mutable firstFailed = false
+
+            try
+                let! _ = actor.ReleaseUpload session metadata
+                ()
+            with
+            | _ -> firstFailed <- true
+
+            Assert.That(firstFailed, Is.True)
+            let mutable nextFailure = ""
+
+            try
+                let! _ = actor.ReleaseUpload session metadata
+                ()
+            with
+            | error -> nextFailure <- error.Message
+
+            Assert.That(nextFailure, Does.Contain("fresh activation"))
+            Assert.That(writes, Is.EqualTo(3), "The failed activation must not write or authorize another effect.")
+            Assert.That(working.Count, Is.EqualTo(2), "The failed working buffer retains metadata and its replacement snapshot.")
+            Assert.That(durable.Count, Is.EqualTo(2))
+            Assert.That(durable[0], Is.EqualTo(metadataEvent))
+
+            let replayed =
+                durable
+                |> Seq.fold (fun dto event -> ContentBlockMetadataDto.UpdateDto event dto) ContentBlockMetadataDto.Empty
+
+            Assert.That(replayed.Upload.Retired |> Array.contains session, Is.EqualTo(commitBeforeFailure))
+
+            Assert.That(
+                replayed.Upload.Retired
+                |> Array.contains earlyRetired,
+                Is.True
+            )
+
+            Assert.That(
+                ContentBlockMetadataActor.acquireUpload earlyRetired ContentBlockStoragePlacement.Empty replayed.Upload
+                |> Result.isError,
+                Is.True
+            )
+        }
