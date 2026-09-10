@@ -2,6 +2,7 @@ namespace Grace.Server.Tests
 
 open Grace.Actors
 open Grace.Shared
+open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Types.Authorization
 open Grace.Types.Common
@@ -185,6 +186,7 @@ type LibraryActorTests() =
                 SlotRecordCount = 0
                 HistoryThrough = 0L
                 NotifyThrough = 0L
+                AdditiveCatalogVersions = [||]
             }
 
         let storage = LibraryReplayTestStorage()
@@ -852,3 +854,434 @@ type LibraryActorTests() =
                 Assert.That(secondMaximumPendingBytes, Is.EqualTo(firstMaximumPendingBytes))
                 Assert.That(second, Is.EqualTo(box first)))
         )
+
+/// Retains exact records across fresh actor instances and injects catalog write response failures.
+type LibraryCatalogRecoveryStorage() =
+    let records = Dictionary<string, obj>()
+    let mutable fault = ""
+    let mutable number = 0
+    let key grainType grainId = string grainType + "|" + string grainId
+
+    member _.Fault
+        with set value = fault <- value
+
+    member _.Store<'T>(kind: string, recordKey: string, value: 'T) = records[key kind (GrainId.Create(kind, recordKey))] <- box value
+
+    member _.Control(repositoryId: Guid) =
+        unbox<LibraryControlDocument> records[key "Grace.Library.Control.v2" (GrainId.Create("Grace.Library.Control.v2", repositoryId.ToString("D")))]
+
+    interface IGrainStorage with
+        member _.ReadStateAsync<'T>(kind, id, state: IGrainState<'T>) =
+            match records.TryGetValue(key kind id) with
+            | true, value ->
+                state.State <- unbox value
+                state.RecordExists <- true
+                state.ETag <- "stored"
+            | _ -> state.RecordExists <- false
+
+            Task.CompletedTask
+
+        member _.WriteStateAsync<'T>(kind, id, state: IGrainState<'T>) =
+            let effect =
+                if kind = "Grace.Library.Receipt.v2" then
+                    "receipt"
+                elif kind = "Grace.Library.Control.v2"
+                     && (unbox<LibraryControlDocument> (box state.State))
+                         .Pending
+                         .IsNone then
+                    "control"
+                else
+                    "other"
+
+            if fault = "before-" + effect then
+                fault <- ""
+                Task.FromException(InvalidOperationException("injected before " + effect))
+            else
+                records[key kind id] <- box state.State
+                number <- number + 1
+                state.ETag <- string number
+
+                if fault = "after-" + effect then
+                    fault <- ""
+                    Task.FromException(InvalidOperationException("injected after " + effect))
+                else
+                    Task.CompletedTask
+
+        member _.ClearStateAsync<'T>(kind, id, _state: IGrainState<'T>) =
+            records.Remove(key kind id) |> ignore
+            Task.CompletedTask
+
+/// Runs the real actor's additive-catalog admission and saved decision completion through persisted records.
+[<NonParallelizable>]
+type LibraryCatalogRecoveryTests() =
+    let authorization = { OwnerId = Guid.Empty; OrganizationId = Guid.Empty; Principals = [||]; EffectiveClaims = [||] }
+
+    /// Reopens the actor with current permission and the previously captured record store.
+    let actor repositoryId permission (storage: LibraryCatalogRecoveryStorage) =
+        let services = ServiceCollection()
+
+        for name in
+            [
+                LibraryRecords.ControlStorageName
+                LibraryRecords.ChangesStorageName
+                LibraryRecords.CurrentStorageName
+                LibraryRecords.ReceiptsStorageName
+                LibraryRecords.HistoryStorageName
+                LibraryRecords.BaselinesStorageName
+            ] do
+            services.AddKeyedSingleton<IGrainStorage>(name, storage)
+            |> ignore
+
+        let provider = services.BuildServiceProvider()
+        let check = Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>>(fun _ _ _ -> Task.FromResult permission)
+        let instance = RepositoryLibraryActor(provider, null, check, Array.create 32 7uy)
+        let context = DispatchProxy.Create<IGrainContext, LibraryTestGrainContextProxy>()
+
+        (context :?> LibraryTestGrainContextProxy).GrainId <- GrainId.Create(
+            GrainType.Create("Grace.RepositoryLibraryActor"),
+            GrainIdKeyExtensions.CreateGuidKey(repositoryId)
+        )
+
+        typeof<Grain>
+            .GetProperty(
+                "GrainContext",
+                BindingFlags.Instance
+                ||| BindingFlags.Public
+                ||| BindingFlags.NonPublic
+            )
+            .SetValue(instance, context)
+
+        instance :> Grace.Actors.Interfaces.IRepositoryLibraryActor
+
+    /// Seeds the existing control record without introducing another state machine.
+    let initial () =
+        let repositoryId = Guid.NewGuid()
+        let catalog = { LibraryCatalogDto.CreateInitial(repositoryId, getCurrentInstant (), "catalog-test") with Libraries = [| "Library" |] }
+
+        let control =
+            {
+                SchemaVersion = 1
+                Catalog = catalog
+                Epoch = Guid.NewGuid()
+                CommittedCursor = 0L
+                ReplayFloor = 1L
+                Pending = None
+                ItemRecordCount = 0
+                SlotRecordCount = 0
+                HistoryThrough = 0L
+                NotifyThrough = 0L
+                AdditiveCatalogVersions = [||]
+            }
+
+        let storage = LibraryCatalogRecoveryStorage()
+        storage.Store("Grace.Library.Control.v2", repositoryId.ToString("D"), control)
+        repositoryId, storage, control
+
+    /// Saves the exact existing catalog decision to isolate its real restart protocol from Cosmos enumeration.
+    let pending repositoryId (storage: LibraryCatalogRecoveryStorage) add path =
+        let current = storage.Control repositoryId
+        let operationId = Guid.NewGuid()
+        let version = LibraryDecision.deterministicGuid repositoryId operationId "catalog"
+
+        let decision =
+            LibraryPendingDecision.CatalogChange(operationId, "catalog-hash", current.Catalog.Version, version, add, path, getCurrentInstant (), "catalog-test")
+
+        storage.Store("Grace.Library.Control.v2", repositoryId.ToString("D"), { current with Pending = Some decision })
+        version
+
+    /// Constructs one unchanged directory command that avoids file-upload dependencies.
+    let command repositoryId version name =
+        let parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
+
+        LibraryChangeCommand.CreateDirectory(
+            Guid.NewGuid(),
+            "request-" + name,
+            version,
+            { Parent = parent; Name = name; ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId parent name; ExpectedState = "vacant" }
+        )
+
+    /// Requires the real actor to return an ordinary receipt.
+    let receipt =
+        function
+        | Ok value -> value
+        | Error error -> failwith error
+
+    /// Replays catalog writes before and after persisted effects, reopening the actor from its saved records.
+    [<TestCase("none");
+      TestCase("before-receipt");
+      TestCase("after-receipt");
+      TestCase("before-control");
+      TestCase("after-control");
+      Category("LibraryCatalogRecoveryTests")>]
+    member _.CatalogRestartMaintainsExactBoundedVersions(fault) =
+        task {
+            let repositoryId, storage, original = initial ()
+            let selected = pending repositoryId storage true "Added"
+            storage.Fault <- fault
+
+            try
+                let! _ =
+                    (actor repositoryId (Allowed "yes") storage)
+                        .GetCatalog "first"
+
+                ()
+            with
+            | :? InvalidOperationException as ex when ex.Message.StartsWith("injected") -> ()
+
+            let reopened = actor repositoryId (Allowed "yes") storage
+            let! catalog = reopened.GetCatalog "restart"
+            let! duplicate = reopened.GetCatalog "duplicate"
+            let current = storage.Control repositoryId
+            Assert.That(catalog.Version, Is.EqualTo(selected))
+            Assert.That(duplicate, Is.EqualTo(catalog))
+            Assert.That(current.AdditiveCatalogVersions, Is.EqualTo<Guid>([| original.Catalog.Version |]))
+            Assert.That(current.Pending.IsNone, Is.True)
+            let json = serialize current
+            Assert.That(deserialize<LibraryControlDocument> json, Is.EqualTo(current))
+        }
+
+    /// Validates current and multiple known old commands, unknown identities, slot checks and exact result replay.
+    [<Test; Category("LibraryCatalogRecoveryTests")>]
+    member _.KnownAdditiveRequestsKeepImmutableIdentityAndCurrentChecks() =
+        task {
+            let repositoryId, storage, original = initial ()
+            let first = pending repositoryId storage true "Added"
+
+            let! _ =
+                (actor repositoryId (Allowed "yes") storage)
+                    .GetCatalog "first"
+
+            let latest = pending repositoryId storage true "Later"
+
+            let! _ =
+                (actor repositoryId (Allowed "yes") storage)
+                    .GetCatalog "second"
+
+            let current = storage.Control repositoryId
+            Assert.That(current.AdditiveCatalogVersions, Is.EqualTo<Guid>([| original.Catalog.Version; first |]))
+            let oldCommand = command repositoryId original.Catalog.Version "oldest"
+            let oldBytes = serialize oldCommand
+
+            let! oldResult =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    oldCommand
+                    "catalog-test"
+                    authorization
+                    "oldest"
+
+            let accepted = receipt oldResult
+            Assert.That(accepted.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize accepted)
+            Assert.That(accepted.OperationId, Is.EqualTo(LibraryDecision.operationId oldCommand))
+            Assert.That(accepted.RequestHash, Is.EqualTo(LibraryDecision.requestHash oldCommand))
+            Assert.That(serialize oldCommand, Is.EqualTo(oldBytes))
+
+            let! replay =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    oldCommand
+                    "catalog-test"
+                    authorization
+                    "replay"
+
+            Assert.That(receipt replay, Is.EqualTo(accepted))
+
+            let! denied =
+                (actor repositoryId (Denied "revoked") storage)
+                    .Submit
+                    oldCommand
+                    "catalog-test"
+                    authorization
+                    "denied"
+
+            Assert.That((denied = Error "revoked"), Is.True)
+
+            let! predecessor =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    (command repositoryId first "predecessor")
+                    "catalog-test"
+                    authorization
+                    "predecessor"
+
+            Assert.That((receipt predecessor).Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize accepted)
+
+            let! currentResult =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    (command repositoryId latest "current")
+                    "catalog-test"
+                    authorization
+                    "current"
+
+            Assert.That((receipt currentResult).Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize accepted)
+
+            let! occupied =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    (command repositoryId original.Catalog.Version "oldest")
+                    "catalog-test"
+                    authorization
+                    "occupied"
+
+            Assert.That((receipt occupied).ReasonCode, Is.EqualTo(Some RejectionReason.SlotOccupied))
+            let unknownCommand = command repositoryId (Guid.NewGuid()) "unknown"
+
+            let! unknown =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    unknownCommand
+                    "catalog-test"
+                    authorization
+                    "unknown"
+
+            Assert.That((receipt unknown).ReasonCode, Is.EqualTo(Some OutcomeKind.StalePolicy))
+
+            let! again =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    unknownCommand
+                    "catalog-test"
+                    authorization
+                    "unknown-replay"
+
+            Assert.That(receipt again, Is.EqualTo(receipt unknown))
+            let item = accepted.Change.Value.Item
+            let staleNamespace = { ItemId = item.ItemId; ExpectedNamespaceVersion = Guid.NewGuid() }
+
+            let! namespaceFailure =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    (LibraryChangeCommand.Rename(Guid.NewGuid(), "bad-namespace", original.Catalog.Version, item.ItemId, staleNamespace, "renamed"))
+                    "catalog-test"
+                    authorization
+                    "namespace"
+
+            Assert.That((receipt namespaceFailure).ReasonCode, Is.EqualTo(Some RejectionReason.NamespaceChanged))
+
+            let fileItem =
+                { item with
+                    ItemId = Guid.NewGuid()
+                    ItemKind = ItemKind.File
+                    Content =
+                        Some
+                            {
+                                ContentVersionId = Guid.NewGuid()
+                                Blake3Hash = String.replicate 64 "a"
+                                Sha256Hash = String.replicate 64 "b"
+                                Size = 3L
+                                CreatedAt = getCurrentInstant ()
+                            }
+                    ContentRevision = Some "unchanged"
+                }
+
+            storage.Store(
+                "Grace.Library.Item.v2",
+                LibraryRecords.key [ repositoryId.ToString("D")
+                                     "item"
+                                     fileItem.ItemId.ToString("D") ],
+                { SchemaVersion = 1; Item = fileItem; LastCursor = 1L; HistoryTailSegment = None }
+            )
+
+            let namespaceCheck = { ItemId = fileItem.ItemId; ExpectedNamespaceVersion = fileItem.Namespace.Value.NamespaceVersion }
+
+            let! contentFailure =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    (LibraryChangeCommand.Delete(Guid.NewGuid(), "bad-content", original.Catalog.Version, fileItem.ItemId, namespaceCheck, None))
+                    "catalog-test"
+                    authorization
+                    "content"
+
+            Assert.That((receipt contentFailure).ReasonCode, Is.EqualTo(Some RejectionReason.ContentChanged))
+
+            let outside =
+                LibraryChangeCommand.CreateDirectory(
+                    Guid.NewGuid(),
+                    "outside",
+                    original.Catalog.Version,
+                    {
+                        Parent = { Kind = "root"; LibraryPath = Some "Outside"; ItemId = None }
+                        Name = "directory"
+                        ExpectedSlotVersion = Guid.Empty
+                        ExpectedState = "vacant"
+                    }
+                )
+
+            let mutable outsideRejected = false
+
+            try
+                let! _ =
+                    (actor repositoryId (Allowed "yes") storage)
+                        .Submit
+                        outside
+                        "catalog-test"
+                        authorization
+                        "path"
+
+                ()
+            with
+            | :? InvalidOperationException as error -> outsideRejected <- error.Message.Contains("configured root")
+
+            Assert.That(outsideRejected, Is.True)
+        }
+
+    /// A saved removal decision clears all older catalog allowance without changing permanent receipts.
+    [<Test; Category("LibraryCatalogRecoveryTests")>]
+    member _.RemovalResetsAllowanceAndRootLimitBoundsHistory() =
+        task {
+            let repositoryId, storage, original = initial ()
+            let mutable count = 1
+
+            while count < 128 do
+                pending repositoryId storage true ("Root" + string count)
+                |> ignore
+
+                let! _ =
+                    (actor repositoryId (Allowed "yes") storage)
+                        .GetCatalog "add"
+
+                count <- count + 1
+
+            let atLimit = storage.Control repositoryId
+            Assert.That(atLimit.Catalog.Libraries.Length, Is.EqualTo(128))
+            Assert.That(atLimit.AdditiveCatalogVersions.Length, Is.EqualTo(127))
+
+            let! over =
+                (actor repositoryId (Allowed "yes") storage)
+                    .ChangeCatalog
+                    true
+                    atLimit.Catalog.Version
+                    "Over"
+                    (Guid.NewGuid())
+                    "over"
+                    "catalog-test"
+                    authorization
+                    true
+                    "over"
+
+            Assert.That((receipt over).ReasonCode, Is.EqualTo(Some CatalogRejectionReason.LibraryLimitExceeded))
+
+            pending repositoryId storage false "Root1"
+            |> ignore
+
+            let! _ =
+                (actor repositoryId (Allowed "yes") storage)
+                    .GetCatalog "remove"
+
+            Assert.That(
+                (storage.Control repositoryId)
+                    .AdditiveCatalogVersions,
+                Is.Empty
+            )
+
+            let! stale =
+                (actor repositoryId (Allowed "yes") storage)
+                    .Submit
+                    (command repositoryId original.Catalog.Version "after-removal")
+                    "catalog-test"
+                    authorization
+                    "stale"
+
+            Assert.That((receipt stale).ReasonCode, Is.EqualTo(Some OutcomeKind.StalePolicy))
+        }
