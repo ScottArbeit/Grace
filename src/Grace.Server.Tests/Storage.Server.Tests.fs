@@ -38,6 +38,28 @@ open System.Net.Http.Headers
 
 /// Reads persisted actor snapshots needed by the Library restart scenario.
 module private LibraryActorSnapshots =
+
+    /// Restarts the shared server after an offline fixture mutation or assertion, including a failed capture.
+    let whileServerStopped state description action =
+        task {
+            do! AspireTestHost.stopGraceServerAsync state description
+
+            let! outcome =
+                task {
+                    try
+                        let! value = action ()
+                        return Ok value
+                    with
+                    | error -> return Error error
+                }
+
+            let! _ = AspireTestHost.startGraceServerAsync state description
+
+            match outcome with
+            | Ok value -> return value
+            | Error error -> return raise error
+        }
+
     /// Builds the exact one-, two-, or three-level provider partition key stored with a Library document.
     let private partitionKey (document: Dictionary<string, JsonElement>) =
         let builder = PartitionKeyBuilder()
@@ -1509,6 +1531,20 @@ type StorageManifestUploadSessionRoutes() =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
+
+            if response.StatusCode <> HttpStatusCode.OK then
+                let! lines = AspireTestHost.getGraceServerLogsAsync HostState.Value
+
+                let logs =
+                    lines
+                    |> List.rev
+                    |> List.truncate 500
+                    |> List.rev
+                    |> String.concat Environment.NewLine
+
+                let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                TestContext.Error.WriteLine($"A4 storage request failure: {route}\n{logs}\n{fileLog}")
+
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
@@ -4061,33 +4097,33 @@ type StorageManifestUploadSessionRoutes() =
 
             expiredSubmit.CorrelationId <- correlationId
             let state = HostState.Value
-            do! AspireTestHost.stopGraceServerAsync state "Library preparation expiry boundary"
 
-            let expiredAt =
-                NodaTime.SystemClock.Instance.GetCurrentInstant()
-                - NodaTime.Duration.FromSeconds(1L)
+            do!
+                LibraryActorSnapshots.whileServerStopped state "Library preparation expiry boundary" (fun () ->
+                    task {
+                        let expireUpload uploadSessionId =
+                            LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
+                                state
+                                state.CosmosContainerName
+                                "UploadSession"
+                                (fun events ->
+                                    events
+                                    |> Seq.fold (fun current event -> UploadSessionDto.UpdateDto event current) UploadSessionDto.Default
+                                    |> fun value -> value.UploadSessionId = uploadSessionId)
+                                (fun events ->
+                                    events
+                                    |> Seq.map (fun event ->
+                                        match event.Event with
+                                        | UploadSessionEventType.CleanupReminderScheduled _ -> { event with Event = UploadSessionEventType.RetryWindowClosed }
+                                        | _ -> event)
+                                    |> List<UploadSessionEvent>)
+                                $"UploadSession {uploadSessionId:D} preparation expiry"
 
-            let expireUpload uploadSessionId =
-                LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
-                    state
-                    state.CosmosContainerName
-                    "UploadSession"
-                    (fun events ->
-                        events
-                        |> Seq.fold (fun current event -> UploadSessionDto.UpdateDto event current) UploadSessionDto.Default
-                        |> fun value -> value.UploadSessionId = uploadSessionId)
-                    (fun events ->
-                        events
-                        |> Seq.map (fun event ->
-                            match event.Event with
-                            | UploadSessionEventType.CleanupReminderScheduled _ -> { event with Event = UploadSessionEventType.RetryWindowClosed }
-                            | _ -> event)
-                        |> List<UploadSessionEvent>)
-                    $"UploadSession {uploadSessionId:D} preparation expiry"
+                        let! _ = expireUpload prepared.UploadSessionId
+                        let! _ = expireUpload expiredPreparation.UploadSessionId
+                        return ()
+                    })
 
-            let! _ = expireUpload prepared.UploadSessionId
-            let! _ = expireUpload expiredPreparation.UploadSessionId
-            let! _ = AspireTestHost.startGraceServerAsync state "Library preparation expiry boundary"
             let! expiredReceipt = submitAsync expiredSubmit
             let! expiredReplay = submitAsync expiredSubmit
             let! acceptedAfterExpiry = submitAsync submit
@@ -4150,58 +4186,74 @@ type StorageManifestUploadSessionRoutes() =
             let! _ = pendingBump
             use! interruptedResponse = interruptedSubmit
             let! interruptedBody = interruptedResponse.Content.ReadAsStringAsync()
+            TestContext.Error.WriteLine($"A4 interrupted submit response: {interruptedBody}")
+            let! interruptedLines = AspireTestHost.getGraceServerLogsAsync state
+
+            let interruptedLogs =
+                interruptedLines
+                |> List.rev
+                |> List.truncate 500
+                |> List.rev
+                |> String.concat Environment.NewLine
+
+            let! interruptedFileLog = AspireTestHost.getGraceServerFileLogAsync state
+            TestContext.Error.WriteLine($"A4 interrupted submit server logs:\n{interruptedLogs}\n{interruptedFileLog}")
             Assert.That(interruptedResponse.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError), interruptedBody)
-            do! AspireTestHost.stopGraceServerAsync state "Library post-acknowledgement interruption"
 
-            let! capturedControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+            let! capturedReceipt, capturedCounter, capturedWorkflow =
+                LibraryActorSnapshots.whileServerStopped state "Library post-acknowledgement interruption" (fun () ->
+                    task {
+                        let! capturedControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
 
-            let! capturedReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
+                        let! capturedReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
 
-            let! capturedCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
-            let! capturedWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+                        let! capturedCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                        let! capturedWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
-            let capturedControl =
-                capturedControls
-                |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
+                        let capturedControl =
+                            capturedControls
+                            |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
 
-            let capturedPendingRecord =
-                match capturedControl.Pending with
-                | Some (LibraryPendingDecision.ItemChange record) when record.Change.OperationId = updateYOperationId -> record
-                | _ -> invalidOp "Expected the interrupted Library item decision to remain pending."
+                        let capturedPendingRecord =
+                            match capturedControl.Pending with
+                            | Some (LibraryPendingDecision.ItemChange record) when record.Change.OperationId = updateYOperationId -> record
+                            | _ -> invalidOp "Expected the interrupted Library item decision to remain pending."
 
-            let capturedReceipt =
-                capturedReceipts
-                |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
+                        let capturedReceipt =
+                            capturedReceipts
+                            |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
 
-            let capturedCounter =
-                capturedCounters
-                |> Array.find (fun counter ->
-                    counter.RepositoryId = Guid.Parse repositoryId
-                    && counter.StoragePoolId = manifestY.StoragePoolId
-                    && counter.ManifestAddress = manifestY.ManifestAddress)
+                        let capturedCounter =
+                            capturedCounters
+                            |> Array.find (fun counter ->
+                                counter.RepositoryId = Guid.Parse repositoryId
+                                && counter.StoragePoolId = manifestY.StoragePoolId
+                                && counter.ManifestAddress = manifestY.ManifestAddress)
 
-            let capturedWorkflow =
-                capturedWorkflows
-                |> Array.find (fun workflow ->
-                    workflow.RepositoryId = Guid.Parse repositoryId
-                    && workflow.StoragePoolId = manifestY.StoragePoolId
-                    && workflow.ManifestAddress = manifestY.ManifestAddress)
+                        let capturedWorkflow =
+                            capturedWorkflows
+                            |> Array.find (fun workflow ->
+                                workflow.RepositoryId = Guid.Parse repositoryId
+                                && workflow.StoragePoolId = manifestY.StoragePoolId
+                                && workflow.ManifestAddress = manifestY.ManifestAddress)
 
-            let contentVersionY = Grace.Actors.LibraryDecision.contentVersionId manifestY.FileContentHash
-            let trackedOperationY = Grace.Actors.LibraryTransfer.counterOperationId updateYOperationId contentVersionY
+                        let contentVersionY = Grace.Actors.LibraryDecision.contentVersionId manifestY.FileContentHash
+                        let trackedOperationY = Grace.Actors.LibraryTransfer.counterOperationId updateYOperationId contentVersionY
 
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(capturedReceipt.RequestHash, Is.EqualTo(capturedPendingRecord.RequestHash))
-                    Assert.That(capturedReceipt.Outcome, Is.EqualTo(LibraryOperationOutcome.AcceptedChange capturedPendingRecord.Cursor))
-                    Assert.That(capturedCounter.Count, Is.EqualTo(1L))
-                    Assert.That(capturedCounter.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(capturedWorkflow.StartOperationId, Is.EqualTo(Some $"{trackedOperationY}:fanout"))
-                    Assert.That(capturedWorkflow.CounterRevision, Is.EqualTo(capturedCounter.Revision))
-                    Assert.That(capturedWorkflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed)))
-            )
+                        Assert.Multiple(
+                            Action (fun () ->
+                                Assert.That(capturedReceipt.RequestHash, Is.EqualTo(capturedPendingRecord.RequestHash))
+                                Assert.That(capturedReceipt.Outcome, Is.EqualTo(LibraryOperationOutcome.AcceptedChange capturedPendingRecord.Cursor))
+                                Assert.That(capturedCounter.Count, Is.EqualTo(1L))
+                                Assert.That(capturedCounter.PendingTrackedAdd, Is.EqualTo(None))
+                                Assert.That(capturedWorkflow.StartOperationId, Is.EqualTo(Some $"{trackedOperationY}:fanout"))
+                                Assert.That(capturedWorkflow.CounterRevision, Is.EqualTo(capturedCounter.Revision))
+                                Assert.That(capturedWorkflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed)))
+                        )
 
-            let! _ = AspireTestHost.startGraceServerAsync state "Library intervening normal counter add"
+                        return capturedReceipt, capturedCounter, capturedWorkflow
+                    })
+
             let interveningOperationId = RepositoryContentCounterOperationId $"library-intervening:{Guid.NewGuid():N}"
             let interveningMetadata = EventMetadata.New (generateCorrelationId ()) testUserId
 
@@ -4750,19 +4802,16 @@ type StorageManifestUploadSessionRoutes() =
                 elif cursor = 200L then cursor200OperationId <- operationId
                 elif cursor = 201L then cursor201OperationId <- operationId
 
-            do! AspireTestHost.stopGraceServerAsync state "Library change-page visibility gap"
-
             let! retainedCursor200 =
-                LibraryActorSnapshots.takeFrom<LibraryAcceptedChangeRecord>
-                    state
-                    "grace-library-changes"
-                    "Grace.Library.Change.v2"
-                    (fun record ->
-                        record.Cursor = 200L
-                        && record.Change.OperationId = cursor200OperationId)
-                    "Library accepted change cursor 200"
-
-            let! _ = AspireTestHost.startGraceServerAsync state "Library change-page visibility gap"
+                LibraryActorSnapshots.whileServerStopped state "Library change-page visibility gap" (fun () ->
+                    LibraryActorSnapshots.takeFrom<LibraryAcceptedChangeRecord>
+                        state
+                        "grace-library-changes"
+                        "Grace.Library.Change.v2"
+                        (fun record ->
+                            record.Cursor = 200L
+                            && record.Change.OperationId = cursor200OperationId)
+                        "Library accepted change cursor 200")
 
             let getChanges pageToken =
                 task {

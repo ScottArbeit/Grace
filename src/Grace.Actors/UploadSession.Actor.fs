@@ -2128,7 +2128,23 @@ module UploadSession =
                 task {
                     this.EnsureUsable()
                     let metadata = { metadata with Timestamp = getCurrentInstant () }
+
+                    log.LogInformation(
+                        "A4 session {Session} {Command} before retry observation {CorrelationId}",
+                        this.GetPrimaryKey(),
+                        commandName command,
+                        metadata.CorrelationId
+                    )
+
                     do! this.ObserveRetryWindow metadata.Timestamp metadata.CorrelationId
+
+                    log.LogInformation(
+                        "A4 session {Session} {Command} after retry observation {CorrelationId}",
+                        this.GetPrimaryKey(),
+                        commandName command,
+                        metadata.CorrelationId
+                    )
+
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Constants.CurrentCommandProperty, commandName command)
 
@@ -2141,7 +2157,23 @@ module UploadSession =
                                     ContentBlockMetadataActorKey.Create uploadSessionDto.StoragePoolId confirmation.ContentBlockAddress
                                 )
 
-                            match! actor.PublishUpload (this.GetPrimaryKey()) confirmation.StoragePlacement confirmation.Payload metadata with
+                            log.LogInformation(
+                                "A4 session {Session} block {Address} before publication {CorrelationId}",
+                                this.GetPrimaryKey(),
+                                confirmation.ContentBlockAddress,
+                                metadata.CorrelationId
+                            )
+
+                            let! publication = actor.PublishUpload (this.GetPrimaryKey()) confirmation.StoragePlacement confirmation.Payload metadata
+
+                            log.LogInformation(
+                                "A4 session {Session} block {Address} after publication {CorrelationId}",
+                                this.GetPrimaryKey(),
+                                confirmation.ContentBlockAddress,
+                                metadata.CorrelationId
+                            )
+
+                            match publication with
                             | Error error -> return Error error
                             | Ok placement ->
                                 let confirmed = UploadSessionCommand.ConfirmBlockUploaded { confirmation with StoragePlacement = placement }
@@ -2149,7 +2181,20 @@ module UploadSession =
                                 match decideCommand state.State uploadSessionDto confirmed metadata with
                                 | Error error -> return Error error
                                 | Ok publishedDecision ->
+                                    log.LogInformation(
+                                        "A4 session {Session} before confirmation persistence {CorrelationId}",
+                                        this.GetPrimaryKey(),
+                                        metadata.CorrelationId
+                                    )
+
                                     do! this.ApplyEvents publishedDecision.Events
+
+                                    log.LogInformation(
+                                        "A4 session {Session} after confirmation persistence {CorrelationId}",
+                                        this.GetPrimaryKey(),
+                                        metadata.CorrelationId
+                                    )
+
                                     return Ok(GraceReturnValue.Create publishedDecision metadata.CorrelationId)
                         | UploadSessionCommand.FinalizeManifest finalize ->
                             if decision.WasIdempotentReplay then

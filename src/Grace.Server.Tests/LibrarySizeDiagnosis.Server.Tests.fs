@@ -30,6 +30,20 @@ module LibrarySizeDiagnosisHttpTests =
         task {
             use! response = Client.PostAsync(path, createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
+
+            if response.StatusCode <> HttpStatusCode.OK then
+                let! lines = AspireTestHost.getGraceServerLogsAsync HostState.Value
+
+                let logs =
+                    lines
+                    |> List.rev
+                    |> List.truncate 500
+                    |> List.rev
+                    |> String.concat Environment.NewLine
+
+                let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                TestContext.Error.WriteLine($"A4 Library request failure: {path}\n{logs}\n{fileLog}")
+
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
 
             return
