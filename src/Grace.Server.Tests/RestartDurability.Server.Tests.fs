@@ -459,7 +459,7 @@ module internal RestartDurabilityScenario =
             Assert.That(reminderAfterRestart.ReminderTime, Is.EqualTo(context.ReminderFireAt))
         }
 
-/// Exercises the five ordinary restart expectations around one deliberate Grace.Server restart.
+/// Exercises ordinary restart expectations around one deliberate Grace.Server stop/start window.
 [<TestFixture>]
 [<NonParallelizable>]
 [<FixtureLifeCycle(LifeCycle.SingleInstance)>]
@@ -469,6 +469,10 @@ type SharedGraceServerRestartScenarios() =
     let mutable webhookContext: WebhookRestartScenario.Context option = None
     let mutable durabilityContext: RestartDurabilityScenario.Context option = None
     let mutable restartEvidence: GraceServerRestartEvidence option = None
+    let mutable libraryExpiry: LibraryRestartScenarios.Context option = None
+    let mutable libraryPending: LibraryRestartScenarios.Context option = None
+    let mutable libraryAccepted: LibraryRestartScenarios.Context option = None
+    let mutable libraryGap: LibraryRestartScenarios.Context option = None
 
     /// Requires preparation state produced by this fixture's one-time setup.
     let requireContext scenarioName context =
@@ -498,13 +502,34 @@ type SharedGraceServerRestartScenarios() =
             let! preparedDurability = RestartDurabilityScenario.prepareAsync ()
             durabilityContext <- Some preparedDurability
 
+            let! expiryRepository = RestartDurabilityHelpers.createRepositoryAsync "restart-library-expiry"
+            let! expiry = LibraryRestartScenarios.prepareContentAsync expiryRepository LibraryRestartScenarios.Expiry
+            libraryExpiry <- Some expiry
+            let! acceptedRepository = RestartDurabilityHelpers.createRepositoryAsync "restart-library-accepted"
+            let! accepted = LibraryRestartScenarios.prepareContentAsync acceptedRepository LibraryRestartScenarios.AcceptedReplay
+            libraryAccepted <- Some accepted
+            let! gapRepository = RestartDurabilityHelpers.createRepositoryAsync "restart-library-gap"
+            let! gap = LibraryRestartScenarios.prepareVisibilityGapAsync gapRepository
+            libraryGap <- Some gap
+            let! pendingRepository = RestartDurabilityHelpers.createRepositoryAsync "restart-library-pending"
+            let! pending = LibraryRestartScenarios.prepareContentAsync pendingRepository LibraryRestartScenarios.PendingRecovery
+            libraryPending <- Some pending
+
+            /// Edits expiry and visibility-gap documents only after observing Grace.Server stopped.
+            let prepareWhileStopped () =
+                task {
+                    do! expiry.PrepareWhileStoppedAsync()
+                    do! gap.PrepareWhileStoppedAsync()
+                }
+
             let! observedRestart =
                 task {
                     try
                         return!
-                            AspireTestHost.restartGraceServerWithEvidenceAsync
+                            AspireTestHost.restartGraceServerWithOfflinePreparationAsync
                                 (RestartDurabilityHelpers.getSharedHostState ())
                                 "SharedGraceServerRestartScenarios.PrepareAndRestartAsync"
+                                prepareWhileStopped
                     with
                     | ex -> return raise (InvalidOperationException("Shared Grace.Server restart phase failed.", ex))
                 }
@@ -557,3 +582,27 @@ type SharedGraceServerRestartScenarios() =
     [<Test>]
     member _.DurableActorStateRehydratesAcrossGraceServerProjectRestart() =
         RestartDurabilityScenario.verifyAfterRestartAsync (requireContext "durable actor state" durabilityContext)
+
+    /// Rejects expired preparations while replaying the already accepted operation unchanged.
+    [<Test>]
+    member _.LibraryPreparationExpiryPreservesRejectionAndAcceptedReplay() =
+        (requireContext "Library preparation expiry" libraryExpiry)
+            .VerifyAfterRestartAsync()
+
+    /// Recovers the retained decision after a real intervening counter add without repeating accounting.
+    [<Test>]
+    member _.LibraryPendingRecoveryPreservesInterveningCounterAndReceipt() =
+        (requireContext "Library pending recovery" libraryPending)
+            .VerifyAfterRestartAsync()
+
+    /// Replays accepted content and baseline continuation without changing durable accounting snapshots.
+    [<Test>]
+    member _.LibraryUploadAcceptReadAndRestartReplayUseOneTrackedManifestReference() =
+        (requireContext "Library accepted content" libraryAccepted)
+            .VerifyAfterRestartAsync()
+
+    /// Holds the change cursor at a missing document and resumes from the retained continuation token.
+    [<Test>]
+    member _.LibraryVisibilityGapPreservesChangePageContinuation() =
+        (requireContext "Library change-page visibility gap" libraryGap)
+            .VerifyAfterRestartAsync()

@@ -1132,9 +1132,8 @@ type StorageContentBlockDiscoveryRoutes() =
             Assert.That(body, Does.Contain($"{maxDiscoveryKeyChunkAddresses}"))
         }
 
-/// Covers storage manifest upload session routes scenarios.
-[<NonParallelizable>]
-type StorageManifestUploadSessionRoutes() =
+/// Shares upload helpers between route tests and the coordinated Library restart cases.
+module private StorageManifestUploadHelpers =
 
     let maxDiscoveryKeyChunkAddresses = 256
 
@@ -1698,6 +1697,11 @@ type StorageManifestUploadSessionRoutes() =
             return response.Value.Content.ToArray()
         }
 
+open StorageManifestUploadHelpers
+
+/// Covers storage manifest upload session routes scenarios.
+[<NonParallelizable>]
+type StorageManifestUploadSessionRoutes() =
     /// Verifies the large manifest upload can upload blob confirm finalize and download content block scenario.
     [<Test>]
     member _.LargeManifestUploadCanUploadBlobConfirmFinalizeAndDownloadContentBlock() =
@@ -3728,11 +3732,21 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(stagingExists, Is.False)
         }
 
-    /// Verifies Library acceptance, retained-byte reads, and operation replay across a full server restart.
-    [<Test>]
-    member _.LibraryUploadAcceptReadAndRestartReplayUseOneTrackedManifestReference() =
+/// Prepares isolated Library repositories for one shared stopped-server window.
+module LibraryRestartScenarios =
+    /// Identifies the independently prepared content cases.
+    type ContentScenario =
+        | Expiry
+        | PendingRecovery
+        | AcceptedReplay
+
+    /// Keeps each case's offline edits and verification tied to its captured persisted data.
+    type Context = { PrepareWhileStoppedAsync: unit -> System.Threading.Tasks.Task<unit>; VerifyAfterRestartAsync: unit -> System.Threading.Tasks.Task<unit> }
+
+    /// Prepares real uploads and acceptance state, then returns the selected restart checks.
+    let prepareContentAsync repositoryId scenario =
         task {
-            let repositoryId = repositoryIds[0]
+            TestContext.Progress.WriteLine($"Preparing Library {scenario} restart scenario in repository {repositoryId}.")
             let correlationId = generateCorrelationId ()
             let operationId = Guid.NewGuid()
             let libraryPath = $"LibraryRestart{Guid.NewGuid():N}"
@@ -3876,6 +3890,7 @@ type StorageManifestUploadSessionRoutes() =
             submit.CreationSlotExpectation <- Some { Parent = parent; Name = fileName; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
             submit.CorrelationId <- correlationId
 
+            /// Submits Library changes through HTTP and includes server logs on failure.
             let submitAsync (parameters: Parameters.Library.SubmitLibraryChangeParameters) =
                 task {
                     use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent parameters)
@@ -3898,6 +3913,7 @@ type StorageManifestUploadSessionRoutes() =
                             .ReturnValue
                 }
 
+            /// Reads the exact accepted revision and compares its downloaded bytes with the upload.
             let readAsync (receipt: LibraryOperationReceiptDto) (expectedPayload: byte array) =
                 task {
                     let item = receipt.Change.Value.Item
@@ -3925,6 +3941,7 @@ type StorageManifestUploadSessionRoutes() =
                     return descriptor
                 }
 
+            /// Prepares and finalizes a real Library upload for a distinct content operation.
             let prepareUploadedContent (contentOperationId: Guid) (contentPayload: byte array) =
                 task {
                     let contentBlock = encodeBlock contentPayload
@@ -3991,701 +4008,839 @@ type StorageManifestUploadSessionRoutes() =
                     Assert.That(deniedSubmitBody, Does.Not.Contain(firstReceipt.Change.Value.Item.ItemId.ToString("D"))))
             )
 
-            let expiredOperationId = Guid.NewGuid()
-            let! expiredPreparation, _ = prepareUploadedContent expiredOperationId (pseudoRandomBytes 220000)
-
-            let expiredSubmit = Parameters.Library.SubmitLibraryChangeParameters()
-            expiredSubmit.OwnerId <- ownerId
-            expiredSubmit.OrganizationId <- organizationId
-            expiredSubmit.RepositoryId <- repositoryId
-            expiredSubmit.OperationId <- expiredOperationId
-            expiredSubmit.LibraryCatalogVersion <- configuredCatalog.Version
-            expiredSubmit.ChangeKind <- ChangeKind.CreateFile
-            expiredSubmit.ItemKind <- ItemKind.File
-            expiredSubmit.UploadSessionId <- Nullable expiredPreparation.UploadSessionId
-
-            expiredSubmit.CreationSlotExpectation <-
-                Some
-                    {
-                        Parent = parent
-                        Name = "expired.bin"
-                        ExpectedSlotVersion = Grace.Actors.LibraryDecision.initialSlotVersion (Guid.Parse repositoryId) parent "expired.bin"
-                        ExpectedState = "vacant"
-                    }
-
-            expiredSubmit.CorrelationId <- correlationId
             let state = HostState.Value
-            do! AspireTestHost.stopGraceServerAsync state "Library preparation expiry boundary"
 
-            let expiredAt =
-                NodaTime.SystemClock.Instance.GetCurrentInstant()
-                - NodaTime.Duration.FromSeconds(1L)
+            match scenario with
+            | Expiry ->
+                let expiredOperationId = Guid.NewGuid()
+                let! expiredPreparation, _ = prepareUploadedContent expiredOperationId (pseudoRandomBytes 220000)
 
-            let expireUpload uploadSessionId =
-                LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
-                    state
-                    state.CosmosContainerName
-                    "UploadSession"
-                    (fun events ->
-                        events
-                        |> Seq.fold (fun current event -> UploadSessionDto.UpdateDto event current) UploadSessionDto.Default
-                        |> fun value -> value.UploadSessionId = uploadSessionId)
-                    (fun events ->
-                        events
-                        |> Seq.map (fun event ->
-                            match event.Event with
-                            | UploadSessionEventType.Started start when start.UploadSessionId = uploadSessionId ->
-                                { event with
-                                    Event =
-                                        UploadSessionEventType.Started
-                                            { start with
-                                                LibraryPreparation =
-                                                    start.LibraryPreparation
-                                                    |> Option.map (fun binding -> { binding with ExpiresAt = expiredAt })
+                let expiredSubmit = Parameters.Library.SubmitLibraryChangeParameters()
+                expiredSubmit.OwnerId <- ownerId
+                expiredSubmit.OrganizationId <- organizationId
+                expiredSubmit.RepositoryId <- repositoryId
+                expiredSubmit.OperationId <- expiredOperationId
+                expiredSubmit.LibraryCatalogVersion <- configuredCatalog.Version
+                expiredSubmit.ChangeKind <- ChangeKind.CreateFile
+                expiredSubmit.ItemKind <- ItemKind.File
+                expiredSubmit.UploadSessionId <- Nullable expiredPreparation.UploadSessionId
+
+                expiredSubmit.CreationSlotExpectation <-
+                    Some
+                        {
+                            Parent = parent
+                            Name = "expired.bin"
+                            ExpectedSlotVersion = Grace.Actors.LibraryDecision.initialSlotVersion (Guid.Parse repositoryId) parent "expired.bin"
+                            ExpectedState = "vacant"
+                        }
+
+                expiredSubmit.CorrelationId <- correlationId
+                let state = HostState.Value
+
+                /// Expires only persisted upload events while the server is stopped.
+                let offline () =
+                    task {
+                        let expiredAt =
+                            NodaTime.SystemClock.Instance.GetCurrentInstant()
+                            - NodaTime.Duration.FromSeconds(1L)
+
+                        /// Rewrites the recorded preparation expiry without inventing an upload session.
+                        let expireUpload uploadSessionId =
+                            LibraryActorSnapshots.rewriteFrom<List<UploadSessionEvent>>
+                                state
+                                state.CosmosContainerName
+                                "UploadSession"
+                                (fun events ->
+                                    events
+                                    |> Seq.fold (fun current event -> UploadSessionDto.UpdateDto event current) UploadSessionDto.Default
+                                    |> fun value -> value.UploadSessionId = uploadSessionId)
+                                (fun events ->
+                                    events
+                                    |> Seq.map (fun event ->
+                                        match event.Event with
+                                        | UploadSessionEventType.Started start when start.UploadSessionId = uploadSessionId ->
+                                            { event with
+                                                Event =
+                                                    UploadSessionEventType.Started
+                                                        { start with
+                                                            LibraryPreparation =
+                                                                start.LibraryPreparation
+                                                                |> Option.map (fun binding -> { binding with ExpiresAt = expiredAt })
+                                                        }
                                             }
-                                }
-                            | _ -> event)
-                        |> List<UploadSessionEvent>)
-                    $"UploadSession {uploadSessionId:D} preparation expiry"
+                                        | _ -> event)
+                                    |> List<UploadSessionEvent>)
+                                $"UploadSession {uploadSessionId:D} preparation expiry"
 
-            let! _ = expireUpload prepared.UploadSessionId
-            let! _ = expireUpload expiredPreparation.UploadSessionId
-            let! _ = AspireTestHost.startGraceServerAsync state "Library preparation expiry boundary"
-            let! expiredReceipt = submitAsync expiredSubmit
-            let! expiredReplay = submitAsync expiredSubmit
-            let! acceptedAfterExpiry = submitAsync submit
-
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(expiredReceipt.Outcome, Is.EqualTo(OutcomeKind.Rejected))
-                    Assert.That(expiredReceipt.ReasonCode, Is.EqualTo(Some RejectionReason.PreparedContentExpired))
-                    Assert.That(expiredReplay, Is.EqualTo(expiredReceipt))
-                    Assert.That(acceptedAfterExpiry, Is.EqualTo(firstReceipt)))
-            )
-
-            let yPayload = pseudoRandomBytes 220000
-            Guid.NewGuid().ToByteArray().CopyTo(yPayload, 0)
-            let updateYOperationId = Guid.NewGuid()
-            let! preparedY, manifestY = prepareUploadedContent updateYOperationId yPayload
-
-            let updateY = Parameters.Library.SubmitLibraryChangeParameters()
-            updateY.OwnerId <- ownerId
-            updateY.OrganizationId <- organizationId
-            updateY.RepositoryId <- repositoryId
-            updateY.OperationId <- updateYOperationId
-            updateY.LibraryCatalogVersion <- configuredCatalog.Version
-            updateY.ChangeKind <- ChangeKind.UpdateContent
-            updateY.ItemKind <- ItemKind.File
-            updateY.ItemId <- Nullable firstReceipt.Change.Value.Item.ItemId
-
-            updateY.NamespacePrecondition <-
-                Some
-                    {
-                        ItemId = firstReceipt.Change.Value.Item.ItemId
-                        ExpectedNamespaceVersion = firstReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                        let! _ = expireUpload prepared.UploadSessionId
+                        let! _ = expireUpload expiredPreparation.UploadSessionId
+                        return ()
                     }
 
-            updateY.ContentPrecondition <-
-                Some
-                    {
-                        ItemId = firstReceipt.Change.Value.Item.ItemId
-                        ExpectedContentVersionId = firstReceipt.Change.Value.Item.Content.Value.ContentVersionId
-                        ExpectedContentRevision = firstReceipt.Change.Value.Item.ContentRevision.Value
+                /// Requires stable rejection replay and the previously accepted receipt after expiry.
+                let verify () =
+                    task {
+                        let! expiredReceipt = submitAsync expiredSubmit
+                        let! expiredReplay = submitAsync expiredSubmit
+                        let! acceptedAfterExpiry = submitAsync submit
+
+                        Assert.Multiple(
+                            Action (fun () ->
+                                Assert.That(expiredReceipt.Outcome, Is.EqualTo(OutcomeKind.Rejected))
+                                Assert.That(expiredReceipt.ReasonCode, Is.EqualTo(Some RejectionReason.PreparedContentExpired))
+                                Assert.That(expiredReplay, Is.EqualTo(expiredReceipt))
+                                Assert.That(acceptedAfterExpiry, Is.EqualTo(firstReceipt)))
+                        )
+
                     }
 
-            updateY.UploadSessionId <- Nullable preparedY.UploadSessionId
-            updateY.CorrelationId <- correlationId
+                return { PrepareWhileStoppedAsync = offline; VerifyAfterRestartAsync = verify }
+            | PendingRecovery
+            | AcceptedReplay ->
+                let yPayload = pseudoRandomBytes 220000
+                Guid.NewGuid().ToByteArray().CopyTo(yPayload, 0)
+                let updateYOperationId = Guid.NewGuid()
+                let! preparedY, manifestY = prepareUploadedContent updateYOperationId yPayload
 
-            let pendingBump =
-                LibraryActorSnapshots.rewriteFrom<LibraryControlDocument>
-                    state
-                    "grace-library-control"
-                    "Grace.Library.Control.v2"
-                    (fun control ->
-                        control.Catalog.RepositoryId = Guid.Parse repositoryId
-                        && (match control.Pending with
-                            | Some (LibraryPendingDecision.ItemChange record) -> record.Change.OperationId = updateYOperationId
-                            | _ -> false))
-                    id
-                    $"Library control pending operation {updateYOperationId:D}"
+                let updateY = Parameters.Library.SubmitLibraryChangeParameters()
+                updateY.OwnerId <- ownerId
+                updateY.OrganizationId <- organizationId
+                updateY.RepositoryId <- repositoryId
+                updateY.OperationId <- updateYOperationId
+                updateY.LibraryCatalogVersion <- configuredCatalog.Version
+                updateY.ChangeKind <- ChangeKind.UpdateContent
+                updateY.ItemKind <- ItemKind.File
+                updateY.ItemId <- Nullable firstReceipt.Change.Value.Item.ItemId
 
-            let interruptedSubmit = Client.PostAsync("/libraries/changes/submit", createJsonContent updateY)
-            let! _ = pendingBump
-            use! interruptedResponse = interruptedSubmit
-            let! interruptedBody = interruptedResponse.Content.ReadAsStringAsync()
-            Assert.That(interruptedResponse.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError), interruptedBody)
-            do! AspireTestHost.stopGraceServerAsync state "Library post-acknowledgement interruption"
+                updateY.NamespacePrecondition <-
+                    Some
+                        {
+                            ItemId = firstReceipt.Change.Value.Item.ItemId
+                            ExpectedNamespaceVersion = firstReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                        }
 
-            let! capturedControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+                updateY.ContentPrecondition <-
+                    Some
+                        {
+                            ItemId = firstReceipt.Change.Value.Item.ItemId
+                            ExpectedContentVersionId = firstReceipt.Change.Value.Item.Content.Value.ContentVersionId
+                            ExpectedContentRevision = firstReceipt.Change.Value.Item.ContentRevision.Value
+                        }
 
-            let! capturedReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
+                updateY.UploadSessionId <- Nullable preparedY.UploadSessionId
+                updateY.CorrelationId <- correlationId
 
-            let! capturedCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
-            let! capturedWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
-            let capturedControl =
-                capturedControls
-                |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
+                match scenario with
+                | PendingRecovery ->
+                    let pendingBump =
+                        LibraryActorSnapshots.rewriteFrom<LibraryControlDocument>
+                            state
+                            "grace-library-control"
+                            "Grace.Library.Control.v2"
+                            (fun control ->
+                                control.Catalog.RepositoryId = Guid.Parse repositoryId
+                                && (match control.Pending with
+                                    | Some (LibraryPendingDecision.ItemChange record) -> record.Change.OperationId = updateYOperationId
+                                    | _ -> false))
+                            id
+                            $"Library control pending operation {updateYOperationId:D}"
 
-            let capturedPendingRecord =
-                match capturedControl.Pending with
-                | Some (LibraryPendingDecision.ItemChange record) when record.Change.OperationId = updateYOperationId -> record
-                | _ -> invalidOp "Expected the interrupted Library item decision to remain pending."
+                    let interruptedSubmit = Client.PostAsync("/libraries/changes/submit", createJsonContent updateY)
+                    let! _ = pendingBump
+                    use! interruptedResponse = interruptedSubmit
+                    let! interruptedBody = interruptedResponse.Content.ReadAsStringAsync()
+                    Assert.That(interruptedResponse.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError), interruptedBody)
+                    // The failed HTTP response has completed; no Library call may recover this repository before restart.
 
-            let capturedReceipt =
-                capturedReceipts
-                |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
+                    let! capturedControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
 
-            let capturedCounter =
-                capturedCounters
-                |> Array.find (fun counter ->
-                    counter.RepositoryId = Guid.Parse repositoryId
-                    && counter.StoragePoolId = manifestY.StoragePoolId
-                    && counter.ManifestAddress = manifestY.ManifestAddress)
+                    let! capturedReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
 
-            let capturedWorkflow =
-                capturedWorkflows
-                |> Array.find (fun workflow ->
-                    workflow.RepositoryId = Guid.Parse repositoryId
-                    && workflow.StoragePoolId = manifestY.StoragePoolId
-                    && workflow.ManifestAddress = manifestY.ManifestAddress)
+                    let! capturedCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                    let! capturedWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
-            let contentVersionY = Grace.Actors.LibraryDecision.contentVersionId manifestY.FileContentHash
-            let trackedOperationY = Grace.Actors.LibraryTransfer.counterOperationId updateYOperationId contentVersionY
+                    let capturedControl =
+                        capturedControls
+                        |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
 
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(capturedReceipt.RequestHash, Is.EqualTo(capturedPendingRecord.RequestHash))
-                    Assert.That(capturedReceipt.Outcome, Is.EqualTo(LibraryOperationOutcome.AcceptedChange capturedPendingRecord.Cursor))
-                    Assert.That(capturedCounter.Count, Is.EqualTo(1L))
-                    Assert.That(capturedCounter.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(capturedWorkflow.StartOperationId, Is.EqualTo(Some $"{trackedOperationY}:fanout"))
-                    Assert.That(capturedWorkflow.CounterRevision, Is.EqualTo(capturedCounter.Revision))
-                    Assert.That(capturedWorkflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed)))
-            )
+                    let capturedPendingRecord =
+                        match capturedControl.Pending with
+                        | Some (LibraryPendingDecision.ItemChange record) when record.Change.OperationId = updateYOperationId -> record
+                        | _ -> invalidOp "Expected the interrupted Library item decision to remain pending."
 
-            let! _ = AspireTestHost.startGraceServerAsync state "Library intervening normal counter add"
-            let interveningOperationId = RepositoryContentCounterOperationId $"library-intervening:{Guid.NewGuid():N}"
-            let interveningMetadata = EventMetadata.New (generateCorrelationId ()) testUserId
+                    let capturedReceipt =
+                        capturedReceipts
+                        |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
 
-            let! interveningDecision =
-                LibraryActorSnapshots.addCounterReferenceThroughSilo
-                    state
-                    (Guid.Parse repositoryId)
-                    manifestY.StoragePoolId
-                    manifestY.ManifestAddress
-                    interveningOperationId
-                    interveningMetadata
+                    let capturedCounter =
+                        capturedCounters
+                        |> Array.find (fun counter ->
+                            counter.RepositoryId = Guid.Parse repositoryId
+                            && counter.StoragePoolId = manifestY.StoragePoolId
+                            && counter.ManifestAddress = manifestY.ManifestAddress)
 
-            match interveningDecision with
-            | Error error -> Assert.Fail($"The normal counter add failed: {error.Error}")
-            | Ok _ -> ()
+                    let capturedWorkflow =
+                        capturedWorkflows
+                        |> Array.find (fun workflow ->
+                            workflow.RepositoryId = Guid.Parse repositoryId
+                            && workflow.StoragePoolId = manifestY.StoragePoolId
+                            && workflow.ManifestAddress = manifestY.ManifestAddress)
 
-            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
-            let mutable interveningCounter = None
+                    let contentVersionY = Grace.Actors.LibraryDecision.contentVersionId manifestY.FileContentHash
+                    let trackedOperationY = Grace.Actors.LibraryTransfer.counterOperationId updateYOperationId contentVersionY
 
-            while interveningCounter.IsNone
-                  && DateTime.UtcNow < timeoutAt do
-                let! counters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(capturedReceipt.RequestHash, Is.EqualTo(capturedPendingRecord.RequestHash))
+                            Assert.That(capturedReceipt.Outcome, Is.EqualTo(LibraryOperationOutcome.AcceptedChange capturedPendingRecord.Cursor))
+                            Assert.That(capturedCounter.Count, Is.EqualTo(1L))
+                            Assert.That(capturedCounter.PendingTrackedAdd, Is.EqualTo(None))
+                            Assert.That(capturedWorkflow.StartOperationId, Is.EqualTo(Some $"{trackedOperationY}:fanout"))
+                            Assert.That(capturedWorkflow.CounterRevision, Is.EqualTo(capturedCounter.Revision))
+                            Assert.That(capturedWorkflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed)))
+                    )
 
-                interveningCounter <-
-                    counters
-                    |> Array.tryFind (fun counter ->
-                        counter.RepositoryId = Guid.Parse repositoryId
-                        && counter.StoragePoolId = manifestY.StoragePoolId
-                        && counter.ManifestAddress = manifestY.ManifestAddress
-                        && counter.Count = 2L
-                        && counter.Revision > capturedCounter.Revision)
 
-                if interveningCounter.IsNone then do! System.Threading.Tasks.Task.Delay 25
+                    let interveningOperationId = RepositoryContentCounterOperationId $"library-intervening:{Guid.NewGuid():N}"
+                    let interveningMetadata = EventMetadata.New (generateCorrelationId ()) testUserId
 
-            let interveningCounter =
-                interveningCounter
-                |> Option.defaultWith (fun () -> invalidOp "The normal Reference add did not advance the Library manifest counter.")
+                    let! interveningDecision =
+                        LibraryActorSnapshots.addCounterReferenceThroughSilo
+                            state
+                            (Guid.Parse repositoryId)
+                            manifestY.StoragePoolId
+                            manifestY.ManifestAddress
+                            interveningOperationId
+                            interveningMetadata
 
-            let! interveningWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+                    match interveningDecision with
+                    | Error error -> Assert.Fail($"The normal counter add failed: {error.Error}")
+                    | Ok _ -> ()
 
-            let interveningWorkflow =
-                interveningWorkflows
-                |> Array.find (fun workflow ->
-                    workflow.RepositoryId = Guid.Parse repositoryId
-                    && workflow.StoragePoolId = manifestY.StoragePoolId
-                    && workflow.ManifestAddress = manifestY.ManifestAddress)
+                    let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
+                    let mutable interveningCounter = None
 
-            let! interveningControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+                    while interveningCounter.IsNone
+                          && DateTime.UtcNow < timeoutAt do
+                        let! counters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
 
-            let interveningControl =
-                interveningControls
-                |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
+                        interveningCounter <-
+                            counters
+                            |> Array.tryFind (fun counter ->
+                                counter.RepositoryId = Guid.Parse repositoryId
+                                && counter.StoragePoolId = manifestY.StoragePoolId
+                                && counter.ManifestAddress = manifestY.ManifestAddress
+                                && counter.Count = 2L
+                                && counter.Revision > capturedCounter.Revision)
 
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(interveningCounter.Count, Is.EqualTo(2L))
-                    Assert.That(interveningCounter.Revision, Is.GreaterThan(capturedCounter.Revision))
-                    Assert.That(interveningCounter.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(interveningCounter.LastCompletedChange.Value.OperationId, Is.EqualTo(interveningOperationId))
-                    Assert.That(interveningCounter.LastCompletedChange.Value.Operation, Is.EqualTo(RepositoryContentCounterChangeOperation.Added))
-                    Assert.That(interveningWorkflow, Is.EqualTo(capturedWorkflow))
+                        if interveningCounter.IsNone then do! System.Threading.Tasks.Task.Delay 25
 
-                    match interveningControl.Pending with
-                    | Some (LibraryPendingDecision.ItemChange record) -> Assert.That(record.Change.OperationId, Is.EqualTo(updateYOperationId))
-                    | _ -> Assert.Fail("The original Library operation must remain pending until restart recovery."))
-            )
+                    let interveningCounter =
+                        interveningCounter
+                        |> Option.defaultWith (fun () -> invalidOp "The normal Reference add did not advance the Library manifest counter.")
 
-            do! AspireTestHost.restartGraceServerAsync state "Library post-acknowledgement pending recovery"
-            let! updateYReceipt = submitAsync updateY
-            let! updateYReplay = submitAsync updateY
-            let! recoveredCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
-            let! recoveredWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+                    let! interveningWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
 
-            let! recoveredControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+                    let interveningWorkflow =
+                        interveningWorkflows
+                        |> Array.find (fun workflow ->
+                            workflow.RepositoryId = Guid.Parse repositoryId
+                            && workflow.StoragePoolId = manifestY.StoragePoolId
+                            && workflow.ManifestAddress = manifestY.ManifestAddress)
 
-            let! recoveredReceipts = LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
+                    let! interveningControls = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
 
-            let recoveredCounter =
-                recoveredCounters
-                |> Array.find (fun counter ->
-                    counter.RepositoryId = Guid.Parse repositoryId
-                    && counter.StoragePoolId = manifestY.StoragePoolId
-                    && counter.ManifestAddress = manifestY.ManifestAddress)
+                    let interveningControl =
+                        interveningControls
+                        |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
 
-            let recoveredWorkflow =
-                recoveredWorkflows
-                |> Array.find (fun workflow ->
-                    workflow.RepositoryId = Guid.Parse repositoryId
-                    && workflow.StoragePoolId = manifestY.StoragePoolId
-                    && workflow.ManifestAddress = manifestY.ManifestAddress)
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(interveningCounter.Count, Is.EqualTo(2L))
+                            Assert.That(interveningCounter.Revision, Is.GreaterThan(capturedCounter.Revision))
+                            Assert.That(interveningCounter.PendingTrackedAdd, Is.EqualTo(None))
+                            Assert.That(interveningCounter.LastCompletedChange.Value.OperationId, Is.EqualTo(interveningOperationId))
+                            Assert.That(interveningCounter.LastCompletedChange.Value.Operation, Is.EqualTo(RepositoryContentCounterChangeOperation.Added))
+                            Assert.That(interveningWorkflow, Is.EqualTo(capturedWorkflow))
 
-            let recoveredControl =
-                recoveredControls
-                |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
+                            match interveningControl.Pending with
+                            | Some (LibraryPendingDecision.ItemChange record) -> Assert.That(record.Change.OperationId, Is.EqualTo(updateYOperationId))
+                            | _ -> Assert.Fail("The original Library operation must remain pending until restart recovery."))
+                    )
 
-            let recoveredReceipt =
-                recoveredReceipts
-                |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
 
-            Assert.Multiple(
-                Action (fun () ->
+                    /// Recovers the saved decision without adding another counter reference or workflow.
+                    let verify () =
+                        task {
+                            let! updateYReceipt = submitAsync updateY
+                            let! updateYReplay = submitAsync updateY
+                            let! recoveredCounters = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                            let! recoveredWorkflows = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+
+                            let! recoveredControls =
+                                LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+
+                            let! recoveredReceipts =
+                                LibraryActorSnapshots.readFrom<LibraryReceiptDocument> state "grace-library-receipts" "Grace.Library.Receipt.v2"
+
+                            let recoveredCounter =
+                                recoveredCounters
+                                |> Array.find (fun counter ->
+                                    counter.RepositoryId = Guid.Parse repositoryId
+                                    && counter.StoragePoolId = manifestY.StoragePoolId
+                                    && counter.ManifestAddress = manifestY.ManifestAddress)
+
+                            let recoveredWorkflow =
+                                recoveredWorkflows
+                                |> Array.find (fun workflow ->
+                                    workflow.RepositoryId = Guid.Parse repositoryId
+                                    && workflow.StoragePoolId = manifestY.StoragePoolId
+                                    && workflow.ManifestAddress = manifestY.ManifestAddress)
+
+                            let recoveredControl =
+                                recoveredControls
+                                |> Array.find (fun control -> control.Catalog.RepositoryId = Guid.Parse repositoryId)
+
+                            let recoveredReceipt =
+                                recoveredReceipts
+                                |> Array.find (fun receipt -> receipt.OperationId = updateYOperationId)
+
+                            Assert.Multiple(
+                                Action (fun () ->
+                                    Assert.That(updateYReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                                    Assert.That(updateYReplay, Is.EqualTo(updateYReceipt))
+                                    Assert.That(recoveredCounter, Is.EqualTo(interveningCounter))
+                                    Assert.That(recoveredWorkflow, Is.EqualTo(interveningWorkflow))
+                                    Assert.That(recoveredControl.Pending, Is.EqualTo(None))
+                                    Assert.That(recoveredReceipt, Is.EqualTo(capturedReceipt)))
+                            )
+
+                            let! yDescriptor = readAsync updateYReceipt yPayload
+
+                            ()
+                        }
+
+                    return { PrepareWhileStoppedAsync = (fun () -> System.Threading.Tasks.Task.FromResult(())); VerifyAfterRestartAsync = verify }
+                | AcceptedReplay ->
+                    let! updateYReceipt = submitAsync updateY
                     Assert.That(updateYReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
-                    Assert.That(updateYReplay, Is.EqualTo(updateYReceipt))
-                    Assert.That(recoveredCounter, Is.EqualTo(interveningCounter))
-                    Assert.That(recoveredWorkflow, Is.EqualTo(interveningWorkflow))
-                    Assert.That(recoveredControl.Pending, Is.EqualTo(None))
-                    Assert.That(recoveredReceipt, Is.EqualTo(capturedReceipt)))
-            )
+                    let! yDescriptor = readAsync updateYReceipt yPayload
+                    // Match the original accepted-content snapshot using a real independent reference add.
+                    let! added =
+                        LibraryActorSnapshots.addCounterReferenceThroughSilo
+                            state
+                            (Guid.Parse repositoryId)
+                            manifestY.StoragePoolId
+                            manifestY.ManifestAddress
+                            (RepositoryContentCounterOperationId $"library-intervening:{Guid.NewGuid():N}")
+                            (EventMetadata.New (generateCorrelationId ()) testUserId)
 
-            let! yDescriptor = readAsync updateYReceipt yPayload
+                    match added with
+                    | Error error -> Assert.Fail($"The normal counter add failed: {error.Error}")
+                    | Ok _ -> ()
 
-            let updateXOperationId = Guid.NewGuid()
-            let! preparedXAgain, manifestXAgain = prepareUploadedContent updateXOperationId payload
-            Assert.That(manifestXAgain, Is.EqualTo(manifest))
+                    let updateXOperationId = Guid.NewGuid()
+                    let! preparedXAgain, manifestXAgain = prepareUploadedContent updateXOperationId payload
+                    Assert.That(manifestXAgain, Is.EqualTo(manifest))
 
-            let updateX = Parameters.Library.SubmitLibraryChangeParameters()
-            updateX.OwnerId <- ownerId
-            updateX.OrganizationId <- organizationId
-            updateX.RepositoryId <- repositoryId
-            updateX.OperationId <- updateXOperationId
-            updateX.LibraryCatalogVersion <- configuredCatalog.Version
-            updateX.ChangeKind <- ChangeKind.UpdateContent
-            updateX.ItemKind <- ItemKind.File
-            updateX.ItemId <- Nullable updateYReceipt.Change.Value.Item.ItemId
+                    let updateX = Parameters.Library.SubmitLibraryChangeParameters()
+                    updateX.OwnerId <- ownerId
+                    updateX.OrganizationId <- organizationId
+                    updateX.RepositoryId <- repositoryId
+                    updateX.OperationId <- updateXOperationId
+                    updateX.LibraryCatalogVersion <- configuredCatalog.Version
+                    updateX.ChangeKind <- ChangeKind.UpdateContent
+                    updateX.ItemKind <- ItemKind.File
+                    updateX.ItemId <- Nullable updateYReceipt.Change.Value.Item.ItemId
 
-            updateX.NamespacePrecondition <-
-                Some
-                    {
-                        ItemId = updateYReceipt.Change.Value.Item.ItemId
-                        ExpectedNamespaceVersion = updateYReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
-                    }
+                    updateX.NamespacePrecondition <-
+                        Some
+                            {
+                                ItemId = updateYReceipt.Change.Value.Item.ItemId
+                                ExpectedNamespaceVersion = updateYReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                            }
 
-            updateX.ContentPrecondition <-
-                Some
-                    {
-                        ItemId = updateYReceipt.Change.Value.Item.ItemId
-                        ExpectedContentVersionId = updateYReceipt.Change.Value.Item.Content.Value.ContentVersionId
-                        ExpectedContentRevision = updateYReceipt.Change.Value.Item.ContentRevision.Value
-                    }
+                    updateX.ContentPrecondition <-
+                        Some
+                            {
+                                ItemId = updateYReceipt.Change.Value.Item.ItemId
+                                ExpectedContentVersionId = updateYReceipt.Change.Value.Item.Content.Value.ContentVersionId
+                                ExpectedContentRevision = updateYReceipt.Change.Value.Item.ContentRevision.Value
+                            }
 
-            updateX.UploadSessionId <- Nullable preparedXAgain.UploadSessionId
-            updateX.CorrelationId <- correlationId
-            let! updateXReceipt = submitAsync updateX
-            let! secondXDescriptor = readAsync updateXReceipt payload
+                    updateX.UploadSessionId <- Nullable preparedXAgain.UploadSessionId
+                    updateX.CorrelationId <- correlationId
+                    let! updateXReceipt = submitAsync updateX
+                    let! secondXDescriptor = readAsync updateXReceipt payload
 
-            let rename = Parameters.Library.SubmitLibraryChangeParameters()
-            rename.OwnerId <- ownerId
-            rename.OrganizationId <- organizationId
-            rename.RepositoryId <- repositoryId
-            rename.OperationId <- Guid.NewGuid()
-            rename.LibraryCatalogVersion <- configuredCatalog.Version
-            rename.ChangeKind <- ChangeKind.Rename
-            rename.ItemKind <- ItemKind.File
-            rename.ItemId <- Nullable updateXReceipt.Change.Value.Item.ItemId
+                    let rename = Parameters.Library.SubmitLibraryChangeParameters()
+                    rename.OwnerId <- ownerId
+                    rename.OrganizationId <- organizationId
+                    rename.RepositoryId <- repositoryId
+                    rename.OperationId <- Guid.NewGuid()
+                    rename.LibraryCatalogVersion <- configuredCatalog.Version
+                    rename.ChangeKind <- ChangeKind.Rename
+                    rename.ItemKind <- ItemKind.File
+                    rename.ItemId <- Nullable updateXReceipt.Change.Value.Item.ItemId
 
-            rename.NamespacePrecondition <-
-                Some
-                    {
-                        ItemId = updateXReceipt.Change.Value.Item.ItemId
-                        ExpectedNamespaceVersion = updateXReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
-                    }
+                    rename.NamespacePrecondition <-
+                        Some
+                            {
+                                ItemId = updateXReceipt.Change.Value.Item.ItemId
+                                ExpectedNamespaceVersion = updateXReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                            }
 
-            rename.DestinationName <- "renamed.bin"
-            rename.CorrelationId <- correlationId
-            let! renameReceipt = submitAsync rename
-            Assert.That(renameReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    rename.DestinationName <- "renamed.bin"
+                    rename.CorrelationId <- correlationId
+                    let! renameReceipt = submitAsync rename
+                    Assert.That(renameReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
 
-            let delete = Parameters.Library.SubmitLibraryChangeParameters()
-            delete.OwnerId <- ownerId
-            delete.OrganizationId <- organizationId
-            delete.RepositoryId <- repositoryId
-            delete.OperationId <- Guid.NewGuid()
-            delete.LibraryCatalogVersion <- configuredCatalog.Version
-            delete.ChangeKind <- ChangeKind.Delete
-            delete.ItemKind <- ItemKind.File
-            delete.ItemId <- Nullable renameReceipt.Change.Value.Item.ItemId
+                    let delete = Parameters.Library.SubmitLibraryChangeParameters()
+                    delete.OwnerId <- ownerId
+                    delete.OrganizationId <- organizationId
+                    delete.RepositoryId <- repositoryId
+                    delete.OperationId <- Guid.NewGuid()
+                    delete.LibraryCatalogVersion <- configuredCatalog.Version
+                    delete.ChangeKind <- ChangeKind.Delete
+                    delete.ItemKind <- ItemKind.File
+                    delete.ItemId <- Nullable renameReceipt.Change.Value.Item.ItemId
 
-            delete.NamespacePrecondition <-
-                Some
-                    {
-                        ItemId = renameReceipt.Change.Value.Item.ItemId
-                        ExpectedNamespaceVersion = renameReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
-                    }
+                    delete.NamespacePrecondition <-
+                        Some
+                            {
+                                ItemId = renameReceipt.Change.Value.Item.ItemId
+                                ExpectedNamespaceVersion = renameReceipt.Change.Value.Item.Namespace.Value.NamespaceVersion
+                            }
 
-            delete.ContentPrecondition <-
-                Some
-                    {
-                        ItemId = renameReceipt.Change.Value.Item.ItemId
-                        ExpectedContentVersionId = renameReceipt.Change.Value.Item.Content.Value.ContentVersionId
-                        ExpectedContentRevision = renameReceipt.Change.Value.Item.ContentRevision.Value
-                    }
+                    delete.ContentPrecondition <-
+                        Some
+                            {
+                                ItemId = renameReceipt.Change.Value.Item.ItemId
+                                ExpectedContentVersionId = renameReceipt.Change.Value.Item.Content.Value.ContentVersionId
+                                ExpectedContentRevision = renameReceipt.Change.Value.Item.ContentRevision.Value
+                            }
 
-            delete.CorrelationId <- correlationId
-            let! deleteReceipt = submitAsync delete
+                    delete.CorrelationId <- correlationId
+                    let! deleteReceipt = submitAsync delete
 
-            let directoryName = "paged-directory"
-            let directorySlotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
-            directorySlotRequest.OwnerId <- ownerId
-            directorySlotRequest.OrganizationId <- organizationId
-            directorySlotRequest.RepositoryId <- repositoryId
-            directorySlotRequest.Parent <- Some parent
-            directorySlotRequest.Name <- directoryName
-            directorySlotRequest.CorrelationId <- correlationId
-            use! directorySlotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent directorySlotRequest)
-            let! directorySlotBody = directorySlotResponse.Content.ReadAsStringAsync()
-            Assert.That(directorySlotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), directorySlotBody)
+                    let directoryName = "paged-directory"
+                    let directorySlotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
+                    directorySlotRequest.OwnerId <- ownerId
+                    directorySlotRequest.OrganizationId <- organizationId
+                    directorySlotRequest.RepositoryId <- repositoryId
+                    directorySlotRequest.Parent <- Some parent
+                    directorySlotRequest.Name <- directoryName
+                    directorySlotRequest.CorrelationId <- correlationId
+                    use! directorySlotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent directorySlotRequest)
+                    let! directorySlotBody = directorySlotResponse.Content.ReadAsStringAsync()
+                    Assert.That(directorySlotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), directorySlotBody)
 
-            let directorySlot =
-                (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> directorySlotBody)
+                    let directorySlot =
+                        (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> directorySlotBody)
+                            .ReturnValue
+
+                    let createDirectory = Parameters.Library.SubmitLibraryChangeParameters()
+                    createDirectory.OwnerId <- ownerId
+                    createDirectory.OrganizationId <- organizationId
+                    createDirectory.RepositoryId <- repositoryId
+                    createDirectory.OperationId <- Guid.NewGuid()
+                    createDirectory.LibraryCatalogVersion <- configuredCatalog.Version
+                    createDirectory.ChangeKind <- ChangeKind.CreateDirectory
+                    createDirectory.ItemKind <- ItemKind.Directory
+
+                    createDirectory.CreationSlotExpectation <-
+                        Some { Parent = parent; Name = directoryName; ExpectedSlotVersion = directorySlot.SlotVersion; ExpectedState = "vacant" }
+
+                    createDirectory.CorrelationId <- correlationId
+                    let! directoryReceipt = submitAsync createDirectory
+                    let! historicalDescriptor = readAsync firstReceipt payload
+                    let! historicalYDescriptor = readAsync updateYReceipt yPayload
+                    let! historicalSecondXDescriptor = readAsync updateXReceipt payload
+
+                    let bootstrap = Parameters.Library.StartLibraryBootstrapParameters()
+                    bootstrap.OwnerId <- ownerId
+                    bootstrap.OrganizationId <- organizationId
+                    bootstrap.RepositoryId <- repositoryId
+                    bootstrap.PageSize <- 1
+                    bootstrap.CorrelationId <- correlationId
+                    use! bootstrapResponse = Client.PostAsync("/libraries/bootstrap/start", createJsonContent bootstrap)
+                    let! bootstrapBody = bootstrapResponse.Content.ReadAsStringAsync()
+
+                    let! bootstrapDiagnostics =
+                        task {
+                            if bootstrapResponse.StatusCode = HttpStatusCode.OK then
+                                return bootstrapBody
+                            else
+                                let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
+                                let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                                return $"{bootstrapBody}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
+                        }
+
+                    Assert.That(bootstrapResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), bootstrapDiagnostics)
+
+                    let bootstrapPage =
+                        (deserialize<GraceReturnValue<LibraryBootstrapPageDto>> bootstrapBody)
+                            .ReturnValue
+
+                    let continueBootstrap = Parameters.Library.ContinueLibraryBootstrapParameters()
+                    continueBootstrap.OwnerId <- ownerId
+                    continueBootstrap.OrganizationId <- organizationId
+                    continueBootstrap.RepositoryId <- repositoryId
+                    continueBootstrap.BootstrapId <- bootstrapPage.BootstrapId
+                    continueBootstrap.PageToken <- bootstrapPage.NextPageToken.Value
+                    continueBootstrap.PageSize <- 1
+                    continueBootstrap.CorrelationId <- correlationId
+
+                    /// Reuses the saved bootstrap token to verify stable continuation across restart.
+                    let continueBootstrapAsync () =
+                        task {
+                            use! response = Client.PostAsync("/libraries/bootstrap/continue", createJsonContent continueBootstrap)
+                            let! body = response.Content.ReadAsStringAsync()
+                            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+                            return
+                                (deserialize<GraceReturnValue<LibraryBootstrapPageDto>> body)
+                                    .ReturnValue
+                        }
+
+                    let! secondBootstrapPage = continueBootstrapAsync ()
+
+                    let statusParameters = Parameters.Library.GetLibraryStatusParameters()
+                    statusParameters.OwnerId <- ownerId
+                    statusParameters.OrganizationId <- organizationId
+                    statusParameters.RepositoryId <- repositoryId
+                    statusParameters.CorrelationId <- correlationId
+                    use! statusResponse = Client.PostAsync("/libraries/status/get", createJsonContent statusParameters)
+                    let! statusBody = statusResponse.Content.ReadAsStringAsync()
+                    Assert.That(statusResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), statusBody)
+
+                    let repositoryStatus =
+                        (deserialize<GraceReturnValue<LibraryRepositoryStatusDto>> statusBody)
+                            .ReturnValue
+
+                    let state = HostState.Value
+                    let! before = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                    let! workflowsBefore = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+
+                    let! controlsBefore = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+
+                    let! currentItemsBefore = LibraryActorSnapshots.readFrom<LibraryCurrentItemDocument> state "grace-library-current" "Grace.Library.Item.v2"
+
+                    let! currentSlotsBefore = LibraryActorSnapshots.readFrom<LibraryCurrentSlotDocument> state "grace-library-current" "Grace.Library.Slot.v2"
+
+                    let! historiesBefore =
+                        LibraryActorSnapshots.readFrom<LibraryHistorySegmentDocument> state "grace-library-history" "Grace.Library.History.v2"
+
+                    let! failedEventsBefore =
+                        LibraryActorSnapshots.readFrom<FailedGraceEventEnvelope> state "grace-library-receipts" "Grace.Library.FailedGraceEvent.v2"
+
+                    let! baselineManifestsBefore =
+                        LibraryActorSnapshots.readFrom<LibraryBaselineManifestDocument> state "grace-library-baselines" "Grace.Library.BaselineManifest.v2"
+
+                    let controlBefore =
+                        controlsBefore
+                        |> Array.find (fun value -> value.Catalog.RepositoryId = Guid.Parse repositoryId)
+
+                    let currentItemBefore =
+                        currentItemsBefore
+                        |> Array.find (fun value -> value.Item.ItemId = firstReceipt.Change.Value.Item.ItemId)
+
+                    let itemHistoryBefore =
+                        historiesBefore
+                        |> Array.find (fun value -> value.Cursors = [| 1L; 2L; 3L; 4L; 5L |])
+
+                    let baselineManifestBefore =
+                        baselineManifestsBefore
+                        |> Array.find (fun value ->
+                            value.Epoch = controlBefore.Epoch
+                            && value.BoundaryCursor = controlBefore.CommittedCursor)
+
+                    let counterBefore: RepositoryContentCounterDto =
+                        before
+                        |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                            value.RepositoryId = Guid.Parse repositoryId
+                            && value.ManifestAddress = manifest.ManifestAddress)
+
+                    let counterYBefore: RepositoryContentCounterDto =
+                        before
+                        |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                            value.RepositoryId = Guid.Parse repositoryId
+                            && value.ManifestAddress = manifestY.ManifestAddress)
+
+                    let workflowsXBefore: ManifestContributionWorkflowDto array =
+                        workflowsBefore
+                        |> Array.filter (fun value ->
+                            value.RepositoryId = Guid.Parse repositoryId
+                            && value.StoragePoolId = manifest.StoragePoolId
+                            && value.ManifestAddress = manifest.ManifestAddress)
+
+                    let workflowYBefore: ManifestContributionWorkflowDto =
+                        workflowsBefore
+                        |> Array.find (fun value ->
+                            value.RepositoryId = Guid.Parse repositoryId
+                            && value.StoragePoolId = manifestY.StoragePoolId
+                            && value.ManifestAddress = manifestY.ManifestAddress)
+
+                    let expectedRanges =
+                        manifest.Blocks
+                        |> Seq.distinctBy (fun value -> value.Address)
+                        |> Seq.map (fun value -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = value.Address })
+                        |> Seq.toArray
+
+                    let expectedRangesY =
+                        manifestY.Blocks
+                        |> Seq.distinctBy (fun value -> value.Address)
+                        |> Seq.map (fun value -> { StoragePoolId = manifestY.StoragePoolId; ContentBlockAddress = value.Address })
+                        |> Seq.toArray
+
+
+                    /// Replays receipts and bootstrap continuation and compares retained content and accounting state.
+                    let verify () =
+                        task {
+                            let! replayedSecondBootstrapPage = continueBootstrapAsync ()
+                            let! replayReceipt = submitAsync submit
+                            let! replayDescriptor = readAsync replayReceipt payload
+                            let! after = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
+                            let! workflowsAfter = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
+
+                            let! controlsAfter = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
+
+                            let! failedEventsAfter =
+                                LibraryActorSnapshots.readFrom<FailedGraceEventEnvelope> state "grace-library-receipts" "Grace.Library.FailedGraceEvent.v2"
+
+                            let controlAfter =
+                                controlsAfter
+                                |> Array.find (fun value -> value.Catalog.RepositoryId = Guid.Parse repositoryId)
+
+                            let counterAfter: RepositoryContentCounterDto =
+                                after
+                                |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                                    value.RepositoryId = Guid.Parse repositoryId
+                                    && value.ManifestAddress = manifest.ManifestAddress)
+
+                            let counterYAfter: RepositoryContentCounterDto =
+                                after
+                                |> Array.find (fun (value: RepositoryContentCounterDto) ->
+                                    value.RepositoryId = Guid.Parse repositoryId
+                                    && value.ManifestAddress = manifestY.ManifestAddress)
+
+                            let workflowsXAfter: ManifestContributionWorkflowDto array =
+                                workflowsAfter
+                                |> Array.filter (fun value ->
+                                    value.RepositoryId = Guid.Parse repositoryId
+                                    && value.StoragePoolId = manifest.StoragePoolId
+                                    && value.ManifestAddress = manifest.ManifestAddress)
+
+                            let workflowYAfter: ManifestContributionWorkflowDto =
+                                workflowsAfter
+                                |> Array.find (fun value ->
+                                    value.RepositoryId = Guid.Parse repositoryId
+                                    && value.StoragePoolId = manifestY.StoragePoolId
+                                    && value.ManifestAddress = manifestY.ManifestAddress)
+
+                            Assert.Multiple(
+                                Action (fun () ->
+                                    Assert.That(replayReceipt, Is.EqualTo(firstReceipt))
+                                    Assert.That(replayDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
+                                    Assert.That(historicalDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
+                                    Assert.That(historicalYDescriptor.Content, Is.EqualTo(yDescriptor.Content))
+                                    Assert.That(historicalSecondXDescriptor.Content, Is.EqualTo(secondXDescriptor.Content))
+                                    Assert.That(updateXReceipt.Change.Value.Item.Content, Is.EqualTo(firstReceipt.Change.Value.Item.Content))
+                                    Assert.That(updateYReceipt.Change.Value.Item.Content, Is.Not.EqualTo(firstReceipt.Change.Value.Item.Content))
+
+                                    Assert.That(
+                                        updateYReceipt.Change.Value.Item.ContentRevision,
+                                        Is.Not.EqualTo(firstReceipt.Change.Value.Item.ContentRevision)
+                                    )
+
+                                    Assert.That(
+                                        updateXReceipt.Change.Value.Item.ContentRevision,
+                                        Is.Not.EqualTo(updateYReceipt.Change.Value.Item.ContentRevision)
+                                    )
+
+                                    Assert.That(renameReceipt.Change.Value.Item.Namespace.Value.Name, Is.EqualTo("renamed.bin"))
+                                    Assert.That(renameReceipt.Change.Value.Item.ContentRevision, Is.EqualTo(updateXReceipt.Change.Value.Item.ContentRevision))
+                                    Assert.That(deleteReceipt.Change.Value.Item.Tombstone.IsSome, Is.True)
+                                    Assert.That(deleteReceipt.Change.Value.Item.Content, Is.EqualTo(None))
+                                    Assert.That(directoryReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                                    Assert.That(directoryReceipt.Change.Value.Item.ItemKind, Is.EqualTo(ItemKind.Directory))
+                                    Assert.That(bootstrapPage.BoundaryCursor, Is.EqualTo(directoryReceipt.Change.Value.Item.LastChangeCursor))
+                                    Assert.That(bootstrapPage.Items.Length, Is.EqualTo(1))
+                                    Assert.That(bootstrapPage.NextPageToken.IsSome, Is.True)
+                                    Assert.That(secondBootstrapPage.Items.Length, Is.EqualTo(1))
+                                    Assert.That(secondBootstrapPage.NextPageToken, Is.EqualTo(None))
+                                    Assert.That(replayedSecondBootstrapPage, Is.EqualTo(secondBootstrapPage))
+
+                                    Assert.That(
+                                        Array.append bootstrapPage.Items secondBootstrapPage.Items
+                                        |> Array.map (fun value -> value.ItemId)
+                                        |> Set.ofArray,
+                                        Is.EqualTo(
+                                            box (
+                                                Set.ofList [ deleteReceipt.Change.Value.Item.ItemId
+                                                             directoryReceipt.Change.Value.Item.ItemId ]
+                                            )
+                                        )
+                                    )
+
+                                    Assert.That(repositoryStatus.State, Is.EqualTo("ready"))
+                                    Assert.That(repositoryStatus.IsCaughtUp, Is.True)
+                                    Assert.That(repositoryStatus.ProjectionLagCount, Is.EqualTo(0L))
+                                    Assert.That(controlBefore.CommittedCursor, Is.EqualTo(6L))
+                                    Assert.That(controlBefore.HistoryThrough, Is.EqualTo(controlBefore.CommittedCursor))
+                                    Assert.That(controlBefore.NotifyThrough, Is.EqualTo(controlBefore.CommittedCursor))
+                                    Assert.That(controlBefore.Pending, Is.EqualTo(None))
+                                    Assert.That(currentItemBefore.HistoryTailSegment, Is.EqualTo(Some "00000000000000000000"))
+                                    Assert.That(itemHistoryBefore.Cursors, Is.EqualTo(box [| 1L; 2L; 3L; 4L; 5L |]))
+
+                                    Assert.That(
+                                        currentSlotsBefore
+                                        |> Array.filter (fun value ->
+                                            value.HistoryTailSegment.IsSome
+                                            && value.Slot.Parent.LibraryPath = Some libraryPath),
+                                        Has.Length.EqualTo(3)
+                                    )
+
+                                    Assert.That(failedEventsBefore, Is.Empty)
+                                    Assert.That(baselineManifestBefore.Catalog, Is.EqualTo(configuredCatalog))
+
+                                    Assert.That(
+                                        baselineManifestBefore.Shards
+                                        |> Array.sumBy (fun value -> value.ItemCount),
+                                        Is.EqualTo(2)
+                                    )
+
+                                    Assert.That(counterBefore.Count, Is.EqualTo(2L))
+                                    Assert.That(counterBefore.PendingTrackedAdd, Is.EqualTo(None))
+                                    Assert.That(counterYBefore.Count, Is.EqualTo(2L))
+                                    Assert.That(counterYBefore.PendingTrackedAdd, Is.EqualTo(None))
+                                    Assert.That(workflowsXBefore, Has.Length.EqualTo(1))
+
+                                    Assert.That(
+                                        workflowsXBefore
+                                        |> Array.forall (fun value ->
+                                            value.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+                                            && value.Ranges = expectedRanges
+                                            && (value.CompletedRanges
+                                                |> Array.map (fun progress -> progress.Range)) = expectedRanges
+                                            && value.CounterRevision = counterBefore.Revision
+                                            && Array.isEmpty value.FailedRanges),
+                                        Is.True
+                                    )
+
+                                    Assert.That(workflowYBefore.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
+                                    Assert.That(workflowYBefore.Ranges = expectedRangesY, Is.True)
+
+                                    Assert.That(
+                                        (workflowYBefore.CompletedRanges
+                                         |> Array.map (fun value -> value.Range)) =
+                                            expectedRangesY,
+                                        Is.True
+                                    )
+
+                                    Assert.That(workflowYBefore.FailedRanges, Is.Empty)
+                                    Assert.That(counterAfter.Count, Is.EqualTo(counterBefore.Count))
+                                    Assert.That(counterAfter.Revision, Is.EqualTo(counterBefore.Revision))
+                                    Assert.That(counterAfter.PendingTrackedAdd, Is.EqualTo(None))
+                                    Assert.That(counterYAfter, Is.EqualTo(counterYBefore))
+                                    Assert.That(workflowsXAfter.Length, Is.EqualTo(workflowsXBefore.Length))
+
+                                    Assert.That(
+                                        workflowsXAfter
+                                        |> Array.forall (fun value -> workflowsXBefore |> Array.contains value),
+                                        Is.True
+                                    )
+
+                                    Assert.That(workflowYAfter, Is.EqualTo(workflowYBefore))
+                                    Assert.That(controlAfter, Is.EqualTo(controlBefore))
+                                    Assert.That(failedEventsAfter, Is.Empty))
+                            )
+
+                        }
+
+                    return { PrepareWhileStoppedAsync = (fun () -> System.Threading.Tasks.Task.FromResult(())); VerifyAfterRestartAsync = verify }
+                | Expiry -> return invalidOp "Expiry was handled before content-update preparation."
+        }
+
+    /// Prepares an independent 201-change stream so its gap cannot change content-replay snapshots.
+    let prepareVisibilityGapAsync repositoryId =
+        task {
+            TestContext.Progress.WriteLine($"Preparing Library visibility-gap restart scenario in repository {repositoryId}.")
+            let state = HostState.Value
+            let correlationId = generateCorrelationId ()
+            let libraryPath = $"LibraryGap{Guid.NewGuid():N}"
+            let getCatalog = Parameters.Library.GetLibraryCatalogParameters()
+            getCatalog.OwnerId <- ownerId
+            getCatalog.OrganizationId <- organizationId
+            getCatalog.RepositoryId <- repositoryId
+            getCatalog.CorrelationId <- correlationId
+            use! catalogResponse = Client.PostAsync("/libraries/catalog/get", createJsonContent getCatalog)
+            let! catalogBody = catalogResponse.Content.ReadAsStringAsync()
+            Assert.That(catalogResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), catalogBody)
+
+            let catalog =
+                (deserialize<GraceReturnValue<LibraryCatalogDto>> catalogBody)
                     .ReturnValue
 
-            let createDirectory = Parameters.Library.SubmitLibraryChangeParameters()
-            createDirectory.OwnerId <- ownerId
-            createDirectory.OrganizationId <- organizationId
-            createDirectory.RepositoryId <- repositoryId
-            createDirectory.OperationId <- Guid.NewGuid()
-            createDirectory.LibraryCatalogVersion <- configuredCatalog.Version
-            createDirectory.ChangeKind <- ChangeKind.CreateDirectory
-            createDirectory.ItemKind <- ItemKind.Directory
+            let addLibrary = Parameters.Library.AddLibraryParameters()
+            addLibrary.OwnerId <- ownerId
+            addLibrary.OrganizationId <- organizationId
+            addLibrary.RepositoryId <- repositoryId
+            addLibrary.ExpectedVersion <- catalog.Version
+            addLibrary.LibraryPath <- libraryPath
+            addLibrary.OperationId <- Guid.NewGuid()
+            addLibrary.CorrelationId <- correlationId
+            use! addResponse = Client.PostAsync("/libraries/add", createJsonContent addLibrary)
+            let! addBody = addResponse.Content.ReadAsStringAsync()
+            Assert.That(addResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), addBody)
 
-            createDirectory.CreationSlotExpectation <-
-                Some { Parent = parent; Name = directoryName; ExpectedSlotVersion = directorySlot.SlotVersion; ExpectedState = "vacant" }
-
-            createDirectory.CorrelationId <- correlationId
-            let! directoryReceipt = submitAsync createDirectory
-            let! historicalDescriptor = readAsync firstReceipt payload
-            let! historicalYDescriptor = readAsync updateYReceipt yPayload
-            let! historicalSecondXDescriptor = readAsync updateXReceipt payload
-
-            let bootstrap = Parameters.Library.StartLibraryBootstrapParameters()
-            bootstrap.OwnerId <- ownerId
-            bootstrap.OrganizationId <- organizationId
-            bootstrap.RepositoryId <- repositoryId
-            bootstrap.PageSize <- 1
-            bootstrap.CorrelationId <- correlationId
-            use! bootstrapResponse = Client.PostAsync("/libraries/bootstrap/start", createJsonContent bootstrap)
-            let! bootstrapBody = bootstrapResponse.Content.ReadAsStringAsync()
-
-            let! bootstrapDiagnostics =
-                task {
-                    if bootstrapResponse.StatusCode = HttpStatusCode.OK then
-                        return bootstrapBody
-                    else
-                        let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
-                        let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
-                        return $"{bootstrapBody}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
-                }
-
-            Assert.That(bootstrapResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), bootstrapDiagnostics)
-
-            let bootstrapPage =
-                (deserialize<GraceReturnValue<LibraryBootstrapPageDto>> bootstrapBody)
+            let configuredCatalogResult =
+                (deserialize<GraceReturnValue<LibraryCatalogChangeResultDto>> addBody)
                     .ReturnValue
 
-            let continueBootstrap = Parameters.Library.ContinueLibraryBootstrapParameters()
-            continueBootstrap.OwnerId <- ownerId
-            continueBootstrap.OrganizationId <- organizationId
-            continueBootstrap.RepositoryId <- repositoryId
-            continueBootstrap.BootstrapId <- bootstrapPage.BootstrapId
-            continueBootstrap.PageToken <- bootstrapPage.NextPageToken.Value
-            continueBootstrap.PageSize <- 1
-            continueBootstrap.CorrelationId <- correlationId
+            let configuredCatalog = configuredCatalogResult.LibraryCatalog
 
-            let continueBootstrapAsync () =
+            use! addReplayResponse = Client.PostAsync("/libraries/add", createJsonContent addLibrary)
+            let! addReplayBody = addReplayResponse.Content.ReadAsStringAsync()
+            Assert.That(addReplayResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), addReplayBody)
+
+            let addReplay =
+                (deserialize<GraceReturnValue<LibraryCatalogChangeResultDto>> addReplayBody)
+                    .ReturnValue
+
+            Assert.That(addReplay, Is.EqualTo(configuredCatalogResult))
+
+            let parent = { Kind = "root"; LibraryPath = Some libraryPath; ItemId = None }
+
+            /// Creates real accepted directory changes and includes server diagnostics on HTTP failure.
+            let submitAsync (parameters: Parameters.Library.SubmitLibraryChangeParameters) =
                 task {
-                    use! response = Client.PostAsync("/libraries/bootstrap/continue", createJsonContent continueBootstrap)
+                    use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent parameters)
                     let! body = response.Content.ReadAsStringAsync()
-                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+                    let! diagnostics =
+                        task {
+                            if response.StatusCode = HttpStatusCode.OK then
+                                return body
+                            else
+                                let! resourceLogs = AspireTestHost.getGraceServerLogsAsync HostState.Value
+                                let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
+                                return $"{body}{Environment.NewLine}{String.Join(Environment.NewLine, resourceLogs)}{Environment.NewLine}{fileLog}"
+                        }
+
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), diagnostics)
 
                     return
-                        (deserialize<GraceReturnValue<LibraryBootstrapPageDto>> body)
+                        (deserialize<GraceReturnValue<LibraryOperationReceiptDto>> body)
                             .ReturnValue
                 }
-
-            let! secondBootstrapPage = continueBootstrapAsync ()
-
-            let statusParameters = Parameters.Library.GetLibraryStatusParameters()
-            statusParameters.OwnerId <- ownerId
-            statusParameters.OrganizationId <- organizationId
-            statusParameters.RepositoryId <- repositoryId
-            statusParameters.CorrelationId <- correlationId
-            use! statusResponse = Client.PostAsync("/libraries/status/get", createJsonContent statusParameters)
-            let! statusBody = statusResponse.Content.ReadAsStringAsync()
-            Assert.That(statusResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), statusBody)
-
-            let repositoryStatus =
-                (deserialize<GraceReturnValue<LibraryRepositoryStatusDto>> statusBody)
-                    .ReturnValue
-
-            let state = HostState.Value
-            let! before = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
-            let! workflowsBefore = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
-
-            let! controlsBefore = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
-
-            let! currentItemsBefore = LibraryActorSnapshots.readFrom<LibraryCurrentItemDocument> state "grace-library-current" "Grace.Library.Item.v2"
-
-            let! currentSlotsBefore = LibraryActorSnapshots.readFrom<LibraryCurrentSlotDocument> state "grace-library-current" "Grace.Library.Slot.v2"
-
-            let! historiesBefore = LibraryActorSnapshots.readFrom<LibraryHistorySegmentDocument> state "grace-library-history" "Grace.Library.History.v2"
-
-            let! failedEventsBefore =
-                LibraryActorSnapshots.readFrom<FailedGraceEventEnvelope> state "grace-library-receipts" "Grace.Library.FailedGraceEvent.v2"
-
-            let! baselineManifestsBefore =
-                LibraryActorSnapshots.readFrom<LibraryBaselineManifestDocument> state "grace-library-baselines" "Grace.Library.BaselineManifest.v2"
-
-            let controlBefore =
-                controlsBefore
-                |> Array.find (fun value -> value.Catalog.RepositoryId = Guid.Parse repositoryId)
-
-            let currentItemBefore =
-                currentItemsBefore
-                |> Array.find (fun value -> value.Item.ItemId = firstReceipt.Change.Value.Item.ItemId)
-
-            let itemHistoryBefore =
-                historiesBefore
-                |> Array.find (fun value -> value.Cursors = [| 1L; 2L; 3L; 4L; 5L |])
-
-            let baselineManifestBefore =
-                baselineManifestsBefore
-                |> Array.find (fun value ->
-                    value.Epoch = controlBefore.Epoch
-                    && value.BoundaryCursor = controlBefore.CommittedCursor)
-
-            let counterBefore: RepositoryContentCounterDto =
-                before
-                |> Array.find (fun (value: RepositoryContentCounterDto) ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.ManifestAddress = manifest.ManifestAddress)
-
-            let counterYBefore: RepositoryContentCounterDto =
-                before
-                |> Array.find (fun (value: RepositoryContentCounterDto) ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.ManifestAddress = manifestY.ManifestAddress)
-
-            let workflowsXBefore: ManifestContributionWorkflowDto array =
-                workflowsBefore
-                |> Array.filter (fun value ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.StoragePoolId = manifest.StoragePoolId
-                    && value.ManifestAddress = manifest.ManifestAddress)
-
-            let workflowYBefore: ManifestContributionWorkflowDto =
-                workflowsBefore
-                |> Array.find (fun value ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.StoragePoolId = manifestY.StoragePoolId
-                    && value.ManifestAddress = manifestY.ManifestAddress)
-
-            let expectedRanges =
-                manifest.Blocks
-                |> Seq.distinctBy (fun value -> value.Address)
-                |> Seq.map (fun value -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = value.Address })
-                |> Seq.toArray
-
-            let expectedRangesY =
-                manifestY.Blocks
-                |> Seq.distinctBy (fun value -> value.Address)
-                |> Seq.map (fun value -> { StoragePoolId = manifestY.StoragePoolId; ContentBlockAddress = value.Address })
-                |> Seq.toArray
-
-            do! AspireTestHost.restartGraceServerAsync state "Library accepted-content replay"
-            let! replayedSecondBootstrapPage = continueBootstrapAsync ()
-            let! replayReceipt = submitAsync submit
-            let! replayDescriptor = readAsync replayReceipt payload
-            let! after = LibraryActorSnapshots.read<RepositoryContentCounterDto> state "RepoContentCounter"
-            let! workflowsAfter = LibraryActorSnapshots.read<ManifestContributionWorkflowDto> state "ManifestContributionWorkflow"
-
-            let! controlsAfter = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
-
-            let! failedEventsAfter = LibraryActorSnapshots.readFrom<FailedGraceEventEnvelope> state "grace-library-receipts" "Grace.Library.FailedGraceEvent.v2"
-
-            let controlAfter =
-                controlsAfter
-                |> Array.find (fun value -> value.Catalog.RepositoryId = Guid.Parse repositoryId)
-
-            let counterAfter: RepositoryContentCounterDto =
-                after
-                |> Array.find (fun (value: RepositoryContentCounterDto) ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.ManifestAddress = manifest.ManifestAddress)
-
-            let counterYAfter: RepositoryContentCounterDto =
-                after
-                |> Array.find (fun (value: RepositoryContentCounterDto) ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.ManifestAddress = manifestY.ManifestAddress)
-
-            let workflowsXAfter: ManifestContributionWorkflowDto array =
-                workflowsAfter
-                |> Array.filter (fun value ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.StoragePoolId = manifest.StoragePoolId
-                    && value.ManifestAddress = manifest.ManifestAddress)
-
-            let workflowYAfter: ManifestContributionWorkflowDto =
-                workflowsAfter
-                |> Array.find (fun value ->
-                    value.RepositoryId = Guid.Parse repositoryId
-                    && value.StoragePoolId = manifestY.StoragePoolId
-                    && value.ManifestAddress = manifestY.ManifestAddress)
-
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(replayReceipt, Is.EqualTo(firstReceipt))
-                    Assert.That(replayDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
-                    Assert.That(historicalDescriptor.Content, Is.EqualTo(firstDescriptor.Content))
-                    Assert.That(historicalYDescriptor.Content, Is.EqualTo(yDescriptor.Content))
-                    Assert.That(historicalSecondXDescriptor.Content, Is.EqualTo(secondXDescriptor.Content))
-                    Assert.That(updateXReceipt.Change.Value.Item.Content, Is.EqualTo(firstReceipt.Change.Value.Item.Content))
-                    Assert.That(updateYReceipt.Change.Value.Item.Content, Is.Not.EqualTo(firstReceipt.Change.Value.Item.Content))
-
-                    Assert.That(updateYReceipt.Change.Value.Item.ContentRevision, Is.Not.EqualTo(firstReceipt.Change.Value.Item.ContentRevision))
-
-                    Assert.That(updateXReceipt.Change.Value.Item.ContentRevision, Is.Not.EqualTo(updateYReceipt.Change.Value.Item.ContentRevision))
-
-                    Assert.That(renameReceipt.Change.Value.Item.Namespace.Value.Name, Is.EqualTo("renamed.bin"))
-                    Assert.That(renameReceipt.Change.Value.Item.ContentRevision, Is.EqualTo(updateXReceipt.Change.Value.Item.ContentRevision))
-                    Assert.That(deleteReceipt.Change.Value.Item.Tombstone.IsSome, Is.True)
-                    Assert.That(deleteReceipt.Change.Value.Item.Content, Is.EqualTo(None))
-                    Assert.That(directoryReceipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
-                    Assert.That(directoryReceipt.Change.Value.Item.ItemKind, Is.EqualTo(ItemKind.Directory))
-                    Assert.That(bootstrapPage.BoundaryCursor, Is.EqualTo(directoryReceipt.Change.Value.Item.LastChangeCursor))
-                    Assert.That(bootstrapPage.Items.Length, Is.EqualTo(1))
-                    Assert.That(bootstrapPage.NextPageToken.IsSome, Is.True)
-                    Assert.That(secondBootstrapPage.Items.Length, Is.EqualTo(1))
-                    Assert.That(secondBootstrapPage.NextPageToken, Is.EqualTo(None))
-                    Assert.That(replayedSecondBootstrapPage, Is.EqualTo(secondBootstrapPage))
-
-                    Assert.That(
-                        Array.append bootstrapPage.Items secondBootstrapPage.Items
-                        |> Array.map (fun value -> value.ItemId)
-                        |> Set.ofArray,
-                        Is.EqualTo(
-                            box (
-                                Set.ofList [ deleteReceipt.Change.Value.Item.ItemId
-                                             directoryReceipt.Change.Value.Item.ItemId ]
-                            )
-                        )
-                    )
-
-                    Assert.That(repositoryStatus.State, Is.EqualTo("ready"))
-                    Assert.That(repositoryStatus.IsCaughtUp, Is.True)
-                    Assert.That(repositoryStatus.ProjectionLagCount, Is.EqualTo(0L))
-                    Assert.That(controlBefore.CommittedCursor, Is.EqualTo(6L))
-                    Assert.That(controlBefore.HistoryThrough, Is.EqualTo(controlBefore.CommittedCursor))
-                    Assert.That(controlBefore.NotifyThrough, Is.EqualTo(controlBefore.CommittedCursor))
-                    Assert.That(controlBefore.Pending, Is.EqualTo(None))
-                    Assert.That(currentItemBefore.HistoryTailSegment, Is.EqualTo(Some "00000000000000000000"))
-                    Assert.That(itemHistoryBefore.Cursors, Is.EqualTo(box [| 1L; 2L; 3L; 4L; 5L |]))
-
-                    Assert.That(
-                        currentSlotsBefore
-                        |> Array.filter (fun value ->
-                            value.HistoryTailSegment.IsSome
-                            && value.Slot.Parent.LibraryPath = Some libraryPath),
-                        Has.Length.EqualTo(3)
-                    )
-
-                    Assert.That(failedEventsBefore, Is.Empty)
-                    Assert.That(baselineManifestBefore.Catalog, Is.EqualTo(configuredCatalog))
-
-                    Assert.That(
-                        baselineManifestBefore.Shards
-                        |> Array.sumBy (fun value -> value.ItemCount),
-                        Is.EqualTo(2)
-                    )
-
-                    Assert.That(counterBefore.Count, Is.EqualTo(2L))
-                    Assert.That(counterBefore.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(counterYBefore.Count, Is.EqualTo(2L))
-                    Assert.That(counterYBefore.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(workflowsXBefore, Has.Length.EqualTo(1))
-
-                    Assert.That(
-                        workflowsXBefore
-                        |> Array.forall (fun value ->
-                            value.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
-                            && value.Ranges = expectedRanges
-                            && (value.CompletedRanges
-                                |> Array.map (fun progress -> progress.Range)) = expectedRanges
-                            && value.CounterRevision = counterBefore.Revision
-                            && Array.isEmpty value.FailedRanges),
-                        Is.True
-                    )
-
-                    Assert.That(workflowYBefore.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
-                    Assert.That(workflowYBefore.Ranges = expectedRangesY, Is.True)
-
-                    Assert.That(
-                        (workflowYBefore.CompletedRanges
-                         |> Array.map (fun value -> value.Range)) =
-                            expectedRangesY,
-                        Is.True
-                    )
-
-                    Assert.That(workflowYBefore.FailedRanges, Is.Empty)
-                    Assert.That(counterAfter.Count, Is.EqualTo(counterBefore.Count))
-                    Assert.That(counterAfter.Revision, Is.EqualTo(counterBefore.Revision))
-                    Assert.That(counterAfter.PendingTrackedAdd, Is.EqualTo(None))
-                    Assert.That(counterYAfter, Is.EqualTo(counterYBefore))
-                    Assert.That(workflowsXAfter.Length, Is.EqualTo(workflowsXBefore.Length))
-
-                    Assert.That(
-                        workflowsXAfter
-                        |> Array.forall (fun value -> workflowsXBefore |> Array.contains value),
-                        Is.True
-                    )
-
-                    Assert.That(workflowYAfter, Is.EqualTo(workflowYBefore))
-                    Assert.That(controlAfter, Is.EqualTo(controlBefore))
-                    Assert.That(failedEventsAfter, Is.Empty))
-            )
 
             let mutable cursor199 = String.Empty
             let mutable cursor200OperationId = Guid.Empty
             let mutable cursor201OperationId = Guid.Empty
 
-            for cursor in 7L .. 201L do
+            for cursor in 1L .. 201L do
                 let name = $"page-gap-{cursor:D3}"
                 let operationId = Guid.NewGuid()
                 let createPagedDirectory = Parameters.Library.SubmitLibraryChangeParameters()
@@ -4713,85 +4868,101 @@ type StorageManifestUploadSessionRoutes() =
                 elif cursor = 200L then cursor200OperationId <- operationId
                 elif cursor = 201L then cursor201OperationId <- operationId
 
-            do! AspireTestHost.stopGraceServerAsync state "Library change-page visibility gap"
+            let mutable retainedCursor200 = None
 
-            let! retainedCursor200 =
-                LibraryActorSnapshots.takeFrom<LibraryAcceptedChangeRecord>
-                    state
-                    "grace-library-changes"
-                    "Grace.Library.Change.v2"
-                    (fun record ->
-                        record.Cursor = 200L
-                        && record.Change.OperationId = cursor200OperationId)
-                    "Library accepted change cursor 200"
-
-            let! _ = AspireTestHost.startGraceServerAsync state "Library change-page visibility gap"
-
-            let getChanges pageToken =
+            /// Removes the real cursor-200 document only after observing the stopped server.
+            let offline () =
                 task {
-                    let parameters = Parameters.Library.GetLibraryChangesParameters()
-                    parameters.OwnerId <- ownerId
-                    parameters.OrganizationId <- organizationId
-                    parameters.RepositoryId <- repositoryId
-                    parameters.AfterCursor <- cursor199
-                    parameters.PageToken <- pageToken |> Option.toObj
-                    parameters.PageSize <- 10
-                    parameters.CorrelationId <- generateCorrelationId ()
-                    use! response = Client.PostAsync("/libraries/changes/get", createJsonContent parameters)
-                    let! body = response.Content.ReadAsStringAsync()
+                    let! retained =
+                        LibraryActorSnapshots.takeFrom<LibraryAcceptedChangeRecord>
+                            state
+                            "grace-library-changes"
+                            "Grace.Library.Change.v2"
+                            (fun record ->
+                                record.Cursor = 200L
+                                && record.Change.OperationId = cursor200OperationId)
+                            "Library accepted change cursor 200"
 
-                    if response.StatusCode <> HttpStatusCode.OK then
-                        return Choice2Of2(InvalidOperationException($"Library change-page request failed with {response.StatusCode}: {body}") :> exn)
-                    else
-                        return
-                            Choice1Of2(
-                                (deserialize<GraceReturnValue<LibraryChangePageDto>> body)
-                                    .ReturnValue
-                            )
+                    retainedCursor200 <- Some retained
                 }
 
-            let! initialGapResult =
+            /// Restores the missing document and resumes from the unchanged continuation boundary.
+            let verify () =
                 task {
-                    try
-                        return! getChanges None
-                    with
-                    | error -> return Choice2Of2 error
-                }
+                    /// Reads after cursor 199, preserving any continuation token returned for the missing change.
+                    let getChanges pageToken =
+                        task {
+                            let parameters = Parameters.Library.GetLibraryChangesParameters()
+                            parameters.OwnerId <- ownerId
+                            parameters.OrganizationId <- organizationId
+                            parameters.RepositoryId <- repositoryId
+                            parameters.AfterCursor <- cursor199
+                            parameters.PageToken <- pageToken |> Option.toObj
+                            parameters.PageSize <- 10
+                            parameters.CorrelationId <- generateCorrelationId ()
+                            use! response = Client.PostAsync("/libraries/changes/get", createJsonContent parameters)
+                            let! body = response.Content.ReadAsStringAsync()
 
-            do! LibraryActorSnapshots.restoreTo state "grace-library-changes" retainedCursor200
+                            if response.StatusCode <> HttpStatusCode.OK then
+                                return Choice2Of2(InvalidOperationException($"Library change-page request failed with {response.StatusCode}: {body}") :> exn)
+                            else
+                                return
+                                    Choice1Of2(
+                                        (deserialize<GraceReturnValue<LibraryChangePageDto>> body)
+                                            .ReturnValue
+                                    )
+                        }
 
-            let initialGapPage =
-                match initialGapResult with
-                | Choice1Of2 page -> page
-                | Choice2Of2 error -> raise error
+                    let! initialGapResult =
+                        task {
+                            try
+                                return! getChanges None
+                            with
+                            | error -> return Choice2Of2 error
+                        }
 
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(initialGapPage.Changes, Is.Empty)
-                    Assert.That(initialGapPage.LastCursor, Is.EqualTo(cursor199))
-                    Assert.That(initialGapPage.HasMore, Is.True)
-                    Assert.That(initialGapPage.NextPageToken.IsSome, Is.True))
-            )
+                    do!
+                        LibraryActorSnapshots.restoreTo
+                            state
+                            "grace-library-changes"
+                            (retainedCursor200
+                             |> Option.defaultWith (fun () -> invalidOp "The cursor-200 change was not retained while stopped."))
 
-            let! resumedGapResult = getChanges initialGapPage.NextPageToken
+                    let initialGapPage =
+                        match initialGapResult with
+                        | Choice1Of2 page -> page
+                        | Choice2Of2 error -> raise error
 
-            let resumedGapPage =
-                match resumedGapResult with
-                | Choice1Of2 page -> page
-                | Choice2Of2 error -> raise error
-
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(
-                        resumedGapPage.Changes
-                        |> Array.map (fun change -> change.OperationId),
-                        Is.EqualTo(
-                            box [| cursor200OperationId
-                                   cursor201OperationId |]
-                        )
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(initialGapPage.Changes, Is.Empty)
+                            Assert.That(initialGapPage.LastCursor, Is.EqualTo(cursor199))
+                            Assert.That(initialGapPage.HasMore, Is.True)
+                            Assert.That(initialGapPage.NextPageToken.IsSome, Is.True))
                     )
 
-                    Assert.That(resumedGapPage.HasMore, Is.False)
-                    Assert.That(resumedGapPage.NextPageToken, Is.EqualTo(None)))
-            )
+                    let! resumedGapResult = getChanges initialGapPage.NextPageToken
+
+                    let resumedGapPage =
+                        match resumedGapResult with
+                        | Choice1Of2 page -> page
+                        | Choice2Of2 error -> raise error
+
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(
+                                resumedGapPage.Changes
+                                |> Array.map (fun change -> change.OperationId),
+                                Is.EqualTo(
+                                    box [| cursor200OperationId
+                                           cursor201OperationId |]
+                                )
+                            )
+
+                            Assert.That(resumedGapPage.HasMore, Is.False)
+                            Assert.That(resumedGapPage.NextPageToken, Is.EqualTo(None)))
+                    )
+                }
+
+            return { PrepareWhileStoppedAsync = offline; VerifyAfterRestartAsync = verify }
         }
