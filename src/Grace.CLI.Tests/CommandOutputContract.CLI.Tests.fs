@@ -238,16 +238,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 218
+        |> should equal 219
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 209
+        |> should equal 210
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 197
+        |> should equal 198
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
@@ -298,7 +298,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 197
+        jsonReady |> should equal 198
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
@@ -575,7 +575,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 197
+        commonEntries.Length |> should equal 198
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -593,7 +593,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 197
+        commonEntries.Length |> should equal 198
 
         let parserInvalidEntries =
             commonEntries
@@ -1055,7 +1055,7 @@ module CommandOutputContractRegistryTests =
                 | ConditionalGraceResultEnvelope _ -> true
                 | _ -> false)
 
-        eligibleEntries.Length |> should equal 198
+        eligibleEntries.Length |> should equal 199
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status
@@ -1080,7 +1080,7 @@ module CommandOutputContractRegistryTests =
             |> should equal "success-envelope-shape"
 
     /// Requires every synchronization entrypoint to expose pause independently of participation and progress.
-    [<TestCase("enable"); TestCase("run"); TestCase("pause"); TestCase("resume"); TestCase("status")>]
+    [<TestCase("enable"); TestCase("run"); TestCase("pause"); TestCase("resume"); TestCase("adopt-catalog"); TestCase("status")>]
     let ``library synchronization schema exposes independent pause setting`` verb =
         let entry =
             CommandOutputContract.commandIdentity [ "library"; "sync" ] verb

@@ -1296,7 +1296,18 @@ module GraceCommand =
                                 Some rootHelpSections
                             elif helpCommand.Name = "sync"
                                  && tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive = Some "library" then
-                                Some [ { Heading = "Synchronize files"; CommandNames = [ "enable"; "run"; "status" ] } ]
+                                Some [ {
+                                           Heading = "Synchronize files"
+                                           CommandNames =
+                                               [
+                                                   "enable"
+                                                   "run"
+                                                   "pause"
+                                                   "adopt-catalog"
+                                                   "resume"
+                                                   "status"
+                                               ]
+                                       } ]
                             else
                                 match groupedHelpSectionsByCommandName.TryGetValue(helpCommand.Name) with
                                 | true, sections -> Some sections

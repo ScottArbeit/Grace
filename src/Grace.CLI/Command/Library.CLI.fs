@@ -238,6 +238,7 @@ module LibraryCommand =
                     | "run" -> LibrarySynchronization.run configuration locator.CorrelationId cancellationToken
                     | "pause" -> LibrarySynchronization.pause configuration cancellationToken
                     | "resume" -> LibrarySynchronization.resume configuration locator.CorrelationId cancellationToken
+                    | "adopt-catalog" -> LibrarySynchronization.adoptCatalog configuration locator.CorrelationId cancellationToken
                     | "status" -> LibrarySynchronization.status configuration
                     | _ -> invalidArg (nameof verb) "Unsupported Library synchronization command."
 
@@ -405,6 +406,7 @@ module LibraryCommand =
                 "run"
                 "pause"
                 "resume"
+                "adopt-catalog"
                 "status"
             ] do
             let command =
@@ -413,6 +415,7 @@ module LibraryCommand =
                     match verb with
                     | "pause" -> "Pause this onboarded copy locally, retaining saved and pending work."
                     | "resume" -> "Resume this paused copy and synchronize retained and latest saved work."
+                    | "adopt-catalog" -> "Adopt one added Library root while paused; restart Watch and explicitly resume afterward."
                     | "status" -> "Show participation, pause setting and completed synchronization progress."
                     | _ -> $"Library synchronization {verb}."
                 )
@@ -436,6 +439,11 @@ module LibraryCommand =
                                 | Normal
                                 | Verbose
                                 | Minimal ->
+                                    if verb = "adopt-catalog" then
+                                        Console.Out.WriteLine(
+                                            "Library catalog adopted; synchronization remains paused. Restart Watch, then run 'grace library sync resume' to apply retained changes."
+                                        )
+
                                     Console.Out.WriteLine(
                                         $"Library synchronization: Enabled={value.ReturnValue.Enabled}, Paused={value.ReturnValue.Paused}, State={value.ReturnValue.State}, Pending={value.ReturnValue.PendingOperationCount}."
                                     )

@@ -66,6 +66,7 @@ module LibraryCliParsingTests =
                 "run"
                 "pause"
                 "resume"
+                "adopt-catalog"
                 "status"
             ] do
             let parsed =

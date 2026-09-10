@@ -10,6 +10,8 @@ open Microsoft.Data.Sqlite
 open NUnit.Framework
 open System
 open System.IO
+open System.Threading
+open System.Threading.Tasks
 
 /// Exercises the real Library SQLite completion boundary and Windows filesystem guards.
 [<NonParallelizable>]
@@ -180,6 +182,539 @@ module LibraryLocalStateTests =
             complete db initial first
             setState db (readRepository db initial.RepositoryId).Value "current"
             return configuration, (readRepository db initial.RepositoryId).Value, first.Accepted.Value.Item
+        }
+
+    /// Supplies one direct successor and complete retained feed without replacing any production local checks.
+    let private adoptionSelection (current: RepositoryState) =
+        let selected = { current.Catalog with Version = Guid.NewGuid(); PreviousVersion = Some current.Catalog.Version; Libraries = [| "Added"; "Library" |] }
+
+        let page: LibraryChangePageDto =
+            {
+                Outcome = "success"
+                CursorEpoch = current.CursorEpoch
+                Changes = [||]
+                LastCursor = current.AppliedCursor
+                HasMore = false
+                NextPageToken = None
+                Rebaseline = None
+            }
+
+        selected, page
+
+    /// Exercises real rollback and lost-response retry while retaining terminal echo, materialization and exact cursor.
+    [<TestCase("before"); TestCase("inside"); TestCase("after"); TestCase("none")>]
+    let ``catalog adoption retains every noncatalog fact through interruption and duplicate invocation`` fault =
+        task {
+            let! configuration, active, _ = renameCopy ()
+            let db = configuration.GraceStatusFile
+            setPaused db active true
+            let before = (readRepository db active.RepositoryId).Value
+            let selected, page = adoptionSelection before
+
+            Directory.CreateDirectory(Path.Combine(configuration.RootDirectory, "Added"))
+            |> ignore
+
+            let items = readItems db before.RepositoryId
+            let operations = readOperations db before.RepositoryId
+            let bytes = File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "Library/item.bin"))
+
+            /// Invokes production orchestration with only remote responses and transaction interruption controlled.
+            let invoke beforeCommit afterWrite =
+                LibrarySynchronization.adoptCatalogWith
+                    beforeCommit
+                    afterWrite
+                    (fun () -> Task.FromResult selected)
+                    (fun cursor ->
+                        Assert.That(cursor, Is.EqualTo(before.AppliedCursor))
+                        Task.FromResult page)
+                    configuration
+                    CancellationToken.None
+
+            let mutable interrupted = false
+
+            try
+                let! _ = invoke (fun () -> if fault = "before" then invalidOp "injected") (fun _ _ -> if fault = "inside" then invalidOp "injected")
+                if fault = "after" then invalidOp "injected"
+            with
+            | :? InvalidOperationException as ex when ex.Message = "injected" -> interrupted <- true
+
+            Assert.That(interrupted, Is.EqualTo(fault <> "none"))
+
+            Assert.That(
+                readRepository db before.RepositoryId,
+                Is.EqualTo(
+                    Some(
+                        if fault = "before" || fault = "inside" then
+                            before
+                        else
+                            { before with Catalog = selected }
+                    )
+                )
+            )
+
+            let! result = invoke ignore (fun _ _ -> ())
+            let! duplicate = invoke ignore (fun _ _ -> ())
+            Assert.That(result, Is.EqualTo(duplicate))
+            Assert.That(result.Paused, Is.True)
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some { before with Catalog = selected }))
+            Assert.That(readItems db before.RepositoryId, Is.EqualTo<LibraryItemDto>(items))
+            Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(serialize operations))
+            Assert.That(File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "Library/item.bin")), Is.EqualTo<byte>(bytes))
+            Assert.That(Directory.GetFileSystemEntries(Path.Combine(configuration.RootDirectory, "Added")), Is.Empty)
+        }
+
+    /// Refuses supported input failures before effects, with explicit remote injections kept distinct from local facts.
+    [<TestCase("active");
+      TestCase("partial-local");
+      TestCase("incomplete");
+      TestCase("dirty");
+      TestCase("untracked");
+      TestCase("zero");
+      TestCase("occupied");
+      TestCase("missing");
+      TestCase("removal");
+      TestCase("replacement");
+      TestCase("skipped");
+      TestCase("overlap");
+      TestCase("unnormalized");
+      TestCase("epoch");
+      TestCase("partial-remote");
+      TestCase("rebaseline");
+      TestCase("history");
+      TestCase("unavailable");
+      TestCase("stale-row");
+      TestCase("stale-disk");
+      TestCase("stale-catalog")>]
+    let ``catalog adoption refuses changed or unsupported inputs without capturing work`` scenario =
+        task {
+            let! configuration, active, item = renameCopy ()
+            let db = configuration.GraceStatusFile
+            setPaused db active true
+            let mutable before = (readRepository db active.RepositoryId).Value
+            let mutable selected, page = adoptionSelection before
+            let mutable page = page
+            let added = Path.Combine(configuration.RootDirectory, "Added")
+            Directory.CreateDirectory added |> ignore
+            let file = Path.Combine(configuration.RootDirectory, "Library/item.bin")
+
+            match scenario with
+            | "active" -> setPaused db before false
+            | "partial-local" -> recordPage db before (Some "retained-token")
+            | "incomplete" ->
+                use connection = openConnection db
+                use command = connection.CreateCommand()
+                command.CommandText <- "UPDATE library_repository_state SET baseline_json=$baseline"
+
+                command.Parameters.AddWithValue(
+                    "$baseline",
+                    serialize { BootstrapId = Guid.NewGuid(); BoundaryCursor = before.AppliedCursor; MetadataComplete = false; Applied = false }
+                )
+                |> ignore
+
+                command.ExecuteNonQuery() |> ignore
+            | "dirty" -> File.WriteAllText(file, "changed")
+            | "untracked" -> File.WriteAllText(Path.Combine(configuration.RootDirectory, "Library/new.txt"), "retain")
+            | "zero" -> File.WriteAllBytes(file, [||])
+            | "occupied" -> File.WriteAllText(Path.Combine(added, "keep.txt"), "retain")
+            | "missing" -> Directory.Delete added
+            | "removal" -> selected <- { selected with Libraries = [||] }
+            | "replacement" -> selected <- { selected with Libraries = [| "Added"; "Other" |] }
+            | "skipped" -> selected <- { selected with PreviousVersion = Some(Guid.NewGuid()) }
+            | "overlap" -> selected <- { selected with Libraries = [| "Library"; "Library/nested" |] }
+            | "unnormalized" -> selected <- { selected with Libraries = [| "Added\\nested"; "Library" |] }
+            | "epoch" -> page <- { page with CursorEpoch = LibraryCursorEpoch.ofGuid (Guid.NewGuid()) }
+            | "partial-remote" -> page <- { page with HasMore = true; NextPageToken = Some "retained-remote" }
+            | "rebaseline" ->
+                page <-
+                    { page with
+                        Rebaseline =
+                            Some
+                                {
+                                    Reason = "rebaselineRequired"
+                                    CurrentEpoch = page.CursorEpoch
+                                    ServiceFloorCursor = page.LastCursor
+                                    RecommendedBootstrap = true
+                                }
+                    }
+            | "history" ->
+                page <-
+                    { page with
+                        Changes =
+                            [|
+                                {
+                                    OperationId = Guid.NewGuid()
+                                    ChangeKind = ChangeKind.CreateFile
+                                    AcceptedAt = getCurrentInstant ()
+                                    AcceptedBy = "injected"
+                                    LibraryCatalogVersion = Guid.NewGuid()
+                                    Item = item
+                                    Conflict = None
+                                }
+                            |]
+                    }
+            | _ -> ()
+
+            before <- (readRepository db active.RepositoryId).Value
+            let operations = serialize (readOperations db before.RepositoryId)
+            let items = readItems db before.RepositoryId
+            let bytes = File.ReadAllBytes file
+            let mutable catalogs = 0
+            let mutable refused = false
+
+            try
+                let! _ =
+                    LibrarySynchronization.adoptCatalogWith
+                        (fun () ->
+                            if scenario = "stale-row" then setState db before "blocked"
+                            if scenario = "stale-disk" then File.WriteAllText(file, "newer"))
+                        (fun _ _ -> ())
+                        (fun () ->
+                            catalogs <- catalogs + 1
+
+                            Task.FromResult(
+                                if scenario = "stale-catalog" && catalogs = 2 then
+                                    { selected with Version = Guid.NewGuid() }
+                                else
+                                    selected
+                            ))
+                        (fun _ ->
+                            if scenario = "unavailable" then invalidOp "injected unavailable history"
+                            Task.FromResult page)
+                        configuration
+                        CancellationToken.None
+
+                ()
+            with
+            | :? InvalidOperationException -> refused <- true
+            | :? DirectoryNotFoundException -> refused <- true
+            | :? FileNotFoundException -> refused <- true
+
+            Assert.That(refused, Is.True, scenario)
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some(if scenario = "stale-row" then { before with State = "blocked" } else before)))
+            Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(operations))
+            Assert.That(readItems db before.RepositoryId, Is.EqualTo<LibraryItemDto>(items))
+
+            Assert.That(
+                File.ReadAllBytes file,
+                Is.EqualTo<byte>(
+                    if scenario = "stale-disk" then
+                        System.Text.Encoding.UTF8.GetBytes "newer"
+                    else
+                        bytes
+                )
+            )
+        }
+
+    /// Keeps local frozen requests restricted while incoming work can finish under its selected additive application catalog.
+    [<TestCase(true); TestCase(false)>]
+    let ``catalog predecessor completion permits incoming only and preserves accepted metadata`` remote =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let before, local = prepared ()
+            let selected, _ = adoptionSelection before
+            let current = { before with Catalog = selected }
+            let change = local.Accepted.Value
+
+            let operation =
+                if remote then
+                    { incoming before.AppliedCursor local.SourcePath local.TargetPath None EchoState.Pending change with CatalogVersion = selected.Version }
+                else
+                    { local with CatalogVersion = selected.Version }
+
+            enable db current
+            insertOperation db current.RepositoryId operation
+
+            if remote then
+                complete db current operation
+
+                Assert.That(
+                    (readRepository db current.RepositoryId)
+                        .Value
+                        .AppliedCursor,
+                    Is.EqualTo(change.Item.LastChangeCursor)
+                )
+
+                let completed = readOperations db current.RepositoryId
+                Assert.That(completed[0].Accepted, Is.EqualTo(Some change))
+            else
+                throws<InvalidOperationException> (fun () -> complete db current operation)
+                Assert.That(readRepository db current.RepositoryId, Is.EqualTo(Some current))
+                Assert.That(serialize (readOperations db current.RepositoryId), Is.EqualTo(serialize [| operation |]))
+        }
+
+    /// Covers every nonterminal family without rewriting its stored intent, indexes or receipt during refusal.
+    [<TestCase("saved");
+      TestCase("frozen");
+      TestCase("rejected");
+      TestCase("directory");
+      TestCase("rename");
+      TestCase("incoming");
+      TestCase("baseline-live");
+      TestCase("baseline-tombstone")>]
+    let ``catalog adoption preserves unfinished work of every operation family`` family =
+        task {
+            let! configuration, active, item = renameCopy ()
+            let db = configuration.GraceStatusFile
+            setPaused db active true
+            let before = (readRepository db active.RepositoryId).Value
+            let selected, page = adoptionSelection before
+
+            Directory.CreateDirectory(Path.Combine(configuration.RootDirectory, "Added"))
+            |> ignore
+
+            let _, sample = prepared ()
+            let rejection = { RequestHash = "exact-hash"; ReasonCode = RejectionCode.ItemTombstoned; CurrentCatalog = Some before.Catalog; Rebaseline = None }
+            let parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
+            let intent = { SourcePath = "Library/item.bin"; Object = objectReference sampleBytes; Base = SavedBase.MaterializedItem item }
+
+            let work =
+                match family with
+                | "saved" -> OperationWork.SavedFile(intent, SavedFileProgress.Captured)
+                | "frozen" -> OperationWork.SavedFile(intent, SavedFileProgress.RequestFrozen "exact-frozen-request")
+                | "rejected" -> OperationWork.SavedFile(intent, SavedFileProgress.Rejected("exact-rejected-request", rejection))
+                | "directory" ->
+                    OperationWork.DirectoryCreate({ SourcePath = "Library/new"; Placement = { Parent = parent; Name = "new" } }, DirectoryProgress.Selected)
+                | "rename" ->
+                    OperationWork.ExplicitRename(
+                        { SourcePath = "Library/item.bin"; TargetPath = "Library/renamed.bin"; MaterializedItem = item },
+                        RenameProgress.Selected
+                    )
+                | "incoming" -> OperationWork.Incoming(sample.Accepted.Value, "Library/item.bin", Some item, ApplicationProgress.AwaitingPreparation)
+                | "baseline-live" -> OperationWork.BaselineLive(item, BaselineInstallation.Selected)
+                | _ ->
+                    OperationWork.BaselineTombstone(
+                        { item with
+                            Namespace = None
+                            Content = None
+                            ContentRevision = None
+                            Tombstone =
+                                Some
+                                    {
+                                        DeletedAt = getCurrentInstant ()
+                                        DeletedBy = "test"
+                                        DeleteCursor = "retained-delete"
+                                        LastNamespace = item.Namespace.Value
+                                        LastContentVersionId = Some item.Content.Value.ContentVersionId
+                                    }
+                        },
+                        TombstoneInstallation.Selected
+                    )
+
+            insertOperation db before.RepositoryId { sample with OperationId = Guid.NewGuid(); CatalogVersion = before.Catalog.Version; Work = work }
+            let operations = serialize (readOperations db before.RepositoryId)
+            let mutable reads = 0
+            let mutable refused = false
+
+            try
+                let! _ =
+                    LibrarySynchronization.adoptCatalogWith
+                        ignore
+                        (fun _ _ -> ())
+                        (fun () ->
+                            reads <- reads + 1
+                            Task.FromResult selected)
+                        (fun _ -> Task.FromResult page)
+                        configuration
+                        CancellationToken.None
+
+                ()
+            with
+            | :? InvalidOperationException -> refused <- true
+
+            Assert.That(refused, Is.True)
+            Assert.That(reads, Is.Zero)
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
+            Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(operations))
+            Assert.That(File.ReadAllBytes(Path.Combine(configuration.RootDirectory, "Library/item.bin")), Is.EqualTo<byte>(sampleBytes))
+        }
+
+    /// Cancels the public command while queued and lets a queued Watch classifier reread the retained pause setting.
+    [<Test>]
+    let ``catalog adoption cancellation and queued Watch classification preserve paused state`` () =
+        task {
+            let! configuration, active, _ = renameCopy ()
+            let db = configuration.GraceStatusFile
+            setPaused db active true
+            let before = (readRepository db active.RepositoryId).Value
+            let operations = serialize (readOperations db before.RepositoryId)
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                |> Result.defaultWith invalidOp
+
+            use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+            use cancellation = new CancellationTokenSource()
+            let waiting = LibrarySynchronization.adoptCatalog configuration "canceled-adoption" cancellation.Token
+            Assert.That(waiting.IsCompleted, Is.False)
+            cancellation.Cancel()
+            let mutable canceled = false
+
+            try
+                let! _ = waiting
+                ()
+            with
+            | :? OperationCanceledException -> canceled <- true
+
+            Assert.That(canceled, Is.True)
+
+            let queued =
+                LibrarySynchronization.classifyWatchObservations
+                    configuration
+                    [|
+                        Path.Combine(configuration.RootDirectory, "Library/item.bin")
+                    |]
+                    CancellationToken.None
+
+            Assert.That(queued.IsCompleted, Is.False)
+            (held :> IDisposable).Dispose()
+            do! queued
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
+            Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(operations))
+        }
+
+    /// Rejects actual Windows junctions at each relevant path boundary without traversing or changing external bytes.
+    [<TestCase("root"); TestCase("ancestor"); TestCase("descendant")>]
+    let ``catalog adoption refuses reparse roots ancestors and descendants`` placement =
+        task {
+            let! configuration, active, _ = renameCopy ()
+            let db = configuration.GraceStatusFile
+            setPaused db active true
+            let before = (readRepository db active.RepositoryId).Value
+            let selected, page = adoptionSelection before
+            let external = Path.Combine(Path.GetTempPath(), $"grace-adoption-junction-target-{Guid.NewGuid():N}")
+
+            Directory.CreateDirectory(Path.Combine(external, "Added"))
+            |> ignore
+
+            let keep = Path.Combine(external, "keep.txt")
+            File.WriteAllText(keep, "external bytes remain")
+
+            let selected =
+                if placement = "ancestor" then
+                    { selected with Libraries = [| "Container/Added"; "Library" |] }
+                else
+                    selected
+
+            let relative =
+                if placement = "root" then "Added"
+                elif placement = "ancestor" then "Container"
+                else "Library/linked"
+
+            if placement = "descendant" then
+                Directory.CreateDirectory(Path.Combine(configuration.RootDirectory, "Added"))
+                |> ignore
+
+            let script = Path.Combine(configuration.RootDirectory, "junction.ps1")
+
+            File.WriteAllText(
+                script,
+                "param([string]$LinkPath,[string]$TargetPath)\n$ErrorActionPreference = 'Stop'\nNew-Item -ItemType Junction -Path $LinkPath -Target $TargetPath | Out-Null\n"
+            )
+
+            let start = System.Diagnostics.ProcessStartInfo("pwsh", UseShellExecute = false, CreateNoWindow = true)
+
+            [
+                "-NoProfile"
+                "-NonInteractive"
+                "-File"
+                script
+                "-LinkPath"
+                Path.Combine(configuration.RootDirectory, relative)
+                "-TargetPath"
+                external
+            ]
+            |> List.iter start.ArgumentList.Add
+
+            use junction = System.Diagnostics.Process.Start start
+            do! junction.WaitForExitAsync()
+            Assert.That(junction.ExitCode, Is.Zero)
+            let operations = serialize (readOperations db before.RepositoryId)
+            let mutable refused = false
+
+            try
+                let! _ =
+                    LibrarySynchronization.adoptCatalogWith
+                        ignore
+                        (fun _ _ -> ())
+                        (fun () -> Task.FromResult selected)
+                        (fun _ -> Task.FromResult page)
+                        configuration
+                        CancellationToken.None
+
+                ()
+            with
+            | :? InvalidOperationException -> refused <- true
+
+            Assert.That(refused, Is.True)
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
+            Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(operations))
+            Assert.That(File.ReadAllText keep, Is.EqualTo("external bytes remain"))
+        }
+
+    /// Checks real nested paths from durable directory identities and refuses cycles before touching bytes.
+    [<TestCase(false); TestCase(true)>]
+    let ``catalog adoption clean tree follows materialized parent identity and rejects cycles`` cycle =
+        task {
+            let! configuration, before, item = renameCopy ()
+            let selected, _ = adoptionSelection before
+
+            Directory.CreateDirectory(Path.Combine(configuration.RootDirectory, "Added"))
+            |> ignore
+
+            let nested = Directory.CreateDirectory(Path.Combine(configuration.RootDirectory, "Library/nested"))
+            File.Move(Path.Combine(configuration.RootDirectory, "Library/item.bin"), Path.Combine(nested.FullName, "item.bin"))
+
+            let directory =
+                { item with
+                    ItemId = Guid.NewGuid()
+                    ItemKind = ItemKind.Directory
+                    Content = None
+                    ContentRevision = None
+                    Namespace = Some { item.Namespace.Value with Name = "nested" }
+                }
+
+            let parent = { Kind = "item"; LibraryPath = None; ItemId = Some directory.ItemId }
+            let nestedItem = { item with Namespace = Some { item.Namespace.Value with Parent = parent } }
+
+            let directory =
+                if cycle then
+                    { directory with Namespace = Some { directory.Namespace.Value with Parent = parent } }
+                else
+                    directory
+
+            if cycle then
+                throws<InvalidOperationException> (fun () -> LibrarySynchronization.requireAdoptionTree configuration selected [| nestedItem; directory |])
+            else
+                LibrarySynchronization.requireAdoptionTree configuration selected [| nestedItem; directory |]
+
+            Assert.That(File.ReadAllBytes(Path.Combine(nested.FullName, "item.bin")), Is.EqualTo<byte>(sampleBytes))
+        }
+
+    /// Rejects an obsolete item or terminal-operation snapshot within the catalog transaction itself.
+    [<TestCase("items"); TestCase("operations")>]
+    let ``catalog adoption transaction compares complete materialization and terminal operation snapshots`` stale =
+        task {
+            let! configuration, active, _ = renameCopy ()
+            let db = configuration.GraceStatusFile
+            setPaused db active true
+            let before = (readRepository db active.RepositoryId).Value
+            let selected, _ = adoptionSelection before
+            let items = readItems db before.RepositoryId
+            let operations = readOperations db before.RepositoryId
+
+            throws<InvalidOperationException> (fun () ->
+                adoptCatalogWith
+                    (fun _ _ -> ())
+                    db
+                    before
+                    (if stale = "items" then [||] else items)
+                    (if stale = "operations" then [||] else operations)
+                    selected)
+
+            Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
+            Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(serialize operations))
+            Assert.That(readItems db before.RepositoryId, Is.EqualTo<LibraryItemDto>(items))
         }
 
     /// Reads canonical epochs from SQLite and rejects corrupt identity text without modifying retained work.

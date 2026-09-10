@@ -2571,3 +2571,136 @@ module LibrarySynchronizationWindowsServerTests =
                 Is.EqualTo(all.Length)
             )
         }
+
+    /// Runs actual adoption commands, old-catalog backlog, new-root content and a fresh-process publication restart.
+    [<Test; Category("CatalogAdoption")>]
+    let ``catalog adoption CLI retains paused progress and replays both roots after publication interruption`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "catalog-adoption"
+            use proxy = createdProxy
+            let fileA = Path.Combine(copyA, "Library", "original.txt")
+            let fileB = Path.Combine(copyB, "Library", "original.txt")
+            File.WriteAllText(fileA, "original materialized bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(fileA, "old catalog backlog bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            do! pauseRetainingAsync copyA repositoryId proxy
+            do! pauseRetainingAsync copyB repositoryId proxy
+
+            Directory.CreateDirectory(Path.Combine(copyA, "Added"))
+            |> ignore
+
+            Directory.CreateDirectory(Path.Combine(copyB, "Added"))
+            |> ignore
+
+            let beforeA =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
+                |> Option.get
+
+            let beforeB =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
+                |> Option.get
+
+            let oldItemsB = Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+            let oldOperationsB = Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+            let add = Parameters.Library.AddLibraryParameters()
+            add.OwnerId <- ownerId
+            add.OrganizationId <- organizationId
+            add.RepositoryId <- string repositoryId
+            add.ExpectedVersion <- beforeA.Catalog.Version
+            add.OperationId <- Guid.NewGuid()
+            add.LibraryPath <- "Added"
+            add.CorrelationId <- generateCorrelationId ()
+            use! response = Client.PostAsync("/libraries/add", createJsonContent add)
+            let! result = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
+            Assert.That(result.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize result)
+            let selected = result.LibraryCatalog
+
+            /// Reads the real source copy's immutable objects independently of SQLite metadata.
+            let objectHashes () =
+                Directory.GetFiles(Path.Combine(copyA, ".grace", "objects"), "*", SearchOption.AllDirectories)
+                |> Array.map (fun path -> path, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes path)))
+                |> Array.sort
+
+            let retainedObjects = objectHashes ()
+            Assert.That(retainedObjects.Length, Is.GreaterThan(0))
+
+            let! human =
+                requireGraceSuccessAsync
+                    copyA
+                    proxy.BaseAddress
+                    [|
+                        "library"
+                        "sync"
+                        "adopt-catalog"
+                        "--output"
+                        "Minimal"
+                    |]
+
+            Assert.That(human, Does.Contain("Restart Watch"))
+            Assert.That(human, Does.Contain("sync resume"))
+            Assert.That(objectHashes (), Is.EqualTo<string * string>(retainedObjects))
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId, Is.EqualTo(Some { beforeA with Catalog = selected }))
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "resume")
+            File.WriteAllText(Path.Combine(copyA, "Added", "new.txt"), "new root accepted bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let beforeAdoptUploads = proxy.ManifestUploadCount
+            let beforeAdoptSubmits = proxy.SubmitRequestCount
+            let! json = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "adopt-catalog")
+            use envelope = System.Text.Json.JsonDocument.Parse json
+
+            let output =
+                deserialize<LibrarySynchronization.LibrarySynchronizationStatus> (
+                    envelope
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetRawText()
+                )
+
+            Assert.That(output.Paused, Is.True)
+            Assert.That(output.AppliedCursor, Is.EqualTo(Some beforeB.AppliedCursor))
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "adopt-catalog")
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId, Is.EqualTo(Some { beforeB with Catalog = selected }))
+            Assert.That(Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId, Is.EqualTo<LibraryItemDto>(oldItemsB))
+            Assert.That(serialize (Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId), Is.EqualTo(serialize oldOperationsB))
+
+            localSql
+                copyB
+                "CREATE TRIGGER fail_adoption_completion BEFORE UPDATE OF applied_cursor ON library_repository_state BEGIN SELECT RAISE(ABORT,'injected adoption completion'); END;"
+            |> ignore
+
+            let! interrupted = runGraceAsync copyB proxy.BaseAddress (syncCommand "resume")
+            Assert.That(interrupted.ExitCode, Is.Not.Zero)
+            Assert.That(interrupted.StandardOutput, Does.Contain("injected adoption completion"))
+            Assert.That(File.ReadAllText(fileB), Is.EqualTo("old catalog backlog bytes"))
+
+            let interruptedRow =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
+                |> Option.get
+
+            Assert.That(interruptedRow.AppliedCursor, Is.EqualTo(beforeB.AppliedCursor))
+            Assert.That(interruptedRow.Paused, Is.False)
+
+            localSql copyB "DROP TRIGGER fail_adoption_completion;"
+            |> ignore
+
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "resume")
+            Assert.That(File.ReadAllText(fileB), Is.EqualTo("old catalog backlog bytes"))
+            let addedB = Path.Combine(copyB, "Added", "new.txt")
+            Assert.That(File.ReadAllText(addedB), Is.EqualTo("new root accepted bytes"))
+            let stamps = File.GetLastWriteTimeUtc(fileB), File.GetLastWriteTimeUtc(addedB)
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That((File.GetLastWriteTimeUtc(fileB), File.GetLastWriteTimeUtc(addedB)), Is.EqualTo(stamps))
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(beforeAdoptUploads))
+            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(beforeAdoptSubmits))
+
+            Assert.That(
+                countWduCompletions copyA
+                + countWduCompletions copyB,
+                Is.Zero
+            )
+        }

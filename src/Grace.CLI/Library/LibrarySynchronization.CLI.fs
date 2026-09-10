@@ -13,7 +13,9 @@ open Grace.Types.Common
 open Grace.Types.Library
 open System
 open System.IO
+open System.Collections.Generic
 open System.Threading
+open System.Threading.Tasks
 
 /// Runs the Windows Library tracer using the existing SDK, local database, and shared root exclusion.
 module internal LibrarySynchronization =
@@ -291,6 +293,239 @@ module internal LibrarySynchronization =
                || state configuration <> expected then
                 invalidOp "Library catalog or applied predecessor changed; synchronization has stopped before local effects."
         }
+
+    /// Limits replay to the selected catalog and its one supported additive predecessor.
+    let internal requireAcceptedCatalog (selected: LibraryCatalogDto) (change: LibraryChangeDto) =
+        if
+            change.LibraryCatalogVersion <> selected.Version
+            && not
+                (
+                    selected.Libraries.Length = 2
+                    && selected.PreviousVersion = Some change.LibraryCatalogVersion
+                )
+        then
+            invalidOp "Library accepted history belongs to an unsupported catalog; local work is retained."
+
+    /// Derives the complete clean tree from live materialization and checks ordinary physical ancestry and bytes.
+    let internal requireAdoptionTree (configuration: GraceConfiguration) (selected: LibraryCatalogDto) (items: LibraryItemDto array) =
+        let expected = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        let visiting = HashSet<Guid>()
+        let resolved = Dictionary<Guid, string>()
+
+        /// Resolves live directory edges with cycle detection before any filesystem enumeration.
+        let rec resolve (item: LibraryItemDto) =
+            match resolved.TryGetValue item.ItemId with
+            | true, path -> path
+            | _ ->
+                if
+                    item.Tombstone.IsSome || item.Namespace.IsNone
+                    || not (visiting.Add item.ItemId)
+                then
+                    invalidOp "Library materialized ancestry is invalid."
+
+                let ns = item.Namespace.Value
+
+                let parent =
+                    match ns.Parent.Kind, ns.Parent.LibraryPath, ns.Parent.ItemId with
+                    | "root", Some root, None when selected.Libraries |> Array.contains root -> root
+                    | "item", None, Some id ->
+                        match items
+                              |> Array.tryFind (fun candidate -> candidate.ItemId = id)
+                            with
+                        | Some parent when
+                            parent.ItemKind = ItemKind.Directory
+                            && parent.Tombstone.IsNone
+                            ->
+                            resolve parent
+                        | _ -> invalidOp "Library materialized parent is not a live directory."
+                    | _ -> invalidOp "Library materialized parent is outside the selected catalog."
+
+                let name =
+                    normalizeName ns.Name
+                    |> Result.defaultWith invalidOp
+
+                if name <> ns.Name then invalidOp "Library materialized name is not normalized."
+                let path = parent + "/" + name
+                fullPath configuration path |> ignore
+                visiting.Remove item.ItemId |> ignore
+                resolved.Add(item.ItemId, path)
+                path
+
+        selected.Libraries
+        |> Array.iter (fun root -> expected.Add(root, "directory"))
+
+        items
+        |> Array.filter (fun item -> item.Tombstone.IsNone)
+        |> Array.iter (fun item ->
+            let path = resolve item
+
+            let fingerprint =
+                match item.ItemKind, item.Content, item.ContentRevision with
+                | kind, None, None when kind = ItemKind.Directory -> "directory"
+                | kind, Some content, Some _ when kind = ItemKind.File && content.Size > 0L -> contentFingerprint content
+                | _ -> invalidOp "Library materialization has no supported complete content."
+
+            if not (expected.TryAdd(path, fingerprint)) then
+                invalidOp "Library materialized paths overlap.")
+
+        let actual = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+
+        /// Refuses links before descending and compares full content identity without capturing objects.
+        let rec visit relative =
+            let path = fullPath configuration relative
+            let attributes = File.GetAttributes path
+
+            if attributes.HasFlag(FileAttributes.ReparsePoint) then
+                invalidOp "Library catalog adoption rejects reparse points."
+
+            if attributes.HasFlag(FileAttributes.Directory) then
+                actual.Add(relative, "directory")
+
+                Directory.GetFileSystemEntries(path)
+                |> Array.iter (fun child -> visit (relative + "/" + Path.GetFileName child))
+            else
+                let content = LibraryFilesystem.stableIdentity path
+
+                if content.Size = 0L then
+                    invalidOp "Library catalog adoption preserves excluded empty files."
+
+                actual.Add(relative, LibraryOperation.fingerprint content)
+
+        selected.Libraries
+        |> Array.iter (fun relative ->
+            let mutable parent = fullPath configuration relative
+
+            let root =
+                Path
+                    .GetFullPath(configuration.RootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar)
+
+            while parent.Length >= root.Length do
+                if
+                    not (Directory.Exists parent)
+                    || File
+                        .GetAttributes(parent)
+                        .HasFlag(FileAttributes.ReparsePoint)
+                then
+                    invalidOp "Library catalog adoption requires ordinary existing root directories and ancestry."
+
+                parent <- Path.GetDirectoryName parent
+
+            visit relative)
+
+        if actual.Count <> expected.Count
+           || expected
+              |> Seq.exists (fun entry ->
+                  match actual.TryGetValue entry.Key with
+                  | true, value -> value <> entry.Value
+                  | _ -> true) then
+            invalidOp "Library catalog adoption requires clean materialized roots and an empty added root; local input is retained."
+
+    /// Adopts one additive catalog under root exclusion, retaining every non-catalog row and all local bytes.
+    let internal adoptCatalogWith
+        beforeCommit
+        afterWrite
+        (getCatalog: unit -> Task<LibraryCatalogDto>)
+        (getChanges: string -> Task<LibraryChangePageDto>)
+        (configuration: GraceConfiguration)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                invalidOp "Library catalog adoption requires Windows 11."
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+                |> Result.defaultWith invalidOp
+
+            use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
+            do! initialize configuration.GraceStatusFile
+            let before = state configuration
+
+            if not before.Paused
+               || before.Baseline.IsSome
+               || before.NextPageToken.IsSome then
+                invalidOp "Library catalog adoption requires completed onboarding, durable pause and no partial feed page."
+
+            let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
+            let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+
+            if operations
+               |> Array.exists (fun operation -> not operation.Terminal) then
+                invalidOp "Library catalog adoption requires all retained operations to be terminal."
+
+            let! selected = getCatalog ()
+
+            normalizeLibraries selected.Libraries
+            |> Result.defaultWith invalidOp
+            |> ignore
+
+            if selected.RepositoryId <> before.RepositoryId
+               || selected.Libraries
+                  |> Array.exists (fun root -> normalizeRepositoryRelativePath root <> Ok root) then
+                invalidOp "Library catalog adoption requires normalized non-overlapping roots for this repository."
+
+            let duplicate = selected = before.Catalog
+
+            if selected.Libraries.Length <> 2
+               || selected.PreviousVersion.IsNone
+               || (not duplicate
+                   && (before.Catalog.Libraries.Length <> 1
+                       || selected.PreviousVersion
+                          <> Some before.Catalog.Version
+                       || selected.Version = before.Catalog.Version
+                       || not (
+                           selected.Libraries
+                           |> Array.contains before.Catalog.Libraries[0]
+                       ))) then
+                invalidOp "Library catalog adoption supports only one direct successor adding a root with the original unchanged."
+
+            requireAdoptionTree configuration selected items
+            let! page = getChanges before.AppliedCursor
+
+            if page.Rebaseline.IsSome
+               || page.CursorEpoch <> before.CursorEpoch then
+                invalidOp "Library catalog adoption cannot replace unavailable history or a changed epoch."
+
+            if page.HasMore || page.NextPageToken.IsSome then
+                invalidOp "Library catalog adoption requires a complete retained feed response."
+
+            page.Changes
+            |> Array.iter (requireAcceptedCatalog selected)
+
+            let last =
+                page.Changes
+                |> Array.tryLast
+                |> Option.map (fun change -> change.Item.LastChangeCursor)
+                |> Option.defaultValue before.AppliedCursor
+
+            if last <> page.LastCursor then
+                invalidOp "Library feed does not retain the selected completed predecessor."
+
+            beforeCommit ()
+            let! latest = getCatalog ()
+            cancellationToken.ThrowIfCancellationRequested()
+            if latest <> selected then invalidOp "Library catalog changed before adoption."
+            requireAdoptionTree configuration selected items
+            LibraryLocalState.adoptCatalogWith afterWrite configuration.GraceStatusFile before items operations selected
+            return! status configuration
+        }
+
+    /// Uses the existing catalog and retained-feed SDK routes for the explicit local adoption command.
+    let adoptCatalog configuration correlationId cancellationToken =
+        adoptCatalogWith
+            ignore
+            (fun _ _ -> ())
+            (fun () -> catalog configuration correlationId)
+            (fun cursor ->
+                task {
+                    let parameters = scoped configuration correlationId (GetLibraryChangesParameters())
+                    parameters.AfterCursor <- cursor
+                    let! result = Libraries.GetChanges parameters
+                    return value result
+                })
+            configuration
+            cancellationToken
 
     /// Separates completed filenames, retained rejection and uncertain or obstructed progress.
     [<RequireQualifiedAccess>]
@@ -828,6 +1063,7 @@ module internal LibrarySynchronization =
         task {
             cancellationToken.ThrowIfCancellationRequested()
             do! checkCatalog configuration correlationId expected
+            requireAcceptedCatalog expected.Catalog change
             captureSaved configuration |> ignore
             let items = readItems configuration.GraceStatusFile configuration.RepositoryId
 

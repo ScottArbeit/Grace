@@ -12,9 +12,9 @@ An authorized remote client can:
 - Read retained immutable content through a signed URL that remains valid until its fixed expiry.
 - Read content-free repository synchronization status.
 
-Local Product V1 supports Windows 11, two authorized copies of one repository, and one unchanged Library root. A new copy enables into an empty local Library directory and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
+Local Product V1 supports Windows 11 and two authorized copies of one repository, with initial onboarding into one Library root. A new copy enables into an empty local Library directory and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
 
-Explicit adoption of one added root by an already onboarded, paused copy is the [accepted next design](Libraries.Design.md#additive-catalog-adoption-accepted-not-implemented). It is not delivered: the current client still stops when its catalog changes. The [experiment and production acceptance mapping](design/Libraries.Catalog-Adoption-Validation.md) describe the remaining work; do not use fresh onboarding to replace an existing copy's retained state.
+An already onboarded, paused copy can explicitly adopt one direct catalog successor that adds a second root while leaving its original root unchanged. See [adoption](#adopt-one-added-root) and the [production validation record](design/Libraries.Catalog-Adoption-Validation.md) for this bounded transition. Fresh onboarding must not replace an existing copy's retained state.
 
 ## Library ownership
 
@@ -229,6 +229,32 @@ grace library sync resume
 Status shows `Enabled=true` and `Paused=true` independently of progress `State`. Watch skips Library capture, upload and incoming application while paused. `run`, `enable` and `rename` return a nonzero result directing you to resume. Catalog-based exclusion from version control remains in force; pause is not a fully offline Watch mode.
 
 Resume retains captured objects and exact pending requests, then captures the latest supported local save before applying incoming changes. It does not retain every intermediate save overwritten while paused. A failed resume stays active and blocked with saved work retained. Resolve the reported object, zero-byte or other obstruction before retrying; a changed catalog or rebaseline requirement never authorizes discarding local state. Pause and resume require completed onboarding and are safe to repeat.
+
+## Adopt one added root
+
+After an administrator adds a second Library to the repository catalog, create that ordinary empty directory locally and pause the onboarded copy. Its original root must exactly match its materialized files and directories. No unfinished operation, partial feed page, dirty file, untracked entry, empty file or reparse point may remain in either root or its relevant ancestry.
+
+PowerShell:
+
+```powershell
+grace library sync pause
+grace library sync adopt-catalog
+# Restart Watch so it reads the added root, then explicitly resume.
+grace library sync resume
+```
+
+bash / zsh:
+
+```bash
+grace library sync pause
+grace library sync adopt-catalog
+# Restart Watch so it reads the added root, then explicitly resume.
+grace library sync resume
+```
+
+Adoption selects the current server catalog using existing read permissions. It changes only the local catalog, retaining working-copy identity, pause, progress, the exact cursor and epoch, materialized items, operations and saved objects. It does not apply downloaded changes or claim the copy is synchronized. Repeating the command after a lost response reads the committed selection safely.
+
+The retained feed must be available in one complete response with the same epoch. A partial response or rebaseline requirement stops adoption without skipping history. The added root may already contain remote content if that retained feed covers it. Explicit resume applies original-root backlog and new-root content in order; a failed resume can remain active and blocked with work retained. Root removal, relocation, replacement, skipped successors, reconciliation of existing local files and fresh multi-root onboarding remain unsupported.
 
 ## Deferred capabilities
 
