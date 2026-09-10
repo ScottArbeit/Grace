@@ -1,0 +1,3 @@
+# Preserve captured experiment bytes and recorded SHA-256 hashes.
+*.fs.fragment -text
+*.ps1 -text

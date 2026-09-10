@@ -14,6 +14,8 @@ An authorized remote client can:
 
 Local Product V1 supports Windows 11, two authorized copies of one repository, and one unchanged Library root. A new copy enables into an empty local Library directory and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
 
+Explicit adoption of one added root by an already onboarded, paused copy is the [accepted next design](Libraries.Design.md#additive-catalog-adoption-accepted-not-implemented). It is not delivered: the current client still stops when its catalog changes. The [experiment and production acceptance mapping](design/Libraries.Catalog-Adoption-Validation.md) describe the remaining work; do not use fresh onboarding to replace an existing copy's retained state.
+
 ## Library ownership
 
 Every repository is created with a persisted empty `LibraryCatalogDto`. Catalog changes use the exact current catalog version and an idempotent operation ID.
