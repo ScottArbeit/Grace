@@ -14,7 +14,7 @@ An authorized remote client can:
 
 Local Product V1 supports Windows 11 and two authorized copies of one repository, with initial onboarding into one Library root. A new copy enables into an empty local Library directory and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
 
-An already onboarded, paused copy can explicitly adopt one direct catalog successor that adds a second root while leaving its original root unchanged. See [adoption](#adopt-one-added-root) and the [production validation record](design/Libraries.Catalog-Adoption-Validation.md) for this bounded transition. Fresh onboarding must not replace an existing copy's retained state.
+The accepted next behavior is [automatic synchronization of added Libraries](#automatically-receive-added-libraries). Issue #1081 is being revised to deliver it; PR #1082's manual adoption candidate is rejected and unmerged. Fresh onboarding must not replace an existing copy's retained state.
 
 ## Library ownership
 
@@ -230,31 +230,13 @@ Status shows `Enabled=true` and `Paused=true` independently of progress `State`.
 
 Resume retains captured objects and exact pending requests, then captures the latest supported local save before applying incoming changes. It does not retain every intermediate save overwritten while paused. A failed resume stays active and blocked with saved work retained. Resolve the reported object, zero-byte or other obstruction before retrying; a changed catalog or rebaseline requirement never authorizes discarding local state. Pause and resume require completed onboarding and are safe to repeat.
 
-## Adopt one added root
+## Automatically receive added Libraries
 
-After an administrator adds a second Library to the repository catalog, create that ordinary empty directory locally and pause the onboarded copy. Its original root must exactly match its materialized files and directories. No unfinished operation, partial feed page, dirty file, untracked entry, empty file or reparse point may remain in either root or its relevant ancestry.
+**Accepted behavior; replacement implementation pending in Issue #1081.** An administrator adds a Library to the repository. Every copy with Library synchronization enabled discovers it, creates its missing local directory and downloads its content automatically. A running Watch responds to notification; startup/reconnect and periodic reads recover missed notifications. An explicitly paused copy retains its pause and catches up after resume.
 
-PowerShell:
+Synchronize every Library in the repository. Selective synchronization remains deferred. Receiving an added Library requires no `adopt-catalog` command, manual directory creation, clean-tree preparation, pause or Watch restart. Existing edits and saved requests remain protected. If a local file or directory obstructs the incoming Library, Grace preserves it and reports the problem.
 
-```powershell
-grace library sync pause
-grace library sync adopt-catalog
-# Restart Watch so it reads the added root, then explicitly resume.
-grace library sync resume
-```
-
-bash / zsh:
-
-```bash
-grace library sync pause
-grace library sync adopt-catalog
-# Restart Watch so it reads the added root, then explicitly resume.
-grace library sync resume
-```
-
-Adoption selects the current server catalog using existing read permissions. It changes only the local catalog, retaining working-copy identity, pause, progress, the exact cursor and epoch, materialized items, operations and saved objects. It does not apply downloaded changes or claim the copy is synchronized. Repeating the command after a lost response reads the committed selection safely.
-
-The retained feed must be available in one complete response with the same epoch. A partial response or rebaseline requirement stops adoption without skipping history. The added root may already contain remote content if that retained feed covers it. Explicit resume applies original-root backlog and new-root content in order; a failed resume can remain active and blocked with work retained. Root removal, relocation, replacement, skipped successors, reconciliation of existing local files and fresh multi-root onboarding remain unsupported.
+The manual command in unmerged PR #1082 is superseded by this requirement. Its tests do not establish automatic discovery, live policy refresh or automatic root creation. The [design](Libraries.Design.md#automatic-synchronization-of-added-libraries) and [validation mapping](design/Libraries.Catalog-Adoption-Validation.md) distinguish required behavior from completed testing.
 
 ## Deferred capabilities
 

@@ -1,8 +1,18 @@
 # Library additive catalog-adoption production validation
 
-**Status: implemented in [Issue #1081](https://github.com/ScottArbeit/Grace/issues/1081), [PR #1082](https://github.com/ScottArbeit/Grace/pull/1082). R1 passed with an empty discovery ledger and Shape Review raised no concerns at `805a21ed`; the CI test repair below still needs bounded R2, final-head GitHub Validate and merge approval.** The mainline base is `9b18c97ab342d319d3bdeaedc5f1d64571913cf5`. Commit `04da41d927ae18d1efa230fcc2cc47dc3c4087d9` records the requested documentation-only checkpoint before runtime edits. The [accepted design](../Libraries.Design.md#additive-catalog-adoption) and [type plan](Libraries.Type-Plan.md#additive-catalog-adoption-propagation) govern this implementation. The [captured experiment](Libraries.Catalog-Adoption-Experiment.md) remains historical and its fixture, scripts and results are unchanged.
+**Status: manual candidate superseded by Scott's automatic-sync correction on 2026-09-10.** PR #1082 at `061ab711858f49cf1e9f81949e51b06d753eb9ac` remains unmerged. Its completed R1/R2, Shape Review and [passing Validate run](https://github.com/ScottArbeit/Grace/actions/runs/34430255312) certify the old manual behavior only. The [current design](../Libraries.Design.md#automatic-synchronization-of-added-libraries) and [propagation map](Libraries.Type-Plan.md#automatic-library-addition-propagation) govern the replacement. Captured experiment fixture, scripts and results remain unchanged.
 
-## Requirement mapping
+## Automatic behavior still to validate
+
+| Requirement | Required executable evidence | Current result |
+| --- | --- | --- |
+| LIB-019 | Actual administrator addition of an empty Library; live enabled Watch creates the root and downloads subsequent content without manual commands. Restart/reconnect discovers multiple missed additions. | Pending replacement experiment and implementation. |
+| LIB-020 | Existing saved/pending/rejected work and local edits retained; explicit pause preserved; occupied/reparse target protected; cancellation and stale reads cannot overwrite state. | Old clean paused tests do not cover the corrected normal flow. |
+| LIB-021 | Paged retained backlog across catalog additions; interruption before/after root creation, catalog selection, publication and completion; reopen state and converge without skipping history. | Old one-page/direct-successor results are insufficient. |
+
+The remainder records the rejected manual candidate for comparison and salvage. Its LIB-019 through LIB-021 labels refer to the former requirement wording, not the corrected rows above. It is not a user workflow or a claim of delivered automatic synchronization.
+
+## Historical manual requirement mapping
 
 | Requirement | Production implementation | Exact test evidence |
 | --- | --- | --- |
