@@ -44,6 +44,10 @@ semantics only. They do not establish serialization or integration of this chang
 7. With no metadata or holders, persist a deletion reservation, observe and persist the exact blob ETag, then delete
    conditionally. Reconcile changed conditions and lost responses; retain failures for retry before compacting session state.
 
+The block actor keeps exactly one latest upload-state snapshot alongside all non-upload metadata events. Replacing that
+snapshot occurs in the same conditional state write as the transition; its complete retirement set remains indefinite.
+This keeps persisted retirement history linear while preserving hold, placement, ETag and deletion recovery evidence.
+
 Delayed empty-placeholder creation can leave zero-byte overhead. The design promises payload cleanup, not permanent
 404 responses. It introduces no reference count, catalog, SQL table, background service, usage fact or billing producer.
 

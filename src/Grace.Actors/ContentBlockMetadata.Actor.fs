@@ -818,7 +818,8 @@ module ContentBlockMetadata =
     /// Implements the Orleans grain for content block metadata actor.
     type ContentBlockMetadataActor
         (
-            [<PersistentState(StateName.ContentBlockMetadata, Constants.GraceActorStorage)>] state: IPersistentState<List<ContentBlockMetadataEvent>>
+            [<PersistentState(StateName.ContentBlockMetadata, Constants.GraceActorStorage)>] state: IPersistentState<List<ContentBlockMetadataEvent>>,
+            loggerFactory: ILoggerFactory
         ) =
         inherit Grain()
 
@@ -848,6 +849,15 @@ module ContentBlockMetadata =
                 this.EnsureUsable()
 
                 for metadataEvent in events do
+                    match metadataEvent.Event with
+                    | ContentBlockMetadataEventType.UploadStateChanged _ ->
+                        state.State.RemoveAll (fun prior ->
+                            match prior.Event with
+                            | ContentBlockMetadataEventType.UploadStateChanged _ -> true
+                            | _ -> false)
+                        |> ignore
+                    | _ -> ()
+
                     state.State.Add(metadataEvent)
 
                 try
@@ -866,7 +876,7 @@ module ContentBlockMetadata =
             if persistenceFailed then
                 invalidOp "ContentBlock state write failed; retry on a fresh activation."
 
-        /// Commits the chosen upload condition before any corresponding blob write or delete.
+        /// Replaces obsolete upload snapshots in the same durable write while retaining metadata events and all retired identities.
         member private this.SaveUpload upload metadata =
             this.ApplyEvents [ { Event = ContentBlockMetadataEventType.UploadStateChanged upload; Metadata = metadata } ]
 

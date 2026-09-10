@@ -2887,7 +2887,17 @@ type StorageManifestUploadSessionRoutes() =
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
 
             let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
-            Assert.That(body, Does.Contain("does not match the staged validated payload"))
+            Assert.That(body, Does.Contain("Stored ContentBlock does not match the validated upload."))
+
+            let! unchanged =
+                (finalContentBlockClientFromUploadUri uploadUri stagedBlock.Address)
+                    .DownloadContentAsync()
+
+            Assert.That(
+                unchanged.Value.Content.ToArray(),
+                Is.EqualTo(box existingFinalBlock.Payload),
+                "Rejection must not overwrite the different physical encoding."
+            )
         }
 
     /// Verifies the confirm content block upload rejects invalid final CAS blob instead of treating it as success scenario.
@@ -2961,8 +2971,13 @@ type StorageManifestUploadSessionRoutes() =
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
 
             let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
-            Assert.That(body, Does.Contain("Existing final ContentBlock"))
-            Assert.That(body, Does.Contain("invalid"))
+            Assert.That(body, Does.Contain("Empty or invalid ContentBlock bytes cannot confirm an upload."))
+
+            let! unchanged =
+                (finalContentBlockClientFromUploadUri uploadUri block.Address)
+                    .DownloadContentAsync()
+
+            Assert.That(unchanged.Value.Content.ToArray(), Is.EqualTo(box invalidFinalPayload), "Corrupt content must not be silently replaced or confirmed.")
         }
 
     /// Verifies the content block upload URI rejects retention pending session with retained intent scenario.
@@ -3610,9 +3625,10 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
-    /// Verifies the confirm content block upload returns bad request when staged block blob is missing scenario.
-    [<Test>]
-    member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsMissing() =
+    /// Rejects both a genuinely missing staged blob and an unfilled prepared placeholder using their observed physical state.
+    [<TestCase(true)>]
+    [<TestCase(false)>]
+    member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsMissing(deletePreparedBlob: bool) =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -3665,9 +3681,29 @@ type StorageManifestUploadSessionRoutes() =
             confirm.Payload <- block.Payload
 
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some "etag-missing-block")
+            // The physical read must decide whether the staged blob is missing or unfilled.
+            confirm.Payload <- Array.empty
+
+            let staged = contentBlockClientFromPlacementViaUploadUri (Uri uploadUriBody) confirm.StoragePlacement
+            let! prepared = staged.GetPropertiesAsync()
+            Assert.That(prepared.Value.ContentLength, Is.Zero)
+
+            if deletePreparedBlob then
+                let! _ = staged.DeleteAsync()
+                let! absent = staged.ExistsAsync()
+                Assert.That(absent.Value, Is.False, "The missing-blob case must remove the prepared placeholder.")
 
             let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
-            Assert.That(body, Does.Contain("could not be read from object storage"))
+
+            Assert.That(
+                body,
+                Does.Contain(
+                    if deletePreparedBlob then
+                        "could not be read from object storage"
+                    else
+                        "ContentBlock payload length mismatch."
+                )
+            )
         }
 
     /// Verifies the confirm content block upload returns bad request when staged block blob is corrupt scenario.
