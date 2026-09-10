@@ -861,6 +861,9 @@ module ContentBlockMetadata =
                     state.State.Add(metadataEvent)
 
                 try
+                    log.LogInformation("A4 block before state serialization {CorrelationId}", events.Head.Metadata.CorrelationId)
+                    let serialized = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(state.State, Grace.Shared.Constants.JsonSerializerOptions)
+                    log.LogInformation("A4 block after state serialization {Bytes} {CorrelationId}", serialized.Length, events.Head.Metadata.CorrelationId)
                     log.LogInformation("A4 block before persistence {CorrelationId}", events.Head.Metadata.CorrelationId)
                     do! state.WriteStateAsync()
                     log.LogInformation("A4 block after persistence {CorrelationId}", events.Head.Metadata.CorrelationId)

@@ -61,6 +61,49 @@ module OrleansFsharpFix =
 /// Contains Grace Server program behavior and supporting helpers.
 module Program =
 
+    /// Temporarily exposes local-emulator Cosmos outcomes hidden by the provider retry loop during A4 diagnosis.
+    type UploadWriteDiagnosticHandler(log: ILogger) =
+        inherit RequestHandler()
+
+        override this.SendAsync(request: RequestMessage, cancellationToken: CancellationToken) =
+            let requestId = Guid.NewGuid()
+            let started = Stopwatch.StartNew()
+
+            let path =
+                if request.RequestUri.IsAbsoluteUri then
+                    request.RequestUri.AbsolutePath
+                else
+                    request.RequestUri.OriginalString.Split('?')[0]
+
+            log.LogInformation("A4 Cosmos request {RequestId} {Method} {Path} started", requestId, request.Method, path)
+            let pending = ``base``.SendAsync(request, cancellationToken)
+
+            task {
+                try
+                    let! response = pending
+
+                    log.LogInformation(
+                        "A4 Cosmos request {RequestId} completed {Status} activity {ActivityId} retryAfterMs {RetryAfterMs} elapsedMs {ElapsedMs}",
+                        requestId,
+                        int response.StatusCode,
+                        response.Headers.ActivityId,
+                        response.Headers["x-ms-retry-after-ms"],
+                        started.ElapsedMilliseconds
+                    )
+
+                    return response
+                with
+                | error ->
+                    log.LogInformation(
+                        "A4 Cosmos request {RequestId} failed {ExceptionType} elapsedMs {ElapsedMs}",
+                        requestId,
+                        error.GetType().FullName,
+                        started.ElapsedMilliseconds
+                    )
+
+                    return raise error
+            }
+
     [<InternalsVisibleTo("Host")>]
     [<InternalsVisibleTo("Grace.Server.Unit.Tests")>]
     do ()
@@ -380,6 +423,14 @@ module Program =
                                     cosmosClientOptions.LimitToEndpoint <- true
                                     cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
                                     cosmosClientOptions.EnableContentResponseOnWrite <- true
+
+                                    cosmosClientOptions.CustomHandlers.Add(
+                                        UploadWriteDiagnosticHandler(
+                                            serviceProvider
+                                                .GetRequiredService<ILoggerFactory>()
+                                                .CreateLogger("UploadWriteDiagnostic")
+                                        )
+                                    )
 
                                     cosmosClientOptions.ServerCertificateCustomValidationCallback <-
                                         Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)

@@ -1528,6 +1528,9 @@ module UploadSession =
                 this.EnsureUsable()
 
                 try
+                    log.LogInformation("A4 session before state serialization {CorrelationId}", this.correlationId)
+                    let serialized = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(state.State, Grace.Shared.Constants.JsonSerializerOptions)
+                    log.LogInformation("A4 session after state serialization {Bytes} {CorrelationId}", serialized.Length, this.correlationId)
                     do! state.WriteStateAsync()
                 with
                 | ex ->
