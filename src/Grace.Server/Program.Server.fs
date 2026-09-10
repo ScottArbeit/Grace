@@ -498,9 +498,9 @@ module Program =
                                         fun () ->
                                             logToConsole "Creating custom HttpClient for Cosmos DB."
 
-                                            let handler = new HttpClientHandler()
+                                            let handler = new SocketsHttpHandler(PooledConnectionLifetime = TimeSpan.FromMilliseconds(1.0))
 
-                                            handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                                            handler.SslOptions.RemoteCertificateValidationCallback <- RemoteCertificateValidationCallback(fun _ _ _ _ -> true)
 
                                             let diagnosticHandler =
                                                 new UploadHttpDiagnosticHandler(
