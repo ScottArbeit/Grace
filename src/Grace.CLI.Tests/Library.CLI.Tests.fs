@@ -20,6 +20,9 @@ module LibraryCommandTests =
     [<Test>]
     let ``adopt catalog command cancellation while waiting leaves participation untouched`` () =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let previousDirectory = Environment.CurrentDirectory
             let root = Path.Combine(Path.GetTempPath(), $"grace-adoption-command-{Guid.NewGuid():N}")
             let grace = Directory.CreateDirectory(Path.Combine(root, ".grace"))
@@ -75,9 +78,10 @@ module LibraryCommandTests =
                 Assert.That(parsed.Errors.Count, Is.Zero)
                 let action = parsed.CommandResult.Command.Action :?> System.CommandLine.Invocation.AsynchronousCommandLineAction
                 let waiting = action.InvokeAsync(parsed, cancellation.Token)
-                Assert.That(waiting.IsCompleted, Is.False)
+                let wasWaiting = not waiting.IsCompleted
                 cancellation.Cancel()
                 let! exitCode = waiting
+                Assert.That(wasWaiting, Is.True)
                 Assert.That(exitCode, Is.Not.Zero)
                 Assert.That(LibraryLocalState.readRepository current.GraceStatusFile current.RepositoryId, Is.EqualTo(Some before))
                 Assert.That(LibraryLocalState.readOperations current.GraceStatusFile current.RepositoryId, Is.Empty)

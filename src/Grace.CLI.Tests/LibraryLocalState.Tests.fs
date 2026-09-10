@@ -205,6 +205,9 @@ module LibraryLocalStateTests =
     [<TestCase("before"); TestCase("inside"); TestCase("after"); TestCase("none")>]
     let ``catalog adoption retains every noncatalog fact through interruption and duplicate invocation`` fault =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, active, _ = renameCopy ()
             let db = configuration.GraceStatusFile
             setPaused db active true
@@ -287,6 +290,9 @@ module LibraryLocalStateTests =
       TestCase("stale-catalog")>]
     let ``catalog adoption refuses changed or unsupported inputs without capturing work`` scenario =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, active, item = renameCopy ()
             let db = configuration.GraceStatusFile
             setPaused db active true
@@ -454,6 +460,9 @@ module LibraryLocalStateTests =
       TestCase("baseline-tombstone")>]
     let ``catalog adoption preserves unfinished work of every operation family`` family =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, active, item = renameCopy ()
             let db = configuration.GraceStatusFile
             setPaused db active true
@@ -533,6 +542,9 @@ module LibraryLocalStateTests =
     [<Test>]
     let ``catalog adoption cancellation and queued Watch classification preserve paused state`` () =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, active, _ = renameCopy ()
             let db = configuration.GraceStatusFile
             setPaused db active true
@@ -546,7 +558,7 @@ module LibraryLocalStateTests =
             use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
             use cancellation = new CancellationTokenSource()
             let waiting = LibrarySynchronization.adoptCatalog configuration "canceled-adoption" cancellation.Token
-            Assert.That(waiting.IsCompleted, Is.False)
+            let wasWaiting = not waiting.IsCompleted
             cancellation.Cancel()
             let mutable canceled = false
 
@@ -556,7 +568,10 @@ module LibraryLocalStateTests =
             with
             | :? OperationCanceledException -> canceled <- true
 
+            Assert.That(wasWaiting, Is.True)
             Assert.That(canceled, Is.True)
+
+            use queuedCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30.0))
 
             let queued =
                 LibrarySynchronization.classifyWatchObservations
@@ -564,11 +579,12 @@ module LibraryLocalStateTests =
                     [|
                         Path.Combine(configuration.RootDirectory, "Library/item.bin")
                     |]
-                    CancellationToken.None
+                    queuedCancellation.Token
 
-            Assert.That(queued.IsCompleted, Is.False)
+            let wasQueued = not queued.IsCompleted
             (held :> IDisposable).Dispose()
             do! queued
+            Assert.That(wasQueued, Is.True)
             Assert.That(readRepository db before.RepositoryId, Is.EqualTo(Some before))
             Assert.That(serialize (readOperations db before.RepositoryId), Is.EqualTo(operations))
         }
@@ -577,6 +593,9 @@ module LibraryLocalStateTests =
     [<TestCase("root"); TestCase("ancestor"); TestCase("descendant")>]
     let ``catalog adoption refuses reparse roots ancestors and descendants`` placement =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, active, _ = renameCopy ()
             let db = configuration.GraceStatusFile
             setPaused db active true
@@ -627,7 +646,16 @@ module LibraryLocalStateTests =
             |> List.iter start.ArgumentList.Add
 
             use junction = System.Diagnostics.Process.Start start
-            do! junction.WaitForExitAsync()
+            use junctionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30.0))
+
+            try
+                do! junction.WaitForExitAsync(junctionTimeout.Token)
+            with
+            | :? OperationCanceledException ->
+                junction.Kill(entireProcessTree = true)
+                do! junction.WaitForExitAsync()
+                invalidOp "Catalog adoption test junction creation timed out."
+
             Assert.That(junction.ExitCode, Is.Zero)
             let operations = serialize (readOperations db before.RepositoryId)
             let mutable refused = false
@@ -656,6 +684,9 @@ module LibraryLocalStateTests =
     [<TestCase(false); TestCase(true)>]
     let ``catalog adoption clean tree follows materialized parent identity and rejects cycles`` cycle =
         task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
             let! configuration, before, item = renameCopy ()
             let selected, _ = adoptionSelection before
 

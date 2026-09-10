@@ -1,6 +1,6 @@
 # Library additive catalog-adoption production validation
 
-**Status: implemented in [Issue #1081](https://github.com/ScottArbeit/Grace/issues/1081); independent review, final-head GitHub Validate and merge approval remain pending.** The mainline base is `9b18c97ab342d319d3bdeaedc5f1d64571913cf5`. Commit `04da41d927ae18d1efa230fcc2cc47dc3c4087d9` records the requested documentation-only checkpoint before runtime edits. The [accepted design](../Libraries.Design.md#additive-catalog-adoption) and [type plan](Libraries.Type-Plan.md#additive-catalog-adoption-propagation) govern this implementation. The [captured experiment](Libraries.Catalog-Adoption-Experiment.md) remains historical and its fixture, scripts and results are unchanged.
+**Status: implemented in [Issue #1081](https://github.com/ScottArbeit/Grace/issues/1081), [PR #1082](https://github.com/ScottArbeit/Grace/pull/1082). R1 passed with an empty discovery ledger and Shape Review raised no concerns at `805a21ed`; the CI test repair below still needs bounded R2, final-head GitHub Validate and merge approval.** The mainline base is `9b18c97ab342d319d3bdeaedc5f1d64571913cf5`. Commit `04da41d927ae18d1efa230fcc2cc47dc3c4087d9` records the requested documentation-only checkpoint before runtime edits. The [accepted design](../Libraries.Design.md#additive-catalog-adoption) and [type plan](Libraries.Type-Plan.md#additive-catalog-adoption-propagation) govern this implementation. The [captured experiment](Libraries.Catalog-Adoption-Experiment.md) remains historical and its fixture, scripts and results are unchanged.
 
 ## Requirement mapping
 
@@ -53,14 +53,30 @@ These tests require the selected Windows host; the hosted command also requires 
 
 Routine local Fast/Full were not run. The focused Release builds and tests are the local gates; GitHub Validate is the required broad gate. No production server/SDK/shared/generated contract, schema, package, project or solution changed. README and CLI inventory documentation were propagated; CONTRIBUTING has no affected command or workflow statement.
 
-## Final local candidate results
+## Initial candidate results at 805a21ed
 
 - Matching Release builds: CLI tests and hosted tests, zero warnings and zero errors.
 - Focused CLI/Library/command registry/help run: **185 passed, 0 failed, 0 skipped** in 19 seconds.
 - Final hosted run including immutable object-hash retention: **1 passed, 0 failed, 0 skipped** in 17 seconds.
 - Touched F# formatted with repository Fantomas. Touched Markdown lint and `git diff --check` pass. Captured experiment files remain byte-for-byte unchanged.
-- Reports are local ignored files under each test project's `TestResults` directory. The issue/PR records the exact delivery revision; these counts describe the candidate containing this record, not the earlier prototype.
+- Reports are local ignored files under each test project's `TestResults` directory. These counts describe `805a21edb550f3cdfec8ac2f3776fb7b35cd11ea`, not the earlier prototype or a passing Ubuntu run.
 
 CLI report SHA-256: `846F60832B1120A8475F011BEF20DF53889044D2C0A99C272499CD3595AFBCDE`.
 
 Hosted report SHA-256: `0A8D50EA85DE50DB97ED740DAA583E474CFA961EB37D8445289A09CE63D5B1A5`.
+
+## Ubuntu CI failure and bounded test repair
+
+[Validate run 34428025370](https://github.com/ScottArbeit/Grace/actions/runs/34428025370) tested `805a21ed` on Ubuntu and showed nine failures in the new command cancellation, queued Watch, clean-tree, changed-input (`stale-row`, `stale-disk`) and four interruption/retry cases. The tests omitted the existing Windows eligibility guard, so production correctly rejected the unsupported platform before the intended test steps. Some negative cases also appeared to pass by catching this platform rejection instead of exercising their named condition.
+
+The root canceled the run after 28 minutes; the CLI assembly had not produced a terminal summary. Cancellation is not a passing result. Other assemblies reported passing summaries, including 1,264 server unit tests and 320 hosted tests with 37 intentional skips. The Windows hosted adoption case was correctly skipped on Ubuntu.
+
+The [frozen CI-1/CI-2 repair ledger](https://github.com/ScottArbeit/Grace/pull/1082#issuecomment-5611789349) permits changes only to test eligibility, owned asynchronous fixture cleanup and this record. Seven Windows command/orchestration/filesystem test functions, comprising 40 cases, now skip before fixture creation on other platforms. The two predecessor-completion cases, two exact SQLite snapshot cases, parser and command-registry tests remain portable and enabled.
+
+Cancellation fixtures now cancel and await their command before asserting that it was waiting. The Watch fixture releases its held lease and awaits its classifier before asserting that it had queued; that wait has a 30-second cancellation limit. Junction creation also has a 30-second limit and kills/reaps its owned subprocess on timeout. On Ubuntu the observed adoption failures happened before lease acquisition, and the fixture-held leases were scoped for disposal. The log does not establish an orphaned adoption waiter as the cause of the missing CLI summary; this repair does not claim to diagnose unrelated hangs.
+
+Production files and the hosted test are unchanged from `805a21ed`. Its actual Windows hosted 1/1 result and report hash above remain applicable and are reused without another hosted run. The repaired head still requires GitHub Validate; local Windows results do not certify Ubuntu execution.
+
+Repair validation on Windows: matching `Grace.CLI.Tests` Release build passed with zero warnings/errors. The same focused Library/registry/help filter documented above passed **185 tests, 0 failed, 0 skipped** in 18 seconds, using `--logger 'trx;LogFileName=issue-1081-ci-repair-cli.trx'`. Both touched F# files were formatted; this Markdown file and `git diff --check` pass. No local Fast/Full or unchanged hosted test was repeated.
+
+Repair CLI report SHA-256: `4A7DF9B7DE00E6515D017346D2E63024AC2A9F46070C563DBB852D66DD17E8EB`.
