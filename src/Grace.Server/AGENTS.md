@@ -53,6 +53,15 @@ do not add total scan or wrapper deadlines. SQL per-command behavior and short a
 A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
 Source identity belongs to each route/table; matching GUIDs across the three sources do not identify a combined observation.
 
+## TextContent upload evidence
+
+`TextContentStorage.write` commits `grace_textcontent_format=1`, `grace_utf8_byte_length` as invariant decimal and
+`grace_blake3_hash` as the existing lowercase hash in the same conditional upload as the compressed payload.
+Retries verify metadata and body from one download response against the expected existing TextContent reference.
+Missing, malformed, unsupported or conflicting evidence fails without metadata repair. Ordinary event-backed reads
+keep their existing reference verification. Preserve WorkItem append classification, newly-created cleanup ownership,
+unknown-outcome retention, character limits and scope checks. This adds no Operations dependency or measurement route.
+
 ## Owner observation reads
 
 `GET /owner/usage/directory-version-observations/{observationId}` uses explicit historical scope, with no body metadata

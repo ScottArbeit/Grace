@@ -176,6 +176,36 @@ module private WorkItemIntegrationHelpers =
             return exists.Value
         }
 
+    /// Resolves the exact hosted object for evidence inspection and deliberate retry-negative controls.
+    let getTextContentBlobAsync (repositoryId: string) (textContentId: TextContentId) =
+        task {
+            let hostState = getSharedHostState ()
+            let! containerClient = AspireTestHost.getAzureStorageContainerClientAsync hostState (repositoryId.ToLowerInvariant())
+            return containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+        }
+
+    /// Checks original UTF-8 facts and compressed body from a single stored revision, returning its ETag.
+    let assertTextContentEvidenceAsync repositoryId (reference: Grace.Types.TextContent.TextContent) (text: string) =
+        task {
+            let! blob = getTextContentBlobAsync repositoryId reference.TextContentId
+            let! response = blob.DownloadStreamingAsync()
+            use body = response.Value.Content
+            let metadata = response.Value.Details.Metadata
+            Assert.That(metadata["grace_textcontent_format"], Is.EqualTo("1"))
+
+            Assert.That(
+                metadata["grace_utf8_byte_length"],
+                Is.EqualTo(
+                    (Encoding.UTF8.GetByteCount(text))
+                        .ToString(Globalization.CultureInfo.InvariantCulture)
+                )
+            )
+
+            Assert.That(metadata["grace_blake3_hash"], Is.EqualTo(ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes(text))))
+            Assert.That(Grace.Server.TextContentStorage.verifyCompressedText Int32.MaxValue reference body, Is.EqualTo(Ok text: Result<string, string>))
+            return response.Value.Details.ETag
+        }
+
     /// Removes one deterministic TextContent object so an exact replay must recreate its immutable storage before succeeding.
     let deleteTextContentObjectAsync (repositoryId: string) (textContentId: TextContentId) =
         task {
@@ -192,8 +222,10 @@ module private WorkItemIntegrationHelpers =
             let hostState = getSharedHostState ()
             let! containerClient = AspireTestHost.getAzureStorageContainerClientAsync hostState (repositoryId.ToLowerInvariant())
             let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+            let! properties = blobClient.GetPropertiesAsync()
             use corrupt = new MemoryStream([| 0uy; 1uy; 2uy |])
-            let! _ = blobClient.UploadAsync(corrupt, overwrite = true)
+            let options = Azure.Storage.Blobs.Models.BlobUploadOptions(Metadata = properties.Value.Metadata)
+            let! _ = blobClient.UploadAsync(corrupt, options)
             return ()
         }
 
@@ -341,10 +373,15 @@ module private WorkItemIntegrationHelpers =
             return response
         }
 
-    /// Builds a deterministic work item for integration setup fixture for the server integration work Item Integration assertions.
+    /// Creates a fixture work item and preserves the server's error body when creation fails.
     let createWorkItemAsync (repositoryId: string) (title: string) =
         task {
             let! workItemId, response = createWorkItemWithIdResponseAsync Client repositoryId title
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                raise (HttpRequestException($"Work item {workItemId} create returned HTTP {int response.StatusCode}: {body}", null, response.StatusCode))
+
             response.EnsureSuccessStatusCode() |> ignore
             return workItemId
         }
@@ -388,7 +425,7 @@ module private WorkItemIntegrationHelpers =
     let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
         setWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier text (generateCorrelationId ())
 
-    /// Sets one description while selecting the private ephemeral hosted-race rendezvous after immutable storage writes.
+    /// Sets one description with independent caller cancellation and the private post-upload rendezvous.
     let setWorkItemDescriptionWithGateResponseAsync
         (client: HttpClient)
         (repositoryId: string)
@@ -396,6 +433,7 @@ module private WorkItemIntegrationHelpers =
         (text: string)
         (correlationId: string)
         (gatePort: int)
+        (cancellationToken: CancellationToken)
         =
         task {
             let parameters = Parameters.WorkItem.SetWorkItemDescriptionParameters()
@@ -409,7 +447,7 @@ module private WorkItemIntegrationHelpers =
             request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
             request.Headers.Add("X-Grace-Test-Description-Clear-Gate-Port", string gatePort)
             request.Content <- createJsonContent parameters
-            return! client.SendAsync(request)
+            return! client.SendAsync(request, cancellationToken)
         }
 
     /// Clears one work-item description through the public route with caller-selected correlation data for replay proof.
@@ -959,6 +997,172 @@ module private WorkItemIntegrationHelpers =
 [<NonParallelizable>]
 type WorkItemNumberAndLinksIntegrationTests() =
 
+    /// Verifies create, exact replay, separate set identity and clear preserve original evidence and old objects.
+    [<TestCase("é😀")>]
+    [<TestCase("boundary")>]
+    member _.DescriptionLifecyclePreservesOriginalBlobEvidence(sample: string) =
+        task {
+            let text = if sample = "boundary" then String.replicate 65_536 "😀" else sample
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-text-evidence"
+            let workItemId = Guid.NewGuid().ToString()
+            let createCorrelation = generateCorrelationId ()
+
+            use! created =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync Client repositoryId workItemId "text evidence" text createCorrelation
+
+            let! createdBody = created.Content.ReadAsStringAsync()
+            Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK), createdBody)
+
+            let createdReference =
+                (Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryId) (Guid.Parse workItemId) createCorrelation text)
+                    .TextContent
+                    .Value
+
+            let! createETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId createdReference text
+
+            use! replay =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync Client repositoryId workItemId "text evidence" text createCorrelation
+
+            let! replayBody = replay.Content.ReadAsStringAsync()
+            Assert.That(replay.StatusCode, Is.EqualTo(HttpStatusCode.OK), replayBody)
+            let! replayETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId createdReference text
+            Assert.That(replayETag, Is.EqualTo(createETag))
+            let setCorrelation = generateCorrelationId ()
+            use! setResult = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text setCorrelation
+            let! setResultBody = setResult.Content.ReadAsStringAsync()
+            Assert.That(setResult.StatusCode, Is.EqualTo(HttpStatusCode.OK), setResultBody)
+
+            let setReference =
+                (Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryId) (Guid.Parse workItemId) setCorrelation text)
+                    .TextContent
+                    .Value
+
+            Assert.That(setReference.TextContentId, Is.Not.EqualTo(createdReference.TextContentId))
+            let! setETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId setReference text
+            use! setReplay = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text setCorrelation
+            let! setReplayBody = setReplay.Content.ReadAsStringAsync()
+            Assert.That(setReplay.StatusCode, Is.EqualTo(HttpStatusCode.OK), setReplayBody)
+            let! setReplayETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId setReference text
+            Assert.That(setReplayETag, Is.EqualTo(setETag))
+            use! cleared = WorkItemIntegrationHelpers.clearWorkItemDescriptionResponseAsync Client repositoryId workItemId
+            let! clearedBody = cleared.Content.ReadAsStringAsync()
+            Assert.That(cleared.StatusCode, Is.EqualTo(HttpStatusCode.OK), clearedBody)
+            let! retainedCreateETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId createdReference text
+            let! retainedSetETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId setReference text
+            Assert.That(retainedCreateETag, Is.EqualTo(createETag))
+            Assert.That(retainedSetETag, Is.EqualTo(setETag))
+        }
+
+    /// Rejects metadata-less, unsupported and conflicting stored evidence on replay while event-backed reads still work.
+    [<TestCase("grace_textcontent_format", "")>]
+    [<TestCase("grace_textcontent_format", "2")>]
+    [<TestCase("grace_utf8_byte_length", "six")>]
+    [<TestCase("grace_utf8_byte_length", "7")>]
+    [<TestCase("grace_blake3_hash", "bad-hash")>]
+    member _.DescriptionReplayRejectsMetadataWithoutRepair(key: string, value: string) =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-text-evidence-negative"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "metadata rejection"
+            let correlation = generateCorrelationId ()
+            let text = "é😀"
+            use! first = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlation
+            let! firstBody = first.Content.ReadAsStringAsync()
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstBody)
+
+            let reference =
+                (Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryId) (Guid.Parse workItemId) correlation text)
+                    .TextContent
+                    .Value
+
+            let! _ = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
+            let! blob = WorkItemIntegrationHelpers.getTextContentBlobAsync repositoryId reference.TextContentId
+            let! properties = blob.GetPropertiesAsync()
+            let metadata = Dictionary<string, string>(properties.Value.Metadata)
+            if value = "" then metadata.Clear() else metadata[key] <- value
+            let! mutation = blob.SetMetadataAsync(metadata)
+            let! read = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            Assert.That(read.Description, Is.EqualTo(text))
+            let! beforeEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            use! replay = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlation
+            let! replayBody = replay.Content.ReadAsStringAsync()
+            Assert.That(replay.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), replayBody)
+            Assert.That(replayBody, Does.Contain("metadata verification failed"))
+            let! after = blob.DownloadStreamingAsync()
+            use body = after.Value.Content
+            Assert.That(after.Value.Details.ETag, Is.EqualTo(mutation.Value.ETag))
+            Assert.That(after.Value.Details.Metadata, Is.EquivalentTo(metadata))
+            Assert.That(Grace.Server.TextContentStorage.verifyCompressedText 65_536 reference body, Is.EqualTo(Ok text: Result<string, string>))
+            let! afterEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            Assert.That(afterEvents.Length, Is.EqualTo(beforeEvents.Length))
+        }
+
+    /// Retains uploaded evidence when the caller cancels before receiving a response, then converges to one accepted append on retry.
+    [<Test>]
+    member _.DescriptionCallerCancellationRetainsEvidenceForRetry() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-text-evidence-uncertain"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "uncertain text evidence"
+            let correlation = generateCorrelationId ()
+            let text = "unacknowledged é😀"
+
+            let reference =
+                (Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryId) (Guid.Parse workItemId) correlation text)
+                    .TextContent
+                    .Value
+
+            let! beforeEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            let gatePort, listener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
+            use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(listener, 1)
+            use callerCancellation = new CancellationTokenSource()
+
+            let pending =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    text
+                    correlation
+                    gatePort
+                    callerCancellation.Token
+
+            let! entered = gate.WaitForFreshOperationsAsync()
+            Assert.That(entered, Is.EqualTo(box [| "fresh-description-operation" |]))
+            let! beforeETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
+            callerCancellation.Cancel()
+
+            let! callerObservedCancellation =
+                task {
+                    try
+                        use! response = pending
+                        return false
+                    with
+                    | :? OperationCanceledException -> return true
+                }
+
+            Assert.That(callerObservedCancellation, Is.True, "The caller must lose the response after the upload is inspected and before the gate releases.")
+            let! blockedEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            Assert.That(blockedEvents.Length, Is.EqualTo(beforeEvents.Length), "The independent gate still blocks append at this point.")
+            let! afterETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
+            Assert.That(afterETag, Is.EqualTo(beforeETag))
+            do! gate.ReleaseAsync()
+            use! retry = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlation
+            let! retryBody = retry.Content.ReadAsStringAsync()
+            Assert.That(retry.StatusCode, Is.EqualTo(HttpStatusCode.OK), retryBody)
+            let! retryETag = WorkItemIntegrationHelpers.assertTextContentEvidenceAsync repositoryId reference text
+            Assert.That(retryETag, Is.EqualTo(beforeETag))
+            let! acceptedEvents = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+            Assert.That(acceptedEvents.Length, Is.EqualTo(beforeEvents.Length + 1))
+
+            let acceptedDescriptions =
+                acceptedEvents
+                |> Array.choose (fun event ->
+                    match event.Event with
+                    | DescriptionSet description when description.TextContent = Some reference -> Some description
+                    | _ -> None)
+
+            Assert.That(acceptedDescriptions, Has.Length.EqualTo(1))
+        }
+
     /// Verifies that immutable description writes hydrate the final accepted append for GUID and numeric reads.
     [<Test>]
     member _.DescriptionSetHydratesTheLastAcceptedAppend() =
@@ -1417,7 +1621,14 @@ type WorkItemNumberAndLinksIntegrationTests() =
             use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(gateListener, 1)
 
             let creatorRequest =
-                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync Client repositoryId workItemId text correlationId gatePort
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    text
+                    correlationId
+                    gatePort
+                    CancellationToken.None
 
             let! freshOperations = gate.WaitForFreshOperationsAsync()
 
