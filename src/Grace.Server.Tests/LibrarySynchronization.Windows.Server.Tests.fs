@@ -646,8 +646,8 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(File.ReadAllText(Path.Combine(copyA, "Library", "retained.txt")), Is.EqualTo("retained original"))
         }
 
-    /// Exercises a running Watch process with real authentication while CLI pause/resume races its periodic work.
-    [<Test>]
+    /// Exercises automatic additions and refreshed VC exclusions in a running Watch process while pause retains local work.
+    [<Test; Category("AutomaticCatalogSynchronization")>]
     let ``live Watch and CLI pause retain local saves while another copy continues`` () =
         task {
             if not (OperatingSystem.IsWindows()) then
@@ -768,6 +768,45 @@ module LibrarySynchronizationWindowsServerTests =
                     waitUntil (fun () ->
                         output
                         |> Seq.exists (fun line -> line.Contains("Starting timer.")))
+
+                let selected =
+                    Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
+                    |> Option.get
+
+                let! _ =
+                    requireGraceSuccessAsync
+                        copyB
+                        proxy.BaseAddress
+                        [|
+                            "library"
+                            "add"
+                            "WatchAdded"
+                            "--output"
+                            "Json"
+                        |]
+
+                do! waitUntil (fun () -> Directory.Exists(Path.Combine(copyA, "WatchAdded")))
+
+                Assert.That(
+                    (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                        .Value
+                        .AppliedCursor,
+                    Is.EqualTo(selected.AppliedCursor)
+                )
+
+                let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+                File.WriteAllText(Path.Combine(copyB, "WatchAdded", "automatic.txt"), "automatic added root download")
+                let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+                do! waitUntil (fun () -> File.Exists(Path.Combine(copyA, "WatchAdded", "automatic.txt")))
+                Assert.That(File.ReadAllText(Path.Combine(copyA, "WatchAdded", "automatic.txt")), Is.EqualTo("automatic added root download"))
+                File.WriteAllText(Path.Combine(copyA, "WatchAdded", "watched.txt"), "new root stays outside VC")
+
+                do!
+                    waitUntil (fun () ->
+                        Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
+                        |> Array.exists (fun item ->
+                            item.Namespace
+                            |> Option.exists (fun ns -> ns.Name = "watched.txt")))
 
                 File.WriteAllText(pathA, "positive Watch capture")
 
@@ -1927,8 +1966,8 @@ module LibrarySynchronizationWindowsServerTests =
             )
         }
 
-    /// Preserves rejected saved input after the real server has tombstoned its original item.
-    [<Test>]
+    /// Downloads earlier unrelated added-root content while retaining a genuinely rejected saved edit at its conflicting deletion.
+    [<Test; Category("AutomaticCatalogSynchronization")>]
     let ``deletion first retains ItemTombstoned saved edit without resurrection`` () =
         task {
             if not (OperatingSystem.IsWindows()) then
@@ -1949,11 +1988,38 @@ module LibrarySynchronizationWindowsServerTests =
                 Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
                 |> Array.exactlyOne
 
-            let! _ = changeNamespaceAsync repositoryId before.Catalog.Version original true
+            let add = Parameters.Library.AddLibraryParameters()
+            add.OwnerId <- ownerId
+            add.OrganizationId <- organizationId
+            add.RepositoryId <- string repositoryId
+            add.ExpectedVersion <- before.Catalog.Version
+            add.OperationId <- Guid.NewGuid()
+            add.LibraryPath <- "Added"
+            add.CorrelationId <- generateCorrelationId ()
+            use! addedResponse = Client.PostAsync("/libraries/add", createJsonContent add)
+            let! added = requireReturnValueAsync<LibraryCatalogChangeResultDto> addedResponse
+            Assert.That(added.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(Path.Combine(copyA, "Added", "unrelated.txt"), "unrelated preceding download")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            let preceding =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId)
+                    .Value
+
+            let! _ = changeNamespaceAsync repositoryId added.LibraryCatalog.Version original true
             File.WriteAllText(pathB, "saved after server deletion")
             let! rejected = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
             Assert.That(rejected.ExitCode, Is.Not.EqualTo(0))
             Assert.That(rejected.StandardOutput, Does.Contain(RejectionReason.ItemTombstoned))
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Added", "unrelated.txt")), Is.EqualTo("unrelated preceding download"))
+
+            Assert.That(
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
+                    .State,
+                Is.EqualTo("blocked")
+            )
 
             let pending =
                 Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
@@ -2002,7 +2068,7 @@ module LibrarySynchronizationWindowsServerTests =
                 (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
                     .Value
                     .AppliedCursor,
-                Is.EqualTo(before.AppliedCursor)
+                Is.EqualTo(preceding.AppliedCursor)
             )
 
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
@@ -2010,7 +2076,7 @@ module LibrarySynchronizationWindowsServerTests =
 
             Assert.That(
                 (Grace.CLI.LibraryLocalState.readItems (localDb copyA) repositoryId
-                 |> Array.exactlyOne)
+                 |> Array.find (fun item -> item.ItemId = original.ItemId))
                     .Tombstone
                     .IsSome,
                 Is.True
@@ -2572,135 +2638,327 @@ module LibrarySynchronizationWindowsServerTests =
             )
         }
 
-    /// Runs actual adoption commands, old-catalog backlog, new-root content and a fresh-process publication restart.
-    [<Test; Category("CatalogAdoption")>]
-    let ``catalog adoption CLI retains paused progress and replays both roots after publication interruption`` () =
+
+    /// Refuses occupied or linked added roots through the real CLI before selecting their catalog or capturing unrelated bytes.
+    [<TestCase("file"); TestCase("directory"); TestCase("junction"); Category("AutomaticCatalogSynchronization")>]
+    let ``automatic catalog CLI protects preexisting added root input`` obstruction =
         task {
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
 
-            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "catalog-adoption"
+            let! _, copyB, repositoryId, createdProxy = enableCopiesAsync "automatic-obstruction"
             use proxy = createdProxy
-            let fileA = Path.Combine(copyA, "Library", "original.txt")
-            let fileB = Path.Combine(copyB, "Library", "original.txt")
-            File.WriteAllText(fileA, "original materialized bytes")
-            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
-            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
-            File.WriteAllText(fileA, "old catalog backlog bytes")
-            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
-            do! pauseRetainingAsync copyA repositoryId proxy
-            do! pauseRetainingAsync copyB repositoryId proxy
 
-            Directory.CreateDirectory(Path.Combine(copyA, "Added"))
-            |> ignore
+            let before =
+                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                    .Value
 
-            Directory.CreateDirectory(Path.Combine(copyB, "Added"))
-            |> ignore
+            let operations = serialize (Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId)
+            let addedPath = Path.Combine(copyB, "Added")
+            let retainedPath = Path.Combine(copyB, "Library", "unsaved.txt")
+            File.WriteAllText(retainedPath, "existing local save")
+            let external = Path.Combine(Path.GetDirectoryName(copyB), "JunctionTarget")
 
-            let beforeA =
-                Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId
-                |> Option.get
+            if obstruction = "file" then
+                File.WriteAllText(addedPath, "occupied input")
+            elif obstruction = "directory" then
+                Directory.CreateDirectory(addedPath) |> ignore
+                File.WriteAllText(Path.Combine(addedPath, "keep.txt"), "occupied input")
+            else
+                Directory.CreateDirectory(external) |> ignore
+                File.WriteAllText(Path.Combine(external, "keep.txt"), "occupied input")
+                let script = Path.Combine(copyB, ".grace", "junction.ps1")
 
-            let beforeB =
-                Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
-                |> Option.get
+                File.WriteAllText(
+                    script,
+                    "param([string]$LinkPath,[string]$TargetPath)\n$ErrorActionPreference='Stop'\nNew-Item -ItemType Junction -Path $LinkPath -Target $TargetPath | Out-Null\n"
+                )
 
-            let oldItemsB = Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
-            let oldOperationsB = Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                let start = ProcessStartInfo("pwsh", UseShellExecute = false, CreateNoWindow = true)
+
+                [|
+                    "-NoProfile"
+                    "-NonInteractive"
+                    "-File"
+                    script
+                    "-LinkPath"
+                    addedPath
+                    "-TargetPath"
+                    external
+                |]
+                |> Array.iter start.ArgumentList.Add
+
+                use junction = Process.Start start
+                use timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30.0))
+
+                try
+                    do! junction.WaitForExitAsync(timeout.Token)
+                with
+                | :? OperationCanceledException ->
+                    junction.Kill(true)
+                    do! junction.WaitForExitAsync()
+                    invalidOp "Junction fixture timed out."
+
+                Assert.That(junction.ExitCode, Is.Zero)
+
             let add = Parameters.Library.AddLibraryParameters()
             add.OwnerId <- ownerId
             add.OrganizationId <- organizationId
             add.RepositoryId <- string repositoryId
-            add.ExpectedVersion <- beforeA.Catalog.Version
+            add.ExpectedVersion <- before.Catalog.Version
             add.OperationId <- Guid.NewGuid()
             add.LibraryPath <- "Added"
             add.CorrelationId <- generateCorrelationId ()
             use! response = Client.PostAsync("/libraries/add", createJsonContent add)
-            let! result = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
-            Assert.That(result.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize result)
-            let selected = result.LibraryCatalog
+            let! added = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
+            Assert.That(added.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+            let! result = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(result.ExitCode, Is.Not.Zero)
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId, Is.EqualTo(Some { before with State = "blocked" }))
+            Assert.That(serialize (Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId), Is.EqualTo(operations))
+            Assert.That(File.ReadAllText retainedPath, Is.EqualTo("existing local save"))
 
-            /// Reads the real source copy's immutable objects independently of SQLite metadata.
-            let objectHashes () =
-                Directory.GetFiles(Path.Combine(copyA, ".grace", "objects"), "*", SearchOption.AllDirectories)
-                |> Array.map (fun path -> path, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes path)))
-                |> Array.sort
+            let protectedPath =
+                if obstruction = "file" then addedPath
+                elif obstruction = "directory" then Path.Combine(addedPath, "keep.txt")
+                else Path.Combine(external, "keep.txt")
 
-            let retainedObjects = objectHashes ()
-            Assert.That(retainedObjects.Length, Is.GreaterThan(0))
+            Assert.That(File.ReadAllText protectedPath, Is.EqualTo("occupied input"))
+        }
 
-            let! human =
-                requireGraceSuccessAsync
-                    copyA
-                    proxy.BaseAddress
-                    [|
-                        "library"
-                        "sync"
-                        "adopt-catalog"
-                        "--output"
-                        "Minimal"
-                    |]
+    /// Exercises automatic selection through real CLI processes and one-item signed HTTP pages.
+    [<TestCase("captured"); TestCase("accepted"); TestCase("prepared"); TestCase("racing"); Category("AutomaticCatalogSynchronization")>]
+    let AutomaticCatalogSynchronization stage =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
 
-            Assert.That(human, Does.Contain("Restart Watch"))
-            Assert.That(human, Does.Contain("sync resume"))
-            Assert.That(objectHashes (), Is.EqualTo<string * string>(retainedObjects))
-            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId, Is.EqualTo(Some { beforeA with Catalog = selected }))
-            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "resume")
-            File.WriteAllText(Path.Combine(copyA, "Added", "new.txt"), "new root accepted bytes")
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "automatic-catalog"
+            use proxy = createdProxy
+            let fileA = Path.Combine(copyA, "Library", "original.txt")
+            let fileB = Path.Combine(copyB, "Library", "original.txt")
+            File.WriteAllText(fileA, "initial bytes")
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
-            let beforeAdoptUploads = proxy.ManifestUploadCount
-            let beforeAdoptSubmits = proxy.SubmitRequestCount
-            let! json = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "adopt-catalog")
-            use envelope = System.Text.Json.JsonDocument.Parse json
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(fileA, "old catalog backlog bytes")
 
-            let output =
-                deserialize<LibrarySynchronization.LibrarySynchronizationStatus> (
-                    envelope
-                        .RootElement
-                        .GetProperty("ReturnValue")
-                        .GetRawText()
-                )
+            if stage = "prepared" then
+                localSql
+                    copyA
+                    "CREATE TRIGGER fail_old_prepared BEFORE UPDATE OF applied_cursor ON library_repository_state BEGIN SELECT RAISE(ABORT,'injected old prepared'); END;"
+                |> ignore
+            else
+                proxy.DropNextAcceptedSubmitResponse()
 
-            Assert.That(output.Paused, Is.True)
-            Assert.That(output.AppliedCursor, Is.EqualTo(Some beforeB.AppliedCursor))
-            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "adopt-catalog")
-            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId, Is.EqualTo(Some { beforeB with Catalog = selected }))
-            Assert.That(Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId, Is.EqualTo<LibraryItemDto>(oldItemsB))
-            Assert.That(serialize (Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId), Is.EqualTo(serialize oldOperationsB))
+            let! lostReceipt = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(lostReceipt.ExitCode, Is.Not.Zero)
+
+            if stage = "prepared" then
+                Assert.That(lostReceipt.StandardOutput.Contains("injected old prepared"), Is.True, lostReceipt.StandardOutput)
+            else
+                Assert.That(proxy.DroppedAcceptedSubmitCount, Is.EqualTo(1))
+
+            let frozenA =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.find (fun operation -> not operation.Terminal)
+
+            let mutable beforeB =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
+                |> Option.get
+            // Save real positive local bytes without submitting or changing their immutable object.
+            File.WriteAllText(Path.Combine(copyB, "Library", "pending.txt"), "retained pending bytes")
+            let configuration = GraceConfiguration()
+            configuration.RootDirectory <- copyB
+            configuration.RepositoryId <- repositoryId
+            configuration.GraceStatusFile <- localDb copyB
+            configuration.ObjectDirectory <- Path.Combine(copyB, ".grace", "objects")
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+
+            let pendingBefore =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+
+            Assert.That(pendingBefore.Length, Is.EqualTo(1))
+
+            /// Adds one actual administrator catalog entry while both copies remain active.
+            let add name expected =
+                task {
+                    let parameters = Parameters.Library.AddLibraryParameters()
+                    parameters.OwnerId <- ownerId
+                    parameters.OrganizationId <- organizationId
+                    parameters.RepositoryId <- string repositoryId
+                    parameters.ExpectedVersion <- expected
+                    parameters.OperationId <- Guid.NewGuid()
+                    parameters.LibraryPath <- name
+                    parameters.CorrelationId <- generateCorrelationId ()
+                    use! response = Client.PostAsync("/libraries/add", createJsonContent parameters)
+                    let! result = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
+                    Assert.That(result.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize result)
+                    return result.LibraryCatalog
+                }
+
+            let! second =
+                task {
+                    if stage = "accepted" || stage = "racing" then
+                        let mutable selectedSecond = None
+
+                        proxy.BeforeNextSubmit (fun () ->
+                            task {
+                                let! selected = add "Added" beforeB.Catalog.Version
+                                selectedSecond <- Some selected
+                            }
+                            :> Task)
+
+                        if stage = "accepted" then
+                            proxy.BeforeNextChangesGet(fun () -> invalidOp "injected pull after accepted receipt")
+
+                        let! interrupted = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+
+                        if stage = "accepted" then
+                            Assert.That(interrupted.ExitCode, Is.Not.Zero, interrupted.StandardOutput)
+                        else
+                            Assert.That(interrupted.ExitCode, Is.Zero, interrupted.StandardOutput)
+
+                        let retained =
+                            Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                            |> Array.find (fun operation -> operation.OperationId = pendingBefore[0].OperationId)
+
+                        Assert.That(retained.Accepted.IsSome, Is.True, interrupted.StandardOutput)
+                        Assert.That(retained.Terminal, Is.EqualTo((stage = "racing")))
+                        Assert.That(retained.CatalogVersion, Is.EqualTo(pendingBefore[0].CatalogVersion))
+
+                        if stage = "racing" then
+                            beforeB <-
+                                (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
+                                    .Value
+
+                        return selectedSecond.Value
+                    else
+                        return! add "Added" beforeB.Catalog.Version
+                }
+
+            let pendingBefore =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.filter (fun operation -> operation.OperationId = pendingBefore[0].OperationId)
+
+            if stage = "prepared" then
+                localSql copyA "DROP TRIGGER fail_old_prepared;"
+                |> ignore
+
+            let uploadsBeforeA = proxy.ManifestUploadCount
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(uploadsBeforeA))
+
+            let recoveredA =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                |> Array.find (fun operation -> operation.OperationId = frozenA.OperationId)
+
+            Assert.That(recoveredA.Terminal, Is.True)
+            Assert.That(recoveredA.RequestJson, Is.EqualTo(frozenA.RequestJson))
+            Assert.That(recoveredA.CatalogVersion, Is.EqualTo(frozenA.CatalogVersion))
+            File.WriteAllText(Path.Combine(copyA, "Added", "second.txt"), "second catalog bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! third = add "Later" second.Version
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(Path.Combine(copyA, "Later", "third.txt"), "third catalog bytes")
+            let! thirdPublish = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            if thirdPublish.ExitCode <> 0 then
+                Assert.That(thirdPublish.StandardOutput.Contains("HttpClient.Timeout"), Is.True, thirdPublish.StandardOutput)
+                TestContext.Out.WriteLine("Observed manifest HTTP timeout; retrying exact saved request once in a fresh CLI process.")
+
+                let retained =
+                    Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                    |> Array.filter (fun operation -> not operation.Terminal)
+
+                Assert.That(retained.Length, Is.EqualTo(1))
+                let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+                let completed =
+                    Grace.CLI.LibraryLocalState.readOperations (localDb copyA) repositoryId
+                    |> Array.find (fun operation -> operation.OperationId = retained[0].OperationId)
+
+                Assert.That(completed.Terminal, Is.True)
+                Assert.That(completed.RequestJson, Is.EqualTo(retained[0].RequestJson))
+                Assert.That(completed.CatalogVersion, Is.EqualTo(retained[0].CatalogVersion))
+
+            Assert.That(Directory.Exists(Path.Combine(copyB, "Added")), Is.EqualTo(stage = "accepted" || stage = "racing"))
 
             localSql
                 copyB
-                "CREATE TRIGGER fail_adoption_completion BEFORE UPDATE OF applied_cursor ON library_repository_state BEGIN SELECT RAISE(ABORT,'injected adoption completion'); END;"
+                "CREATE TRIGGER fail_automatic_completion BEFORE UPDATE OF applied_cursor ON library_repository_state BEGIN SELECT RAISE(ABORT,'injected automatic completion'); END;"
             |> ignore
 
-            let! interrupted = runGraceAsync copyB proxy.BaseAddress (syncCommand "resume")
+            let! interrupted = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
             Assert.That(interrupted.ExitCode, Is.Not.Zero)
-            Assert.That(interrupted.StandardOutput, Does.Contain("injected adoption completion"))
+            Assert.That(interrupted.StandardOutput.Contains("injected automatic completion"), Is.True, interrupted.StandardOutput)
             Assert.That(File.ReadAllText(fileB), Is.EqualTo("old catalog backlog bytes"))
 
-            let interruptedRow =
+            let afterInterrupt =
                 Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
                 |> Option.get
 
-            Assert.That(interruptedRow.AppliedCursor, Is.EqualTo(beforeB.AppliedCursor))
-            Assert.That(interruptedRow.Paused, Is.False)
+            Assert.That(afterInterrupt.AppliedCursor, Is.EqualTo(beforeB.AppliedCursor))
+            Assert.That(afterInterrupt.Catalog, Is.EqualTo(third))
+            Assert.That(Directory.Exists(Path.Combine(copyB, "Later")), Is.True)
 
-            localSql copyB "DROP TRIGGER fail_adoption_completion;"
+            let preparedBefore =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.find (fun operation ->
+                    operation.Direction = "remote"
+                    && operation.Prepared
+                    && not operation.Terminal)
+
+            let! recoveryCatalog = add "BeforeRecovery" third.Version
+
+            localSql copyB "DROP TRIGGER fail_automatic_completion;"
             |> ignore
 
-            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "resume")
-            Assert.That(File.ReadAllText(fileB), Is.EqualTo("old catalog backlog bytes"))
-            let addedB = Path.Combine(copyB, "Added", "new.txt")
-            Assert.That(File.ReadAllText(addedB), Is.EqualTo("new root accepted bytes"))
-            let stamps = File.GetLastWriteTimeUtc(fileB), File.GetLastWriteTimeUtc(addedB)
+            let uploadsBeforeB = proxy.ManifestUploadCount
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
-            Assert.That((File.GetLastWriteTimeUtc(fileB), File.GetLastWriteTimeUtc(addedB)), Is.EqualTo(stamps))
-            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(beforeAdoptUploads))
-            Assert.That(proxy.SubmitRequestCount, Is.EqualTo(beforeAdoptSubmits))
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(uploadsBeforeB))
 
-            Assert.That(
-                countWduCompletions copyA
-                + countWduCompletions copyB,
-                Is.Zero
-            )
+            let preparedAfter =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.find (fun operation -> operation.OperationId = preparedBefore.OperationId)
+
+            Assert.That(preparedAfter.Terminal, Is.True)
+            Assert.That(preparedAfter.CatalogVersion, Is.EqualTo(preparedBefore.CatalogVersion))
+            Assert.That(preparedAfter.Accepted, Is.EqualTo(preparedBefore.Accepted))
+            Assert.That(preparedAfter.ExpectedCursor, Is.EqualTo(preparedBefore.ExpectedCursor))
+            Assert.That(preparedAfter.ExpectedAncestry, Is.EqualTo<LibraryItemDto>(preparedBefore.ExpectedAncestry))
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Added", "second.txt")), Is.EqualTo("second catalog bytes"))
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Later", "third.txt")), Is.EqualTo("third catalog bytes"))
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "pending.txt")), Is.EqualTo("retained pending bytes"))
+
+            let afterPending =
+                Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+                |> Array.filter (fun operation -> operation.OperationId = pendingBefore[0].OperationId)
+
+            Assert.That(afterPending[0].Terminal, Is.True)
+            Assert.That(afterPending[0].CatalogVersion, Is.EqualTo(pendingBefore[0].CatalogVersion))
+            Assert.That(afterPending[0].SourceObject, Is.EqualTo(pendingBefore[0].SourceObject))
+
+            if pendingBefore[0].RequestJson.IsSome then
+                Assert.That(afterPending[0].RequestJson, Is.EqualTo(pendingBefore[0].RequestJson))
+
+            let retryRequest = deserialize<Parameters.Library.SubmitLibraryChangeParameters> afterPending[0].RequestJson.Value
+            use! retryResponse = Client.PostAsync("/libraries/changes/submit", createJsonContent retryRequest)
+            let! retryReceipt = requireReturnValueAsync<LibraryOperationReceiptDto> retryResponse
+            Assert.That(retryReceipt, Is.EqualTo(afterPending[0].Receipt.Value))
+            let copyC = Path.Combine(Path.GetDirectoryName(copyB), "InitialAllRoots")
+            Directory.CreateDirectory(copyC) |> ignore
+            configureWorkingCopy copyC repositoryId proxy.BaseAddress
+
+            proxy.AfterNextContentRead (fun () ->
+                (add "DuringBaseline" recoveryCatalog.Version)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore)
+
+            let! _ = requireGraceSuccessAsync copyC proxy.BaseAddress (syncCommand "enable")
+            Assert.That(Directory.Exists(Path.Combine(copyC, "DuringBaseline")), Is.True)
+            Assert.That(File.ReadAllText(Path.Combine(copyC, "Added", "second.txt")), Is.EqualTo("second catalog bytes"))
+            Assert.That(File.ReadAllText(Path.Combine(copyC, "Later", "third.txt")), Is.EqualTo("third catalog bytes"))
+            Assert.That(File.ReadAllText(Path.Combine(copyC, "Library", "pending.txt")), Is.EqualTo("retained pending bytes"))
         }

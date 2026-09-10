@@ -608,23 +608,13 @@ type RepositoryLibraryActor
     let tryNotifyCatalog repositoryId (control: LibraryControlDocument) =
         task {
             try
-                let correlationId = $"LibraryCatalog/{control.Catalog.Version:D}"
-
-                let payload =
-                    LibraryContentAvailable.Create(
-                        repositoryId,
-                        LibraryCursorEpoch.ofGuid control.Epoch,
-                        LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch control.CommittedCursor,
-                        control.Catalog.Version,
-                        control.Catalog.CreatedAt,
-                        correlationId
-                    )
+                let messageId, payload = LibraryNotifications.catalogWake libraryTokenKey repositoryId control
 
                 match
                     tryCreateLibraryGraceEventEnvelope
-                        ($"LibraryCatalogAvailable/{repositoryId:D}/{control.Catalog.Version:D}")
+                        messageId
                         (GraceEvent.LibraryContentAvailableEvent payload)
-                        (EventMetadata.New correlationId "RepositoryLibraryActor")
+                        (EventMetadata.New payload.CorrelationId "RepositoryLibraryActor")
                     with
                 | Some envelope -> do! sendGraceEventEnvelope envelope CancellationToken.None
                 | None -> ()

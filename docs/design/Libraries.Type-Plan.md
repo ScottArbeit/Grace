@@ -294,7 +294,7 @@ Implementation locations are the existing `src/Grace.CLI/Library/` modules, `Com
 
 ## Automatic Library addition propagation
 
-The [accepted correction](../Libraries.Design.md#automatic-synchronization-of-added-libraries) replaces the manual-adoption plan in Issue #1081. The old candidate remains preserved. This map describes the proposed replacement; the new algorithm experiment must establish its state/effect ordering before implementation.
+The [accepted correction](../Libraries.Design.md#automatic-synchronization-of-added-libraries) replaces the manual-adoption plan in Issue #1081. The old candidate remains preserved. The frozen replacement charter uses the completed automatic experiment. This map describes the implementation; the validation record separates prototype results from candidate tests.
 
 | Surface | Required treatment |
 | --- | --- |
@@ -303,7 +303,7 @@ The [accepted correction](../Libraries.Design.md#automatic-synchronization-of-ad
 | Synchronization and Windows filesystem | Discover additions automatically; create missing ordinary roots and apply retained history across all roots. Protect occupied/reparse paths. Validate interruption/restart and partial paging. |
 | Watch | Replace lifetime catalog mismatch termination with safe policy refresh; discover on wake, startup/reconnect and periodic read. Preserve per-operation classification and root lease checks. |
 | CLI, help, output registry and tests | Remove the unmerged `sync adopt-catalog` command and its workflow guidance. Existing enable/run/resume/Watch paths handle discovery. Preserve current status shape unless evidence requires a separately recorded change. |
-| `LibraryControlDocument` / repository actor catalog commit | Selected extension: bounded `AdditiveCatalogVersions` with a new serializer field identity. Addition retains its known predecessor; removal resets the set. Update the field with catalog/Pending completion and exercise actual actor failure/replay. No new store, lifecycle or data migration. |
+| `LibraryControlDocument` / repository actor catalog commit | Bounded `AdditiveCatalogVersions: LibraryCatalogVersion array`, Orleans serializer field identity 10. Addition retains its known predecessor; removal resets the set. The field commits with catalog/Pending completion, with actual actor failure/replay and nonempty serialization coverage. No new store, lifecycle or data migration. |
 | Item submission precondition | Accept current or known additive predecessor versions after all existing current permissions/path/namespace/content checks. Resolve exact recorded receipts first and preserve them. Catalog administration retains its exact-version precondition. |
 | RepositoryLibraryActor, notifications and shared events | Use the existing content-free wake payload with current cursor/new catalog version and catalog-specific message identity. Best-effort catalog wake does not change content progress or its failed-envelope slot. Periodic/startup reads recover missed hints; no new event shape selected. |
 | HTTP routes, SDK, OpenAPI and generated clients | Existing request/response shapes and routes remain. Document the changed item-submission precondition; regenerate only schemas/descriptions that actually change. No additional catalog history API is selected. |

@@ -235,22 +235,23 @@ module internal LibraryLocalState =
         readOperationsWith connection None repositoryId
 
     /// Changes only the selected catalog after comparing every local input inside the SQLite transaction.
-    let adoptCatalogWith afterWrite dbPath (expected: RepositoryState) items operations (selected: LibraryCatalogDto) =
+    let selectCatalogWith afterWrite dbPath (expected: RepositoryState) items operations (selected: LibraryCatalogDto) =
         use connection = openConnection dbPath
         use transaction = connection.BeginTransaction()
 
-        if not expected.Paused
-           || expected.Baseline.IsSome
-           || expected.NextPageToken.IsSome
-           || operations
-              |> Array.exists (fun (operation: PendingOperation) -> not operation.Terminal)
+        if expected.Paused
+           || expected.Baseline
+              |> Option.exists (fun baseline -> not baseline.Applied)
+           || selected.RepositoryId <> expected.RepositoryId
+           || expected.Catalog.Libraries
+              |> Array.exists (fun root -> not (selected.Libraries |> Array.contains root))
            || readRepositoryWith connection (Some transaction) expected.RepositoryId
               <> Some expected
            || readItemsWith connection (Some transaction) expected.RepositoryId
               <> items
            || readOperationsWith connection (Some transaction) expected.RepositoryId
               <> operations then
-            invalidOp "Library participation, materialized items or operations changed before catalog adoption."
+            invalidOp "Library participation, materialized items or operations changed before catalog selection."
 
         execute
             connection
@@ -678,19 +679,13 @@ module internal LibraryLocalState =
             operation.Accepted
             |> Option.defaultWith (fun () -> invalidOp "Library completion requires an accepted result.")
 
-        if not operation.Prepared
-           || operation.Terminal
-           || change.OperationId <> operation.OperationId
-           || operation.ExpectedCursor <> expected.AppliedCursor
-           || operation.ExpectedCatalogVersion
-              <> expected.Catalog.Version
-           || (change.LibraryCatalogVersion
-               <> expected.Catalog.Version
-               && not (
-                   operation.Direction = "remote"
-                   && expected.Catalog.Libraries.Length = 2
-                   && expected.Catalog.PreviousVersion = Some change.LibraryCatalogVersion
-               )) then
+        if
+            not operation.Prepared
+            || operation.Terminal
+            || change.OperationId <> operation.OperationId
+            || operation.ExpectedCursor <> expected.AppliedCursor
+            || not (Grace.Shared.Validation.Library.configurationOwnsPath expected.Catalog operation.TargetPath)
+        then
             invalidOp "Library completion catalog or predecessor does not match preparation."
 
         use connection = openConnection dbPath

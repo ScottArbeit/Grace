@@ -10,7 +10,7 @@ An authorized participant edits ordinary nonempty files in a repository-owned Li
 
 One configured repository-relative root is one Library. A repository owns a complete catalog of at most 128 non-overlapping roots. Adding a root requires an empty outgoing version-control namespace; removing it requires an empty Library namespace. A catalog change changes path ownership, never imports or moves files.
 
-The Windows client supports two authorized copies initially onboarded to one Library root. A publishes nonempty files and nested directories; a fresh B joins with an empty local Library root, installs exact selected baseline revisions, catches up with changes accepted after selection, and restarts without duplicate publication or completed-file rewrites. Issue #1081 is being revised for automatic synchronization of every added Library, as accepted below. Existing-file reconciliation, root removal/relocation and automatic rebaseline remain deferred.
+The Windows client supports authorized copies onboarded to every configured Library root. A publishes nonempty files and nested directories; a fresh B joins with empty or missing ordinary local roots, installs exact selected baseline revisions, catches up with changes accepted after selection, and restarts without duplicate publication or completed-file rewrites. Issue #1081 adds automatic synchronization of every added Library, as described below. Existing-file reconciliation, root removal/relocation and automatic rebaseline remain deferred.
 
 The explicit command lets a user rename one synchronized nonempty file within its directory while both Windows copies retain the same item and content history. The accepted command and failure behavior appear below. Automatic recognition of an Explorer rename remains deferred.
 
@@ -322,7 +322,7 @@ For an incoming file rename, changed old-path bytes may be removed only when tho
 
 ## Automatic synchronization of added Libraries
 
-**Accepted by Scott on 2026-09-10; implementation pending.** The [owner correction](https://github.com/ScottArbeit/Grace/issues/1037#issuecomment-5615996371) replaces the earlier manual D1-D3 workflow. [Issue #1081](https://github.com/ScottArbeit/Grace/issues/1081) remains the task. [PR #1082](https://github.com/ScottArbeit/Grace/pull/1082) at `061ab711858f49cf1e9f81949e51b06d753eb9ac` implements the rejected manual design and must not merge as the solution. Its tests and [captured experiment](design/Libraries.Catalog-Adoption-Experiment.md) remain historical evidence.
+**Accepted by Scott on 2026-09-10; automatic candidate implemented locally.** The [owner correction](https://github.com/ScottArbeit/Grace/issues/1037#issuecomment-5615996371) replaces the earlier manual D1-D3 workflow. [Issue #1081](https://github.com/ScottArbeit/Grace/issues/1081) remains the task. The earlier [PR #1082](https://github.com/ScottArbeit/Grace/pull/1082) revision `061ab711858f49cf1e9f81949e51b06d753eb9ac` implements the rejected manual design. Its tests and [captured experiment](design/Libraries.Catalog-Adoption-Experiment.md) remain historical evidence; the replacement requires fresh review and CI.
 
 ### Accepted behavior
 
@@ -334,7 +334,7 @@ Preserve working-copy identity, existing materialized bases, typed operations, v
 
 The delivered Windows onboarding, explicit file rename, `Common.ItemKind`, rejection/resume and durable pause decisions remain accepted. Participation/progress DUs and an AppliedCursor wrapper remain unaccepted. Removal/relocation, automatic rebaseline, existing-file reconciliation, additional platforms and stronger cross-domain reservation remain outside this addition outcome. No production-data migration is implied.
 
-### Selected implementation and required experiment
+### Selected implementation and completed experiment
 
 Use the existing repository actor, root lease, three-table local store, finite synchronization path and Watch scheduling. Remove the manual command from the candidate. Refresh catalog classification during normal Watch operation and at startup, and make catalog creation prompt a content-free wake even when it produces no content change. Keep periodic catalog reads so a lost hint cannot strand a copy.
 
@@ -346,13 +346,13 @@ Use the existing `LibraryContentAvailable.v1` advisory payload with the current 
 
 The [automatic addition experiment](design/Libraries.Automatic-Addition-Experiment.md) passed its finite algorithm gate: all named Windows/SQLite console cases, 8/8 actual actor/serialization cases and 3/3 hosted cases using actual CLI processes, HTTP and signed one-item pages. It covers multiple additions, queued work, old prepared local/incoming publication, initial multi-root onboarding and an addition during baseline download. It confirms prevalidation before catalog selection, exact input retention and ordinary restart. Its earlier rejected-work variant and final compatible-work variant have distinct coverage. Live Watch refresh/retry, notification delivery, cancellation and candidate command-level negative cases remain production acceptance requirements.
 
-The selected server catalog and retained feed must be reread before catalog-dependent effects; local row, operation and target observations must be checked under the root lease. Exact frozen requests and accepted changes remain immutable. Catalog versions are identities, not a sortable sequence. An additive set comparison alone cannot establish the history of a removed and recreated root. The experiment must establish which existing records can distinguish supported additions and safely finish older work before implementation removes any guard.
+The selected server catalog and retained feed are reread before catalog-dependent effects; local row, operation and target observations are checked under the root lease. Exact frozen requests and accepted changes remain immutable. Catalog versions are identities, not a sortable sequence. A changed selection requires strictly more roots with every previous root preserved. This does not infer the history of an unseen removed/recreated root: the server retains only explicitly recorded additive predecessors for request acceptance, and genuine feed items outside current roots stop application.
 
-The first executable user test runs two enabled Windows copies, adds an empty Library through the actual administrator command, observes its automatic local creation, publishes content in it, and observes the other copy download it without an adoption command or manual restart. A second copy stopped across additions must discover all added roots when restarted. Existing-root edits and interruption recovery belong in the same test sequence. [Validation mapping](design/Libraries.Catalog-Adoption-Validation.md) separates these pending cases from the rejected candidate's results.
+The candidate's live Watch test runs two enabled Windows copies, adds an empty Library through the actual administrator command, observes its automatic local creation, publishes content in it, and observes the other copy download it without an adoption command or manual restart. Separate hosted cases reopen copies across multiple additions and publication interruptions. [Validation mapping](design/Libraries.Catalog-Adoption-Validation.md) records actual candidate results and provider limitations separately from the rejected candidate's results.
 
 ### Automatic addition delivery and stop conditions
 
-Continue one Tier 2 mainline slice in Issue #1081 with one implementation owner and a replacement charter after the experiment. Preserve the old candidate in Git history. Commit the revised documentation separately before runtime edits. No integration branch or enabling PR is currently justified.
+The replacement runs as one Tier 2 mainline slice in Issue #1081 with one implementation owner under its frozen charter. The old candidate remains in Git history, and revised documentation was committed separately before runtime edits. No integration branch or enabling PR is justified by this implementation.
 
 Stop dependent implementation if the experiment needs another durable lifecycle, actor owner, conflict rule, frozen-request rewrite, skipped history, automatic rebaseline or stronger cross-domain guarantee. Record the concrete result and the smallest recommended decision. Automatic discovery and synchronization of all Libraries is already accepted and must not be put back to Scott as an open choice.
 

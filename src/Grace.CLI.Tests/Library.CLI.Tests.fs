@@ -18,13 +18,13 @@ module LibraryCommandTests =
 
     /// Invokes the real command action with cancellation while another holder owns the configured root lease.
     [<Test>]
-    let ``adopt catalog command cancellation while waiting leaves participation untouched`` () =
+    let ``automatic sync command cancellation while waiting leaves participation untouched`` () =
         task {
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
 
             let previousDirectory = Environment.CurrentDirectory
-            let root = Path.Combine(Path.GetTempPath(), $"grace-adoption-command-{Guid.NewGuid():N}")
+            let root = Path.Combine(Path.GetTempPath(), $"grace-automatic-command-{Guid.NewGuid():N}")
             let grace = Directory.CreateDirectory(Path.Combine(root, ".grace"))
             let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
             configuration.OwnerId <- Guid.NewGuid()
@@ -55,7 +55,7 @@ module LibraryCommandTests =
                         AppliedCursor = "opaque-command-predecessor"
                         NextPageToken = None
                         State = "current"
-                        Paused = true
+                        Paused = false
                         Baseline = None
                     }
 
@@ -71,7 +71,7 @@ module LibraryCommandTests =
                 let parsed =
                     GraceCommand.rootCommand.Parse [| "library"
                                                       "sync"
-                                                      "adopt-catalog"
+                                                      "run"
                                                       "--output"
                                                       "Json" |]
 

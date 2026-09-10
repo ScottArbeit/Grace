@@ -147,8 +147,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `219`
-- JSON-ready routed commands: `198`
+- Total leaf commands: `218`
+- JSON-ready routed commands: `197`
 - Conditionally JSON-ready routed commands: `1`
 - Intentionally human-only commands: `0`
 - Deferred routed commands with explicit V2 scope: `11`
@@ -201,7 +201,7 @@ The `library` command group uses the same result envelope as other JSON-ready co
 
 - `library get <path>` and `library list` return the persisted `LibraryCatalogDto`.
 - `library add <path>` and `library remove <path>` return `LibraryCatalogChangeResultDto`.
-- `library sync enable/run/pause/adopt-catalog/resume/status` return `Enabled`, `Paused`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, `AppliedCursor`, and `PendingOperationCount`. State is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`; pause is independent from that progress. Adoption changes only the catalog and remains paused with the exact retained cursor and epoch. Restart Watch and explicitly resume to apply changes. The applied cursor is absent until all required baseline work is verified and its boundary commits; received pages never count as completed application. Pending count includes unfinished baseline items. Initial catch-up remains gated from saved-file capture until its complete pull. These commands support `--schema`, `--examples`, and `--select` through the same registry.
+- `library sync enable/run/pause/resume/status` return `Enabled`, `Paused`, `State`, `LibraryCatalogVersion`, `CursorEpoch`, `AppliedCursor`, and `PendingOperationCount`. State is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`; pause is independent from that progress. Enabled active copies select added Libraries automatically without changing their applied cursor or epoch. The applied cursor is absent until all required baseline work is verified and its boundary commits; received pages never count as completed application. Pending count includes unfinished baseline items. Initial catch-up remains gated from saved-file capture until its complete pull. A retained rejected request keeps status blocked even if unrelated earlier changes download; explicit run/resume still returns the rejection error. These commands support `--schema`, `--examples`, and `--select` through the same registry.
 - `library rename` returns `OperationId`, `SourcePath`, `TargetPath`, `Outcome`, `ReasonCode`, and `Diagnostic`. Outcomes are `completed`, `rejected`, `ambiguous`, and `acceptedButObstructed`; an incomplete result retains the operation identity for retry. `ReasonCode` holds the stable server rejection code, while `Diagnostic` explains ambiguous acceptance or incomplete local application. Both are absent for completion. Its `--schema`, `--examples`, and `--select` metadata uses the same `RenameOutput` type as the command; the internal outcome is typed before explicit CLI conversion.
 
 Catalog changes require a positional Library path. `--expected-version` is optional: omission performs one scoped catalog read, while an explicit value skips that read. `--operation-id` is optional: omission creates one ID per invocation, while an explicit ID passes through unchanged. Lookup errors prevent submission; stale results return without automatic retry. Exact retries require identical request details, including explicit version and operation ID. Automation must inspect

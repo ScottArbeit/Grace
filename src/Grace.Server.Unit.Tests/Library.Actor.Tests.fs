@@ -860,13 +860,17 @@ type LibraryCatalogRecoveryStorage() =
     let records = Dictionary<string, obj>()
     let mutable fault = ""
     let mutable number = 0
+    /// Separates persisted record types and grain keys in the recovery fixture.
     let key grainType grainId = string grainType + "|" + string grainId
 
+    /// Arms one before-write or lost-response failure for the next matching catalog effect.
     member _.Fault
         with set value = fault <- value
 
+    /// Seeds an exact existing record without running unrelated provider enumeration.
     member _.Store<'T>(kind: string, recordKey: string, value: 'T) = records[key kind (GrainId.Create(kind, recordKey))] <- box value
 
+    /// Reads the durable catalog state independently of actor activation.
     member _.Control(repositoryId: Guid) =
         unbox<LibraryControlDocument> records[key "Grace.Library.Control.v2" (GrainId.Create("Grace.Library.Control.v2", repositoryId.ToString("D")))]
 
@@ -1005,6 +1009,25 @@ type LibraryCatalogRecoveryTests() =
         function
         | Ok value -> value
         | Error error -> failwith error
+
+    /// Keeps empty and nonempty catalog hints admissible without consuming content-notification progress.
+    [<TestCase(0L); TestCase(17L)>]
+    member _.CatalogWakeRetainsCommittedCursorAndHasIndependentIdentity(cursor) =
+        let repositoryId, _, original = initial ()
+        let control = { original with CommittedCursor = cursor; NotifyThrough = 0L }
+        let before = serialize control
+        let key = Array.create 32 7uy
+        let identity, payload = LibraryNotifications.catalogWake key repositoryId control
+        let duplicate = LibraryNotifications.catalogWake key repositoryId control
+        let next = { control with Catalog = { control.Catalog with Version = Guid.NewGuid() } }
+        let nextIdentity, nextPayload = LibraryNotifications.catalogWake key repositoryId next
+        Assert.That(LibraryTokens.tryCursor key repositoryId payload.AvailableAfterCursor, Is.EqualTo(Some(control.Epoch, cursor)))
+        Assert.That(payload.LibraryCatalogVersion, Is.EqualTo(control.Catalog.Version))
+        Assert.That(duplicate, Is.EqualTo((identity, payload)))
+        Assert.That(nextIdentity, Is.Not.EqualTo(identity))
+        Assert.That(nextPayload.AvailableAfterCursor, Is.EqualTo(payload.AvailableAfterCursor))
+        Assert.That(identity, Does.StartWith("LibraryCatalogAvailable/"))
+        Assert.That(serialize control, Is.EqualTo(before))
 
     /// Replays catalog writes before and after persisted effects, reopening the actor from its saved records.
     [<TestCase("none");
@@ -1231,7 +1254,8 @@ type LibraryCatalogRecoveryTests() =
     member _.RemovalResetsAllowanceAndRootLimitBoundsHistory() =
         task {
             let repositoryId, storage, original = initial ()
-            let mutable count = 1
+            storage.Store("Grace.Library.Control.v2", repositoryId.ToString("D"), { original with Catalog = { original.Catalog with Libraries = [||] } })
+            let mutable count = 0
 
             while count < 128 do
                 pending repositoryId storage true ("Root" + string count)
@@ -1245,7 +1269,7 @@ type LibraryCatalogRecoveryTests() =
 
             let atLimit = storage.Control repositoryId
             Assert.That(atLimit.Catalog.Libraries.Length, Is.EqualTo(128))
-            Assert.That(atLimit.AdditiveCatalogVersions.Length, Is.EqualTo(127))
+            Assert.That(atLimit.AdditiveCatalogVersions.Length, Is.EqualTo(128))
 
             let! over =
                 (actor repositoryId (Allowed "yes") storage)

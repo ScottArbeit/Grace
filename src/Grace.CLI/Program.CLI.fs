@@ -1303,7 +1303,6 @@ module GraceCommand =
                                                    "enable"
                                                    "run"
                                                    "pause"
-                                                   "adopt-catalog"
                                                    "resume"
                                                    "status"
                                                ]

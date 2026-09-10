@@ -59,6 +59,14 @@ module internal LibrarySynchronization =
     type private LibraryPausedException() =
         inherit InvalidOperationException("Library synchronization is paused. Run 'grace library sync resume' to continue.")
 
+    /// Requests a fresh selection when an additive server change races an active synchronization run.
+    type private LibraryCatalogChangedException() =
+        inherit InvalidOperationException("Library catalog changed during synchronization; rereading the catalog.")
+
+    /// Keeps the existing rejected-work error visible while Watch remains available for unrelated downloads.
+    type private LibraryRejectedWorkException(reason: string) =
+        inherit InvalidOperationException($"Library saved input remains pending: {reason}.")
+
     /// Rejects active commands after their lease-protected participation read observes pause.
     let private requireActive (current: RepositoryState) = if current.Paused then raise (LibraryPausedException())
 
@@ -104,6 +112,35 @@ module internal LibrarySynchronization =
             |> Option.defaultWith (fun () -> invalidOp "Library item has no live namespace.")
 
         parentPath items ns.Parent + "/" + ns.Name
+
+    /// Validates the actual feed root identity, including tombstones and materialized parent chains, without ordering catalog GUIDs.
+    let internal requireAcceptedRoot (selected: LibraryCatalogDto) (items: LibraryItemDto array) (change: LibraryChangeDto) =
+        let visited = HashSet<Guid>()
+
+        /// Follows live directory edges until the change's configured root is known.
+        let rec root (parent: LibraryParentDto) =
+            match parent.Kind, parent.LibraryPath, parent.ItemId with
+            | "root", Some path, None when selected.Libraries |> Array.contains path -> ()
+            | "item", None, Some id when visited.Add id ->
+                match items
+                      |> Array.tryFind (fun item ->
+                          item.ItemId = id
+                          && item.Tombstone.IsNone
+                          && item.ItemKind = ItemKind.Directory)
+                    with
+                | Some item when item.Namespace.IsSome -> root item.Namespace.Value.Parent
+                | _ -> invalidOp "Library accepted history has no live materialized parent."
+            | _ -> invalidOp "Library accepted history references a root outside the selected catalog; local work is retained."
+
+        let ns =
+            change.Item.Namespace
+            |> Option.orElseWith (fun () ->
+                change.Item.Tombstone
+                |> Option.map (fun tombstone -> tombstone.LastNamespace))
+
+        match ns with
+        | Some ns -> root ns.Parent
+        | None -> invalidOp "Library accepted history has no namespace."
 
     /// Captures the exact materialized item and parent chain used to choose an effect.
     let private ancestry (items: LibraryItemDto array) (item: LibraryItemDto) =
@@ -226,7 +263,7 @@ module internal LibrarySynchronization =
                     }
         }
 
-    /// Selects a baseline only for a fresh empty local Library root, preserving existing participation on retry.
+    /// Selects a baseline only for fresh empty local Library roots, preserving existing participation on retry.
     let private enableParticipation (configuration: GraceConfiguration) correlationId cancellationToken =
         task {
             if not (OperatingSystem.IsWindows()) then
@@ -249,7 +286,7 @@ module internal LibrarySynchronization =
             return! status configuration
         }
 
-    /// Reads the authoritative catalog for a Watch lifetime or a synchronization decision.
+    /// Reads the current remote catalog for Watch classification or a synchronization decision.
     let catalog configuration correlationId =
         task {
             let! result = Libraries.GetCatalog(scoped configuration correlationId (GetLibraryCatalogParameters()))
@@ -289,243 +326,112 @@ module internal LibrarySynchronization =
             let! result = Libraries.GetCatalog(scoped configuration correlationId (GetLibraryCatalogParameters()))
             let catalog = value result
 
-            if catalog <> expected.Catalog
-               || state configuration <> expected then
+            if state configuration <> expected then
                 invalidOp "Library catalog or applied predecessor changed; synchronization has stopped before local effects."
+
+            if catalog <> expected.Catalog then
+                if catalog.RepositoryId = expected.RepositoryId
+                   && catalog.Libraries.Length > expected.Catalog.Libraries.Length
+                   && expected.Catalog.Libraries
+                      |> Array.forall (fun root -> catalog.Libraries |> Array.contains root) then
+                    raise (LibraryCatalogChangedException())
+                else
+                    invalidOp "Library removal or relocation is unsupported; local work is retained."
         }
 
-    /// Limits replay to the selected catalog and its one supported additive predecessor.
-    let internal requireAcceptedCatalog (selected: LibraryCatalogDto) (change: LibraryChangeDto) =
-        if
-            change.LibraryCatalogVersion <> selected.Version
-            && not
-                (
-                    selected.Libraries.Length = 2
-                    && selected.PreviousVersion = Some change.LibraryCatalogVersion
-                )
-        then
-            invalidOp "Library accepted history belongs to an unsupported catalog; local work is retained."
-
-    /// Derives the complete clean tree from live materialization and checks ordinary physical ancestry and bytes.
-    let internal requireAdoptionTree (configuration: GraceConfiguration) (selected: LibraryCatalogDto) (items: LibraryItemDto array) =
-        let expected = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        let visiting = HashSet<Guid>()
-        let resolved = Dictionary<Guid, string>()
-
-        /// Resolves live directory edges with cycle detection before any filesystem enumeration.
-        let rec resolve (item: LibraryItemDto) =
-            match resolved.TryGetValue item.ItemId with
-            | true, path -> path
-            | _ ->
-                if
-                    item.Tombstone.IsSome || item.Namespace.IsNone
-                    || not (visiting.Add item.ItemId)
-                then
-                    invalidOp "Library materialized ancestry is invalid."
-
-                let ns = item.Namespace.Value
-
-                let parent =
-                    match ns.Parent.Kind, ns.Parent.LibraryPath, ns.Parent.ItemId with
-                    | "root", Some root, None when selected.Libraries |> Array.contains root -> root
-                    | "item", None, Some id ->
-                        match items
-                              |> Array.tryFind (fun candidate -> candidate.ItemId = id)
-                            with
-                        | Some parent when
-                            parent.ItemKind = ItemKind.Directory
-                            && parent.Tombstone.IsNone
-                            ->
-                            resolve parent
-                        | _ -> invalidOp "Library materialized parent is not a live directory."
-                    | _ -> invalidOp "Library materialized parent is outside the selected catalog."
-
-                let name =
-                    normalizeName ns.Name
-                    |> Result.defaultWith invalidOp
-
-                if name <> ns.Name then invalidOp "Library materialized name is not normalized."
-                let path = parent + "/" + name
-                fullPath configuration path |> ignore
-                visiting.Remove item.ItemId |> ignore
-                resolved.Add(item.ItemId, path)
-                path
-
-        selected.Libraries
-        |> Array.iter (fun root -> expected.Add(root, "directory"))
-
-        items
-        |> Array.filter (fun item -> item.Tombstone.IsNone)
-        |> Array.iter (fun item ->
-            let path = resolve item
-
-            let fingerprint =
-                match item.ItemKind, item.Content, item.ContentRevision with
-                | kind, None, None when kind = ItemKind.Directory -> "directory"
-                | kind, Some content, Some _ when kind = ItemKind.File && content.Size > 0L -> contentFingerprint content
-                | _ -> invalidOp "Library materialization has no supported complete content."
-
-            if not (expected.TryAdd(path, fingerprint)) then
-                invalidOp "Library materialized paths overlap.")
-
-        let actual = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-
-        /// Refuses links before descending and compares full content identity without capturing objects.
-        let rec visit relative =
-            let path = fullPath configuration relative
-            let attributes = File.GetAttributes path
-
-            if attributes.HasFlag(FileAttributes.ReparsePoint) then
-                invalidOp "Library catalog adoption rejects reparse points."
-
-            if attributes.HasFlag(FileAttributes.Directory) then
-                actual.Add(relative, "directory")
-
-                Directory.GetFileSystemEntries(path)
-                |> Array.iter (fun child -> visit (relative + "/" + Path.GetFileName child))
-            else
-                let content = LibraryFilesystem.stableIdentity path
-
-                if content.Size = 0L then
-                    invalidOp "Library catalog adoption preserves excluded empty files."
-
-                actual.Add(relative, LibraryOperation.fingerprint content)
-
-        selected.Libraries
-        |> Array.iter (fun relative ->
-            let mutable parent = fullPath configuration relative
-
-            let root =
-                Path
-                    .GetFullPath(configuration.RootDirectory)
-                    .TrimEnd(Path.DirectorySeparatorChar)
-
-            while parent.Length >= root.Length do
-                if
-                    not (Directory.Exists parent)
-                    || File
-                        .GetAttributes(parent)
-                        .HasFlag(FileAttributes.ReparsePoint)
-                then
-                    invalidOp "Library catalog adoption requires ordinary existing root directories and ancestry."
-
-                parent <- Path.GetDirectoryName parent
-
-            visit relative)
-
-        if actual.Count <> expected.Count
-           || expected
-              |> Seq.exists (fun entry ->
-                  match actual.TryGetValue entry.Key with
-                  | true, value -> value <> entry.Value
-                  | _ -> true) then
-            invalidOp "Library catalog adoption requires clean materialized roots and an empty added root; local input is retained."
-
-    /// Adopts one additive catalog under root exclusion, retaining every non-catalog row and all local bytes.
-    let internal adoptCatalogWith
+    /// Selects an additive catalog under the caller's root lease, retaining all operation input and application progress.
+    let internal refreshCatalogWith
         beforeCommit
         afterWrite
         (getCatalog: unit -> Task<LibraryCatalogDto>)
-        (getChanges: string -> Task<LibraryChangePageDto>)
         (configuration: GraceConfiguration)
         (cancellationToken: CancellationToken)
         =
         task {
-            if not (OperatingSystem.IsWindows()) then
-                invalidOp "Library catalog adoption requires Windows 11."
+            let original = state configuration
+            requireActive original
 
-            let scope =
-                WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
+            if original.Baseline
+               |> Option.forall (fun baseline -> baseline.Applied) then
+                let! selected = getCatalog ()
+
+                normalizeLibraries selected.Libraries
                 |> Result.defaultWith invalidOp
+                |> ignore
 
-            use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
-            do! initialize configuration.GraceStatusFile
-            let before = state configuration
+                if selected.RepositoryId <> original.RepositoryId
+                   || (selected <> original.Catalog
+                       && selected.Libraries.Length
+                          <= original.Catalog.Libraries.Length)
+                   || selected.Libraries
+                      |> Array.exists (fun root -> normalizeRepositoryRelativePath root <> Ok root)
+                   || original.Catalog.Libraries
+                      |> Array.exists (fun root -> not (selected.Libraries |> Array.contains root)) then
+                    invalidOp "Library removal, relocation or invalid catalog roots are unsupported; local work is retained."
 
-            if not before.Paused
-               || before.Baseline.IsSome
-               || before.NextPageToken.IsSome then
-                invalidOp "Library catalog adoption requires completed onboarding, durable pause and no partial feed page."
+                if selected <> original.Catalog then
+                    let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+                    let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
 
-            let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
-            let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+                    let added =
+                        selected.Libraries
+                        |> Array.filter (fun root -> not (original.Catalog.Libraries |> Array.contains root))
 
-            if operations
-               |> Array.exists (fun operation -> not operation.Terminal) then
-                invalidOp "Library catalog adoption requires all retained operations to be terminal."
+                    added
+                    |> Array.iter (
+                        LibraryFilesystem.requireEmptyRoot configuration
+                        >> ignore
+                    )
 
-            let! selected = getCatalog ()
+                    beforeCommit ()
+                    let! confirmed = getCatalog ()
+                    cancellationToken.ThrowIfCancellationRequested()
+                    if confirmed <> selected then raise (LibraryCatalogChangedException())
 
-            normalizeLibraries selected.Libraries
-            |> Result.defaultWith invalidOp
-            |> ignore
+                    added
+                    |> Array.iter (
+                        LibraryFilesystem.requireEmptyRoot configuration
+                        >> ignore
+                    )
 
-            if selected.RepositoryId <> before.RepositoryId
-               || selected.Libraries
-                  |> Array.exists (fun root -> normalizeRepositoryRelativePath root <> Ok root) then
-                invalidOp "Library catalog adoption requires normalized non-overlapping roots for this repository."
+                    selectCatalogWith afterWrite configuration.GraceStatusFile original items operations selected
 
-            let duplicate = selected = before.Catalog
+                let current = state configuration
+                let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+                let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
 
-            if selected.Libraries.Length <> 2
-               || selected.PreviousVersion.IsNone
-               || (not duplicate
-                   && (before.Catalog.Libraries.Length <> 1
-                       || selected.PreviousVersion
-                          <> Some before.Catalog.Version
-                       || selected.Version = before.Catalog.Version
-                       || not (
-                           selected.Libraries
-                           |> Array.contains before.Catalog.Libraries[0]
-                       ))) then
-                invalidOp "Library catalog adoption supports only one direct successor adding a root with the original unchanged."
+                current.Catalog.Libraries
+                |> Array.iter (fun root ->
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let path = LibraryFilesystem.requireRootPath configuration root
 
-            requireAdoptionTree configuration selected items
-            let! page = getChanges before.AppliedCursor
+                    if not (Directory.Exists path) then
+                        /// Identifies physical expectations that prevent recreating a removed materialized root.
+                        let owns relative =
+                            pathsEqual root relative
+                            || relative.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase)
 
-            if page.Rebaseline.IsSome
-               || page.CursorEpoch <> before.CursorEpoch then
-                invalidOp "Library catalog adoption cannot replace unavailable history or a changed epoch."
+                        let materialized =
+                            items
+                            |> Array.exists (fun item ->
+                                item.Tombstone.IsNone
+                                && owns (itemPath items item))
 
-            if page.HasMore || page.NextPageToken.IsSome then
-                invalidOp "Library catalog adoption requires a complete retained feed response."
+                        let prepared =
+                            operations
+                            |> Array.exists (fun operation ->
+                                operation.Prepared
+                                && not operation.Terminal
+                                && (owns operation.SourcePath
+                                    || owns operation.TargetPath))
 
-            page.Changes
-            |> Array.iter (requireAcceptedCatalog selected)
+                        if materialized || prepared then
+                            invalidOp "A materialized Library root is missing; local work is retained."
 
-            let last =
-                page.Changes
-                |> Array.tryLast
-                |> Option.map (fun change -> change.Item.LastChangeCursor)
-                |> Option.defaultValue before.AppliedCursor
-
-            if last <> page.LastCursor then
-                invalidOp "Library feed does not retain the selected completed predecessor."
-
-            beforeCommit ()
-            let! latest = getCatalog ()
-            cancellationToken.ThrowIfCancellationRequested()
-            if latest <> selected then invalidOp "Library catalog changed before adoption."
-            requireAdoptionTree configuration selected items
-            LibraryLocalState.adoptCatalogWith afterWrite configuration.GraceStatusFile before items operations selected
-            return! status configuration
+                        LibraryFilesystem.requireRootPath configuration root
+                        |> Directory.CreateDirectory
+                        |> ignore)
         }
-
-    /// Uses the existing catalog and retained-feed SDK routes for the explicit local adoption command.
-    let adoptCatalog configuration correlationId cancellationToken =
-        adoptCatalogWith
-            ignore
-            (fun _ _ -> ())
-            (fun () -> catalog configuration correlationId)
-            (fun cursor ->
-                task {
-                    let parameters = scoped configuration correlationId (GetLibraryChangesParameters())
-                    parameters.AfterCursor <- cursor
-                    let! result = Libraries.GetChanges parameters
-                    return value result
-                })
-            configuration
-            cancellationToken
 
     /// Separates completed filenames, retained rejection and uncertain or obstructed progress.
     [<RequireQualifiedAccess>]
@@ -674,7 +580,6 @@ module internal LibrarySynchronization =
                 |> Array.tryPick (fun operation ->
                     if operation.Prepared
                        && not operation.Terminal
-                       && operation.ExpectedCatalogVersion = current.Catalog.Version
                        && operation.ExpectedCursor = current.AppliedCursor then
                         operation.Accepted
                         |> Option.bind (fun change ->
@@ -755,7 +660,6 @@ module internal LibrarySynchronization =
                                 |> Array.choose (fun operation ->
                                     if operation.Prepared
                                        && not operation.Terminal
-                                       && operation.ExpectedCatalogVersion = current.Catalog.Version
                                        && operation.ExpectedCursor = current.AppliedCursor
                                        && pathsEqual operation.TargetPath relative then
                                         operation.Accepted
@@ -827,7 +731,6 @@ module internal LibrarySynchronization =
                         |> Array.filter (fun operation ->
                             operation.Prepared
                             && not operation.Terminal
-                            && operation.ExpectedCatalogVersion = current.Catalog.Version
                             && operation.ExpectedCursor = current.AppliedCursor
                             && pathsEqual operation.TargetPath relative
                             && operation.Accepted
@@ -852,7 +755,6 @@ module internal LibrarySynchronization =
                             operation.Rename
                             && not operation.Prepared
                             && not operation.Terminal
-                            && operation.ExpectedCatalogVersion = current.Catalog.Version
                             && pathsEqual operation.TargetPath relative)
 
                     if not (
@@ -931,10 +833,6 @@ module internal LibrarySynchronization =
 
                 let current = state configuration
                 do! checkCatalog configuration correlationId current
-
-                if current.Catalog.Version
-                   <> operation.ExpectedCatalogVersion then
-                    invalidOp "Saved Library operation belongs to another catalog version."
 
                 let mutable prepared = None
 
@@ -1063,9 +961,10 @@ module internal LibrarySynchronization =
         task {
             cancellationToken.ThrowIfCancellationRequested()
             do! checkCatalog configuration correlationId expected
-            requireAcceptedCatalog expected.Catalog change
             captureSaved configuration |> ignore
             let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+
+            requireAcceptedRoot expected.Catalog items change
 
             let previous =
                 items
@@ -1078,6 +977,9 @@ module internal LibrarySynchronization =
 
             let target = fullPath configuration targetRelative
 
+            if not (configurationOwnsPath expected.Catalog targetRelative) then
+                invalidOp "Library accepted history references a root outside the selected catalog; local work is retained."
+
             let priorPath =
                 previous
                 |> Option.filter (fun item -> item.Tombstone.IsNone)
@@ -1086,6 +988,25 @@ module internal LibrarySynchronization =
 
             let priorTarget = fullPath configuration priorPath
             let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
+
+            operations
+            |> Array.iter (fun pending ->
+                match pending.Receipt with
+                | Some receipt when
+                    not pending.Terminal
+                    && receipt.Outcome = OutcomeKind.Rejected
+                    && (pathsEqual pending.SourcePath targetRelative
+                        || pathsEqual pending.TargetPath targetRelative
+                        || pending.MaterializedBase
+                           |> Option.exists (fun item -> item.ItemId = change.Item.ItemId))
+                    ->
+                    raise (
+                        LibraryRejectedWorkException(
+                            receipt.ReasonCode
+                            |> Option.defaultValue OutcomeKind.Rejected
+                        )
+                    )
+                | _ -> ())
 
             let existing =
                 operations
@@ -1196,8 +1117,6 @@ module internal LibrarySynchronization =
                     cancellationToken.ThrowIfCancellationRequested()
 
                     if state configuration <> expected
-                       || expected.Catalog.Version
-                          <> operation.ExpectedCatalogVersion
                        || expected.AppliedCursor <> operation.ExpectedCursor then
                         invalidOp "Library catalog or predecessor changed before filesystem effects."
 
@@ -1448,7 +1367,7 @@ module internal LibrarySynchronization =
         }
 
     /// Runs finite pending submissions and ordered pulls under the existing shared root lease.
-    let run (configuration: GraceConfiguration) correlationId cancellationToken =
+    let private runOnce (configuration: GraceConfiguration) correlationId cancellationToken =
         task {
             if not (OperatingSystem.IsWindows()) then
                 invalidOp "Library synchronization requires Windows 11."
@@ -1462,12 +1381,15 @@ module internal LibrarySynchronization =
             let original = state configuration
             requireActive original
 
-            if original.Baseline.IsNone then
-                setState configuration.GraceStatusFile original "catchingUp"
-
             try
+                do! refreshCatalogWith ignore (fun _ _ -> ()) (fun () -> catalog configuration correlationId) configuration cancellationToken
+
+                if original.Baseline.IsNone then
+                    setState configuration.GraceStatusFile (state configuration) "catchingUp"
+
                 if (state configuration).Baseline.IsSome then
                     do! LibraryBaseline.resumeWith ignore (baselineRemote configuration correlationId) configuration cancellationToken
+                    do! refreshCatalogWith ignore (fun _ _ -> ()) (fun () -> catalog configuration correlationId) configuration cancellationToken
 
                 let mutable again = true
                 let mutable caughtUp = false
@@ -1493,8 +1415,21 @@ module internal LibrarySynchronization =
                         if operation.Direction = "local"
                            && not operation.Terminal
                            && operation.Accepted.IsNone
+                           && operation.Receipt.IsNone
                            && originReady then
-                            do! submitLocal configuration correlationId operation
+                            try
+                                do! submitLocal configuration correlationId operation
+                            with
+                            | :? InvalidOperationException as error ->
+                                let retained =
+                                    readOperations configuration.GraceStatusFile configuration.RepositoryId
+                                    |> Array.find (fun value -> value.OperationId = operation.OperationId)
+
+                                if retained.Receipt
+                                   |> Option.exists (fun receipt -> receipt.Outcome = OutcomeKind.Rejected)
+                                   |> not then
+                                    raise error
+
                             submitted <- true
 
                         index <- index + 1
@@ -1523,18 +1458,68 @@ module internal LibrarySynchronization =
 
                 let current = state configuration
 
-                let pendingCount =
+                let pending =
                     readOperations configuration.GraceStatusFile configuration.RepositoryId
                     |> Array.filter (fun operation -> not operation.Terminal)
-                    |> Array.length
 
-                setState configuration.GraceStatusFile current (if caughtUp && pendingCount = 0 then "current" else "catchingUp")
+                let blocked =
+                    pending
+                    |> Array.exists (fun operation ->
+                        operation.Receipt
+                        |> Option.exists (fun receipt -> receipt.Outcome = OutcomeKind.Rejected))
+
+                setState
+                    configuration.GraceStatusFile
+                    current
+                    (if blocked then "blocked"
+                     elif caughtUp && pending.Length = 0 then "current"
+                     else "catchingUp")
+
                 pruneClassified configuration.GraceStatusFile configuration.RepositoryId 128
+
+                if blocked then
+                    let rejection =
+                        pending
+                        |> Array.pick (fun operation ->
+                            operation.Receipt
+                            |> Option.filter (fun receipt -> receipt.Outcome = OutcomeKind.Rejected))
+
+                    raise (
+                        LibraryRejectedWorkException(
+                            rejection.ReasonCode
+                            |> Option.defaultValue OutcomeKind.Rejected
+                        )
+                    )
+
                 return! status configuration
             with
+            | :? LibraryCatalogChangedException as ex ->
+                setState configuration.GraceStatusFile (state configuration) "catchingUp"
+                return raise ex
             | ex ->
                 setState configuration.GraceStatusFile (state configuration) "blocked"
                 return raise ex
+        }
+
+    /// Reopens selection after a racing addition; each retry releases the root lease and retains exact unfinished effects.
+    let run configuration correlationId (cancellationToken: CancellationToken) =
+        task {
+            let mutable result = None
+            let mutable attempts = 0
+
+            while result.IsNone && attempts <= MaximumRootCount do
+                cancellationToken.ThrowIfCancellationRequested()
+                attempts <- attempts + 1
+
+                try
+                    let! completed = runOnce configuration correlationId cancellationToken
+                    result <- Some completed
+                with
+                | :? LibraryCatalogChangedException -> ()
+
+            match result with
+            | Some completed -> return completed
+            | None -> return! status configuration
         }
 
     /// Lets a racing pause skip a Watch tick without terminating Watch or hiding unrelated synchronization failures.
@@ -1545,17 +1530,14 @@ module internal LibrarySynchronization =
                 return ()
             with
             | :? LibraryPausedException -> return ()
+            | :? LibraryRejectedWorkException -> return ()
         }
 
     /// Enables or resumes populated-Library onboarding, then catches up through genuine accepted changes.
     let enable configuration correlationId cancellationToken =
         task {
-            let! selected = enableParticipation configuration correlationId cancellationToken
-
-            if (state configuration).Baseline.IsSome then
-                return! run configuration correlationId cancellationToken
-            else
-                return selected
+            let! _ = enableParticipation configuration correlationId cancellationToken
+            return! run configuration correlationId cancellationToken
         }
 
     /// Commits a local setting without network access or draining retained operations.
@@ -1604,6 +1586,7 @@ module internal LibrarySynchronization =
                     use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
                     do! initialize configuration.GraceStatusFile
                     requireActive (state configuration)
+                    do! refreshCatalogWith ignore (fun _ _ -> ()) (fun () -> catalog configuration correlationId) configuration cancellationToken
                     do! checkCatalog configuration correlationId (state configuration)
                     return selectRenameWith ignore configuration sourcePath newName
                 }

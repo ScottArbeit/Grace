@@ -12,9 +12,9 @@ An authorized remote client can:
 - Read retained immutable content through a signed URL that remains valid until its fixed expiry.
 - Read content-free repository synchronization status.
 
-Local Product V1 supports Windows 11 and two authorized copies of one repository, with initial onboarding into one Library root. A new copy enables into an empty local Library directory and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
+Local Product V1 supports authorized Windows 11 copies of one repository and every configured Library root. A new copy enables into empty or missing ordinary local Library directories and can join after another copy has published nonempty files and nested directories. Disable, offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and execution on other platforms are outside this release.
 
-The accepted next behavior is [automatic synchronization of added Libraries](#automatically-receive-added-libraries). Issue #1081 is being revised to deliver it; PR #1082's manual adoption candidate is rejected and unmerged. Fresh onboarding must not replace an existing copy's retained state.
+[Automatic synchronization of added Libraries](#automatically-receive-added-libraries) extends existing participation without replacing retained state. Issue #1081 and PR #1082 track this change and its acceptance results.
 
 ## Library ownership
 
@@ -126,7 +126,7 @@ grace library sync status --output Json
 
 Enable A, create nonempty files and nested directories in its Library, and run synchronization in A. A fresh B can then enable into its empty local Library root. B installs the selected content and catches up with later accepted changes before normal saved-file capture starts. Edit a file in B and run synchronization in B and A. `grace watch` invokes this same finite synchronization path from its existing timer, including interrupted onboarding.
 
-`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. Catalog changes and rebaseline responses stop application and retain saved work.
+`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. Additive catalog changes refresh selection and retry safely. Removal, relocation and rebaseline responses stop application and retain saved work.
 
 Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation or catalog adoption.
 
@@ -232,11 +232,13 @@ Resume retains captured objects and exact pending requests, then captures the la
 
 ## Automatically receive added Libraries
 
-**Accepted behavior; replacement implementation pending in Issue #1081.** An administrator adds a Library to the repository. Every copy with Library synchronization enabled discovers it, creates its missing local directory and downloads its content automatically. A running Watch responds to notification; startup/reconnect and periodic reads recover missed notifications. An explicitly paused copy retains its pause and catches up after resume.
+An administrator adds a Library to the repository. Every copy with Library synchronization enabled discovers it, creates its missing local directory and downloads its content automatically. A running Watch responds to notification; startup/reconnect and periodic reads recover missed notifications. An explicitly paused copy retains its pause and catches up after resume.
 
 Synchronize every Library in the repository. Selective synchronization remains deferred. Receiving an added Library requires no `adopt-catalog` command, manual directory creation, clean-tree preparation, pause or Watch restart. Existing edits and saved requests remain protected. If a local file or directory obstructs the incoming Library, Grace preserves it and reports the problem.
 
-The manual command in unmerged PR #1082 is superseded by this requirement. Its tests do not establish automatic discovery, live policy refresh or automatic root creation. The [design](Libraries.Design.md#automatic-synchronization-of-added-libraries) and [validation mapping](design/Libraries.Catalog-Adoption-Validation.md) distinguish required behavior from completed testing.
+Queued requests keep their original identity and bytes across additions. The server accepts recorded additive predecessor versions after checking current permissions and namespace/content conditions. An already recorded rejection remains rejected; Grace does not rewrite or reissue it. Unrelated earlier downloads can complete while status remains blocked. A conflicting event stops ordered application with local input retained. Removal, relocation and rebaseline remain unsupported for an existing copy.
+
+The [design](Libraries.Design.md#automatic-synchronization-of-added-libraries) and [validation mapping](design/Libraries.Catalog-Adoption-Validation.md) record the implementation and its acceptance results for Issue #1081 and PR #1082.
 
 ## Deferred capabilities
 

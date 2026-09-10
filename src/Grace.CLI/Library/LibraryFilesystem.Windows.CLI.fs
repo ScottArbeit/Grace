@@ -10,6 +10,60 @@ open Grace.CLI.LibraryOperation
 /// Supplies the existing narrow Windows read and same-volume publication mechanics for Library files.
 module internal LibraryFilesystem =
 
+    /// Checks every existing directory from a configured Library root through the working root, permitting missing directories only.
+    let requireRootPath (configuration: GraceConfiguration) (relative: string) =
+        let normalized =
+            Grace.Shared.Validation.Library.normalizeRepositoryRelativePath relative
+            |> Result.defaultWith invalidOp
+
+        let root =
+            Path
+                .GetFullPath(configuration.RootDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar)
+
+        let path = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)))
+
+        if not (path.StartsWith(root + string Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) then
+            invalidOp "Library root escaped the working directory."
+
+        let mutable current = path
+
+        while current.Length >= root.Length do
+            let attributes =
+                try
+                    Some(File.GetAttributes current)
+                with
+                | :? FileNotFoundException
+                | :? DirectoryNotFoundException -> None
+
+            match attributes with
+            | Some value when
+                value.HasFlag(FileAttributes.ReparsePoint)
+                || not (value.HasFlag(FileAttributes.Directory))
+                ->
+                invalidOp "Library roots require ordinary directories and ancestry; local input is retained."
+            | _ -> ()
+
+            current <- Path.GetDirectoryName current
+
+        path
+
+    /// Refuses occupied additions before selection so previously unrelated local bytes cannot enter Library synchronization.
+    let requireEmptyRoot configuration relative =
+        let path = requireRootPath configuration relative
+
+        if
+            Directory.Exists path
+            && not
+                (
+                    Directory.EnumerateFileSystemEntries(path)
+                    |> Seq.isEmpty
+                )
+        then
+            invalidOp "An added Library root is occupied; local input is retained."
+
+        path
+
     /// Holds immutable bytes and their complete content identity for one captured save.
     type StableContent = { Bytes: byte array; Blake3Hash: string; Sha256Hash: string; Size: int64 }
 

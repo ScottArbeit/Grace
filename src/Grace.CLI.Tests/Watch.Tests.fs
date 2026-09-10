@@ -1734,6 +1734,48 @@ module WatchTests =
         Watch.takeLibraryWake () |> should equal true
         Watch.takeLibraryWake () |> should equal false
 
+    /// Refreshes callback exclusions through the same command context without restarting Watch or retaining cached VC decisions.
+    [<Test; Category("WatchPathClassification")>]
+    let ``Library policy refresh reaches inherited callbacks and refreshed ignore snapshot`` () =
+        withTempRepo (fun root ->
+            use policy = Services.beginLibraryPolicy [| "Library" |]
+            activateWatchIgnoreSnapshot ()
+            let path = Path.Combine(root, "Added", "shared.bin")
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path))
+            |> ignore
+
+            File.WriteAllBytes(path, [| 1uy; 2uy |])
+
+            Watch.shouldIgnoreFileForWatchTests path
+            |> should equal false
+
+            use released = new System.Threading.ManualResetEventSlim(false)
+
+            let inherited =
+                Task.Run (fun () ->
+                    released.Wait()
+                    Services.currentLibraries ())
+
+            try
+                policy.Update [| "Library"; "Added" |]
+                activateWatchIgnoreSnapshot ()
+            finally
+                released.Set()
+
+            inherited.GetAwaiter().GetResult()
+            |> should equal [| "Library"; "Added" |]
+
+            Watch.shouldIgnoreFileForWatchTests path
+            |> should equal true
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnCreated(createdEvent path)
+            Watch.OnChanged(changedEvent path)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>)
+
     /// Keeps configured Library files outside ordinary Watch save admission with or without local participation.
     [<Test; Category("WatchPathClassification")>]
     let ``Library callbacks stay outside ordinary Watch work`` () =
