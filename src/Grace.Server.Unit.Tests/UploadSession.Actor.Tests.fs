@@ -266,6 +266,26 @@ type UploadSessionActorTests() =
         use serviceProvider = services.BuildServiceProvider()
 
         let serializer = serviceProvider.GetRequiredService<Serializer<UploadSessionDto>>()
+        let blockSerializer = serviceProvider.GetRequiredService<Serializer<ContentBlockMetadataEvent>>()
+
+        let pending: ContentBlockMetadataEvent =
+            {
+                Event =
+                    ContentBlockMetadataEventType.UploadStateChanged
+                        { ContentBlockUploadState.Empty with
+                            Holders = [| sessionId |]
+                            Retired = [| Guid.NewGuid() |]
+                            PreparedETag = Some "\"etag-quoted\""
+                            Deleting = true
+                            Placement = Some(placementFor reuseBlockAddress None)
+                        }
+                Metadata = metadata "pending-codec"
+            }
+
+        let restored = blockSerializer.Deserialize(blockSerializer.SerializeToArray pending)
+        Assert.That(box restored.Event, Is.Not.Null, "Event union must survive the generated envelope codec.")
+        Assert.That(box restored.Metadata, Is.Not.Null, "Event metadata must survive the generated envelope codec.")
+        Assert.That(restored, Is.EqualTo(box pending))
 
         let blockIntent =
             {
@@ -274,6 +294,7 @@ type UploadSessionActorTests() =
                 LogicalLength = 34L
                 ExpectedPayloadLength = 56L
                 RegisteredAt = timestamp
+                PreparedPlacement = Some(placementFor reuseBlockAddress (Some "\"prepared-stage\""))
             }
 
         let session =
@@ -283,12 +304,16 @@ type UploadSessionActorTests() =
                 StoragePoolId = sessionStoragePoolId
                 LifecycleState = UploadSessionLifecycleState.UploadingBlocks
                 BlockUploadIntents = [| blockIntent |]
+                RetryExpiresAt = Some(timestamp + Duration.FromHours 1)
+                RetryWindowAdvancedAt = Some timestamp
             }
 
         let encoded = serializer.SerializeToArray(session)
         let decoded = serializer.Deserialize(encoded)
 
         Assert.That(decoded.UploadSessionId, Is.EqualTo(sessionId))
+        Assert.That(decoded.RetryExpiresAt, Is.EqualTo(session.RetryExpiresAt))
+        Assert.That(decoded.RetryWindowAdvancedAt, Is.EqualTo(session.RetryWindowAdvancedAt))
         Assert.That(decoded.RepositoryId, Is.EqualTo(repositoryId))
         Assert.That(decoded.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
         Assert.That(decoded.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.UploadingBlocks))
@@ -313,6 +338,15 @@ type UploadSessionActorTests() =
         let eventTypeSerializer = serviceProvider.GetRequiredService<Serializer<UploadSessionEventType>>()
         let decodedEventType = eventTypeSerializer.Deserialize(eventTypeSerializer.SerializeToArray(eventType))
         Assert.That(decodedEventType, Is.EqualTo(eventType))
+
+        for changed in
+            [
+                UploadSessionEventType.BlockUploadPrepared(blockIntent.ContentBlockAddress, blockIntent.PreparedPlacement.Value)
+                UploadSessionEventType.RetryWindowRecovered timestamp
+                UploadSessionEventType.RetryWindowClosed
+            ] do
+            let recovered = eventTypeSerializer.Deserialize(eventTypeSerializer.SerializeToArray changed)
+            Assert.That(recovered, Is.EqualTo(changed))
 
     /// Verifies that finalize Prevalidates All Metadata Merge Plans Before Side Effecting Merge Calls.
     [<Test>]
@@ -1506,6 +1540,7 @@ type UploadSessionActorTests() =
                             LogicalLength = intent.LogicalLength
                             ExpectedPayloadLength = intent.ExpectedPayloadLength
                             RegisteredAt = timestamp
+                            PreparedPlacement = None
                         }
                     |]
                 ConfirmedBlockUploads =
@@ -3030,6 +3065,7 @@ type UploadSessionActorTests() =
                 LogicalLength = 11L
                 ExpectedPayloadLength = block.Payload.LongLength
                 RegisteredAt = timestamp
+                PreparedPlacement = None
             }
 
         let confirmedBlock =
@@ -3412,3 +3448,131 @@ type UploadSessionActorTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected null claim payload to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))
+
+    /// Real progress can keep a long upload live, while duplicate confirmations and discovery preserve its deadline.
+    [<Test>]
+    member _.RetryClockAdvancesOnlyForNewConfirmedAddressesAndRanges() =
+        let initial, _ = startedSession ()
+        let later = timestamp + Duration.FromMinutes 55L
+        let eventMetadata = { metadata "clock" with Timestamp = later }
+        let block = encodedBlock [| 1uy; 2uy; 3uy |]
+
+        let confirmed: ConfirmedBlockUpload =
+            {
+                ContentBlockAddress = block.Address
+                PayloadLength = int64 block.Payload.Length
+                StoragePlacement = placementFor block.Address None
+                Ranges = [||]
+                ConfirmedAt = later
+            }
+
+        let progressed = apply { Event = UploadSessionEventType.BlockUploadConfirmed("first", confirmed); Metadata = eventMetadata } initial
+
+        let duplicate =
+            apply
+                {
+                    Event = UploadSessionEventType.BlockUploadConfirmed("different-operation", confirmed)
+                    Metadata = { eventMetadata with Timestamp = later + Duration.FromMinutes 30L }
+                }
+                progressed
+
+        Assert.That(progressed.RetryExpiresAt, Is.EqualTo(Some(later + Duration.FromHours 1)))
+        Assert.That(duplicate.RetryExpiresAt, Is.EqualTo(progressed.RetryExpiresAt))
+
+        let claimed: ClaimedReuseRange =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = reuseBlockAddress
+                OrdinalStart = 0
+                OrdinalCount = 1
+                PhysicalOffset = 0L
+                PhysicalLength = 10L
+                MetadataVersion = 1L
+                ClaimedAt = later
+            }
+
+        let claimTime = later + Duration.FromMinutes 50L
+
+        let claimedState =
+            apply
+                { Event = UploadSessionEventType.ReuseRangesClaimed("new-range", [| claimed |]); Metadata = { eventMetadata with Timestamp = claimTime } }
+                duplicate
+
+        let replayedClaim =
+            apply
+                {
+                    Event = UploadSessionEventType.ReuseRangesClaimed("same-range", [| claimed |])
+                    Metadata = { eventMetadata with Timestamp = claimTime + Duration.FromMinutes 10L }
+                }
+                claimedState
+
+        Assert.That(claimedState.RetryExpiresAt, Is.EqualTo(Some(claimTime + Duration.FromHours 1)))
+        Assert.That(replayedClaim.RetryExpiresAt, Is.EqualTo(claimedState.RetryExpiresAt))
+
+        let intentState =
+            apply
+                {
+                    Event =
+                        UploadSessionEventType.BlockUploadIntentRegistered(
+                            "intent",
+                            {
+                                ContentBlockAddress = block.Address
+                                LogicalOffset = 0L
+                                LogicalLength = 3L
+                                ExpectedPayloadLength = int64 block.Payload.Length
+                                RegisteredAt = claimTime
+                                PreparedPlacement = None
+                            }
+                        )
+                    Metadata = eventMetadata
+                }
+                claimedState
+
+        Assert.That(intentState.RetryExpiresAt, Is.EqualTo(claimedState.RetryExpiresAt))
+
+    /// Recovery uses process startup or a substantially overdue deadline and never revives a closed window.
+    [<Test>]
+    member _.RetryRecoveryIsPersistedOnceAndClosedWindowsStayClosed() =
+        let initial, _ = startedSession ()
+        let processStart = timestamp + Duration.FromMinutes 10L
+        let observed = timestamp + Duration.FromMinutes 20L
+        Assert.That(UploadSessionActor.shouldRecoverRetryWindow processStart observed initial, Is.True)
+        let recovered = apply { Event = UploadSessionEventType.RetryWindowRecovered observed; Metadata = metadata "recovery" } initial
+        Assert.That(recovered.RetryExpiresAt, Is.EqualTo(Some(observed + Duration.FromHours 1)))
+        Assert.That(UploadSessionActor.shouldRecoverRetryWindow processStart observed recovered, Is.False)
+        let deadline = recovered.RetryExpiresAt.Value
+        Assert.That(UploadSessionActor.shouldRecoverRetryWindow processStart (deadline + Duration.FromSeconds 120L) recovered, Is.False)
+        Assert.That(UploadSessionActor.shouldRecoverRetryWindow processStart (deadline + Duration.FromSeconds 121L) recovered, Is.True)
+        let closed = apply { Event = UploadSessionEventType.RetryWindowClosed; Metadata = metadata "closed" } recovered
+        Assert.That(UploadSessionActor.shouldRecoverRetryWindow (processStart + Duration.FromHours 3) (deadline + Duration.FromHours 3) closed, Is.False)
+        Assert.That(UploadSessionActor.retryReminderId sessionId deadline, Is.EqualTo(UploadSessionActor.retryReminderId sessionId deadline))
+
+        Assert.That(
+            UploadSessionActor.retryReminderId sessionId deadline,
+            Is.Not.EqualTo(UploadSessionActor.retryReminderId sessionId (deadline + Duration.FromTicks 1L))
+        )
+
+    /// Completion grants a full retry hour and scheduling its cleanup does not close that hour.
+    [<Test>]
+    member _.FirstCompletionRetainsLibraryAcceptanceWindowUntilExplicitClosure() =
+        let initial, _ = startedSession ()
+        let bytes = [| 1uy; 2uy |]
+        let block = encodedBlock bytes
+        let completedAt = timestamp + Duration.FromHours 2
+        let eventMetadata = { metadata "completion-clock" with Timestamp = completedAt }
+        let completed = apply { Event = UploadSessionEventType.Finalized("complete", manifestFor bytes [| block |]); Metadata = eventMetadata } initial
+
+        let scheduled =
+            apply { Event = UploadSessionEventType.CleanupReminderScheduled("cleanup", completedAt + Duration.FromHours 1); Metadata = eventMetadata } completed
+
+        Assert.That(scheduled.RetryExpiresAt, Is.EqualTo(Some(completedAt + Duration.FromHours 1)))
+        let closed = apply { Event = UploadSessionEventType.RetryWindowClosed; Metadata = eventMetadata } scheduled
+        Assert.That(closed.RetryExpiresAt, Is.EqualTo(None))
+
+    /// Issuing a grant at minute 59 cannot leave a valid grant beyond minute 60.
+    [<Test>]
+    member _.StagingGrantExpiresNoLaterThanSessionRetryWindow() =
+        let start = timestamp.ToDateTimeOffset()
+        let deadline = timestamp + Duration.FromHours 1
+        Assert.That(Grace.Actors.Services.contentBlockSasExpiry (start.AddMinutes 59.) (Some deadline), Is.EqualTo(deadline.ToDateTimeOffset()))
+        Assert.That(Grace.Actors.Services.contentBlockSasExpiry start (Some deadline), Is.EqualTo(start.AddMinutes 15.))

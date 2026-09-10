@@ -40,6 +40,10 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
 
 ## Notes
 
+- ContentBlock staging SAS URIs carry `graceContentBlockETag` in the existing metadata fragment. Decode it and require
+  exact `IfMatch` on the single block PUT; never fall back to an unconditional staging upload. Request a fresh grant
+  after a condition failure. The session deadline caps SAS validity. Whole-file uploads and read grants are unchanged.
+
 - `Owner.GetDirectoryVersionObservation` requires an observation GUID and all three explicit recorded scope IDs.
   It uses GET and the existing reader to reconstruct exact int64 and Instant fields. It never fills selectors from
   current configuration or resolves names.

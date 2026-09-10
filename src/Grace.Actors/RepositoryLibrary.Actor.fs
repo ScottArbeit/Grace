@@ -364,7 +364,7 @@ type RepositoryLibraryActor
 
             let! now, upload, validation =
                 LibraryTransfer.readAndValidatePreparedUpload
-                    (fun () -> actor.Get correlationId)
+                    (fun () -> actor.GetForRetry correlationId)
                     (fun () -> SystemClock.Instance.GetCurrentInstant())
                     repositoryId
                     operationId
@@ -1130,12 +1130,14 @@ type RepositoryLibraryActor
         member _.PrepareContent start correlationId =
             task {
                 let actor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy start.UploadSessionId start.RepositoryId correlationId
-                let! existing = actor.Get correlationId
+                let! existing = actor.GetForRetry correlationId
 
                 if existing.LifecycleState = UploadSessionLifecycleState.NotStarted then
                     match! actor.Handle (UploadSessionCommand.Start start) (EventMetadata.New correlationId "RepositoryLibraryActor") with
                     | Error error -> return invalidOp $"Library upload preparation failed: {error.Error}"
                     | Ok _ -> return! actor.Get correlationId
+                elif existing.RetryExpiresAt.IsNone then
+                    return invalidOp "PreparedContentExpired"
                 else
                     let actual =
                         existing.LibraryPreparation

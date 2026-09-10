@@ -148,3 +148,17 @@ type StorageSdkTests() =
         Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
         Assert.That(placement.ObjectKey, Is.EqualTo("cas/content/99999999"))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-standard"))
+
+    /// Quoted provider ETags survive the URI fragment; missing conditions never fall back to an unconditional PUT.
+    [<Test>]
+    member _.ContentBlockUploadRequiresAndDecodesPreparedETag() =
+        let tag = "\"0x1234\""
+        let uri = Uri($"https://storage.test/staging/block?sig=example#graceStorageAccount=store&graceContentBlockETag={Uri.EscapeDataString tag}")
+        Assert.That(Storage.preparedContentBlockETag uri, Is.EqualTo(tag))
+
+        Assert.Throws<InvalidOperationException>(
+            Action (fun () ->
+                Storage.preparedContentBlockETag (Uri "https://storage.test/staging/block?sig=example")
+                |> ignore)
+        )
+        |> ignore

@@ -612,6 +612,17 @@ module Interfaces =
     type IContentBlockMetadataActor =
         inherit IGrainWithStringKey
 
+        /// Persists an upload hold before publishing validated bytes with an exact provider ETag.
+        abstract member PublishUpload:
+            sessionId: UploadSessionId ->
+            placement: ContentBlockStoragePlacement ->
+            payload: byte array ->
+            metadata: EventMetadata ->
+                Task<Result<ContentBlockStoragePlacement, GraceError>>
+
+        /// Retires this session's hold and completes eligible never-accepted whole-block cleanup.
+        abstract member ReleaseUpload: sessionId: UploadSessionId -> metadata: EventMetadata -> Task<Result<unit, GraceError>>
+
         /// Returns true if metadata exists for this ContentBlock.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
 
@@ -668,6 +679,12 @@ module Interfaces =
     [<Interface>]
     type IUploadSessionActor =
         inherit IGraceReminderWithGuidKey
+
+        /// Observes process recovery before a retry or Library preparation checks its deadline.
+        abstract member GetForRetry: correlationId: CorrelationId -> Task<UploadSessionDto>
+
+        /// Persists the staging ETag before its conditional upload grant can be issued.
+        abstract member PrepareBlockUpload: address: ContentBlockAddress -> metadata: EventMetadata -> Task<Result<ContentBlockStoragePlacement, GraceError>>
 
         /// Returns true if this upload session already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>

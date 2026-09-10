@@ -353,10 +353,6 @@ module Library =
                     let uploadSessionId = Grace.Actors.LibraryDecision.deterministicGuid ids.RepositoryId parameters.OperationId "upload-session"
                     let! repository = repositoryState context
 
-                    let expiresAt =
-                        SystemClock.Instance.GetCurrentInstant()
-                        + Duration.FromMinutes 15L
-
                     let authorizedScope = $"Library/{uploadSessionId:D}"
 
                     let start =
@@ -373,21 +369,14 @@ module Library =
                             SamplingPolicySnapshot = JsonSerializer.Serialize(repository.ManifestEligibilityPolicy, Constants.JsonSerializerOptions)
                             OperationId = $"Library-prepare:{parameters.OperationId:D}"
                             LibraryPreparation =
-                                Some
-                                    {
-                                        OperationId = parameters.OperationId
-                                        PrincipalId = principalId context
-                                        ExpectedSha256 = parameters.Sha256Hash
-                                        ExpiresAt = expiresAt
-                                    }
+                                Some { OperationId = parameters.OperationId; PrincipalId = principalId context; ExpectedSha256 = parameters.Sha256Hash }
                         }
 
                     let! upload = (libraryActor ids.RepositoryId).PrepareContent start correlationId
 
                     let persistedExpiresAt =
-                        upload.LibraryPreparation
-                        |> Option.map (fun preparation -> preparation.ExpiresAt)
-                        |> Option.defaultWith (fun () -> invalidOp "The Library upload preparation did not retain its expiry.")
+                        upload.RetryExpiresAt
+                        |> Option.defaultWith (fun () -> invalidOp "PreparedContentExpired")
 
                     return!
                         ok

@@ -22,6 +22,25 @@ The owner observation read introduced by [Issue #1068](https://github.com/ScottA
 
 ## Committed Library content declarations
 
+### Unfinished upload cleanup
+
+[Issue #1083](https://github.com/ScottArbeit/Grace/issues/1083) reclaims unfinished upload payload through the existing
+UploadSession and ContentBlockMetadata owners. One hour after new upload progress, the retry window closes. Healthy
+cleanup targets the next 15 minutes. Process recovery or a reminder more than 120 seconds overdue preserves a fresh
+hour from its first observed recovery; this conservative rule can retain data longer during overload or process movement.
+It does not measure outages that occur entirely between observations.
+
+Library preparations share this clock, including a full hour after first manifest completion. Only blocks with no
+completed-manifest metadata and no upload holds enter whole-block cleanup. Metadata-present and partially used blocks
+remain subject to the existing 24-hour, size, churn and version rules; this change does not add a compaction worker.
+Staging and permanent payload writes are fenced by persisted exact ETags. Cleanup retains its inventory after failures.
+Inaccessible unfinished uploads are non-chargeable; this slice creates no quantity, minute fact, usage producer or bill.
+
+The [portable preflight](design/UploadCleanup.Preflight.md) distinguishes actual storage effects from modeled actor
+state and clocks. The broader usage measurement and persistence decisions remain separate.
+
+### Diagnostic scope
+
 [Issue #1077](https://github.com/ScottArbeit/Grace/issues/1077) adds the internal SystemAdmin `POST /admin/library-content-size/diagnose` diagnostic. It reads permanent accepted Library changes through the existing control record's captured `Epoch` and `CommittedCursor`. Superseded content and tombstoned items remain included through their accepted history, including changes below the public synchronization `ReplayFloor`. Pending work and records above the selected cursor contribute nothing.
 
 The result contains explicit `Scope`, `DeclaredLogicalBytes`, `DistinctManifestCount`, `Epoch`, `CommittedCursor`, `EnumerationStartedAt` and `EnumerationFinishedAt` in the ordinary Grace success envelope. Quantities and cursor are exact nonnegative Int64 JSON numbers. The PowerShell command validates and saves the original JSON without reserializing its integers or nanosecond timestamps. SystemAdmin permission and the live, nondeleted repository scope are checked before and after the scan. Epoch change or cursor regression discards the result; an advancing tail does not change the selected prefix.

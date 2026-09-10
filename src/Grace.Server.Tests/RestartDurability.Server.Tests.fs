@@ -238,7 +238,13 @@ module RestartDurabilityHelpers =
             let blockBlobClient = BlockBlobClient(uploadUri)
             use payloadStream = new MemoryStream(payload, writable = false)
             let options = BlobUploadOptions()
-            options.Conditions <- BlobRequestConditions(IfNoneMatch = Azure.ETag.All)
+
+            let preparedETag =
+                uploadUri.Fragment.TrimStart('#').Split('&')
+                |> Array.find (fun value -> value.StartsWith("graceContentBlockETag=", StringComparison.Ordinal))
+                |> fun value -> Uri.UnescapeDataString(value.Substring("graceContentBlockETag=".Length))
+
+            options.Conditions <- BlobRequestConditions(IfMatch = Azure.ETag preparedETag)
             let! response = blockBlobClient.UploadAsync(payloadStream, options)
             return response.Value.ETag.ToString()
         }

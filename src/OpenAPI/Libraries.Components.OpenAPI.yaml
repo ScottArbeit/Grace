@@ -271,6 +271,7 @@
           nullable: true
       required: [Outcome, CursorEpoch, Changes, LastCursor, HasMore, NextPageToken, Rebaseline]
     LibraryContentPreparationDto:
+      description: Preparation binding with the upload session's shared one-hour inactivity deadline, extended only by real progress or recovery.
       type: object
       properties:
         UploadSessionId:

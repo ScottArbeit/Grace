@@ -166,7 +166,8 @@ type LibraryActorTests() =
             LifecycleState = UploadSessionLifecycleState.RetentionPending
             FinalizedManifestAddress = Some manifest.ManifestAddress
             FinalizedManifest = Some manifest
-            LibraryPreparation = Some { OperationId = operationId; PrincipalId = "user:test"; ExpectedSha256 = String.replicate 64 "a"; ExpiresAt = expiresAt }
+            LibraryPreparation = Some { OperationId = operationId; PrincipalId = "user:test"; ExpectedSha256 = String.replicate 64 "a" }
+            RetryExpiresAt = Some expiresAt
         }
 
     /// Builds a real RepositoryLibraryActor with exact keyed records and a controllable current permission result.
@@ -593,7 +594,7 @@ type LibraryActorTests() =
                 match before with
                 | Error reason -> Assert.Fail($"Expected valid preparation before expiry, got {reason}.")
                 | Ok (binding, manifest) ->
-                    Assert.That(binding.ExpiresAt, Is.EqualTo(timestamp))
+                    Assert.That(upload.RetryExpiresAt, Is.EqualTo(Some timestamp))
                     Assert.That(manifest, Is.EqualTo(upload.FinalizedManifest.Value))
 
                 match atBoundary with

@@ -21,8 +21,12 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
 2. Keep grain state mutations safe for retries—idempotent transitions make distributed recovery predictable.
 3. Document non-obvious activation, reminder, or timer behavior here so future agents can reason without scanning the
    entire implementation.
-4. `UploadSessionActor` cleanup reminders delete only temporary upload coordination state after finalization, abandon, or
-   expiration. They must not delete accepted manifests, content blocks, block metadata, or contribution accounting.
+4. `UploadSessionActor` owns the one-hour inactivity clock, staging preparation and cleanup inventory. Before compacting
+   coordination state, release recorded holds through `ContentBlockMetadataActor`; retain selected completed-manifest
+   holds until their metadata merge is durable. Whole-block deletion requires no metadata and no remaining holds.
+   Metadata at zero active count remains protected. Persist exact placeholder ETags before payload writes or grant
+   delivery; keep retirement history and fail closed after uncertain state writes. Immutable deadline reminders must
+   ensure the next deadline before acknowledging an old callback. Actor activation alone never renews the clock.
 5. `ContentBlockMetadataActor` is keyed by the StoragePoolId and ContentBlockAddress composite key. Preserve whole-record
    MetadataVersion concurrency and exact range presence semantics; do not introduce per-chunk actor or grain state.
    Compaction is a whole-record metadata rewrite: keep the `ContentBlockAddress`, preserve active logical ordinal
