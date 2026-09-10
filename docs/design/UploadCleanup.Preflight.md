@@ -86,3 +86,22 @@ pwsh ./docs/design/UploadCleanup.Preflight.ps1 -OutputDirectory ./artifacts/uplo
 The provider runners use Windows PowerShell networking commands. Extraction itself is portable; running those captured
 provider scripts requires the original Windows/Docker environment. Their results remain historical evidence with the
 exact hashes in the capture. Current source builds, codec tests and hosted actor tests are reported separately in the PR.
+
+## Hosted validation and Local debug connections
+
+The hosted Linux tests exposed Cosmos state writes waiting inside HTTP send before response headers. JSON serialization
+had completed; the captures did not establish a size threshold or a 429 retry. The stopped-server Library fixture also
+needed to restart its shared server when an offline assertion failed, so one failure would not prevent later tests from running.
+
+A controlled CI trial changed only the existing Local debug actor-storage client's pooled connection lifetime to one
+millisecond. [Validate run 34474510757](https://github.com/ScottArbeit/Grace/actions/runs/34474510757) passed, including
+322 hosted tests with 36 skipped, after the pooled configuration repeatedly failed the same upload/Library paths.
+This matches a [reported vNext emulator connection issue](https://github.com/Azure/azure-cosmos-dotnet-v3/issues/6000);
+the precise internal race is not established by Grace's captures. A separate synthetic Linux SDK 3.62.1 size comparison
+passed all 16 conditional writes in both pooled and connection-retirement modes, so that smaller comparison did not reproduce the fault.
+
+The setting applies when `DebugEnvironment` is `Local` and Cosmos managed identity is disabled, matching the existing
+Gateway/certificate-bypass branch. It is selected by mode, not by inspecting the endpoint hostname. The short lifetime
+retires aged connections between requests; it does not cancel an in-flight request or guarantee a fresh connection for
+every request. Other modes and managed-identity client paths retain their existing settings. Temporary diagnostics are
+removed from the final candidate; its required CI result is recorded separately in PR #1086.

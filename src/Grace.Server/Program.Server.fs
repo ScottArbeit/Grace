@@ -61,108 +61,6 @@ module OrleansFsharpFix =
 /// Contains Grace Server program behavior and supporting helpers.
 module Program =
 
-    /// Temporarily distinguishes emulator HTTP response headers from Cosmos SDK response processing during A4 diagnosis.
-    type UploadHttpDiagnosticHandler(log: ILogger, inner: HttpMessageHandler) =
-        inherit DelegatingHandler(inner)
-
-        /// Reports transport entry and returned headers without consuming or changing request content.
-        override this.SendAsync(request: HttpRequestMessage, cancellationToken: CancellationToken) =
-            let requestId = Guid.NewGuid()
-            let started = Stopwatch.StartNew()
-
-            let contentLength =
-                if isNull request.Content then
-                    Nullable()
-                else
-                    request.Content.Headers.ContentLength
-
-            log.LogInformation(
-                "A4 HTTP request {RequestId} {Method} {Path} started contentLength {ContentLength} expectContinue {ExpectContinue}",
-                requestId,
-                request.Method,
-                request.RequestUri.AbsolutePath,
-                contentLength,
-                request.Headers.ExpectContinue
-            )
-
-            let pending = ``base``.SendAsync(request, cancellationToken)
-
-            task {
-                try
-                    let! response = pending
-
-                    /// Reads only named diagnostic response headers, never authorization or content.
-                    let header name =
-                        match response.Headers.TryGetValues name with
-                        | true, values -> String.Join(",", values)
-                        | _ -> String.Empty
-
-                    log.LogInformation(
-                        "A4 HTTP request {RequestId} response headers {Status} activity {ActivityId} retryAfterMs {RetryAfterMs} elapsedMs {ElapsedMs}",
-                        requestId,
-                        int response.StatusCode,
-                        header "x-ms-activity-id",
-                        header "x-ms-retry-after-ms",
-                        started.ElapsedMilliseconds
-                    )
-
-                    return response
-                with
-                | error ->
-                    log.LogInformation(
-                        "A4 HTTP request {RequestId} failed {ExceptionType} elapsedMs {ElapsedMs}",
-                        requestId,
-                        error.GetType().FullName,
-                        started.ElapsedMilliseconds
-                    )
-
-                    return raise error
-            }
-
-    /// Temporarily exposes local-emulator Cosmos outcomes hidden by the provider retry loop during A4 diagnosis.
-    type UploadWriteDiagnosticHandler(log: ILogger) =
-        inherit RequestHandler()
-
-        /// Reports SDK operation completion after its internal transport and retry processing.
-        override this.SendAsync(request: RequestMessage, cancellationToken: CancellationToken) =
-            let requestId = Guid.NewGuid()
-            let started = Stopwatch.StartNew()
-
-            let path =
-                if request.RequestUri.IsAbsoluteUri then
-                    request.RequestUri.AbsolutePath
-                else
-                    request.RequestUri.OriginalString.Split('?')[0]
-
-            log.LogInformation("A4 Cosmos request {RequestId} {Method} {Path} started", requestId, request.Method, path)
-            let pending = ``base``.SendAsync(request, cancellationToken)
-
-            task {
-                try
-                    let! response = pending
-
-                    log.LogInformation(
-                        "A4 Cosmos request {RequestId} completed {Status} activity {ActivityId} retryAfterMs {RetryAfterMs} elapsedMs {ElapsedMs}",
-                        requestId,
-                        int response.StatusCode,
-                        response.Headers.ActivityId,
-                        response.Headers["x-ms-retry-after-ms"],
-                        started.ElapsedMilliseconds
-                    )
-
-                    return response
-                with
-                | error ->
-                    log.LogInformation(
-                        "A4 Cosmos request {RequestId} failed {ExceptionType} elapsedMs {ElapsedMs}",
-                        requestId,
-                        error.GetType().FullName,
-                        started.ElapsedMilliseconds
-                    )
-
-                    return raise error
-            }
-
     [<InternalsVisibleTo("Host")>]
     [<InternalsVisibleTo("Grace.Server.Unit.Tests")>]
     do ()
@@ -483,14 +381,6 @@ module Program =
                                     cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
                                     cosmosClientOptions.EnableContentResponseOnWrite <- true
 
-                                    cosmosClientOptions.CustomHandlers.Add(
-                                        UploadWriteDiagnosticHandler(
-                                            serviceProvider
-                                                .GetRequiredService<ILoggerFactory>()
-                                                .CreateLogger("UploadWriteDiagnostic")
-                                        )
-                                    )
-
                                     cosmosClientOptions.ServerCertificateCustomValidationCallback <-
                                         Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
 
@@ -498,19 +388,13 @@ module Program =
                                         fun () ->
                                             logToConsole "Creating custom HttpClient for Cosmos DB."
 
+                                            // Local debug avoids vNext emulator gateway stalls on reused connections.
+                                            // https://github.com/Azure/azure-cosmos-dotnet-v3/issues/6000
                                             let handler = new SocketsHttpHandler(PooledConnectionLifetime = TimeSpan.FromMilliseconds(1.0))
 
                                             handler.SslOptions.RemoteCertificateValidationCallback <- RemoteCertificateValidationCallback(fun _ _ _ _ -> true)
 
-                                            let diagnosticHandler =
-                                                new UploadHttpDiagnosticHandler(
-                                                    serviceProvider
-                                                        .GetRequiredService<ILoggerFactory>()
-                                                        .CreateLogger("UploadWriteDiagnostic"),
-                                                    handler
-                                                )
-
-                                            new HttpClient(diagnosticHandler, disposeHandler = true)
+                                            new HttpClient(handler, disposeHandler = true)
 
                                 let cosmosClient =
                                     if AzureEnvironment.useManagedIdentity then

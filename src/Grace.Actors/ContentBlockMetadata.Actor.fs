@@ -861,12 +861,7 @@ module ContentBlockMetadata =
                     state.State.Add(metadataEvent)
 
                 try
-                    log.LogInformation("A4 block before state serialization {CorrelationId}", events.Head.Metadata.CorrelationId)
-                    let serialized = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(state.State, Grace.Shared.Constants.JsonSerializerOptions)
-                    log.LogInformation("A4 block after state serialization {Bytes} {CorrelationId}", serialized.Length, events.Head.Metadata.CorrelationId)
-                    log.LogInformation("A4 block before persistence {CorrelationId}", events.Head.Metadata.CorrelationId)
                     do! state.WriteStateAsync()
-                    log.LogInformation("A4 block after persistence {CorrelationId}", events.Head.Metadata.CorrelationId)
                 with
                 | ex ->
                     persistenceFailed <- true
@@ -890,28 +885,18 @@ module ContentBlockMetadata =
             task {
                 this.EnsureUsable()
                 let address = this.GetPrimaryKeyString().Split('|')[1]
-                log.LogInformation("A4 block {Address} session {Session} enter publication {CorrelationId}", address, sessionId, metadata.CorrelationId)
 
                 match validateUploadBytes address payload payload, acquireUpload sessionId placement metadataDto.Upload with
                 | Error error, _
                 | _, Error error -> return Error(graceError metadata.CorrelationId error)
                 | Ok (), Ok acquired ->
                     do! this.SaveUpload acquired metadata
-                    log.LogInformation("A4 block {Address} before client resolution {CorrelationId}", address, metadata.CorrelationId)
 
                     match! getAzureContentBlockClientForPlacement placement metadata.CorrelationId with
                     | Error error -> return Error error
                     | Ok blob ->
                         try
-                            log.LogInformation("A4 block {Address} before existence read {CorrelationId}", address, metadata.CorrelationId)
                             let! exists = blob.ExistsAsync()
-
-                            log.LogInformation(
-                                "A4 block {Address} after existence read {Exists} {CorrelationId}",
-                                address,
-                                exists.Value,
-                                metadata.CorrelationId
-                            )
 
                             if not exists.Value then
                                 if metadataDto.Metadata.IsSome then
@@ -920,16 +905,12 @@ module ContentBlockMetadata =
                                 use empty = new MemoryStream(Array.empty<byte>)
 
                                 try
-                                    log.LogInformation("A4 block {Address} before placeholder PUT {CorrelationId}", address, metadata.CorrelationId)
                                     let! _ = blob.UploadAsync(empty, conditions = BlobRequestConditions(IfNoneMatch = ETag.All))
-                                    log.LogInformation("A4 block {Address} after placeholder PUT {CorrelationId}", address, metadata.CorrelationId)
                                     ()
                                 with
                                 | :? RequestFailedException as ex when ex.Status = 409 || ex.Status = 412 -> ()
 
-                            log.LogInformation("A4 block {Address} before download {CorrelationId}", address, metadata.CorrelationId)
                             let! current = blob.DownloadContentAsync()
-                            log.LogInformation("A4 block {Address} after download {CorrelationId}", address, metadata.CorrelationId)
                             let bytes = current.Value.Content.ToArray()
 
                             if bytes.Length > 0 then
@@ -945,9 +926,7 @@ module ContentBlockMetadata =
                                 let etag = current.Value.Details.ETag
                                 do! this.SaveUpload { metadataDto.Upload with PreparedETag = Some(string etag) } metadata
                                 use stream = new MemoryStream(payload, writable = false)
-                                log.LogInformation("A4 block {Address} before payload PUT {CorrelationId}", address, metadata.CorrelationId)
                                 let! published = blob.UploadAsync(stream, conditions = BlobRequestConditions(IfMatch = etag))
-                                log.LogInformation("A4 block {Address} after payload PUT {CorrelationId}", address, metadata.CorrelationId)
                                 do! this.SaveUpload { metadataDto.Upload with PreparedETag = Some(string published.Value.ETag) } metadata
                                 return Ok { placement with ETag = Some(string published.Value.ETag) }
                         with

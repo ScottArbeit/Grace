@@ -1532,19 +1532,6 @@ type StorageManifestUploadSessionRoutes() =
             let! response = Client.PostAsync(route, createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
 
-            if response.StatusCode <> HttpStatusCode.OK then
-                let! lines = AspireTestHost.getGraceServerLogsAsync HostState.Value
-
-                let logs =
-                    lines
-                    |> List.rev
-                    |> List.truncate 500
-                    |> List.rev
-                    |> String.concat Environment.NewLine
-
-                let! fileLog = AspireTestHost.getGraceServerFileLogAsync HostState.Value
-                TestContext.Error.WriteLine($"A4 storage request failure: {route}\n{logs}\n{fileLog}")
-
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
@@ -4186,18 +4173,6 @@ type StorageManifestUploadSessionRoutes() =
             let! _ = pendingBump
             use! interruptedResponse = interruptedSubmit
             let! interruptedBody = interruptedResponse.Content.ReadAsStringAsync()
-            TestContext.Error.WriteLine($"A4 interrupted submit response: {interruptedBody}")
-            let! interruptedLines = AspireTestHost.getGraceServerLogsAsync state
-
-            let interruptedLogs =
-                interruptedLines
-                |> List.rev
-                |> List.truncate 500
-                |> List.rev
-                |> String.concat Environment.NewLine
-
-            let! interruptedFileLog = AspireTestHost.getGraceServerFileLogAsync state
-            TestContext.Error.WriteLine($"A4 interrupted submit server logs:\n{interruptedLogs}\n{interruptedFileLog}")
             Assert.That(interruptedResponse.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError), interruptedBody)
 
             let! capturedReceipt, capturedCounter, capturedWorkflow =
