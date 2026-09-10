@@ -1,4 +1,4 @@
-# Library additive catalog-adoption production validation
+# Library automatic addition validation
 
 **Status: manual candidate superseded by Scott's automatic-sync correction on 2026-09-10.** PR #1082 at `061ab711858f49cf1e9f81949e51b06d753eb9ac` remains unmerged. Its completed R1/R2, Shape Review and [passing Validate run](https://github.com/ScottArbeit/Grace/actions/runs/34430255312) certify the old manual behavior only. The [current design](../Libraries.Design.md#automatic-synchronization-of-added-libraries) and [propagation map](Libraries.Type-Plan.md#automatic-library-addition-propagation) govern the replacement. Captured experiment fixture, scripts and results remain unchanged.
 
@@ -6,9 +6,13 @@
 
 | Requirement | Required executable evidence | Current result |
 | --- | --- | --- |
-| LIB-019 | Actual administrator addition of an empty Library; live enabled Watch creates the root and downloads subsequent content without manual commands. Restart/reconnect discovers multiple missed additions. | Pending replacement experiment and implementation. |
-| LIB-020 | Existing saved/pending/rejected work and local edits retained; explicit pause preserved; occupied/reparse target protected; cancellation and stale reads cannot overwrite state. | Old clean paused tests do not cover the corrected normal flow. |
-| LIB-021 | Paged retained backlog across catalog additions; interruption before/after root creation, catalog selection, publication and completion; reopen state and converge without skipping history. | Old one-page/direct-successor results are insufficient. |
+| LIB-019 | Actual administrator addition of an empty Library; live enabled Watch creates the root and downloads subsequent content without manual commands. Restart/reconnect discovers multiple missed additions. | Experiment covers actual multi-addition CLI/HTTP and initial all-root enable. Candidate live Watch and notification cases remain pending. |
+| LIB-020 | Existing saved/pending/rejected work and local edits retained; explicit pause preserved; occupied/reparse target protected; cancellation and stale reads cannot overwrite state. | Experiment covers valid queued work, immutable receipts, older prepared local/incoming work and four obstruction controls. Candidate pause/cancellation and combined rejected-work scheduling remain pending. |
+| LIB-021 | Paged retained backlog across catalog additions; interruption before/after root creation, catalog selection, publication and completion; reopen state and converge without skipping history. | Experiment passes with signed one-item pages, several additions, publication/SQLite interruption and fresh-process recovery without reupload. Production implementation and matching tests remain pending. |
+
+The [captured automatic addition experiment](Libraries.Automatic-Addition-Experiment.md) passed all named console cases, 8/8 actor/serialization cases and 3/3 hosted cases. Final builds had zero warnings/errors. The root verified all 36 captured hashes and the actual TRX counters. The final hosted run used no timeout retry; earlier HTTP manifest-finalization and separate Service Bus setup failures remain recorded with unproven causes. No infrastructure change was made.
+
+The algorithm is ready for a replacement charter and implementation. These results do not certify production files or a running Watch. The guide and design retain that distinction until actual candidate acceptance passes.
 
 The remainder records the rejected manual candidate for comparison and salvage. Its LIB-019 through LIB-021 labels refer to the former requirement wording, not the corrected rows above. It is not a user workflow or a claim of delivered automatic synchronization.
 
