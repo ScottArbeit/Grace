@@ -31,6 +31,12 @@ Global policies live in `../AGENTS.md`; follow them before touching tests here.
 - Shared state (HttpClient, OwnerId, Service Bus settings) is set during `OneTimeSetUp` and reused by test modules.
 - This project remains integration-controlled. Do not add assembly-level parallel defaults unless a future issue proves
   the shared Aspire resources and setup state are safe under that change.
+- New tests that need an ordinary Grace.Server stop or restart must use `SharedGraceServerRestartScenarios`;
+  do not add standalone server stop/start or restart calls. Prepare separate repository
+  contexts while the server is running, use its shared stopped-server callback for offline edits, and expose each
+  scenario's post-restart checks as a named test without ordering dependencies. The fixture observes one stop/start
+  window and restores HTTP readiness even when offline preparation fails. Keep Explicit accounting measurements and
+  Redis restart experiments separate.
 
 ## Notes
 

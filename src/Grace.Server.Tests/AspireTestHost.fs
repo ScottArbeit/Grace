@@ -1651,8 +1651,31 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
-    /// Restarts Grace.Server and returns fresh post-command resource-event and HTTP-readiness evidence.
-    let restartGraceServerWithEvidenceAsync (state: TestHostState) (restartContext: string) =
+    /// Runs offline preparation and always attempts recovery, retaining both failures when necessary.
+    let prepareStoppedServerAndRecoverAsync (prepare: unit -> Task<unit>) (start: unit -> Task<unit>) =
+        task {
+            let! preparationError =
+                task {
+                    try
+                        do! prepare ()
+                        return None
+                    with
+                    | error -> return Some error
+                }
+
+            try
+                do! start ()
+            with
+            | startError ->
+                match preparationError with
+                | Some error -> raise (AggregateException("Offline preparation and server recovery failed.", error, startError))
+                | None -> raise startError
+
+            return preparationError
+        }
+
+    /// Observes restart transitions, optionally pausing at a terminal stopped state for offline test edits.
+    let private restartGraceServerCoreAsync (state: TestHostState) (restartContext: string) (offlinePreparation: (unit -> Task<unit>) option) =
         task {
             do! sharedStateLock.WaitAsync()
 
@@ -1663,92 +1686,155 @@ module AspireTestHost =
                 let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
                 use cts = new CancellationTokenSource(defaultWaitTimeout)
 
+                if offlinePreparation.IsSome then
+                    let mutable beforeStop = Unchecked.defaultof<ResourceEvent>
+
+                    if
+                        not (notificationService.TryGetCurrentState(graceServerResourceName, &beforeStop))
+                        || beforeStop.Snapshot.State.Text
+                           <> KnownResourceStates.Running
+                    then
+                        invalidOp "Shared offline preparation requires a running Grace.Server before the stop command."
+
                 let events =
                     notificationService
                         .WatchAsync(cts.Token)
                         .GetAsyncEnumerator(cts.Token)
 
+                let mutable preparationError: exn option = None
+
                 try
-                    let commandStartedAt = DateTimeOffset.UtcNow
-                    let mutable nextResourceEvent = events.MoveNextAsync().AsTask()
-                    let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+                    try
+                        let commandStartedAt = DateTimeOffset.UtcNow
+                        let mutable nextResourceEvent = events.MoveNextAsync().AsTask()
 
-                    if not result.Success then
-                        let errorMessage =
-                            if not (String.IsNullOrWhiteSpace result.Message) then result.Message
-                            elif result.Canceled then "Restart command was canceled."
-                            else "Restart command failed without details."
+                        let command =
+                            if offlinePreparation.IsSome then
+                                KnownResourceCommands.StopCommand
+                            else
+                                KnownResourceCommands.RestartCommand
 
-                        raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
+                        let! result = commandService.ExecuteCommandAsync(graceServerResourceName, command, cts.Token)
 
-                    let commandCompletedAt = DateTimeOffset.UtcNow
-                    let mutable healthyEvent: ResourceEvent option = None
-                    let mutable nonReadyEvent: (DateTimeOffset * ResourceEvent) option = None
+                        if not result.Success then
+                            let errorMessage =
+                                if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                                elif result.Canceled then "Restart command was canceled."
+                                else "Restart command failed without details."
 
-                    while healthyEvent.IsNone do
-                        let! hasEvent = nextResourceEvent
+                            raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
 
-                        if not hasEvent then
-                            invalidOp "Grace.Server resource event observation ended before fresh Healthy evidence."
+                        let commandCompletedAt = DateTimeOffset.UtcNow
+                        logProgress $"Grace.Server {command} command completed for '{normalizedRestartContext}'."
+                        let mutable healthyEvent: ResourceEvent option = None
+                        let mutable nonReadyEvent: (DateTimeOffset * ResourceEvent) option = None
+                        let mutable offlineCompleted = false
 
-                        let resourceEvent = events.Current
+                        while healthyEvent.IsNone do
+                            let! hasEvent = nextResourceEvent
 
-                        if resourceEvent.Resource.Name.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
-                            let resourceState = resourceEvent.Snapshot.State.Text
+                            if not hasEvent then
+                                invalidOp "Grace.Server resource event observation ended before fresh Healthy evidence."
 
-                            let isHealthy =
-                                resourceEvent.Snapshot.HealthStatus.HasValue
-                                && resourceEvent.Snapshot.HealthStatus.Value = Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy
+                            let resourceEvent = events.Current
 
-                            let hasNamedNonRunningState =
-                                not (String.IsNullOrWhiteSpace resourceState)
-                                && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
-                                && not (String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal))
+                            if resourceEvent.Resource.Name.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                                let resourceState = resourceEvent.Snapshot.State.Text
 
-                            let hasKnownNonHealthyStatus =
-                                resourceEvent.Snapshot.HealthStatus.HasValue
-                                && not isHealthy
+                                let isHealthy =
+                                    resourceEvent.Snapshot.HealthStatus.HasValue
+                                    && resourceEvent.Snapshot.HealthStatus.Value = Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy
 
-                            if hasNamedNonRunningState
-                               || hasKnownNonHealthyStatus then
-                                if nonReadyEvent.IsNone then
+                                let hasNamedNonRunningState =
+                                    not (String.IsNullOrWhiteSpace resourceState)
+                                    && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
+                                    && not (String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal))
+
+                                let hasKnownNonHealthyStatus =
+                                    resourceEvent.Snapshot.HealthStatus.HasValue
+                                    && not isHealthy
+
+                                let isStopped =
+                                    resourceState = KnownResourceStates.Exited
+                                    || resourceState = KnownResourceStates.Finished
+                                    || resourceState = KnownResourceStates.NotStarted
+
+                                if offlinePreparation.IsSome
+                                   && not offlineCompleted
+                                   && isStopped then
                                     nonReadyEvent <- Some(DateTimeOffset.UtcNow, resourceEvent)
-                            elif
-                                nonReadyEvent.IsSome && isHealthy
-                                && String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal)
-                            then
-                                healthyEvent <- Some resourceEvent
+                                    logProgress $"Grace.Server observed stopped for '{normalizedRestartContext}'; preparing offline scenarios."
 
-                        if healthyEvent.IsNone then nextResourceEvent <- events.MoveNextAsync().AsTask()
+                                    /// Starts after the observed terminal event, even if offline edits failed.
+                                    let start () =
+                                        task {
+                                            let! started =
+                                                commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.StartCommand, cts.Token)
 
-                    let resourceEventObservedAt = DateTimeOffset.UtcNow
-                    let resourceState = healthyEvent.Value.Snapshot.HealthStatus.Value.ToString()
-                    let nonReadyEventObservedAt, observedNonReadyEvent = nonReadyEvent.Value
-                    let nonReadyResourceState = observedNonReadyEvent.Snapshot.State.Text
+                                            if not started.Success then
+                                                invalidOp $"Grace.Server start failed during {normalizedRestartContext}: {started.Message}"
 
-                    let nonReadyHealthStatus =
-                        if observedNonReadyEvent.Snapshot.HealthStatus.HasValue then
-                            observedNonReadyEvent.Snapshot.HealthStatus.Value.ToString()
-                        else
-                            "Unknown"
+                                            logProgress $"Grace.Server Start command completed for '{normalizedRestartContext}'."
+                                        }
 
-                    logProgress (formatResourceHealthWaitHealthyProgress graceServerResourceName (Some normalizedRestartContext))
-                    do! waitForGraceServerHttpReadyAsync state.Client cts.Token
-                    let httpReadyObservedAt = DateTimeOffset.UtcNow
-                    logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
-                    Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
+                                    let! error = prepareStoppedServerAndRecoverAsync offlinePreparation.Value start
+                                    preparationError <- error
+                                    offlineCompleted <- true
 
-                    return
-                        {
-                            CommandStartedAt = commandStartedAt
-                            CommandCompletedAt = commandCompletedAt
-                            NonReadyEventObservedAt = nonReadyEventObservedAt
-                            NonReadyResourceState = nonReadyResourceState
-                            NonReadyHealthStatus = nonReadyHealthStatus
-                            ResourceEventObservedAt = resourceEventObservedAt
-                            ResourceState = resourceState
-                            HttpReadyObservedAt = httpReadyObservedAt
-                        }
+                                if hasNamedNonRunningState
+                                   || hasKnownNonHealthyStatus then
+                                    if nonReadyEvent.IsNone then
+                                        nonReadyEvent <- Some(DateTimeOffset.UtcNow, resourceEvent)
+                                elif
+                                    nonReadyEvent.IsSome
+                                    && isHealthy
+                                    && (offlinePreparation.IsNone || offlineCompleted)
+                                    && String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal)
+                                then
+                                    healthyEvent <- Some resourceEvent
+
+                            if healthyEvent.IsNone then nextResourceEvent <- events.MoveNextAsync().AsTask()
+
+                        let resourceEventObservedAt = DateTimeOffset.UtcNow
+                        let resourceState = healthyEvent.Value.Snapshot.HealthStatus.Value.ToString()
+                        let nonReadyEventObservedAt, observedNonReadyEvent = nonReadyEvent.Value
+                        let nonReadyResourceState = observedNonReadyEvent.Snapshot.State.Text
+
+                        let nonReadyHealthStatus =
+                            if observedNonReadyEvent.Snapshot.HealthStatus.HasValue then
+                                observedNonReadyEvent.Snapshot.HealthStatus.Value.ToString()
+                            else
+                                "Unknown"
+
+                        logProgress (formatResourceHealthWaitHealthyProgress graceServerResourceName (Some normalizedRestartContext))
+                        do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                        let httpReadyObservedAt = DateTimeOffset.UtcNow
+                        logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
+                        Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
+
+                        match preparationError with
+                        | Some error ->
+                            preparationError <- None
+                            raise (InvalidOperationException("Offline scenario preparation failed; Grace.Server recovered to HTTP readiness.", error))
+                        | None -> ()
+
+                        return
+                            {
+                                CommandStartedAt = commandStartedAt
+                                CommandCompletedAt = commandCompletedAt
+                                NonReadyEventObservedAt = nonReadyEventObservedAt
+                                NonReadyResourceState = nonReadyResourceState
+                                NonReadyHealthStatus = nonReadyHealthStatus
+                                ResourceEventObservedAt = resourceEventObservedAt
+                                ResourceState = resourceState
+                                HttpReadyObservedAt = httpReadyObservedAt
+                            }
+                    with
+                    | recoveryError ->
+                        match preparationError with
+                        | Some error ->
+                            return raise (AggregateException("Offline preparation failed and Grace.Server did not recover readiness.", error, recoveryError))
+                        | None -> return raise recoveryError
                 finally
                     events
                         .DisposeAsync()
@@ -1758,6 +1844,12 @@ module AspireTestHost =
             finally
                 sharedStateLock.Release() |> ignore
         }
+
+    /// Restarts Grace.Server and returns fresh post-command resource-event and HTTP-readiness evidence.
+    let restartGraceServerWithEvidenceAsync state restartContext = restartGraceServerCoreAsync state restartContext None
+
+    /// Shares one observed stopped-server window across prepared scenarios and restores HTTP readiness before returning.
+    let restartGraceServerWithOfflinePreparationAsync state restartContext prepare = restartGraceServerCoreAsync state restartContext (Some prepare)
 
     /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
     let restartGraceServerAsync (state: TestHostState) (restartContext: string) =

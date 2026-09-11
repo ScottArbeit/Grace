@@ -10,6 +10,44 @@ open System.Threading.Tasks
 [<TestFixture>]
 type AspireTestHostDiagnosticsTests() =
 
+    /// Recovers the server after offline preparation fails and retains the preparation error for reporting after readiness.
+    [<Test>]
+    member _.OfflinePreparationFailureStillStartsServer() =
+        task {
+            let calls = ResizeArray<string>()
+
+            /// Injects a missing-document failure at the offline edit boundary.
+            let prepare () =
+                task {
+                    calls.Add("prepare")
+                    return invalidOp "missing document"
+                }
+
+            /// Records the required recovery attempt after the failed edit.
+            let start () = task { calls.Add("start") }
+            let! error = AspireTestHost.prepareStoppedServerAndRecoverAsync prepare start
+            Assert.That(calls, Is.EqualTo(box [| "prepare"; "start" |]))
+            Assert.That(error.Value.Message, Is.EqualTo("missing document"))
+        }
+
+    /// Reports both failures when offline preparation and the subsequent server start fail.
+    [<Test>]
+    member _.OfflinePreparationAndStartFailuresAreBothReported() =
+        /// Injects the original offline failure.
+        let prepare () = task { return invalidOp "offline failed" }
+        /// Injects failure of the recovery attempt.
+        let start () = task { return invalidOp "start failed" }
+        let error = Assert.ThrowsAsync<AggregateException>(Func<Task>(fun () -> AspireTestHost.prepareStoppedServerAndRecoverAsync prepare start :> Task))
+
+        Assert.That(
+            error.InnerExceptions
+            |> Seq.map (fun failure -> failure.Message),
+            Is.EqualTo(
+                box [| "offline failed"
+                       "start failed" |]
+            )
+        )
+
     /// Verifies isolated lifecycle cleanup attempts every step and preserves both failures.
     [<Test>]
     member _.IsolatedLifecycleCleanupAttemptsEveryStepAndPreservesFailures() =
