@@ -175,9 +175,12 @@ module internal LibraryLocalState =
         transaction.Commit()
 
     /// Loads materialized items only; incoming accepted responses do not update this table.
-    let readItems dbPath (repositoryId: Guid) =
-        use connection = openConnection dbPath
+    let private readItemsWith (connection: SqliteConnection) transaction (repositoryId: Guid) =
         use command = connection.CreateCommand()
+
+        transaction
+        |> Option.iter (fun value -> command.Transaction <- value)
+
         command.CommandText <- "SELECT item_json FROM library_items WHERE repository_id=$repository ORDER BY item_id;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
@@ -190,6 +193,11 @@ module internal LibraryLocalState =
             items.Add(deserialize<LibraryItemDto> (reader.GetString(0)))
 
         items.ToArray()
+
+    /// Reads completed materialization without interpreting pending accepted changes as installed items.
+    let readItems dbPath repositoryId =
+        use connection = openConnection dbPath
+        readItemsWith connection None repositoryId
 
     /// Loads operation facts on the caller's connection, including the active completion transaction when supplied.
     let private readOperationsWith (connection: SqliteConnection) transaction (repositoryId: Guid) =
@@ -225,6 +233,38 @@ module internal LibraryLocalState =
     let readOperations dbPath repositoryId =
         use connection = openConnection dbPath
         readOperationsWith connection None repositoryId
+
+    /// Changes only the selected catalog after comparing every local input inside the SQLite transaction.
+    let selectCatalogWith afterWrite dbPath (expected: RepositoryState) items operations (selected: LibraryCatalogDto) =
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if expected.Paused
+           || expected.Baseline
+              |> Option.exists (fun baseline -> not baseline.Applied)
+           || selected.RepositoryId <> expected.RepositoryId
+           || expected.Catalog.Libraries
+              |> Array.exists (fun root -> not (selected.Libraries |> Array.contains root))
+           || readRepositoryWith connection (Some transaction) expected.RepositoryId
+              <> Some expected
+           || readItemsWith connection (Some transaction) expected.RepositoryId
+              <> items
+           || readOperationsWith connection (Some transaction) expected.RepositoryId
+              <> operations then
+            invalidOp "Library participation, materialized items or operations changed before catalog selection."
+
+        execute
+            connection
+            (Some transaction)
+            "UPDATE library_repository_state SET catalog_json=$catalog WHERE repository_id=$repository;"
+            [
+                "$catalog", box (serialize selected)
+                "$repository", box (expected.RepositoryId.ToString("D"))
+            ]
+        |> ignore
+
+        afterWrite connection transaction
+        transaction.Commit()
 
     /// Replaces onboarding progress under a transaction whose caller has checked the exact previous repository record.
     let private writeBaselineState connection transaction (state: RepositoryState) =
@@ -639,14 +679,13 @@ module internal LibraryLocalState =
             operation.Accepted
             |> Option.defaultWith (fun () -> invalidOp "Library completion requires an accepted result.")
 
-        if not operation.Prepared
-           || operation.Terminal
-           || change.OperationId <> operation.OperationId
-           || operation.ExpectedCursor <> expected.AppliedCursor
-           || operation.ExpectedCatalogVersion
-              <> expected.Catalog.Version
-           || change.LibraryCatalogVersion
-              <> expected.Catalog.Version then
+        if
+            not operation.Prepared
+            || operation.Terminal
+            || change.OperationId <> operation.OperationId
+            || operation.ExpectedCursor <> expected.AppliedCursor
+            || not (Grace.Shared.Validation.Library.configurationOwnsPath expected.Catalog operation.TargetPath)
+        then
             invalidOp "Library completion catalog or predecessor does not match preparation."
 
         use connection = openConnection dbPath

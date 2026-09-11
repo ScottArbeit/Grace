@@ -65,29 +65,17 @@ module internal LibraryBaseline =
 
             parent <- Path.GetDirectoryName(parent)
 
-    /// Keeps initial acquisition restricted to an empty ordinary local Library root.
-    let private requireEmptyRoot (configuration: GraceConfiguration) (catalog: LibraryCatalogDto) =
-        if catalog.RepositoryId <> configuration.RepositoryId
-           || catalog.Libraries.Length <> 1 then
-            invalidOp "Library onboarding requires one Library in this repository."
+    /// Validates all selected roots before any initial selection or filesystem creation.
+    let private requireEmptyRoots (configuration: GraceConfiguration) (catalog: LibraryCatalogDto) =
+        if catalog.RepositoryId <> configuration.RepositoryId then
+            invalidOp "Library onboarding requires this repository's catalog."
 
-        let root = fullPath configuration catalog.Libraries[0]
-        requireParents configuration root
+        Grace.Shared.Validation.Library.normalizeLibraries catalog.Libraries
+        |> Result.defaultWith invalidOp
+        |> ignore
 
-        if
-            File.Exists(root)
-            || (Directory.Exists(root)
-                && (File
-                        .GetAttributes(root)
-                        .HasFlag(FileAttributes.ReparsePoint)
-                    || not (
-                        Directory.EnumerateFileSystemEntries(root)
-                        |> Seq.isEmpty
-                    )))
-        then
-            invalidOp "Library onboarding requires an empty ordinary local Library root."
-
-        root
+        catalog.Libraries
+        |> Array.map (LibraryFilesystem.requireEmptyRoot configuration)
 
     /// Reads exact persisted selection state between remote calls and filesystem effects.
     let private current (configuration: GraceConfiguration) =
@@ -99,7 +87,12 @@ module internal LibraryBaseline =
         task {
             let! catalog = remote.Catalog()
 
-            if catalog <> expected.Catalog
+            if catalog.RepositoryId <> expected.RepositoryId
+               || (catalog <> expected.Catalog
+                   && catalog.Libraries.Length
+                      <= expected.Catalog.Libraries.Length)
+               || expected.Catalog.Libraries
+                  |> Array.exists (fun root -> not (catalog.Libraries |> Array.contains root))
                || current configuration <> expected then
                 invalidOp "Library baseline catalog or selection changed; local work is retained."
         }
@@ -122,14 +115,23 @@ module internal LibraryBaseline =
     let startWith observe (remote: Remote) (configuration: GraceConfiguration) =
         task {
             let! page = remote.Start()
-            let root = requireEmptyRoot configuration page.LibraryCatalog
+            let root = requireEmptyRoots configuration page.LibraryCatalog
             let! catalog = remote.Catalog()
 
-            if catalog <> page.LibraryCatalog then
+            if catalog.RepositoryId
+               <> page.LibraryCatalog.RepositoryId
+               || (catalog <> page.LibraryCatalog
+                   && catalog.Libraries.Length
+                      <= page.LibraryCatalog.Libraries.Length)
+               || page.LibraryCatalog.Libraries
+                  |> Array.exists (fun root -> not (catalog.Libraries |> Array.contains root)) then
                 invalidOp "Library catalog changed before baseline selection."
 
-            requireEmptyRoot configuration catalog |> ignore
-            Directory.CreateDirectory(root) |> ignore
+            requireEmptyRoots configuration catalog |> ignore
+
+            root
+            |> Array.iter (fun path -> Directory.CreateDirectory(path) |> ignore)
+
             let selected = selection configuration (Guid.NewGuid()) page
             saveBaselinePage configuration.GraceStatusFile None selected page false
             observe "page"
@@ -150,14 +152,14 @@ module internal LibraryBaseline =
                 let expected = current configuration
                 do! check remote configuration expected
 
-                requireEmptyRoot configuration expected.Catalog
+                requireEmptyRoots configuration expected.Catalog
                 |> ignore
 
                 let baseline = expected.Baseline.Value
                 let! page = remote.Continue baseline.BootstrapId expected.NextPageToken.Value
                 do! check remote configuration expected
 
-                requireEmptyRoot configuration expected.Catalog
+                requireEmptyRoots configuration expected.Catalog
                 |> ignore
 
                 match page with
@@ -166,7 +168,7 @@ module internal LibraryBaseline =
                     let! page = remote.Start()
                     do! check remote configuration expected
 
-                    requireEmptyRoot configuration expected.Catalog
+                    requireEmptyRoots configuration expected.Catalog
                     |> ignore
 
                     let selected = selection configuration expected.WorkingCopyId page

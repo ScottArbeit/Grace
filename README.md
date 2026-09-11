@@ -43,6 +43,8 @@ Use `grace library rename <path> <new-name>` to rename one clean synchronized no
 
 Use `grace library sync pause` to stop Library capture and transfer for one onboarded copy while retaining its saved work. `grace library sync resume` continues synchronization; status reports pause separately from participation and progress.
 
+Enabled copies automatically receive every added Library through Watch or their next synchronization run. Grace creates missing ordinary roots, retains queued saves and catches up through ordered history. An explicitly paused copy stays paused; occupied or linked added roots are reported without replacing local input.
+
 Grace is a modern, fast, powerful centralized version control system. It's made up of a web API, with a CLI (and soon a GUI).
 
 Grace is written primarily in **F#**, and uses:

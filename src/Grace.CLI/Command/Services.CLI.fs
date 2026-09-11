@@ -170,24 +170,36 @@ module Services =
     /// Clears process-local `.graceignore` decisions after repository configuration changes.
     let clearShouldIgnoreCache () = shouldIgnoreCache.Clear()
 
-    let private librariesForOperation = AsyncLocal<string array>()
+    let private librariesForOperation = AsyncLocal<string array ref>()
+
+    /// Shares refreshed Library exclusions with callbacks that inherited the same command context.
+    type LibraryPolicyScope internal (selected: string array ref, restore: unit -> unit) =
+        /// Replaces the roots used by this command and invalidates prior path decisions.
+        member _.Update(libraries: string array) =
+            selected.Value <- Array.copy libraries
+            clearShouldIgnoreCache ()
+
+        interface IDisposable with
+            member _.Dispose() = restore ()
 
     /// Applies one remote repository root-policy snapshot to local path decisions for the lifetime of a single command operation.
     let beginLibraryPolicy (libraries: string array) =
         let previous = librariesForOperation.Value
-        librariesForOperation.Value <- if isNull libraries then Array.empty else Array.copy libraries
+        let selected = ref (if isNull libraries then Array.empty else Array.copy libraries)
+        librariesForOperation.Value <- selected
         clearShouldIgnoreCache ()
 
-        { new IDisposable with
-            member _.Dispose() =
+        new LibraryPolicyScope(
+            selected,
+            fun () ->
                 librariesForOperation.Value <- previous
                 clearShouldIgnoreCache ()
-        }
+        )
 
     /// Returns the Libraries supplied by the current remote command without persisting local participation state.
     let internal currentLibraries () =
         let libraries = librariesForOperation.Value
-        if isNull libraries then Array.empty else libraries
+        if isNull (box libraries) then Array.empty else libraries.Value
 
     // This section is "borrowed" from Common.CLI.fs, because Services.CLI.fs comes before Common.CLI.fs in the build order.
 

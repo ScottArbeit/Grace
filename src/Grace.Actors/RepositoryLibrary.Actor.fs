@@ -604,6 +604,24 @@ type RepositoryLibraryActor
             return! resolveOutcome repositoryId receipt.OperationId receipt.RequestHash receipt.Outcome
         }
 
+    /// Sends an advisory catalog wake without changing content notification progress or its retained failure.
+    let tryNotifyCatalog repositoryId (control: LibraryControlDocument) =
+        task {
+            try
+                let messageId, payload = LibraryNotifications.catalogWake libraryTokenKey repositoryId control
+
+                match
+                    tryCreateLibraryGraceEventEnvelope
+                        messageId
+                        (GraceEvent.LibraryContentAvailableEvent payload)
+                        (EventMetadata.New payload.CorrelationId "RepositoryLibraryActor")
+                    with
+                | Some envelope -> do! sendGraceEventEnvelope envelope CancellationToken.None
+                | None -> ()
+            with
+            | _ -> ()
+        }
+
     /// Completes a saved catalog decision and records its exact public result.
     let completeCatalogPending
         repositoryId
@@ -645,7 +663,20 @@ type RepositoryLibraryActor
                     { SchemaVersion = 1; OperationId = operationId; RequestHash = requestHash; Outcome = LibraryOperationOutcome.CatalogResult result }
 
                 let! _ = createReceipt repositoryId receipt
-                let! _ = writeControl repositoryId etag { control with Catalog = catalog; Pending = None }
+
+                let committed =
+                    { control with
+                        Catalog = catalog
+                        Pending = None
+                        AdditiveCatalogVersions =
+                            if add then
+                                Array.append control.AdditiveCatalogVersions [| expectedVersion |]
+                            else
+                                [||]
+                    }
+
+                let! _ = writeControl repositoryId etag committed
+                if add then do! tryNotifyCatalog repositoryId committed
                 return result
         }
 
@@ -1178,6 +1209,7 @@ type RepositoryLibraryActor
                             SlotRecordCount = 0
                             HistoryThrough = 0L
                             NotifyThrough = 0L
+                            AdditiveCatalogVersions = [||]
                         }
 
                     let! _ = writeControl repositoryId null control
@@ -1204,7 +1236,13 @@ type RepositoryLibraryActor
                     | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
                     | Some (existing, _) ->
                         match existing.Outcome with
-                        | LibraryOperationOutcome.CatalogResult result -> return Ok result
+                        | LibraryOperationOutcome.CatalogResult result ->
+                            if add && result.Outcome = OutcomeKind.Accepted then
+                                match! readControl repositoryId with
+                                | Some (control, _) -> do! tryNotifyCatalog repositoryId control
+                                | None -> ()
+
+                            return Ok result
                         | _ -> return Error RejectionReason.OperationIdentityMismatch
                     | None ->
                         match! readControl repositoryId with
@@ -1340,8 +1378,15 @@ type RepositoryLibraryActor
                         match! readControl repositoryId with
                         | None -> return Error "Library catalog is not initialized."
                         | Some (control, etag) ->
-                            if LibraryDecision.catalogVersion command
-                               <> control.Catalog.Version then
+                            if
+                                LibraryDecision.catalogVersion command
+                                <> control.Catalog.Version
+                                && not
+                                    (
+                                        control.AdditiveCatalogVersions
+                                        |> Array.contains (LibraryDecision.catalogVersion command)
+                                    )
+                            then
                                 let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
                                 return Ok receipt
                             else

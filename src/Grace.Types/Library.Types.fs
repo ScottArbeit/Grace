@@ -627,6 +627,9 @@ module Library =
             HistoryThrough: int64
             [<Id(9u)>]
             NotifyThrough: int64
+            /// Retains known additive predecessors so queued requests survive additions; removal clears this bounded set.
+            [<Id(10u)>]
+            AdditiveCatalogVersions: LibraryCatalogVersion array
         }
 
     /// Stores one current item and the newest history segment that mentions it.

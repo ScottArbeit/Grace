@@ -10,6 +10,8 @@ open Microsoft.Data.Sqlite
 open NUnit.Framework
 open System
 open System.IO
+open System.Threading
+open System.Threading.Tasks
 
 /// Exercises the real Library SQLite completion boundary and Windows filesystem guards.
 [<NonParallelizable>]
@@ -180,6 +182,180 @@ module LibraryLocalStateTests =
             complete db initial first
             setState db (readRepository db initial.RepositoryId).Value "current"
             return configuration, (readRepository db initial.RepositoryId).Value, first.Accepted.Value.Item
+        }
+
+    /// Retains prepared input and page progress while automatic selection survives each catalog transaction boundary.
+    [<TestCase("before"); TestCase("inside"); TestCase("after-selection"); TestCase("after"); TestCase("none")>]
+    let ``automatic catalog selection reopens without changing unfinished input`` fault =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let root, db = location ()
+            let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
+            configuration.RootDirectory <- root
+            configuration.GraceStatusFile <- db
+            do! initialize db
+            let original, operation = prepared ()
+            let original = { original with NextPageToken = Some "retained-page" }
+            configuration.RepositoryId <- original.RepositoryId
+
+            Directory.CreateDirectory(Path.Combine(root, "Library"))
+            |> ignore
+
+            enable db original
+            insertOperation db original.RepositoryId operation
+
+            let selected =
+                { original.Catalog with Version = Guid.NewGuid(); PreviousVersion = Some(Guid.NewGuid()); Libraries = [| "Later"; "Library"; "Added" |] }
+
+            use cancellation = new CancellationTokenSource()
+            let before () = if fault = "before" then invalidOp "injected before catalog"
+
+            let afterWrite _ _ =
+                if fault = "inside" then invalidOp "injected inside catalog"
+                if fault = "after-selection" then cancellation.Cancel()
+
+            try
+                do! LibrarySynchronization.refreshCatalogWith before afterWrite (fun () -> Task.FromResult selected) configuration cancellation.Token
+                if fault = "after" then invalidOp "injected after catalog"
+            with
+            | :? InvalidOperationException as error when error.Message.StartsWith("injected") -> ()
+            | :? OperationCanceledException when fault = "after-selection" -> ()
+
+            let persisted =
+                readRepository db original.RepositoryId
+                |> Option.get
+
+            Assert.That(
+                persisted,
+                Is.EqualTo(
+                    if fault = "before" || fault = "inside" then
+                        original
+                    else
+                        { original with Catalog = selected }
+                )
+            )
+
+            Assert.That(serialize (readOperations db original.RepositoryId), Is.EqualTo(serialize [| operation |]))
+
+            if fault = "after-selection" then
+                Assert.That(Directory.Exists(Path.Combine(root, "Added")), Is.False)
+
+            do! LibrarySynchronization.refreshCatalogWith ignore (fun _ _ -> ()) (fun () -> Task.FromResult selected) configuration CancellationToken.None
+            Assert.That(readRepository db original.RepositoryId, Is.EqualTo(Some { original with Catalog = selected }))
+            Assert.That(Directory.Exists(Path.Combine(root, "Added")), Is.True)
+            Assert.That(Directory.Exists(Path.Combine(root, "Later")), Is.True)
+            Assert.That(serialize (readOperations db original.RepositoryId), Is.EqualTo(serialize [| operation |]))
+        }
+
+    /// Refuses occupied paths, pause and last-moment obstruction before changing any selected metadata or operation.
+    [<TestCase("file"); TestCase("occupied"); TestCase("revalidate"); TestCase("paused"); TestCase("canceled")>]
+    let ``automatic catalog selection preserves obstructing bytes and old state`` scenario =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let root, db = location ()
+            let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
+            configuration.RootDirectory <- root
+            configuration.GraceStatusFile <- db
+            do! initialize db
+            let original, operation = prepared ()
+            let original = { original with Paused = scenario = "paused" }
+            configuration.RepositoryId <- original.RepositoryId
+
+            Directory.CreateDirectory(Path.Combine(root, "Library"))
+            |> ignore
+
+            enable db original
+            insertOperation db original.RepositoryId operation
+            let selected = { original.Catalog with Version = Guid.NewGuid(); Libraries = [| "Library"; "Added" |] }
+            let added = Path.Combine(root, "Added")
+
+            let obstruct () =
+                if scenario = "file" then
+                    File.WriteAllText(added, "retained input")
+                else
+                    Directory.CreateDirectory(added) |> ignore
+                    File.WriteAllText(Path.Combine(added, "local.txt"), "retained input")
+
+            if scenario = "file" || scenario = "occupied" then obstruct ()
+            use cancellation = new CancellationTokenSource()
+            if scenario = "canceled" then cancellation.Cancel()
+            let before () = if scenario = "revalidate" then obstruct ()
+            let mutable refused = false
+
+            try
+                do! LibrarySynchronization.refreshCatalogWith before (fun _ _ -> ()) (fun () -> Task.FromResult selected) configuration cancellation.Token
+            with
+            | :? InvalidOperationException
+            | :? OperationCanceledException -> refused <- true
+
+            Assert.That(refused, Is.True)
+            Assert.That(readRepository db original.RepositoryId, Is.EqualTo(Some original))
+            Assert.That(serialize (readOperations db original.RepositoryId), Is.EqualTo(serialize [| operation |]))
+
+            if scenario = "file" then
+                Assert.That(File.ReadAllText added, Is.EqualTo("retained input"))
+            elif scenario = "occupied" || scenario = "revalidate" then
+                Assert.That(File.ReadAllText(Path.Combine(added, "local.txt")), Is.EqualTo("retained input"))
+        }
+
+    /// Requires the feed's actual root identity instead of accepting an unseen removed root nested below a current path.
+    [<Test>]
+    let ``automatic feed validation checks root identity without ordering catalog versions`` () =
+        let original, operation = prepared ()
+        let selected = { original.Catalog with Version = Guid.NewGuid(); Libraries = [| "Library"; "Added" |] }
+        let change = operation.Accepted.Value
+        LibrarySynchronization.requireAcceptedRoot selected [||] change
+        let ns = change.Item.Namespace.Value
+
+        let removedRoot =
+            { change with Item = { change.Item with Namespace = Some { ns with Parent = { ns.Parent with LibraryPath = Some "Library/Removed" } } } }
+
+        throws<InvalidOperationException> (fun () -> LibrarySynchronization.requireAcceptedRoot selected [||] removedRoot)
+        let parentId = Guid.NewGuid()
+
+        let missingParent =
+            { change with Item = { change.Item with Namespace = Some { ns with Parent = { Kind = "item"; LibraryPath = None; ItemId = Some parentId } } } }
+
+        throws<InvalidOperationException> (fun () -> LibrarySynchronization.requireAcceptedRoot selected [||] missingParent)
+
+    /// Applies old prepared local and incoming records under the current roots without rewriting their catalog or receipt.
+    [<TestCase(true); TestCase(false)>]
+    let ``automatic catalog completion preserves old prepared input`` remote =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let original, local = prepared ()
+            let current = { original with Catalog = { original.Catalog with Version = Guid.NewGuid(); Libraries = [| "Library"; "Added"; "Later" |] } }
+
+            let operation =
+                if remote then
+                    incoming original.AppliedCursor local.SourcePath local.TargetPath None EchoState.Pending local.Accepted.Value
+                else
+                    local
+
+            enable db current
+            insertOperation db current.RepositoryId operation
+            complete db current operation
+
+            let completed =
+                readOperations db current.RepositoryId
+                |> Array.exactlyOne
+
+            Assert.That(completed.Terminal, Is.True)
+            Assert.That(completed.CatalogVersion, Is.EqualTo(operation.CatalogVersion))
+            Assert.That(completed.RequestJson, Is.EqualTo(operation.RequestJson))
+            Assert.That(completed.Accepted, Is.EqualTo(operation.Accepted))
+
+            Assert.That(
+                (readRepository db current.RepositoryId)
+                    .Value
+                    .AppliedCursor,
+                Is.EqualTo(operation.Accepted.Value.Item.LastChangeCursor)
+            )
         }
 
     /// Reads canonical epochs from SQLite and rejects corrupt identity text without modifying retained work.

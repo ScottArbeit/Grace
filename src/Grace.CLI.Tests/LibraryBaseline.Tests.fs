@@ -257,6 +257,24 @@ module LibraryBaselineTests =
             Assert.That(Grace.CLI.LibraryOperation.checkpoint tombstone, Is.EqualTo(None))
         }
 
+    /// Enables an empty catalog without inventing a root so its first later addition can use ordinary additive selection.
+    [<Test>]
+    let ``empty catalog baseline completes with no file work`` () =
+        task {
+            let! fixture = fixture ()
+            let catalog = { fixture.Catalog.Value with Libraries = [||] }
+            let page = { fixture.Pages[0] with LibraryCatalog = catalog; Items = [||]; NextPageToken = None }
+            let remote = { fixture.Remote with Catalog = (fun () -> Task.FromResult catalog); Start = (fun () -> Task.FromResult page) }
+            do! LibraryBaseline.startWith ignore remote fixture.Configuration
+            do! LibraryBaseline.resumeWith ignore remote fixture.Configuration CancellationToken.None
+            let current = state fixture
+            Assert.That(current.Catalog, Is.EqualTo(catalog))
+            Assert.That(current.AppliedCursor, Is.EqualTo(page.BoundaryCursor))
+            Assert.That(current.Baseline.Value.Applied, Is.True)
+            Assert.That(operations fixture, Is.Empty)
+            Assert.That(fixture.Reads.Value, Is.Zero)
+        }
+
     /// Reopens real SQLite after each interrupted stage and checks completion never rewrites published bytes.
     [<TestCase("page", 1)>]
     [<TestCase("page", 2)>]

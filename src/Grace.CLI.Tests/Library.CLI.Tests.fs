@@ -8,11 +8,87 @@ open Grace.Types.Common
 open Grace.Types.Library
 open NUnit.Framework
 open System
+open System.IO
+open System.Threading
 open System.Threading.Tasks
 
 /// Tests catalog command request construction without changing global SDK clients or invoking a server.
 [<NonParallelizable>]
 module LibraryCommandTests =
+
+    /// Invokes the real command action with cancellation while another holder owns the configured root lease.
+    [<Test>]
+    let ``automatic sync command cancellation while waiting leaves participation untouched`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let previousDirectory = Environment.CurrentDirectory
+            let root = Path.Combine(Path.GetTempPath(), $"grace-automatic-command-{Guid.NewGuid():N}")
+            let grace = Directory.CreateDirectory(Path.Combine(root, ".grace"))
+            let configuration = Grace.Shared.Client.Configuration.GraceConfiguration()
+            configuration.OwnerId <- Guid.NewGuid()
+            configuration.OrganizationId <- Guid.NewGuid()
+            configuration.RepositoryId <- Guid.NewGuid()
+            Grace.Shared.Client.Configuration.saveConfigFile (Path.Combine(grace.FullName, "graceconfig.json")) configuration
+
+            try
+                Environment.CurrentDirectory <- root
+                Grace.Shared.Client.Configuration.resetConfiguration ()
+                let current = Grace.Shared.Client.Configuration.Current()
+                do! LibraryLocalState.initialize current.GraceStatusFile
+
+                let before: LibraryLocalState.RepositoryState =
+                    {
+                        RepositoryId = current.RepositoryId
+                        WorkingCopyId = Guid.NewGuid()
+                        Catalog =
+                            {
+                                RepositoryId = current.RepositoryId
+                                Version = Guid.NewGuid()
+                                PreviousVersion = None
+                                Libraries = [| "Library" |]
+                                CreatedAt = getCurrentInstant ()
+                                CreatedBy = "test"
+                            }
+                        CursorEpoch = LibraryCursorEpoch.ofGuid (Guid.NewGuid())
+                        AppliedCursor = "opaque-command-predecessor"
+                        NextPageToken = None
+                        State = "current"
+                        Paused = false
+                        Baseline = None
+                    }
+
+                LibraryLocalState.enable current.GraceStatusFile before
+
+                let scope =
+                    WorkingDirectoryUpdateCoordination.Scope.create current.RepositoryId current.RootDirectory
+                    |> Result.defaultWith invalidOp
+
+                use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                use cancellation = new CancellationTokenSource()
+
+                let parsed =
+                    GraceCommand.rootCommand.Parse [| "library"
+                                                      "sync"
+                                                      "run"
+                                                      "--output"
+                                                      "Json" |]
+
+                Assert.That(parsed.Errors.Count, Is.Zero)
+                let action = parsed.CommandResult.Command.Action :?> System.CommandLine.Invocation.AsynchronousCommandLineAction
+                let waiting = action.InvokeAsync(parsed, cancellation.Token)
+                let wasWaiting = not waiting.IsCompleted
+                cancellation.Cancel()
+                let! exitCode = waiting
+                Assert.That(wasWaiting, Is.True)
+                Assert.That(exitCode, Is.Not.Zero)
+                Assert.That(LibraryLocalState.readRepository current.GraceStatusFile current.RepositoryId, Is.EqualTo(Some before))
+                Assert.That(LibraryLocalState.readOperations current.GraceStatusFile current.RepositoryId, Is.Empty)
+            finally
+                Environment.CurrentDirectory <- previousDirectory
+                Grace.Shared.Client.Configuration.resetConfiguration ()
+        }
 
     /// Keeps human output explicit about rejection, unknown acceptance, incomplete accepted application and finished filenames.
     [<TestCase("completed", "completed");
