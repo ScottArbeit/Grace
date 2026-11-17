@@ -1,0 +1,176 @@
+{
+  "SchemaVersion": 1,
+  "SourceRevision": "9b18c97ab342d319d3bdeaedc5f1d64571913cf5",
+  "Verdict": "Proven for the bounded prototype question; no production adoption command delivered",
+  "Requirements": [
+    "LIB-019",
+    "LIB-020",
+    "LIB-021"
+  ],
+  "RunDateUtc": "2026-09-10",
+  "LocalResultRoot": "C:/Source/Grace-artifacts/library-catalog-adoption-1037/run-20260909",
+  "PublishedResult": "https://github.com/ScottArbeit/Grace/issues/1037#issuecomment-5611183841",
+  "Build": {
+    "Passed": true,
+    "Warnings": 0,
+    "Errors": 0,
+    "Log": "build-final-2.log"
+  },
+  "NUnit": {
+    "Passed": 4,
+    "Failed": 0,
+    "Skipped": 0,
+    "Filter": "TestCategory=CatalogAdoptionReadiness",
+    "Trx": "results-final-2/adoption-final-2.trx",
+    "TrxSHA256": "FA21BDDC06D25FFCF747404A01ED03998DE5F84F081FB96B08587A46E65C223C"
+  },
+  "LocalAssertionGroups": [
+    {
+      "Name": "commit-before-restart-and-duplicate",
+      "Passed": true
+    },
+    {
+      "Name": "commit-inside-restart-and-duplicate",
+      "Passed": true
+    },
+    {
+      "Name": "commit-after-restart-and-duplicate",
+      "Passed": true
+    },
+    {
+      "Name": "active-retained",
+      "Passed": true
+    },
+    {
+      "Name": "partial-page-retained",
+      "Passed": true
+    },
+    {
+      "Name": "incomplete-retained",
+      "Passed": true
+    },
+    {
+      "Name": "dirty-retained",
+      "Passed": true
+    },
+    {
+      "Name": "untracked-retained",
+      "Passed": true
+    },
+    {
+      "Name": "occupied-retained",
+      "Passed": true
+    },
+    {
+      "Name": "zero-retained",
+      "Passed": true
+    },
+    {
+      "Name": "epoch-retained",
+      "Passed": true
+    },
+    {
+      "Name": "rebaseline-retained",
+      "Passed": true
+    },
+    {
+      "Name": "stale-row-retained",
+      "Passed": true
+    },
+    {
+      "Name": "pending-incoming-retained",
+      "Passed": true
+    },
+    {
+      "Name": "frozen-save-retained",
+      "Passed": true
+    },
+    {
+      "Name": "rejected-save-retained",
+      "Passed": true
+    },
+    {
+      "Name": "removal-retained",
+      "Passed": true
+    },
+    {
+      "Name": "replacement-retained",
+      "Passed": true
+    },
+    {
+      "Name": "skipped-retained",
+      "Passed": true
+    },
+    {
+      "Name": "catalog-change-retained",
+      "Passed": true
+    },
+    {
+      "Name": "invalid-cursor-retained",
+      "Passed": true
+    },
+    {
+      "Name": "reparse-retained",
+      "Passed": true
+    },
+    {
+      "Name": "canceled-contended-root-lease-retained",
+      "Passed": true
+    },
+    {
+      "Name": "stale-watch-classification-after-adoption-retained",
+      "Passed": true
+    }
+  ],
+  "RealDependencies": [
+    "Windows build 26340 / NTFS",
+    "Grace native SQLite and serializer",
+    "root lease and Watch classifier boundary",
+    "separate CLI processes",
+    "authorized catalog/feed HTTP",
+    "immutable upload/read",
+    "normal Aspire hosted fixture"
+  ],
+  "Modeled": [
+    "new adoption orchestration and guarded catalog-only SQL update",
+    "verified clean-tree fixture snapshot",
+    "injected catalog removal/replacement/skipped successor/stale observation",
+    "injected changed epoch and rebaseline response",
+    "seeded unfinished operation/partial-page/onboarding state"
+  ],
+  "NotClaimed": [
+    "production adoption CLI or command cancellation",
+    "arbitrary termination or power-loss durability",
+    "full running Watch adoption lifetime",
+    "expired-history compaction",
+    "atomic cross-domain publication exclusion",
+    "other platforms or root transitions"
+  ],
+  "ProductionSourceChanges": 0,
+  "DisposableCLIAdaptations": [
+    "LibraryLocalState completion guard",
+    "LibrarySynchronization incoming history check before effects"
+  ],
+  "Artifacts": [
+    {
+      "Path": "AdoptionExperiment.fs.fragment",
+      "SHA256": "9C4C140E43DD939F5B9F83A38B949A989A743519E9ECC58B2FC3F9554DDE8D85"
+    },
+    {
+      "Path": "Apply-Prototype.ps1",
+      "SHA256": "1E700B8C3FF3090EE7B5AF2CD9EAD0A7C88C5594F8BFC4FAA79F5B7D5735A28F"
+    },
+    {
+      "Path": "Run.ps1",
+      "SHA256": "2AAB84FCB9E47D06EE838E7BC2A7E11079969544DC15052BDCB14CB74A94C97C"
+    }
+  ],
+  "ArtifactCopyHashesVerified": true,
+  "Reproduction": {
+    "PreparedSourceHashMatches": 3,
+    "PowerShellParserPassed": true,
+    "WrapperExecutedEndToEnd": false,
+    "Note": "Manual matching build/test passed; preparation reproduced all three source files byte-for-byte. This documentation change did not rerun the experiment."
+  },
+  "OriginalManifestSHA256": "AF6C917DF9BB1486A0294364FFDC035CFA49FF89E94D8CAF9796369DA79DCE86"
+}

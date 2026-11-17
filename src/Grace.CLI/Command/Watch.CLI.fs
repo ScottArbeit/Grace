@@ -9730,8 +9730,29 @@ module Watch =
 
                     let initializedStatus = initializedState.Status
 
-                    let! libraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
+                    let! initialLibraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
+                    let mutable libraryCatalog = initialLibraryCatalog
                     use libraryPolicyLifetime = beginLibraryPolicy libraryCatalog.Libraries
+
+                    /// Refreshes exclusions before Watch can publish VC work under an obsolete Library policy.
+                    let refreshLibraryPolicy () =
+                        task {
+                            let! current = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
+
+                            if current <> libraryCatalog then
+                                if libraryCatalog.Libraries
+                                   |> Array.exists (fun root -> not (current.Libraries |> Array.contains root)) then
+                                    invalidOp "Library removal or relocation during Watch is unsupported."
+
+                                libraryPolicyLifetime.Update current.Libraries
+
+                                activeWatchIgnoreSnapshot <-
+                                    activeWatchIgnoreSnapshot
+                                    |> Option.map (fun snapshot -> { snapshot with Libraries = Array.copy current.Libraries })
+
+                                libraryCatalog <- current
+                        }
+
                     let! _ = LibrarySynchronization.status cachedOperationalConfiguration
                     libraryObservedPaths.Clear()
                     takeLibraryWake () |> ignore
@@ -10022,10 +10043,7 @@ module Watch =
                         logToAnsiConsole Colors.Error $"Grace Watch startup scan failure: {error}"
 
                     // Process any changes that occurred while not running.
-                    let! startupLibraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
-
-                    if startupLibraryCatalog <> libraryCatalog then
-                        invalidOp "Library catalog changed during Watch startup. Restart Watch after resolving the Library policy change."
+                    do! refreshLibraryPolicy ()
 
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
@@ -10047,6 +10065,7 @@ module Watch =
 
                     while ticked
                           && not (cancellationToken.IsCancellationRequested) do
+                        do! refreshLibraryPolicy ()
                         let! libraryStatus = LibrarySynchronization.status cachedOperationalConfiguration
 
                         if libraryStatus.Enabled && not libraryStatus.Paused then
@@ -10072,10 +10091,7 @@ module Watch =
                                 do! LibrarySynchronization.runFromWatch cachedOperationalConfiguration (getCorrelationId parseResult) cancellationToken
                                 nextLibraryPull <- DateTime.UtcNow.AddSeconds(5.0)
 
-                        let! currentLibraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
-
-                        if currentLibraryCatalog <> libraryCatalog then
-                            invalidOp "Library catalog changed during Watch. Restart Watch after resolving the Library policy change."
+                        do! refreshLibraryPolicy ()
 
                         do!
                             processWatchTimerLocalRecoveryWithReplay

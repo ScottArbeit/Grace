@@ -1,0 +1,432 @@
+
+    /// Captures physical fixture entries without traversing reparse points; the seed is a verified materialized tree.
+    let private adoptionDiskWith allowReparse root libraryRoot =
+        let entries = ResizeArray<string * string>()
+        /// Enumerates only ordinary descendants and fingerprints every file in the materialized seed.
+        let rec visit (path: string) =
+            if File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint) then
+                if not allowReparse then invalidOp "blocked:reparse"
+                entries.Add(Path.GetRelativePath(root, path), "reparse:" + DirectoryInfo(path).LinkTarget)
+            elif Directory.Exists(path) then
+                entries.Add(Path.GetRelativePath(root, path), "directory")
+                Directory.GetFileSystemEntries(path) |> Array.iter visit
+            else
+                let content = LibraryFilesystem.stableRead path
+                entries.Add(Path.GetRelativePath(root, path), $"{content.Size}:{content.Sha256Hash}:{content.Blake3Hash}")
+        visit (Path.Combine(root, libraryRoot))
+        entries |> Seq.sort |> Seq.toArray
+
+    /// Uses strict physical observations for the proposed adoption precondition.
+    let private adoptionDisk root libraryRoot = adoptionDiskWith false root libraryRoot
+
+    /// Reads the current catalog through the actual authorized HTTP endpoint.
+    let private adoptionCatalog repositoryId =
+        task {
+            let parameters = Parameters.Library.GetLibraryCatalogParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- string repositoryId
+            parameters.CorrelationId <- generateCorrelationId ()
+            use! response = Client.PostAsync("/libraries/catalog/get", createJsonContent parameters)
+            return! requireReturnValueAsync<LibraryCatalogDto> response
+        }
+
+    /// Models only the new catalog-adoption commit; all rows, serialization, lease and HTTP reads are real.
+    let private adoptCatalogModel root repositoryId clean (selected: LibraryCatalogDto) fault afterCommit =
+        task {
+            let scope = WorkingDirectoryUpdateCoordination.Scope.create repositoryId root |> Result.defaultWith invalidOp
+            use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+            let db = localDb root
+            let before = Grace.CLI.LibraryLocalState.readRepository db repositoryId |> Option.get
+            if not before.Paused || before.Baseline.IsSome || before.NextPageToken.IsSome then invalidOp "blocked:participation"
+            let operations = Grace.CLI.LibraryLocalState.readOperations db repositoryId
+            if operations |> Array.exists (fun operation -> not operation.Terminal) then invalidOp "blocked:pending"
+            let! actualRemote = adoptionCatalog repositoryId
+            // These three negative controls inject unsupported catalog metadata after a real read.
+            let selected =
+                match fault with
+                | "removal" -> { selected with Libraries = [||] }
+                | "replacement" -> { selected with Libraries = [| "Added"; "Replacement" |] }
+                | "skipped" -> { selected with PreviousVersion = Some(Guid.NewGuid()) }
+                | _ -> selected
+            let remote = if List.contains fault [ "removal"; "replacement"; "skipped" ] then selected else actualRemote
+            if remote <> selected then invalidOp "blocked:catalog"
+            if before.Catalog = selected then return ()
+            else
+                if before.Catalog.Libraries <> [| "Library" |]
+                   || selected.PreviousVersion <> Some before.Catalog.Version
+                   || (selected.Libraries |> Array.sort) <> [| "Added"; "Library" |] then invalidOp "blocked:delta"
+                if adoptionDisk root "Library" <> clean then invalidOp "blocked:dirty"
+                let added = Path.Combine(root, "Added")
+                if not (Directory.Exists added)
+                   || File.GetAttributes(added).HasFlag(FileAttributes.ReparsePoint)
+                   || Directory.EnumerateFileSystemEntries(added).Any() then invalidOp "blocked:added-root"
+                let parameters = Parameters.Library.GetLibraryChangesParameters()
+                parameters.OwnerId <- ownerId
+                parameters.OrganizationId <- organizationId
+                parameters.RepositoryId <- string repositoryId
+                parameters.AfterCursor <- before.AppliedCursor
+                parameters.CorrelationId <- generateCorrelationId ()
+                use! response = Client.PostAsync("/libraries/changes/get", createJsonContent parameters)
+                if not response.IsSuccessStatusCode then invalidOp "blocked:feed-http"
+                let! actualPage = requireReturnValueAsync<LibraryChangePageDto> response
+                let page =
+                    if fault = "epoch" then { actualPage with CursorEpoch = LibraryCursorEpoch.ofGuid(Guid.NewGuid()) }
+                    elif fault = "rebaseline" then
+                        { actualPage with Rebaseline = Some { Reason = "rebaselineRequired"; CurrentEpoch = actualPage.CursorEpoch; ServiceFloorCursor = actualPage.LastCursor; RecommendedBootstrap = true } }
+                    else actualPage
+                if page.Rebaseline.IsSome || page.CursorEpoch <> before.CursorEpoch then invalidOp "blocked:feed"
+                let! actualLatest = adoptionCatalog repositoryId
+                let latest = if fault = "catalog-change" then { actualLatest with Version = Guid.NewGuid() } else actualLatest
+                if fault = "stale-row" then Grace.CLI.LibraryLocalState.setState db before "blocked"
+                if latest <> selected || adoptionDisk root "Library" <> clean
+                   || Directory.EnumerateFileSystemEntries(added).Any()
+                   || Grace.CLI.LibraryLocalState.readRepository db repositoryId <> Some before
+                   || Grace.CLI.LibraryLocalState.readOperations db repositoryId <> operations then invalidOp "blocked:stale"
+                if fault = "before" then invalidOp "injected:before"
+                use connection = Grace.CLI.LibraryLocalState.openConnection db
+                use transaction = connection.BeginTransaction()
+                use command = connection.CreateCommand()
+                command.Transaction <- transaction
+                command.CommandText <- "UPDATE library_repository_state SET catalog_json=$new WHERE repository_id=$repository AND working_copy_id=$copy AND lifecycle_state=$state AND catalog_json=$old AND paused=1 AND applied_cursor=$cursor AND cursor_epoch=$epoch AND next_page_token IS NULL AND baseline_json IS NULL;"
+                command.Parameters.AddWithValue("$new", serialize selected) |> ignore
+                command.Parameters.AddWithValue("$old", serialize before.Catalog) |> ignore
+                command.Parameters.AddWithValue("$repository", repositoryId.ToString("D")) |> ignore
+                command.Parameters.AddWithValue("$cursor", before.AppliedCursor) |> ignore
+                command.Parameters.AddWithValue("$copy", before.WorkingCopyId.ToString("D")) |> ignore
+                command.Parameters.AddWithValue("$state", before.State) |> ignore
+                command.Parameters.AddWithValue("$epoch", LibraryCursorEpoch.toString before.CursorEpoch) |> ignore
+                if command.ExecuteNonQuery() <> 1 then invalidOp "blocked:cas"
+                if fault = "inside" then invalidOp "injected:inside"
+                transaction.Commit()
+                afterCommit ()
+                if fault = "after" then invalidOp "injected:after"
+        }
+
+    /// Copies one stopped disposable working tree so each failure starts from the same real persisted state.
+    let private adoptionClone source target =
+        Directory.CreateDirectory(target) |> ignore
+        Directory.GetDirectories(source, "*", SearchOption.AllDirectories)
+        |> Array.iter (fun path -> Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, path))) |> ignore)
+        Directory.GetFiles(source, "*", SearchOption.AllDirectories)
+        |> Array.iter (fun path -> File.Copy(path, Path.Combine(target, Path.GetRelativePath(source, path))))
+
+    /// Saves durable row/item/operation state and real working/object bytes independently of diagnostic logs.
+    let private adoptionSnapshot root repositoryId =
+        let objects = Path.Combine(root, ".grace", "objects")
+        let objectHashes =
+            if Directory.Exists(objects) then
+                Directory.GetFiles(objects, "*", SearchOption.AllDirectories)
+                |> Array.map (fun path -> Path.GetRelativePath(objects, path), Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes path)))
+                |> Array.sort
+            else [||]
+        serialize {| Repository = Grace.CLI.LibraryLocalState.readRepository (localDb root) repositoryId
+                     Items = Grace.CLI.LibraryLocalState.readItems (localDb root) repositoryId
+                     Operations = Grace.CLI.LibraryLocalState.readOperations (localDb root) repositoryId
+                     Disk = adoptionDiskWith true root "Library"; AddedDisk = adoptionDiskWith true root "Added"; Objects = objectHashes |}
+
+    /// Exercises guarded adoption and rollback over clones without changing either live participating copy.
+    let private adoptionFailureCases copyA copyB repositoryId cleanA cleanB selected output =
+        task {
+            let passed = ResizeArray<string>()
+            Directory.CreateDirectory(output) |> ignore
+            /// Records each completed assertion group immediately, so later failures retain an honest partial ledger.
+            let record name =
+                passed.Add name
+                File.WriteAllText(Path.Combine(output, "cases.json"), serialize (passed.ToArray()))
+            for fault in [ "before"; "inside"; "after" ] do
+                let root = Path.Combine(output, "commit-" + fault)
+                adoptionClone copyB root
+                let before = Grace.CLI.LibraryLocalState.readRepository (localDb root) repositoryId |> Option.get
+                let original = adoptionSnapshot root repositoryId
+                File.WriteAllText(Path.Combine(output, "commit-" + fault + "-before.json"), original)
+                let mutable injected = false
+                try do! adoptCatalogModel root repositoryId cleanB selected fault ignore
+                with :? InvalidOperationException as ex when ex.Message = "injected:" + fault -> injected <- true
+                Assert.That(injected, Is.True)
+                let expected = if fault = "after" then { before with Catalog = selected } else before
+                Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb root) repositoryId, Is.EqualTo(Some expected))
+                let residue = adoptionSnapshot root repositoryId
+                let originalJson = System.Text.Json.Nodes.JsonNode.Parse(original)
+                let residueJson = System.Text.Json.Nodes.JsonNode.Parse(residue)
+                originalJson["Repository"]["Catalog"] <- null
+                residueJson["Repository"]["Catalog"] <- null
+                Assert.That(System.Text.Json.Nodes.JsonNode.DeepEquals(originalJson, residueJson), Is.True)
+                File.WriteAllText(Path.Combine(output, "commit-" + fault + "-residue.json"), residue)
+                if fault <> "after" then Assert.That(adoptionSnapshot root repositoryId, Is.EqualTo(original))
+                do! adoptCatalogModel root repositoryId cleanB selected "none" ignore
+                let completed = adoptionSnapshot root repositoryId
+                do! adoptCatalogModel root repositoryId cleanB selected "none" ignore
+                Assert.That(adoptionSnapshot root repositoryId, Is.EqualTo(completed))
+                File.WriteAllText(Path.Combine(output, "commit-" + fault + "-restart.json"), completed)
+                record ("commit-" + fault + "-restart-and-duplicate")
+            for scenario in [ "active"; "partial-page"; "incomplete"; "dirty"; "untracked"; "occupied"; "zero"; "epoch"; "rebaseline"; "stale-row"; "pending-incoming"; "frozen-save"; "rejected-save"; "removal"; "replacement"; "skipped"; "catalog-change"; "invalid-cursor"; "reparse" ] do
+                let fromA = scenario = "frozen-save" || scenario = "rejected-save"
+                let root = Path.Combine(output, scenario)
+                adoptionClone (if fromA then copyA else copyB) root
+                let clean = if fromA then cleanA else cleanB
+                let db = localDb root
+                let before = Grace.CLI.LibraryLocalState.readRepository db repositoryId |> Option.get
+                match scenario with
+                | "active" -> Grace.CLI.LibraryLocalState.setPaused db before false
+                | "partial-page" -> localSql root "UPDATE library_repository_state SET next_page_token='fixture-retained-continuation';" |> ignore
+                | "incomplete" ->
+                    use connection = Grace.CLI.LibraryLocalState.openConnection db
+                    use command = connection.CreateCommand()
+                    command.CommandText <- "UPDATE library_repository_state SET baseline_json=$baseline;"
+                    let baseline: Grace.CLI.LibraryLocalState.BaselineSelection = { BootstrapId = Guid.NewGuid(); BoundaryCursor = before.AppliedCursor; MetadataComplete = false; Applied = false }
+                    command.Parameters.AddWithValue("$baseline", serialize baseline) |> ignore
+                    command.ExecuteNonQuery() |> ignore
+                | "dirty" -> File.WriteAllText(Path.Combine(root, "Library", "original.txt"), "changed local save")
+                | "untracked" -> File.WriteAllText(Path.Combine(root, "Library", "untracked.txt"), "keep this new input")
+                | "occupied" -> File.WriteAllText(Path.Combine(root, "Added", "obstruction.txt"), "keep this obstruction")
+                | "zero" -> File.WriteAllBytes(Path.Combine(root, "Added", "empty.txt"), [||])
+                | "invalid-cursor" -> localSql root "UPDATE library_repository_state SET applied_cursor='invalid-fixture-token';" |> ignore
+                | "reparse" ->
+                    let target = Path.Combine(output, "preserved-reparse-target")
+                    Directory.CreateDirectory(target) |> ignore
+                    File.WriteAllText(Path.Combine(target, "keep.txt"), "external target bytes")
+                    let script = Path.Combine(output, "create-junction.ps1")
+                    File.WriteAllText(script, "param([string]$LinkPath, [string]$TargetPath)\n$ErrorActionPreference = 'Stop'\nNew-Item -ItemType Junction -Path $LinkPath -Target $TargetPath | Out-Null\n")
+                    let start = ProcessStartInfo("pwsh", UseShellExecute = false, CreateNoWindow = true)
+                    for argument in [ "-NoProfile"; "-NonInteractive"; "-File"; script; "-LinkPath"; Path.Combine(root, "Library", "linked"); "-TargetPath"; target ] do start.ArgumentList.Add argument
+                    use create = Process.Start start
+                    if not (create.WaitForExit(30000)) then
+                        create.Kill(true)
+                        invalidOp "Fixture junction creation timed out."
+                    Assert.That(create.ExitCode, Is.Zero)
+                | "pending-incoming" | "frozen-save" | "rejected-save" ->
+                    let operation =
+                        Grace.CLI.LibraryLocalState.readOperations db repositoryId
+                        |> Array.find (fun op -> if fromA then op.RequestJson.IsSome && op.SourceObject.IsSome else op.Direction = "remote")
+                    let work =
+                        match operation.Work with
+                        | Grace.CLI.LibraryOperation.OperationWork.Incoming(change, source, prior, Grace.CLI.LibraryOperation.ApplicationProgress.Completed checkpoint) ->
+                            Grace.CLI.LibraryOperation.OperationWork.Incoming(change, source, prior, Grace.CLI.LibraryOperation.ApplicationProgress.Prepared checkpoint)
+                        | Grace.CLI.LibraryOperation.OperationWork.SavedFile(intent, Grace.CLI.LibraryOperation.SavedFileProgress.Accepted(request, receipt, _)) ->
+                            let progress =
+                                if scenario = "frozen-save" then Grace.CLI.LibraryOperation.SavedFileProgress.Uploaded request
+                                else Grace.CLI.LibraryOperation.SavedFileProgress.Rejected(request, { RequestHash = receipt.RequestHash; ReasonCode = Grace.CLI.LibraryOperation.RejectionCode.ItemTombstoned; CurrentCatalog = Some before.Catalog; Rebaseline = None })
+                            Grace.CLI.LibraryOperation.OperationWork.SavedFile(intent, progress)
+                        | _ -> invalidOp "Fixture did not retain the required typed completed operation."
+                    use connection = Grace.CLI.LibraryLocalState.openConnection db
+                    use command = connection.CreateCommand()
+                    command.CommandText <- "DELETE FROM library_operations WHERE operation_id=$id;"
+                    command.Parameters.AddWithValue("$id", operation.OperationId.ToString("D")) |> ignore
+                    command.ExecuteNonQuery() |> ignore
+                    Grace.CLI.LibraryLocalState.insertOperation db repositoryId { operation with Work = work }
+                | _ -> ()
+                let original = adoptionSnapshot root repositoryId
+                File.WriteAllText(Path.Combine(output, scenario + "-before.json"), original)
+                let mutable blocked = false
+                try do! adoptCatalogModel root repositoryId clean selected scenario ignore
+                with :? InvalidOperationException as ex when ex.Message.StartsWith("blocked:") -> blocked <- true
+                Assert.That(blocked, Is.True, scenario)
+                let after = adoptionSnapshot root repositoryId
+                if scenario = "stale-row" then
+                    let row = Grace.CLI.LibraryLocalState.readRepository db repositoryId |> Option.get
+                    Assert.That(row, Is.EqualTo({ before with State = "blocked" }))
+                else Assert.That(after, Is.EqualTo(original), scenario)
+                if scenario = "reparse" then
+                    Assert.That(File.ReadAllText(Path.Combine(output, "preserved-reparse-target", "keep.txt")), Is.EqualTo("external target bytes"))
+                File.WriteAllText(Path.Combine(output, scenario + "-after.json"), after)
+                record (scenario + "-retained")
+            let canceledRoot = Path.Combine(output, "canceled-lease")
+            adoptionClone copyB canceledRoot
+            let cancelOriginal = adoptionSnapshot canceledRoot repositoryId
+            let scope = WorkingDirectoryUpdateCoordination.Scope.create repositoryId canceledRoot |> Result.defaultWith invalidOp
+            do!
+                task {
+                    use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope CancellationToken.None
+                    use cancellation = new CancellationTokenSource()
+                    let waiting = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellation.Token
+                    Assert.That(waiting.IsCompleted, Is.False)
+                    cancellation.Cancel()
+                    let mutable canceled = false
+                    try
+                        use! unexpected = waiting
+                        ()
+                    with :? OperationCanceledException -> canceled <- true
+                    Assert.That(canceled, Is.True)
+                    Assert.That(adoptionSnapshot canceledRoot repositoryId, Is.EqualTo(cancelOriginal))
+                }
+            record "canceled-contended-root-lease-retained"
+            let watchRoot = Path.Combine(output, "stale-watch")
+            adoptionClone copyB watchRoot
+            let watchBefore = Grace.CLI.LibraryLocalState.readRepository (localDb watchRoot) repositoryId |> Option.get
+            let configuration = GraceConfiguration()
+            configuration.RootDirectory <- watchRoot
+            configuration.ObjectDirectory <- Path.Combine(watchRoot, ".grace", "objects")
+            configuration.GraceStatusFile <- localDb watchRoot
+            configuration.RepositoryId <- repositoryId
+            let oldObservation = [| Path.Combine(watchRoot, "Library", "original.txt"); Path.Combine(watchRoot, "Added", "not-yet-materialized.txt") |]
+            let mutable queuedWatch: Task = Task.CompletedTask
+            /// Queues a real Watch classification while adoption still owns the exclusive root lease.
+            let queueWatch () =
+                queuedWatch <- Grace.CLI.Command.LibrarySynchronization.classifyWatchObservations configuration oldObservation CancellationToken.None
+                Assert.That(queuedWatch.IsCompleted, Is.False)
+            do! adoptCatalogModel watchRoot repositoryId cleanB selected "none" queueWatch
+            let adoptedSnapshot = adoptionSnapshot watchRoot repositoryId
+            do! queuedWatch
+            Assert.That(adoptionSnapshot watchRoot repositoryId, Is.EqualTo(adoptedSnapshot))
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb watchRoot) repositoryId, Is.EqualTo(Some { watchBefore with Catalog = selected }))
+            record "stale-watch-classification-after-adoption-retained"
+            return passed.ToArray()
+        }
+
+    /// Tests real feed continuity across one added root before expanding the disposable failure ledger.
+    [<Test; Category("CatalogAdoptionReadiness")>]
+    let CatalogAdoptionReadiness () =
+        task {
+            if not (OperatingSystem.IsWindows()) then Assert.Ignore("Windows filesystem contract.")
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "catalog-adoption"
+            use proxy = createdProxy
+            let fileA = Path.Combine(copyA, "Library", "original.txt")
+            let fileB = Path.Combine(copyB, "Library", "original.txt")
+            File.WriteAllText(fileA, "original materialized bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(fileA, "old catalog backlog bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            do! pauseRetainingAsync copyA repositoryId proxy
+            do! pauseRetainingAsync copyB repositoryId proxy
+            Directory.CreateDirectory(Path.Combine(copyA, "Added")) |> ignore
+            Directory.CreateDirectory(Path.Combine(copyB, "Added")) |> ignore
+            let cleanA = adoptionDisk copyA "Library"
+            let cleanB = adoptionDisk copyB "Library"
+            let beforeA = Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId |> Option.get
+            let beforeB = Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId |> Option.get
+            let oldItemsB = Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+            let oldOperationsB = Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId
+            let add = Parameters.Library.AddLibraryParameters()
+            add.OwnerId <- ownerId
+            add.OrganizationId <- organizationId
+            add.RepositoryId <- string repositoryId
+            add.ExpectedVersion <- beforeA.Catalog.Version
+            add.OperationId <- Guid.NewGuid()
+            add.LibraryPath <- "Added"
+            add.CorrelationId <- generateCorrelationId ()
+            use! response = Client.PostAsync("/libraries/add", createJsonContent add)
+            let! result = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
+            Assert.That(result.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize result)
+            let selected = result.LibraryCatalog
+            let output = Environment.GetEnvironmentVariable("GRACE_ADOPTION_RESULTS")
+            let! cases = adoptionFailureCases copyA copyB repositoryId cleanA cleanB selected (Path.Combine(output, "local-cases"))
+            do! adoptCatalogModel copyA repositoryId cleanA selected "none" ignore
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId, Is.EqualTo(Some { beforeA with Catalog = selected }))
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "resume")
+            File.WriteAllText(Path.Combine(copyA, "Added", "new.txt"), "new root accepted bytes")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let beforeAdoptUploads = proxy.ManifestUploadCount
+            do! adoptCatalogModel copyB repositoryId cleanB selected "none" ignore
+            Assert.That(Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId, Is.EqualTo(Some { beforeB with Catalog = selected }))
+            Assert.That(Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId, Is.EqualTo<LibraryItemDto>(oldItemsB))
+            Assert.That(Grace.CLI.LibraryLocalState.readOperations (localDb copyB) repositoryId, Is.EqualTo<Grace.CLI.LibraryLocalState.PendingOperation>(oldOperationsB))
+            localSql copyB "CREATE TRIGGER fail_adoption_completion BEFORE UPDATE OF applied_cursor ON library_repository_state BEGIN SELECT RAISE(ABORT,'injected adoption completion'); END;" |> ignore
+            let! interrupted = runGraceAsync copyB proxy.BaseAddress (syncCommand "resume")
+            Assert.That(interrupted.ExitCode, Is.Not.Zero)
+            Assert.That(interrupted.StandardOutput.Contains("injected adoption completion"), Is.True, interrupted.StandardOutput)
+            Assert.That(File.ReadAllText(fileB), Is.EqualTo("old catalog backlog bytes"))
+            let interruptedRow = Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId |> Option.get
+            Assert.That(interruptedRow.AppliedCursor, Is.EqualTo(beforeB.AppliedCursor))
+            File.WriteAllText(Path.Combine(output, "application-interruption.json"), adoptionSnapshot copyB repositoryId)
+            localSql copyB "DROP TRIGGER fail_adoption_completion;" |> ignore
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "resume")
+            Assert.That(File.ReadAllText(fileB), Is.EqualTo("old catalog backlog bytes"))
+            let addedB = Path.Combine(copyB, "Added", "new.txt")
+            Assert.That(File.ReadAllText(addedB), Is.EqualTo("new root accepted bytes"))
+            Assert.That(proxy.ManifestUploadCount, Is.EqualTo(beforeAdoptUploads))
+            let stamps = File.GetLastWriteTimeUtc(fileB), File.GetLastWriteTimeUtc(addedB)
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That((File.GetLastWriteTimeUtc(fileB), File.GetLastWriteTimeUtc(addedB)), Is.EqualTo(stamps))
+            Directory.CreateDirectory(output) |> ignore
+            File.WriteAllText(Path.Combine(output, "hosted-tracer.json"), serialize {| Source = "9b18c97ab342d319d3bdeaedc5f1d64571913cf5"; Variant = "prototype incoming predecessor-catalog completion"; Cases = cases; CopyA = copyA; CopyB = copyB; RepositoryId = repositoryId; BeforeA = beforeA; BeforeB = beforeB; Selected = selected; AfterA = Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId; AfterB = Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId; Result = "passed" |})
+        }
+
+    /// Measures existing version-control publication against catalog addition without claiming atomic cross-domain exclusion.
+    [<TestCase("vc-first"); TestCase("catalog-first"); TestCase("concurrent"); Category("CatalogAdoptionReadiness")>]
+    let CatalogAdoptionPublicationReadiness order =
+        task {
+            let! repositoryId = createRepositoryAsync ()
+            do! addLibraryAsync repositoryId
+            let! catalog = adoptionCatalog repositoryId
+            let branchParameters = BranchServerTestHelpers.getBranchParameters (string repositoryId) ""
+            branchParameters.BranchName <- "main"
+            use! branchResponse = Client.PostAsync("/branch/get", createJsonContent branchParameters)
+            let! branch = requireReturnValueAsync<Grace.Types.Branch.BranchDto> branchResponse
+            let enableSave = Parameters.Branch.EnableFeatureParameters()
+            enableSave.OwnerId <- ownerId
+            enableSave.OrganizationId <- organizationId
+            enableSave.RepositoryId <- string repositoryId
+            enableSave.BranchId <- string branch.BranchId
+            enableSave.Enabled <- true
+            enableSave.CorrelationId <- generateCorrelationId ()
+            use! enabledResponse = Client.PostAsync("/branch/enableSave", createJsonContent enableSave)
+            let! _ = requireReturnValueAsync<string> enabledResponse
+            let child = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) (string repositoryId) (RelativePath "Added") []
+            let root = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) (string repositoryId) (RelativePath ".") [ child ]
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync (string repositoryId) [ child; root ]
+            let add = Parameters.Library.AddLibraryParameters()
+            add.OwnerId <- ownerId
+            add.OrganizationId <- organizationId
+            add.RepositoryId <- string repositoryId
+            add.ExpectedVersion <- catalog.Version
+            add.OperationId <- Guid.NewGuid()
+            add.LibraryPath <- "Added"
+            add.CorrelationId <- generateCorrelationId ()
+            /// Invokes the existing catalog endpoint and retains its recorded operation outcome.
+            let addCall () =
+                task {
+                    use! response = Client.PostAsync("/libraries/add", createJsonContent add)
+                    return! requireReturnValueAsync<LibraryCatalogChangeResultDto> response
+                }
+            /// Invokes an actual Save Reference publication through its existing domain and records the response.
+            let saveCall () =
+                task {
+                    use! response = BranchServerTestHelpers.saveReferenceResponseAsync (string repositoryId) branch root.DirectoryVersionId root.Sha256Hash
+                    let! body = response.Content.ReadAsStringAsync()
+                    return response.StatusCode, body
+                }
+            let! added, saved =
+                task {
+                    if order = "vc-first" then
+                        let! saved = saveCall ()
+                        let! added = addCall ()
+                        return added, saved
+                    elif order = "catalog-first" then
+                        let! added = addCall ()
+                        let! saved = saveCall ()
+                        return added, saved
+                    else
+                        let adding = addCall ()
+                        let saving = saveCall ()
+                        let! added = adding
+                        let! saved = saving
+                        return added, saved
+                }
+            let saveStatus, saveBody = saved
+            if order = "vc-first" then
+                Assert.That(saveStatus, Is.EqualTo(HttpStatusCode.OK), saveBody)
+                Assert.That(added.ReasonCode, Is.EqualTo(Some CatalogRejectionReason.OutgoingSystemNotEmpty), serialize added)
+            elif order = "catalog-first" then
+                Assert.That(added.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize added)
+                Assert.That(saveStatus, Is.EqualTo(HttpStatusCode.BadRequest), saveBody)
+                Assert.That(saveBody.Contains("Library"), Is.True, saveBody)
+                let later = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) (string repositoryId) (RelativePath "Added/later") []
+                let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
+                parameters.OwnerId <- ownerId
+                parameters.OrganizationId <- organizationId
+                parameters.RepositoryId <- string repositoryId
+                parameters.DirectoryVersions.Add later
+                parameters.CorrelationId <- generateCorrelationId ()
+                use! response = Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.That(response.IsSuccessStatusCode, Is.False, body)
+                Assert.That(body.Contains("Library"), Is.True, body)
+            else
+                Assert.That(added.Outcome = OutcomeKind.Accepted || saveStatus = HttpStatusCode.OK, Is.True)
+                Assert.That(saveStatus = HttpStatusCode.OK || (saveStatus = HttpStatusCode.BadRequest && saveBody.Contains("Library")), Is.True, saveBody)
+            let output = Environment.GetEnvironmentVariable("GRACE_ADOPTION_RESULTS")
+            Directory.CreateDirectory(output) |> ignore
+            File.WriteAllText(Path.Combine(output, "publication-" + order + ".json"), serialize {| Order = order; RepositoryId = repositoryId; Catalog = added; SaveStatus = int saveStatus; SaveResponse = saveBody; BothAccepted = added.Outcome = OutcomeKind.Accepted && saveStatus = HttpStatusCode.OK; AtomicExclusionClaimed = false |})
+        }

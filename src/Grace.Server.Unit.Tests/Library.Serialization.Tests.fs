@@ -343,6 +343,7 @@ type LibrarySerializationTests() =
                 SlotRecordCount = 8
                 HistoryThrough = 16L
                 NotifyThrough = 15L
+                AdditiveCatalogVersions = [| Guid.NewGuid() |]
             }
 
         let currentItem = { SchemaVersion = 2; Item = tombstonedItem; LastCursor = 23L; HistoryTailSegment = Some "history-item-tail" }
