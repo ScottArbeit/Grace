@@ -283,7 +283,7 @@ public partial class Program
 #pragma warning disable ASPIRECOSMOSDB001
                     var cosmosEmulatorContainerName = runSuffix is null ? "cosmosdb-emulator" : $"cosmosdb-emulator-{runSuffix}";
                     var cosmos = builder.AddAzureCosmosDB("cosmos")
-                        .RunAsPreviewEmulator(emulator =>
+                        .RunAsEmulator(emulator =>
                         {
                             emulator
                                 .WithContainerName(cosmosEmulatorContainerName)

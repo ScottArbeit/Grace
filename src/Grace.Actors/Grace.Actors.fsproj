@@ -87,7 +87,6 @@
         <PackageReference Include="Azure.Storage.Common" Version="12.28.0" />
         <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
         <PackageReference Include="FSharpPlus" Version="1.9.1" />
-        <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.12" />
         <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.1" />
         <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.11" />
         <PackageReference Include="Microsoft.Orleans.Core" Version="10.2.2" />
