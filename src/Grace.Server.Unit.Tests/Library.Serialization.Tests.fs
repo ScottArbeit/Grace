@@ -24,17 +24,17 @@ type LibrarySerializationTests() =
     /// Exercises each required epoch-bearing DTO through production JSON, including null and missing fields that F# otherwise defaults.
     let assertEpochJson (epochField: string) (value: 'T) =
         let json = Utilities.serialize value
-        Assert.That(Utilities.deserialize<'T> json, Is.EqualTo(box value))
+        Assert.That<'T>(Utilities.deserialize<'T> json, Is.EqualTo(box value))
         let insensitiveOptions = System.Text.Json.JsonSerializerOptions(Constants.JsonSerializerOptions)
         insensitiveOptions.PropertyNameCaseInsensitive <- true
         let differentlyCased = json.Replace($"\"{epochField}\"", $"\"{epochField.ToLowerInvariant()}\"")
-        Assert.That(System.Text.Json.JsonSerializer.Deserialize<'T>(differentlyCased, insensitiveOptions), Is.EqualTo(box value))
+        Assert.That<'T>(System.Text.Json.JsonSerializer.Deserialize<'T>(differentlyCased, insensitiveOptions), Is.EqualTo(box value))
 
         let firstNull =
             $"{{\"{epochField.ToLowerInvariant()}\":null,"
             + json.Substring(1)
 
-        Assert.That(System.Text.Json.JsonSerializer.Deserialize<'T>(firstNull, insensitiveOptions), Is.EqualTo(box value))
+        Assert.That<'T>(System.Text.Json.JsonSerializer.Deserialize<'T>(firstNull, insensitiveOptions), Is.EqualTo(box value))
 
         let lastNull =
             json.Substring(0, json.LastIndexOf('}'))
