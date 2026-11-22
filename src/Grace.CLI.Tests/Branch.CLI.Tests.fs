@@ -234,37 +234,61 @@ module BranchCommandTests =
                                       concreteReference ]
         |> should equal [ concreteReferenceId ]
 
+    /// Points the process at a new temporary repository whose saved identity is the current branch for switch tests.
+    let private enterTempBranchSwitchRepo (tempDir: string) =
+        let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
+        Directory.CreateDirectory(graceDir) |> ignore
+        File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{}")
+        Environment.CurrentDirectory <- tempDir
+        Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+        resetConfiguration ()
+
+        let configuration = Current()
+        configuration.RepositoryId <- repositoryId
+        configuration.RepositoryName <- "branch-switch-repository"
+        configuration.BranchId <- branchId
+        configuration.BranchName <- "branch-switch-current"
+        configuration.RootDirectory <- tempDir
+        saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, Constants.GraceConfigFileName)) configuration
+        resetConfiguration ()
+
+    /// Restores the process directory, parse result, and configuration replaced for a branch switch test, then deletes its repository.
+    let private exitTempBranchSwitchRepo (tempDir: string) (originalDir: string) originalParseResult =
+        resetConfiguration ()
+        Services.parseResult <- originalParseResult
+        Environment.CurrentDirectory <- originalDir
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+
+        if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+
+    /// Creates the unique temporary repository root used by one branch switch test.
+    let private newTempBranchSwitchRepoPath () = Path.Combine(Path.GetTempPath(), $"grace-branch-switch-tests-{Guid.NewGuid():N}")
+
     /// Runs the supplied action with a temporary current repository identity for branch switch preflight tests.
     let private withTempBranchSwitchRepo (action: unit -> unit) =
-        let tempDir = Path.Combine(Path.GetTempPath(), $"grace-branch-switch-tests-{Guid.NewGuid():N}")
-        let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
+        let tempDir = newTempBranchSwitchRepoPath ()
         let originalDir = Environment.CurrentDirectory
         let originalParseResult = Services.parseResult
 
         try
-            Directory.CreateDirectory(graceDir) |> ignore
-            File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{}")
-            Environment.CurrentDirectory <- tempDir
-            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
-            resetConfiguration ()
-
-            let configuration = Current()
-            configuration.RepositoryId <- repositoryId
-            configuration.RepositoryName <- "branch-switch-repository"
-            configuration.BranchId <- branchId
-            configuration.BranchName <- "branch-switch-current"
-            configuration.RootDirectory <- tempDir
-            saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, Constants.GraceConfigFileName)) configuration
-            resetConfiguration ()
-
+            enterTempBranchSwitchRepo tempDir
             action ()
         finally
-            resetConfiguration ()
-            Services.parseResult <- originalParseResult
-            Environment.CurrentDirectory <- originalDir
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+            exitTempBranchSwitchRepo tempDir originalDir originalParseResult
 
-            if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+    /// Awaits an asynchronous branch switch test inside the temporary repository and restores process state only after it completes.
+    let private withTempBranchSwitchRepoAsync (action: unit -> Task) =
+        task {
+            let tempDir = newTempBranchSwitchRepoPath ()
+            let originalDir = Environment.CurrentDirectory
+            let originalParseResult = Services.parseResult
+
+            try
+                enterTempBranchSwitchRepo tempDir
+                do! action ()
+            finally
+                exitTempBranchSwitchRepo tempDir originalDir originalParseResult
+        }
 
     /// Computes stable content hashes for the binary files served by the Save switch loopback fixture.
     let private switchFixtureHashes (bytes: byte array) =
@@ -1870,33 +1894,34 @@ module BranchCommandTests =
     /// Verifies that branch identity is moved before object-cache refresh can fail.
     [<Test>]
     let ``branch switch local state updates config before cache refresh failure`` () =
-        withTempBranchSwitchRepo (fun () ->
-            let targetBranchId = Guid.NewGuid()
-            let targetBranchName = "branch-switch-target"
+        withTempBranchSwitchRepoAsync (fun () ->
+            task {
+                let targetBranchId = Guid.NewGuid()
+                let targetBranchName = "branch-switch-target"
 
-            let operation =
-                Func<Task> (fun () ->
-                    Branch.applyBranchSwitchLocalState
-                        (fun () -> Task.CompletedTask)
-                        (fun () ->
-                            let configuration = Current()
-                            configuration.BranchId <- targetBranchId
-                            configuration.BranchName <- targetBranchName
-                            updateConfiguration configuration)
-                        (fun () -> task { raise (IOException("simulated object cache refresh failure")) })
-                    :> Task)
+                let operation =
+                    Func<Task> (fun () ->
+                        Branch.applyBranchSwitchLocalState
+                            (fun () -> Task.CompletedTask)
+                            (fun () ->
+                                let configuration = Current()
+                                configuration.BranchId <- targetBranchId
+                                configuration.BranchName <- targetBranchName
+                                updateConfiguration configuration)
+                            (fun () -> task { raise (IOException("simulated object cache refresh failure")) })
+                        :> Task)
 
-            Assert.ThrowsAsync<IOException>(operation)
-            |> ignore
+                let! _ = Assert.ThrowsAsync<IOException>(operation)
 
-            resetConfiguration ()
-            let configuration = Current()
+                resetConfiguration ()
+                let configuration = Current()
 
-            configuration.BranchId
-            |> should equal targetBranchId
+                configuration.BranchId
+                |> should equal targetBranchId
 
-            configuration.BranchName
-            |> should equal targetBranchName)
+                configuration.BranchName
+                |> should equal targetBranchName
+            })
 
     /// Verifies that a Branch switch configuration write failure leaves the persisted branch identity current in this process.
     [<Test>]
@@ -1905,41 +1930,42 @@ module BranchCommandTests =
            <> PlatformID.Win32NT then
             Assert.Ignore("This focused file-sharing failure injection is specific to the supported Windows filesystem.")
 
-        withTempBranchSwitchRepo (fun () ->
-            let persistedConfiguration = Current()
+        withTempBranchSwitchRepoAsync (fun () ->
+            task {
+                let persistedConfiguration = Current()
 
-            updateConfiguration persistedConfiguration
-            resetConfiguration ()
+                updateConfiguration persistedConfiguration
+                resetConfiguration ()
 
-            let targetBranchId = Guid.NewGuid()
-            let targetBranchName = "branch-switch-proposed"
-            let configurationPath = Path.Combine(Current().ConfigurationDirectory, Constants.GraceConfigFileName)
-            use readLock = new FileStream(configurationPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                let targetBranchId = Guid.NewGuid()
+                let targetBranchName = "branch-switch-proposed"
+                let configurationPath = Path.Combine(Current().ConfigurationDirectory, Constants.GraceConfigFileName)
+                use readLock = new FileStream(configurationPath, FileMode.Open, FileAccess.Read, FileShare.Read)
 
-            let operation =
-                Func<Task> (fun () ->
-                    Branch.applyBranchSwitchLocalState
-                        (fun () -> Task.CompletedTask)
-                        (fun () ->
-                            let configuration = Current()
-                            configuration.BranchId <- targetBranchId
-                            configuration.BranchName <- targetBranchName
-                            updateConfiguration configuration)
-                        (fun () -> Task.CompletedTask)
-                    :> Task)
+                let operation =
+                    Func<Task> (fun () ->
+                        Branch.applyBranchSwitchLocalState
+                            (fun () -> Task.CompletedTask)
+                            (fun () ->
+                                let configuration = Current()
+                                configuration.BranchId <- targetBranchId
+                                configuration.BranchName <- targetBranchName
+                                updateConfiguration configuration)
+                            (fun () -> Task.CompletedTask)
+                        :> Task)
 
-            Assert.ThrowsAsync<IOException>(operation)
-            |> ignore
+                let! _ = Assert.ThrowsAsync<IOException>(operation)
 
-            resetConfiguration ()
+                resetConfiguration ()
 
-            let currentConfiguration = Current()
+                let currentConfiguration = Current()
 
-            currentConfiguration.BranchId
-            |> should equal branchId
+                currentConfiguration.BranchId
+                |> should equal branchId
 
-            currentConfiguration.BranchName
-            |> should equal "branch-switch-current")
+                currentConfiguration.BranchName
+                |> should equal "branch-switch-current"
+            })
 
     /// Verifies that a second Watch-clean preflight failure prevents marker creation and working tree mutation.
     [<Test>]
@@ -1994,37 +2020,38 @@ module BranchCommandTests =
     /// Verifies that partial mutation failure removes the working-tree marker created by this invocation.
     [<Test>]
     let ``branch switch working tree update removes owned marker when operation fails`` () =
-        withTempBranchSwitchRepo (fun () ->
-            let updateMarkerFile = Services.updateInProgressFileName ()
-            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+        withTempBranchSwitchRepoAsync (fun () ->
+            task {
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
 
-            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
-                {
-                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
-                    InspectWatchStatus =
-                        fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
-                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
-                }
-
-            let operation =
-                Func<Task> (fun () ->
-                    task {
-                        let! _ =
-                            Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
-                                task { raise (InvalidOperationException("simulated partial mutation failure")) })
-
-                        return ()
+                let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                    {
+                        UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                        InspectWatchStatus =
+                            fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                        ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                     }
-                    :> Task)
 
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
+                let operation =
+                    Func<Task> (fun () ->
+                        task {
+                            let! _ =
+                                Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                                    task { raise (InvalidOperationException("simulated partial mutation failure")) })
 
-            File.Exists(updateMarkerFile)
-            |> should equal false
+                            return ()
+                        }
+                        :> Task)
 
-            File.Exists(updateMarkerFile + ".completed")
-            |> should equal false)
+                let! _ = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+                File.Exists(updateMarkerFile)
+                |> should equal false
+
+                File.Exists(updateMarkerFile + ".completed")
+                |> should equal false
+            })
 
     /// Verifies that a raced marker creation failure does not run mutation work.
     [<Test>]
@@ -2073,34 +2100,35 @@ module BranchCommandTests =
     /// Verifies that cancellation removes the working-tree marker when this invocation created it.
     [<Test>]
     let ``branch switch working tree update removes owned marker when operation cancels`` () =
-        withTempBranchSwitchRepo (fun () ->
-            let updateMarkerFile = Services.updateInProgressFileName ()
-            let markerText = "`grace switch` is in progress."
+        withTempBranchSwitchRepoAsync (fun () ->
+            task {
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let markerText = "`grace switch` is in progress."
 
-            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
-                {
-                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
-                    InspectWatchStatus =
-                        fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
-                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
-                }
-
-            let operation =
-                Func<Task> (fun () ->
-                    task {
-                        let! _ =
-                            Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
-                                task { raise (OperationCanceledException("simulated cancellation")) })
-
-                        return ()
+                let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                    {
+                        UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                        InspectWatchStatus =
+                            fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                        ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                     }
-                    :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation)
-            |> ignore
+                let operation =
+                    Func<Task> (fun () ->
+                        task {
+                            let! _ =
+                                Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                                    task { raise (OperationCanceledException("simulated cancellation")) })
 
-            File.Exists(updateMarkerFile)
-            |> should equal false)
+                            return ()
+                        }
+                        :> Task)
+
+                let! _ = Assert.ThrowsAsync<OperationCanceledException>(operation)
+
+                File.Exists(updateMarkerFile)
+                |> should equal false
+            })
 
     /// Verifies that same-branch Watch IPC from another checkout does not override the current repository snapshot.
     [<Test>]
@@ -2180,29 +2208,30 @@ module BranchCommandTests =
     /// Verifies that marker write failures remove the partial file created by this preflight.
     [<Test>]
     let ``branch switch update marker creation removes partial marker after write failure`` () =
-        withTempBranchSwitchRepo (fun () ->
-            let updateMarkerFile = Services.updateInProgressFileName ()
-            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
-            let partialText = markerText.Substring(0, 16)
+        withTempBranchSwitchRepoAsync (fun () ->
+            task {
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+                let partialText = markerText.Substring(0, 16)
 
-            let operation =
-                Func<Task> (fun () ->
-                    Branch.createBranchSwitchUpdateMarkerWithWriter
-                        (fun writer _ ->
-                            task {
-                                do! writer.WriteAsync(partialText)
-                                do! writer.FlushAsync()
-                                raise (IOException("simulated marker flush failure"))
-                            })
-                        updateMarkerFile
-                        markerText
-                    :> Task)
+                let operation =
+                    Func<Task> (fun () ->
+                        Branch.createBranchSwitchUpdateMarkerWithWriter
+                            (fun writer _ ->
+                                task {
+                                    do! writer.WriteAsync(partialText)
+                                    do! writer.FlushAsync()
+                                    raise (IOException("simulated marker flush failure"))
+                                })
+                            updateMarkerFile
+                            markerText
+                        :> Task)
 
-            Assert.ThrowsAsync<IOException>(operation)
-            |> ignore
+                let! _ = Assert.ThrowsAsync<IOException>(operation)
 
-            File.Exists(updateMarkerFile)
-            |> should equal false)
+                File.Exists(updateMarkerFile)
+                |> should equal false
+            })
 
     /// Verifies that current-repository untrusted Watch IPC still refuses before marker creation.
     [<Test>]

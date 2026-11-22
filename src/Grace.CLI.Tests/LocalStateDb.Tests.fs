@@ -184,10 +184,12 @@ module LocalStateDbTests =
 
         let corruptedRead = Func<Task>(fun () -> LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile :> Task)
 
-        let thrownException = Assert.ThrowsAsync<InvalidOperationException>(corruptedRead)
+        task {
+            let! thrownException = Assert.ThrowsAsync<InvalidOperationException>(corruptedRead)
 
-        thrownException.Message
-        |> should equal expectedMessage
+            thrownException.Message
+            |> should equal expectedMessage
+        }
 
     /// Allocates Watch journal sequences without adding replay semantics beyond the schema scaffold.
     let private insertWatchJournalRows (connection: SqliteConnection) throughSequence =
@@ -568,17 +570,17 @@ module LocalStateDbTests =
                 do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
                 use cancellation = new CancellationTokenSource()
 
-                Assert.ThrowsAsync<OperationCanceledException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.establishRemoteReferenceBoundaryIfAbsentWithBeforeCommit
-                            configuration.GraceStatusFile
-                            status
-                            boundary
-                            cancellation.Token
-                            cancellation.Cancel
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<OperationCanceledException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.establishRemoteReferenceBoundaryIfAbsentWithBeforeCommit
+                                configuration.GraceStatusFile
+                                status
+                                boundary
+                                cancellation.Token
+                                cancellation.Cancel
+                            :> Task)
+                    )
 
                 let! durable = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
                 let! durableStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
@@ -672,16 +674,17 @@ module LocalStateDbTests =
 
                 let! _ = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile status boundary CancellationToken.None
 
-                Assert.ThrowsAsync<InvalidOperationException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.establishRemoteReferenceBoundaryIfAbsent
-                            configuration.GraceStatusFile
-                            status
-                            { boundary with EventCursor = "branch-event-v1:6" }
-                            CancellationToken.None
-                        :> Task)
-                )
-                |> ignore
+                do!
+                    Assert.ThrowsAsync<InvalidOperationException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.establishRemoteReferenceBoundaryIfAbsent
+                                configuration.GraceStatusFile
+                                status
+                                { boundary with EventCursor = "branch-event-v1:6" }
+                                CancellationToken.None
+                            :> Task)
+                    )
+                    :> Task
             })
 
     /// A mismatched cursor is rejected before it can replace the previously committed status snapshot.
@@ -706,16 +709,16 @@ module LocalStateDbTests =
                         EventCursor = "branch-event-v1:1"
                     }
 
-                Assert.ThrowsAsync<ArgumentException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
-                            configuration.GraceStatusFile
-                            replacementStatus
-                            mismatched
-                            CancellationToken.None
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<ArgumentException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                                configuration.GraceStatusFile
+                                replacementStatus
+                                mismatched
+                                CancellationToken.None
+                            :> Task)
+                    )
 
                 let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
                 let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
@@ -754,16 +757,16 @@ module LocalStateDbTests =
                         EventCursor = "branch-event-v1:2"
                     }
 
-                Assert.ThrowsAsync<SqliteException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
-                            configuration.GraceStatusFile
-                            replacementStatus
-                            boundary
-                            CancellationToken.None
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<SqliteException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                                configuration.GraceStatusFile
+                                replacementStatus
+                                boundary
+                                CancellationToken.None
+                            :> Task)
+                    )
 
                 let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
                 let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
@@ -870,18 +873,18 @@ module LocalStateDbTests =
                         writer
                         $"INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ('{configuration.RepositoryId}', '{configuration.BranchId}', '{writerRoot}', 'writer', 'writer-blake3', 'writer-boundary');"
 
-                Assert.ThrowsAsync<InvalidOperationException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepairWithBeforeWriteClaim
-                            configuration.GraceStatusFile
-                            baseline
-                            doctorStatus
-                            doctorBoundary
-                            CancellationToken.None
-                            beginAndStageWriter
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<InvalidOperationException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepairWithBeforeWriteClaim
+                                configuration.GraceStatusFile
+                                baseline
+                                doctorStatus
+                                doctorBoundary
+                                CancellationToken.None
+                                beginAndStageWriter
+                            :> Task)
+                    )
 
                 executeNonQuery writer "COMMIT;"
 
@@ -960,16 +963,16 @@ module LocalStateDbTests =
 
                 let! _ = LocalStateDb.advanceRemoteReferenceBoundaryCursor configuration.GraceStatusFile originalBoundary newerBoundary CancellationToken.None
 
-                Assert.ThrowsAsync<InvalidOperationException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.advanceRemoteReferenceBoundaryCursor
-                            configuration.GraceStatusFile
-                            originalBoundary
-                            { originalBoundary with EventCursor = "opaque-stale" }
-                            CancellationToken.None
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<InvalidOperationException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.advanceRemoteReferenceBoundaryCursor
+                                configuration.GraceStatusFile
+                                originalBoundary
+                                { originalBoundary with EventCursor = "opaque-stale" }
+                                CancellationToken.None
+                            :> Task)
+                    )
 
                 let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
 
@@ -999,17 +1002,17 @@ module LocalStateDbTests =
 
                 use cancellation = new CancellationTokenSource()
 
-                Assert.ThrowsAsync<OperationCanceledException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.advanceRemoteReferenceBoundaryCursorWithBeforeCommit
-                            configuration.GraceStatusFile
-                            originalBoundary
-                            { originalBoundary with EventCursor = "opaque-cancelled" }
-                            cancellation.Token
-                            cancellation.Cancel
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<OperationCanceledException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.advanceRemoteReferenceBoundaryCursorWithBeforeCommit
+                                configuration.GraceStatusFile
+                                originalBoundary
+                                { originalBoundary with EventCursor = "opaque-cancelled" }
+                                cancellation.Token
+                                cancellation.Cancel
+                            :> Task)
+                    )
 
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
@@ -1018,16 +1021,16 @@ module LocalStateDbTests =
                         connection
                         "CREATE TRIGGER reject_remote_reference_cursor BEFORE UPDATE ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced cursor failure'); END;"
 
-                Assert.ThrowsAsync<SqliteException>(
-                    Func<Task> (fun () ->
-                        LocalStateDb.advanceRemoteReferenceBoundaryCursor
-                            configuration.GraceStatusFile
-                            originalBoundary
-                            { originalBoundary with EventCursor = "opaque-failed" }
-                            CancellationToken.None
-                        :> Task)
-                )
-                |> ignore
+                let! _ =
+                    Assert.ThrowsAsync<SqliteException>(
+                        Func<Task> (fun () ->
+                            LocalStateDb.advanceRemoteReferenceBoundaryCursor
+                                configuration.GraceStatusFile
+                                originalBoundary
+                                { originalBoundary with EventCursor = "opaque-failed" }
+                                CancellationToken.None
+                            :> Task)
+                    )
 
                 let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
 
@@ -1148,7 +1151,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 4L :> Task)
 
-                let ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
+                let! ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
 
                 ex.Message
                 |> should contain "cannot move backward"
@@ -1166,7 +1169,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 1L :> Task)
 
-                let ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
+                let! ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
 
                 ex.Message
                 |> should contain "only allocated through 0"
@@ -1495,7 +1498,7 @@ module LocalStateDbTests =
             task {
                 let operation = Func<Task>(fun () -> LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck configuration.GraceStatusFile :> Task)
 
-                let ex = Assert.ThrowsAsync<InvalidDataException>(operation)
+                let! ex = Assert.ThrowsAsync<InvalidDataException>(operation)
 
                 ex.Message
                 |> should contain "local-state database is missing"
@@ -3231,7 +3234,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> LocalStateDb.readWatchJournalSnapshot configuration.GraceStatusFile "all" None 10 :> Task)
 
-                let ex = Assert.ThrowsAsync<InvalidDataException>(operation)
+                let! ex = Assert.ThrowsAsync<InvalidDataException>(operation)
 
                 ex.Message
                 |> should contain "healthy local state database"
@@ -3686,8 +3689,7 @@ module LocalStateDbTests =
                 let operation =
                     Func<Task>(fun () -> task { do! LocalStateDb.applyStatusIncremental configuration.GraceStatusFile status Seq.empty Seq.empty } :> Task)
 
-                Assert.ThrowsAsync<SqliteException>(operation)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<SqliteException>(operation)
 
                 stopwatch.Stop()
 
@@ -3731,8 +3733,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile :> Task)
 
-                Assert.ThrowsAsync<InvalidDataException>(operation)
-                |> ignore
+                do! Assert.ThrowsAsync<InvalidDataException>(operation) :> Task
             })
 
     /// Verifies that replace status snapshot is atomic (rollback on failure).
@@ -3782,8 +3783,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> task { do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile statusB } :> Task)
 
-                Assert.ThrowsAsync<SqliteException>(operation)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<SqliteException>(operation)
 
                 let! readBack = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
 
@@ -3959,8 +3959,7 @@ module LocalStateDbTests =
 
                 let alteredRead = Func<Task>(fun () -> LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile :> Task)
 
-                Assert.ThrowsAsync<InvalidOperationException>(alteredRead)
-                |> ignore
+                do! Assert.ThrowsAsync<InvalidOperationException>(alteredRead) :> Task
             })
 
     /// Proves reopening a hash-selected Branch completion retains terminal state without a pending finalizer.
@@ -4041,9 +4040,10 @@ module LocalStateDbTests =
                         connection
                         $"UPDATE working_directory_update_completions SET branch_previous_branch_id = '{Guid.NewGuid()}' WHERE finalization_state = 'Pending';"
 
-                assertPendingFinalizationReopenRejects
-                    configuration
-                    "Pending Working Directory Update finalization facts do not match their operation identity."
+                do!
+                    assertPendingFinalizationReopenRejects
+                        configuration
+                        "Pending Working Directory Update finalization facts do not match their operation identity."
             })
 
     /// Proves impossible persisted selector and Reference combinations reject during strict pending-row reconstruction.
@@ -4089,7 +4089,7 @@ module LocalStateDbTests =
                 SqliteConnection.ClearAllPools()
                 LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
 
-                assertPendingFinalizationReopenRejects configuration "DirectoryVersion Branch finalization must not persist a Reference id."
+                do! assertPendingFinalizationReopenRejects configuration "DirectoryVersion Branch finalization must not persist a Reference id."
             })
 
     /// Proves restart validation rejects independently mutated target, operation, and caller facts from an otherwise valid pending row.
@@ -4150,7 +4150,7 @@ module LocalStateDbTests =
                         "Connect completion must be terminal and cannot be a pending finalization."
                     | value -> failwith $"Unexpected persisted identity fact '{value}'."
 
-                assertPendingFinalizationReopenRejects configuration expectedMessage
+                do! assertPendingFinalizationReopenRejects configuration expectedMessage
             })
 
     /// Verifies Connect cursor progress and its terminal completion cannot commit separately from matching local facts.
@@ -4189,8 +4189,7 @@ module LocalStateDbTests =
                             operation
                         :> Task)
 
-                Assert.ThrowsAsync<ArgumentException>(mismatchedIdentityCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(mismatchedIdentityCommit)
 
                 let! _ =
                     LocalStateDb.commitWorkingDirectoryUpdateCompletion
@@ -4320,11 +4319,9 @@ module LocalStateDbTests =
                             referenceOperation
                         :> Task)
 
-                Assert.ThrowsAsync<ArgumentException>(mismatchedReferenceWrite)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(mismatchedReferenceWrite)
 
-                Assert.ThrowsAsync<ArgumentException>(mismatchedDirectoryVersionWrite)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(mismatchedDirectoryVersionWrite)
 
                 let otherBranchTarget =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId (Guid.NewGuid()) rootId sha256Hash blake3Hash
@@ -4345,7 +4342,7 @@ module LocalStateDbTests =
                             referenceOperationForOtherBranch
                         :> Task)
 
-                let thrownException = Assert.ThrowsAsync<ArgumentException>(invalidDirectoryVersionWrite)
+                let! thrownException = Assert.ThrowsAsync<ArgumentException>(invalidDirectoryVersionWrite)
 
                 thrownException.Message
                 |> should equal "DirectoryVersion Branch completion must retain the current Branch. (Parameter 'completionDetails')"
@@ -4391,8 +4388,7 @@ module LocalStateDbTests =
                             (fun () -> raise (InvalidOperationException("injected before commit")))
                         :> Task)
 
-                Assert.ThrowsAsync<InvalidOperationException>(failingCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<InvalidOperationException>(failingCommit)
 
                 let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
                 let! revisionAfter = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
@@ -4441,8 +4437,7 @@ module LocalStateDbTests =
                             operation
                         :> Task)
 
-                Assert.ThrowsAsync<ArgumentException>(mismatchedCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(mismatchedCommit)
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
@@ -4488,8 +4483,7 @@ module LocalStateDbTests =
                             operation
                         :> Task)
 
-                Assert.ThrowsAsync<ArgumentException>(mismatchedCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(mismatchedCommit)
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
@@ -4540,8 +4534,7 @@ module LocalStateDbTests =
                             repositoryMismatchOperation
                         :> Task)
 
-                Assert.ThrowsAsync<ArgumentException>(repositoryMismatchCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(repositoryMismatchCommit)
 
                 let rootMismatchTarget =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId (Guid.NewGuid()) sha256Hash blake3Hash
@@ -4560,8 +4553,7 @@ module LocalStateDbTests =
                             rootMismatchOperation
                         :> Task)
 
-                Assert.ThrowsAsync<ArgumentException>(rootMismatchCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<ArgumentException>(rootMismatchCommit)
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
@@ -4655,8 +4647,7 @@ module LocalStateDbTests =
                             displacedPending
                         :> Task)
 
-                Assert.ThrowsAsync<InvalidOperationException>(conflictingCommit)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<InvalidOperationException>(conflictingCommit)
 
                 let! pending = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target secondBranch
                 let! firstBranchBeforeFinalization = LocalStateDb.readWorkingDirectoryUpdateCompletion configuration.GraceStatusFile target firstBranch
@@ -4743,8 +4734,7 @@ module LocalStateDbTests =
                     Func<Task> (fun () ->
                         task { do! LocalStateDb.applyStatusIncremental configuration.GraceStatusFile updatedStatus [ updatedSrc ] differences } :> Task)
 
-                Assert.ThrowsAsync<SqliteException>(operation)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<SqliteException>(operation)
 
                 let! meta = LocalStateDb.readStatusMeta configuration.GraceStatusFile
 
@@ -5948,8 +5938,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> task { do! LocalStateDb.upsertObjectCache configuration.GraceStatusFile [ parentDir ] } :> Task)
 
-                Assert.ThrowsAsync<InvalidOperationException>(operation)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<InvalidOperationException>(operation)
 
                 let! exists = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile parentId
                 exists |> should equal false
@@ -6102,8 +6091,7 @@ module LocalStateDbTests =
 
                 let operation = Func<Task>(fun () -> task { do! LocalStateDb.removeObjectCacheDirectory configuration.GraceStatusFile childId } :> Task)
 
-                Assert.ThrowsAsync<SqliteException>(operation)
-                |> ignore
+                let! _ = Assert.ThrowsAsync<SqliteException>(operation)
 
                 let! stillExists = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile childId
                 stillExists |> should equal true

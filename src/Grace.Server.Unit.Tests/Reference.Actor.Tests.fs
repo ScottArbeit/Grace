@@ -326,7 +326,7 @@ type ReferenceActorHashValidationTests() =
                         publicationCount <- publicationCount + 1
                         Task.FromException(InvalidOperationException("broker outcome unknown")))
 
-            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> action () :> Task))
+            let! error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> action () :> Task))
 
             Assert.That(error.Message, Is.EqualTo("broker outcome unknown"))
             Assert.That(persistenceCount, Is.EqualTo(1))
@@ -529,6 +529,6 @@ type ReferenceActorHashValidationTests() =
                         calls.Add("clear")
                         Task.CompletedTask)
 
-            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
+            let! _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
             Assert.That(calls, Is.EqualTo<string array>([| "remove-root" |]))
         }

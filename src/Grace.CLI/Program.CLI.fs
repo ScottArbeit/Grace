@@ -253,8 +253,11 @@ module GraceCommand =
         -1
 
     /// Evaluates is ignorable introspection parse error against parsed options and command state.
+    /// System.CommandLine exposes no structured error kind, so missing required arguments are recognized by message text.
+    /// Version 3 names the argument ("Required argument 'x' missing for command: 'y'."), while earlier versions did not.
     let private isIgnorableIntrospectionParseError (error: ParseError) =
-        error.Message.StartsWith("Required argument missing for command:", StringComparison.Ordinal)
+        error.Message.StartsWith("Required argument ", StringComparison.Ordinal)
+        && error.Message.Contains(" missing for command: ", StringComparison.Ordinal)
 
     /// Evaluates has blocking introspection parse errors against parsed options and command state.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =

@@ -45,7 +45,7 @@ This repo is primarily **F#** and targets **.NET 10**.
 
 ## Prerequisites
 
-- **.NET SDK 10.0.400**, selected by `global.json` (see: <https://dotnet.microsoft.com/download>)
+- **.NET SDK 11.0.100**, selected by `global.json` (see: <https://dotnet.microsoft.com/download>)
 - **PowerShell 7+** (see: <https://learn.microsoft.com/powershell/>)
 - **Docker Desktop** or **Podman** (recommended for local emulators / Aspire DebugLocal)
   - Windows/macOS: <https://www.docker.com/products/docker-desktop/>

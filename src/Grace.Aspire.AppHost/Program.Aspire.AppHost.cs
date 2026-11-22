@@ -127,7 +127,7 @@ public partial class Program
 
                 var cacheTargetPort = GetAvailableTcpPort();
                 var cacheUrl = "http://127.0.0.1:" + cacheTargetPort;
-                var graceCache = builder.AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.fsproj")
+                var graceCache = builder.AddDotnetProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.fsproj")
                     .WithEnvironment("ASPNETCORE_URLS", cacheUrl)
                     .WithHttpEndpoint(targetPort: cacheTargetPort, name: "http");
                 var forwardedCacheKeys = new List<string>();
@@ -148,7 +148,7 @@ public partial class Program
 
                 Console.WriteLine($"Using Orleans ClusterId='{orleansClusterId}' and ServiceId='{orleansServiceId}'.");
 
-                var graceServer = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
+                var graceServer = builder.AddDotnetProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
                     .WithParentRelationship(redis)
                     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
                     .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
@@ -409,7 +409,7 @@ public partial class Program
                                 $"Server={sqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;";
                         });
 
-                        _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
+                        _ = builder.AddDotnetProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
                             .WithParentRelationship(serviceBusSql)
                             .WithParentRelationship(serviceBusEmulator)
                             .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
@@ -547,7 +547,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
-                    _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
+                    _ = builder.AddDotnetProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
                         .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
                         .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
@@ -621,7 +621,7 @@ public partial class Program
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
 
-                var graceServer = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
+                var graceServer = builder.AddDotnetProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
                     .WithReference(cosmosDatabase)
                     .WithReference(blobStorage)
                     .WithReference(diffStorage)
@@ -788,20 +788,22 @@ public partial class Program
         return $"tcp:{normalizedHost},{portValue}";
     }
 
-    private static void AddOptionalEnvironment(
-        IResourceBuilder<ProjectResource> resource,
+    private static void AddOptionalEnvironment<T>(
+        IResourceBuilder<T> resource,
         IConfiguration configuration,
         string name,
         IList<string> forwardedKeys)
+        where T : IResourceWithEnvironment
     {
         AddOptionalEnvironment(resource, name, ResolveSetting(configuration, name), forwardedKeys);
     }
 
-    private static void AddOptionalEnvironment(
-        IResourceBuilder<ProjectResource> resource,
+    private static void AddOptionalEnvironment<T>(
+        IResourceBuilder<T> resource,
         string name,
         string? value,
         IList<string> forwardedKeys)
+        where T : IResourceWithEnvironment
     {
         if (!string.IsNullOrWhiteSpace(value))
         {

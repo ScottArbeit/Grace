@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-1. **.NET SDK 10.0.400** - Install the SDK selected by `global.json`, which
+1. **.NET SDK 11.0.100** - Install the SDK selected by `global.json`, which
    permits only a compatible latest patch roll-forward.
 2. **Docker Desktop** – Enable Docker before starting Aspire:
    - Windows/macOS: <https://www.docker.com/products/docker-desktop>

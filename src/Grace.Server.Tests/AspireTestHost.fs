@@ -1229,11 +1229,11 @@ module AspireTestHost =
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let descriptionClearPreAppendTestGatePort, _ = startDescriptionClearPreAppendTestGate 0
 
-            let graceServerResource: ProjectResource =
+            let graceServerResource: IResourceWithEnvironment =
                 builder.Resources
                 |> Seq.tryPick (fun resource ->
                     match resource with
-                    | :? ProjectResource as project when project.Name = graceServerResourceName -> Some project
+                    | :? IResourceWithEnvironment as project when project.Name = graceServerResourceName -> Some project
                     | _ -> None)
                 |> Option.defaultWith (fun () -> failwith $"Resource '{graceServerResourceName}' was not added by the test AppHost.")
 

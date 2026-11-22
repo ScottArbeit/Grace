@@ -22,7 +22,7 @@ open System.Text.Json
 /// Uses the nondeprecated NUnit task assertion overload.
 module private LibraryDiagnosticAssertions =
     /// Requires a specific failure before a task can publish its result.
-    let throws<'T when 'T :> exn> (action: unit -> Task) = Assert.ThrowsAsync<'T>(Func<Task>(action))
+    let throws<'T when 'T :> exn> (action: unit -> Task) : Task = Assert.ThrowsAsync<'T>(Func<Task>(action)) :> Task
 
 /// Exercises exact historical membership and publication guards without an external service substitute.
 type LibrarySizeDiagnosisTests() =
@@ -119,25 +119,29 @@ type LibrarySizeDiagnosisTests() =
     /// Makes gaps and absent mappings distinguishable from successful empty history.
     [<Test>]
     member _.``missing prefix or immutable mapping never returns a partial total``() =
-        let a = location "A" 10L
+        task {
+            let a = location "A" 10L
 
-        LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
-            collect
-                3L
-                [|
-                    change 1L (Some a.Content)
-                    change 3L (Some a.Content)
-                |]
-                [ a ]
-                CancellationToken.None
-            :> Task)
-        |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
+                    collect
+                        3L
+                        [|
+                            change 1L (Some a.Content)
+                            change 3L (Some a.Content)
+                        |]
+                        [ a ]
+                        CancellationToken.None
+                    :> Task)
 
-        LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> collect 1L [| change 1L (Some a.Content) |] [] CancellationToken.None :> Task)
-        |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
+                    collect 1L [| change 1L (Some a.Content) |] [] CancellationToken.None :> Task)
 
-        LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> collect 2L [| change 1L (Some a.Content) |] [ a ] CancellationToken.None :> Task)
-        |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
+                    collect 2L [| change 1L (Some a.Content) |] [ a ] CancellationToken.None :> Task)
+        }
 
     /// Separates a complete empty prefix from missing file declarations, over-boundary rows and provider errors.
     [<Test>]
@@ -154,29 +158,28 @@ type LibrarySizeDiagnosisTests() =
             Assert.That(count, Is.Zero)
             let a = location "A" 10L
 
-            LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> collect 1L [| change 1L None |] [] CancellationToken.None :> Task)
-            |> ignore
+            do! LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> collect 1L [| change 1L None |] [] CancellationToken.None :> Task)
 
-            LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
-                collect
-                    1L
-                    [|
-                        change 1L (Some a.Content)
-                        change 2L (Some a.Content)
-                    |]
-                    [ a ]
-                    CancellationToken.None
-                :> Task)
-            |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
+                    collect
+                        1L
+                        [|
+                            change 1L (Some a.Content)
+                            change 2L (Some a.Content)
+                        |]
+                        [ a ]
+                        CancellationToken.None
+                    :> Task)
 
-            LibraryDiagnosticAssertions.throws<IOException> (fun () ->
-                LibraryQueries.enumerateDiagnosticContentWith
-                    1L
-                    (fun _ _ -> Task.FromException<LibraryAcceptedChangeRecord array>(IOException "provider unavailable"))
-                    (fun _ _ -> Task.FromResult None)
-                    CancellationToken.None
-                :> Task)
-            |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<IOException> (fun () ->
+                    LibraryQueries.enumerateDiagnosticContentWith
+                        1L
+                        (fun _ _ -> Task.FromException<LibraryAcceptedChangeRecord array>(IOException "provider unavailable"))
+                        (fun _ _ -> Task.FromResult None)
+                        CancellationToken.None
+                    :> Task)
         }
 
     /// Requires descriptor agreement, complete manifest ranges and reconstructed manifest identity.
@@ -220,17 +223,17 @@ type LibrarySizeDiagnosisTests() =
             Assert.That(count, Is.EqualTo 1L)
             let b = location "B" 1L
 
-            LibraryDiagnosticAssertions.throws<OverflowException> (fun () ->
-                collect
-                    2L
-                    [|
-                        change 1L (Some a.Content)
-                        change 2L (Some b.Content)
-                    |]
-                    [ a; b ]
-                    CancellationToken.None
-                :> Task)
-            |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<OverflowException> (fun () ->
+                    collect
+                        2L
+                        [|
+                            change 1L (Some a.Content)
+                            change 2L (Some b.Content)
+                        |]
+                        [ a; b ]
+                        CancellationToken.None
+                    :> Task)
         }
 
     /// Cancels after the first accumulated mapping and starts a later attempt from the beginning.
@@ -248,24 +251,23 @@ type LibrarySizeDiagnosisTests() =
             use cancellation = new CancellationTokenSource()
             let mutable reads = 0
 
-            LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () ->
-                LibraryQueries.enumerateDiagnosticContentWith
-                    2L
-                    (fun _ _ -> Task.FromResult rows)
-                    (fun _ _ ->
-                        reads <- reads + 1
-                        cancellation.Cancel()
-                        Task.FromResult(Some a))
-                    cancellation.Token
-                :> Task)
-            |> ignore
+            do!
+                LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () ->
+                    LibraryQueries.enumerateDiagnosticContentWith
+                        2L
+                        (fun _ _ -> Task.FromResult rows)
+                        (fun _ _ ->
+                            reads <- reads + 1
+                            cancellation.Cancel()
+                            Task.FromResult(Some a))
+                        cancellation.Token
+                    :> Task)
 
             Assert.That(reads, Is.EqualTo 1)
             let! bytes, _ = collect 2L rows [ a; b ] CancellationToken.None
             Assert.That(bytes, Is.EqualTo 30L)
 
-            LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () -> collect 2L rows [ a; b ] cancellation.Token :> Task)
-            |> ignore
+            do! LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () -> collect 2L rows [ a; b ] cancellation.Token :> Task)
         }
 
     /// Exercises the final repository and epoch checks after a complete candidate has already accumulated.
@@ -287,26 +289,24 @@ type LibrarySizeDiagnosisTests() =
 
             let run check boundary = diagnoseContentSizeWith check (fun _ -> Task.FromResult result) (fun _ -> Task.FromResult boundary) CancellationToken.None
 
-            LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) (Guid.NewGuid(), 205L) :> Task)
-            |> ignore
+            do! LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) (Guid.NewGuid(), 205L) :> Task)
 
-            LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) (epoch, 204L) :> Task)
-            |> ignore
+            do! LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) (epoch, 204L) :> Task)
 
             let mutable checks = 0
 
-            LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
-                run
-                    (fun _ ->
-                        checks <- checks + 1
+            do!
+                LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () ->
+                    run
+                        (fun _ ->
+                            checks <- checks + 1
 
-                        if checks = 2 then
-                            Task.FromException<unit>(InvalidDataException "scope lost")
-                        else
-                            Task.FromResult(()))
-                    (epoch, 205L)
-                :> Task)
-            |> ignore
+                            if checks = 2 then
+                                Task.FromException<unit>(InvalidDataException "scope lost")
+                            else
+                                Task.FromResult(()))
+                        (epoch, 205L)
+                    :> Task)
 
             Assert.That(checks, Is.EqualTo 2)
             let! accepted = run (fun _ -> Task.FromResult(())) (epoch, 206L)
@@ -435,8 +435,7 @@ type LibrarySizeDiagnosisTests() =
                 use cancellation = new CancellationTokenSource()
                 cancellation.Cancel()
 
-                LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () -> invoke cancellation.Token :> Task)
-                |> ignore
+                do! LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () -> invoke cancellation.Token :> Task)
             finally
                 Grace.Server.ApplicationContext.loggerFactory <- previousLogger
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, previousEnvironment)

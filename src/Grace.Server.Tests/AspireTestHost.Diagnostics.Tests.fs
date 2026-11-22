@@ -37,16 +37,19 @@ type AspireTestHostDiagnosticsTests() =
         let prepare () = task { return invalidOp "offline failed" }
         /// Injects failure of the recovery attempt.
         let start () = task { return invalidOp "start failed" }
-        let error = Assert.ThrowsAsync<AggregateException>(Func<Task>(fun () -> AspireTestHost.prepareStoppedServerAndRecoverAsync prepare start :> Task))
 
-        Assert.That(
-            error.InnerExceptions
-            |> Seq.map (fun failure -> failure.Message),
-            Is.EqualTo(
-                box [| "offline failed"
-                       "start failed" |]
+        task {
+            let! error = Assert.ThrowsAsync<AggregateException>(Func<Task>(fun () -> AspireTestHost.prepareStoppedServerAndRecoverAsync prepare start :> Task))
+
+            Assert.That(
+                error.InnerExceptions
+                |> Seq.map (fun failure -> failure.Message),
+                Is.EqualTo(
+                    box [| "offline failed"
+                           "start failed" |]
+                )
             )
-        )
+        }
 
     /// Verifies isolated lifecycle cleanup attempts every step and preserves both failures.
     [<Test>]
@@ -67,15 +70,17 @@ type AspireTestHostDiagnosticsTests() =
 
         let operation = Func<Task>(fun () -> AspireTestHost.FixtureLifecycle.cleanupAsync disposeAsync cleanupAsync :> Task)
 
-        let error = Assert.ThrowsAsync<AggregateException>(operation)
+        task {
+            let! error = Assert.ThrowsAsync<AggregateException>(operation)
 
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(String.Join("|", calls), Is.EqualTo("dispose|docker"))
-                Assert.That(error.InnerExceptions, Has.Count.EqualTo(2))
-                Assert.That(error.InnerExceptions[0].Message, Is.EqualTo("dispose failed"))
-                Assert.That(error.InnerExceptions[1].Message, Is.EqualTo("docker cleanup failed")))
-        )
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(String.Join("|", calls), Is.EqualTo("dispose|docker"))
+                    Assert.That(error.InnerExceptions, Has.Count.EqualTo(2))
+                    Assert.That(error.InnerExceptions[0].Message, Is.EqualTo("dispose failed"))
+                    Assert.That(error.InnerExceptions[1].Message, Is.EqualTo("docker cleanup failed")))
+            )
+        }
 
     /// Verifies a nonzero Docker command result is rejected as a cleanup failure.
     [<Test>]

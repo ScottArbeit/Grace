@@ -299,22 +299,23 @@ module ConnectZipStagingTests =
         let tempDirectory = Path.Combine(Path.GetTempPath(), $"grace-connect-zip-tests-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempDirectory) |> ignore
 
-        use cancellation = new CancellationTokenSource()
-        let source = new ChunkedReadStream(zipBytes, 1024, cancellation.Cancel)
+        task {
+            use cancellation = new CancellationTokenSource()
+            let source = new ChunkedReadStream(zipBytes, 1024, cancellation.Cancel)
 
-        try
-            let operation = Func<Task>(fun () -> ConnectZipStaging.prepareInTempDirectory selectedManifest source tempDirectory cancellation.Token :> Task)
+            try
+                let operation = Func<Task>(fun () -> ConnectZipStaging.prepareInTempDirectory selectedManifest source tempDirectory cancellation.Token :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation)
-            |> ignore
+                let! _ = Assert.ThrowsAsync<OperationCanceledException>(operation)
 
-            source.CanRead |> should equal false
+                source.CanRead |> should equal false
 
-            Directory.EnumerateFileSystemEntries(tempDirectory)
-            |> Seq.isEmpty
-            |> should equal true
-        finally
-            Directory.Delete(tempDirectory, recursive = true)
+                Directory.EnumerateFileSystemEntries(tempDirectory)
+                |> Seq.isEmpty
+                |> should equal true
+            finally
+                Directory.Delete(tempDirectory, recursive = true)
+        }
 
     /// Verifies invalid zip structure is handled only after source disposal and temp-file cleanup.
     [<Test>]

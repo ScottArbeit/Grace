@@ -636,8 +636,7 @@ type WebhookDispatchUnitTests() =
                     }
                     :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation)
-            |> ignore
+            let! _ = Assert.ThrowsAsync<OperationCanceledException>(operation)
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 
@@ -950,8 +949,7 @@ type WebhookDispatchUnitTests() =
                     }
                     :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation)
-            |> ignore
+            let! _ = Assert.ThrowsAsync<OperationCanceledException>(operation)
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 
@@ -1044,8 +1042,7 @@ type WebhookDispatchUnitTests() =
                     }
                     :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation)
-            |> ignore
+            let! _ = Assert.ThrowsAsync<OperationCanceledException>(operation)
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 

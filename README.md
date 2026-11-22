@@ -113,7 +113,7 @@ The first-time steps below use **local emulators** and **test authentication** (
 > There is a detailed guide to configuring authentication at [`/docs/Authentication.md`](/docs/Authentication.md).
 
 1. **Install prerequisites** for your platform:
-   - [.NET SDK 10.0.400](https://dotnet.microsoft.com/en-us/download), selected by `global.json`
+   - [.NET SDK 11.0.100](https://dotnet.microsoft.com/en-us/download), selected by `global.json`
    - [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell)
    - A container runtime
      - Aspire supports [Docker Desktop](https://www.docker.com/get-started/) and [Podman](https://podman-desktop.io/).
@@ -135,18 +135,18 @@ The first-time steps below use **local emulators** and **test authentication** (
 
 2. **Clone the Grace repo**: `git clone https://github.com/ScottArbeit/Grace.git` or `gh repo clone ScottArbeit/Grace`.
 3. **Build the solution**: `dotnet build ./src/Grace.slnx` to sanity-check your environment.
-4. **Create an alias to make your life easier**: Add an alias to your profile called `grace` that points to `./src/Grace.CLI/bin/Debug/net10.0/grace.exe`.
+4. **Create an alias to make your life easier**: Add an alias to your profile called `grace` that points to `./src/Grace.CLI/bin/Debug/net11.0/grace.exe`.
 
    PowerShell:
 
    ```powershell
-   Set-Alias -Name grace -Value \<repo-path\>\src\Grace.CLI\bin\Debug\net10.0\grace.exe
+   Set-Alias -Name grace -Value \<repo-path\>\src\Grace.CLI\bin\Debug\net11.0\grace.exe
    ```
 
    bash / zsh:
 
    ```bash
-   alias grace="\<repo-path\>/src/Grace.CLI/bin/Debug/net10.0/grace.exe"
+   alias grace="\<repo-path\>/src/Grace.CLI/bin/Debug/net11.0/grace.exe"
    ```
 
 5. **Choose a test repository**: You can create an empty directory to start with a blank repo in, or you can copy or clone some code into a directory to start with that code.

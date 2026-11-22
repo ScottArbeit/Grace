@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFramework>net11.0</TargetFramework>
 		<PlatformTarget>x64</PlatformTarget>
 		<Prefer32Bit>false</Prefer32Bit>
 		<LangVersion>preview</LangVersion>
@@ -68,17 +68,17 @@
   </ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="FsCheck" Version="3.3.4" />
-		<PackageReference Include="FsCheck.NUnit" Version="3.3.4" />
-		<PackageReference Include="FsUnit" Version="7.1.1" />
-		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
-		<PackageReference Include="NUnit" Version="4.6.1" />
-		<PackageReference Include="NUnit3TestAdapter" Version="6.2.0" />
-		<PackageReference Include="NUnit.Analyzers" Version="4.14.0">
+		<PackageReference Include="FsCheck" Version="3.6.0" />
+		<PackageReference Include="FsCheck.NUnit" Version="3.6.0" />
+		<PackageReference Include="FsUnit" Version="8.0.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+		<PackageReference Include="NUnit" Version="5.0.0" />
+		<PackageReference Include="NUnit3TestAdapter" Version="6.3.1" />
+		<PackageReference Include="NUnit.Analyzers" Version="4.15.0">
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
-		<PackageReference Include="coverlet.collector" Version="10.0.1">
+		<PackageReference Include="coverlet.collector" Version="10.1.1">
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
@@ -92,6 +92,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.1.400" />
+		<PackageReference Update="FSharp.Core" Version="11.0.101" />
 	</ItemGroup>
 </Project>
