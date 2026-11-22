@@ -438,6 +438,29 @@ must implement the protocol from docs and vectors rather than depending on the .
 No generator is accepted unless generated output can be regenerated cleanly, compiles/imports without hand edits,
 supports Grace auth/correlation/client identity policy, and can sit behind the handwritten facade.
 
+#### Matrix result
+
+Issue #221 ran this matrix against the 3.1.2 generator compatibility projection, `src/OpenAPI/Grace.OpenAPI.3.1.2.yaml`.
+It answered SDK-011, SDK-027, T-013 for raw-client regeneration, and T-020.
+
+| Generator | Language | Result |
+| --------- | -------- | ------ |
+| Kiota | .NET | Rejected. Generation fails on the `DirectoryVersion` and `FileVersion` schema shapes. |
+| Kiota | TypeScript | Rejected. Generation still fails on `DirectoryVersion` collection items with validation disabled. |
+| NSwag | .NET | Rejected. NJsonSchema can't parse array-valued schema properties such as `FileVersion.RepositoryId`. |
+| OpenAPI Generator | TypeScript | Accepted with guardrails. `typescript-fetch` output builds. |
+| OpenAPI Generator | Python | Accepted with guardrails. `python` output imports after an editable install. |
+| OpenAPI Generator | Rust | Accepted with guardrails. `rust` output passes `cargo check`. |
+
+OpenAPI Generator was the only tool that produced compile/importable TypeScript, Python, and Rust clients. All three
+accepted results depend on `--skip-validate-spec`, so the projection still needs schema-shape cleanup before any
+generated client can claim to be SDK-grade. Raw generated output stays behind the handwritten facades either way.
+
+Issue #1089 removed the committed prototype output, the `sdk/scripts/invoke-generator-matrix.ps1` script, its wire
+proofs, and the matrix check in `prove-openapi.ps1`. Generator selection was settled, and the raw output no longer
+informed any decision. To rerun the matrix, restore those files from commit `9306db05`, the last commit that contains
+them.
+
 ## Functional requirements
 
 1. The OpenAPI audit must run before final generator selection.
@@ -599,7 +622,7 @@ continues without lifecycle headers so raw HTTP clients are not blocked by lifec
 | T-010 | SDK facade surfaces lifecycle warnings once or with suppression. | No current lifecycle parser exists. | SDK facade tests and CLI tests | Focused SDK/CLI tests. |
 | T-011 | Server returns `UnsupportedClientVersion` for unsupported SDK versions. | No current unsupported-client error exists. | Server integration tests | Focused server test. |
 | T-012 | SDK facade converts unsupported-client error into update guidance. | Current generic `GraceError` handling lacks lifecycle-specific UX. | SDK and CLI tests | Focused SDK/CLI tests. |
-| T-013 | Generated raw clients regenerate deterministically. | Hand-edited or nondeterministic output should fail. | Generator matrix scripts | Generator matrix command. |
+| T-013 | Generated raw clients regenerate deterministically. | Hand-edited or nondeterministic output should fail. | `sdk/scripts/generate-sdk-clients.ps1` | `pwsh ./sdk/scripts/generate-sdk-clients.ps1 -Mode Check`. |
 | T-014 | Generated raw clients compile or import without hand edits. | Generator output fails build/import. | Language package test suites | Language-specific build/import commands. |
 | T-015 | TypeScript Node Tier 1 facade works through the generated raw client boundary. | Direct raw-client-only behavior is insufficient. | TypeScript facade tests | npm test/build command. |
 | T-016 | Tier 2 simple file transfer works through facade. | Missing server-mediated transfer support blocks early adoption. | Server plus language SDK tests | Focused server and SDK tests. |
