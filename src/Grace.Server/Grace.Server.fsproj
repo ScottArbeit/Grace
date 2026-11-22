@@ -11,7 +11,7 @@
 		<Description>The server module for Grace Version Control System.</Description>
 		<UserSecretsId>f1167a88-7f15-49c3-8ea1-30c2608081c9</UserSecretsId>
         <TransformWebConfigEnabled>false</TransformWebConfigEnabled>
-        <ContainerBaseImage>mcr.microsoft.com/dotnet/sdk:10.0</ContainerBaseImage>
+        <ContainerBaseImage>mcr.microsoft.com/dotnet/sdk:11.0</ContainerBaseImage>
 		<ContainerImageTags>$(GraceBuildVersion);latest</ContainerImageTags>
 		<ContainerRepository>scottarbeit/grace-server</ContainerRepository>
         <EnableSdkContainerDebugging>true</EnableSdkContainerDebugging>

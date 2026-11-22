@@ -2,7 +2,7 @@
 
 Thanks for considering a contribution to **Grace Version Control System**.
 
-This repo is primarily **F#** and targets **.NET 10**.
+This repo is primarily **F#** and targets **.NET 11**.
 
 ## Quick start
 

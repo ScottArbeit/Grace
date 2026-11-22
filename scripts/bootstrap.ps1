@@ -38,20 +38,20 @@ try {
     try {
         Get-Command dotnet -ErrorAction Stop | Out-Null
     } catch {
-        throw "dotnet SDK not found. Install the .NET 10 SDK and retry."
+        throw "dotnet SDK not found. Install the .NET 11 SDK selected by global.json and retry."
     }
 
     $dotnetVersion = (& dotnet --version).Trim()
     if ($LASTEXITCODE -ne 0) {
-        throw "dotnet --version failed. Ensure the .NET 10 SDK is installed."
+        throw "dotnet --version failed. Ensure the .NET 11 SDK selected by global.json is installed."
     }
     if ([string]::IsNullOrWhiteSpace($dotnetVersion)) {
         throw "dotnet --version returned an empty value."
     }
 
     $dotnetMajor = [int]($dotnetVersion.Split(".")[0])
-    if ($dotnetMajor -lt 10) {
-        throw "dotnet SDK 10.x required. Detected $dotnetVersion."
+    if ($dotnetMajor -lt 11) {
+        throw "dotnet SDK 11.x required. Detected $dotnetVersion."
     }
 
     if (-not $SkipDocker) {

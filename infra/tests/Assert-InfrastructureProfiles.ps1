@@ -146,10 +146,10 @@ Assert-Pattern $containerAppModule "path:\s*'/healthz'" 'Grace Server HTTP probe
 Assert-PatternAbsent $containerAppModule '(registryPassword|passwordSecretRef|adminUserEnabled:\s*true)' 'The Container App must not use registry credentials.'
 Assert-PatternAbsent $containerAppModule '(grace__redis__(username|password|ca_certificate)|secretRef)' 'The Container App must not receive Redis credentials, custom trust, or secrets.'
 
-Assert-Pattern $graceServerDockerfile 'FROM\s+mcr\.microsoft\.com/dotnet/aspnet:10\.0\s+AS\s+final' 'The production image must use the ASP.NET runtime image.'
+Assert-Pattern $graceServerDockerfile 'FROM\s+mcr\.microsoft\.com/dotnet/aspnet:11\.0\s+AS\s+final' 'The production image must use the ASP.NET runtime image.'
 Assert-Pattern $graceServerDockerfile 'dotnet publish[^\r\n]+-c Release' 'The production image must publish Grace Server in Release mode.'
 Assert-Pattern $graceServerDockerfile '/p:DebugSymbols=false' 'The production image must exclude debug symbols.'
-Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:10\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
+Assert-PatternAbsent $graceServerDockerfile 'dotnet tool install|dotnet/sdk:\d+\.0-preview|nano|dotnet-monitor' 'The production image must exclude debug SDK tooling.'
 
 Assert-Pattern $infraReadme 'cosmosProvisionedThroughput=1000' 'The production deployment example must use the accepted 1,000 RU/s manual Cosmos throughput.'
 Assert-PatternAbsent $infraReadme 'sqlSkuName=|sqlVCoreCapacity=|sqlMaxSizeBytes=' 'The deployment example must not override the approved SQL serverless baseline.'
