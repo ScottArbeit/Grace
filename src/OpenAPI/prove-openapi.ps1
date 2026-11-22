@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('All', 'Freshness', 'CanonicalVersion', 'Projections', 'Quality', 'GeneratedClientMatrix', 'SdkPackage', 'ProtocolVectors')]
+    [ValidateSet('All', 'Freshness', 'CanonicalVersion', 'Projections', 'Quality', 'GeneratedSdkMetadata', 'SdkPackage', 'ProtocolVectors')]
     [string] $Check = 'All',
 
     [switch] $AllowPending
@@ -65,27 +65,6 @@ function Get-StringSha256 {
     finally {
         $sha.Dispose()
     }
-}
-
-function Get-DirectoryManifestHash {
-    param([string] $Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        return $null
-    }
-
-    $lines = Get-ChildItem -Path $Path -Recurse -File |
-        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache|[^\\]+\.egg-info)\\' } |
-        Where-Object { $_.Name -notin @('package-lock.json', 'Cargo.lock') } |
-        Sort-Object FullName |
-        ForEach-Object {
-            $relative = [IO.Path]::GetRelativePath($Path, $_.FullName).Replace('\', '/')
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-            "$relative $hash"
-        }
-
-    $manifestText = ($lines -join "`n") + "`n"
-    return Get-StringSha256 $manifestText
 }
 
 function Get-OpenApiManifest {
@@ -1474,7 +1453,7 @@ function Test-SdkPackageProof {
     Write-Host '== SDK package export/import proof =='
     $packageProofPath = Join-Path $RepoRoot 'sdk/package-proof.json'
     if (-not (Test-Path -LiteralPath $packageProofPath -PathType Leaf)) {
-        Add-Pending 'No stable SDK package export/import proof exists; raw generated-client matrix acceptance remains limited to guardrailed OpenAPI Generator proof artifacts behind facades.'
+        Add-Pending 'No stable SDK package export/import proof exists; generated raw clients remain internal metadata stubs behind handwritten facades.'
         return
     }
 
@@ -1562,140 +1541,20 @@ function Test-GeneratedSdkMetadataFreshness {
     }
 }
 
-function Test-GeneratedClientMatrixProof {
+# The 3.1.2 compatibility projection feeds sdk/scripts/generate-sdk-clients.ps1. Every committed SDK metadata hash
+# claim must match it, so an OpenAPI change cannot land without regenerating the language-lane metadata.
+function Test-GeneratedSdkMetadataProof {
     param([string] $RepoRoot)
 
-    Write-Host '== Generated-client matrix proof =='
-    $matrixPath = Join-Path $RepoRoot 'sdk/generated/matrix/generator-matrix-evidence.json'
-    if (-not (Test-Path -LiteralPath $matrixPath -PathType Leaf)) {
-        Add-Failure "Missing generated-client matrix evidence: $matrixPath"
-        return
-    }
-
-    $evidence = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
-    $projectionRelativePath = Get-RequiredJsonProperty $evidence 'sourceProjection' 'Generator matrix evidence'
-    if ([string]::IsNullOrWhiteSpace([string] $projectionRelativePath)) {
-        Add-Failure 'Generator matrix evidence is missing sourceProjection.'
-        return
-    }
-
-    $projectionPath = Join-Path $RepoRoot ([string] $projectionRelativePath)
+    Write-Host '== Generated SDK metadata proof =='
+    $projectionRelativePath = 'src/OpenAPI/Grace.OpenAPI.3.1.2.yaml'
+    $projectionPath = Join-Path $RepoRoot $projectionRelativePath
     if (-not (Test-Path -LiteralPath $projectionPath -PathType Leaf)) {
-        Add-Failure "Generator matrix source projection is missing: $projectionRelativePath"
-    }
-    else {
-        $actualProjectionHash = Get-FileSha256 $projectionPath
-        $recordedProjectionHash = [string] (Get-RequiredJsonProperty $evidence 'sourceProjectionSha256' 'Generator matrix evidence')
-        if ($actualProjectionHash -ne $recordedProjectionHash.ToLowerInvariant()) {
-            Add-Failure "Generator matrix evidence is stale for $projectionRelativePath. Expected $recordedProjectionHash, actual $actualProjectionHash."
-        }
-
-        Test-GeneratedSdkMetadataFreshness $RepoRoot ([string] $projectionRelativePath) $actualProjectionHash
+        Add-Failure "Generator compatibility projection is missing: $projectionRelativePath"
+        return
     }
 
-    $acceptedTier = [string] (Get-RequiredJsonProperty $evidence 'acceptedTier' 'Generator matrix evidence')
-    if ($acceptedTier -ne 'raw-openapi-generator-behind-facades') {
-        Add-Failure "Generator matrix acceptedTier must be 'raw-openapi-generator-behind-facades'; actual '$acceptedTier'."
-    }
-
-    $sdkGrade = Get-RequiredJsonProperty $evidence 'sdkGradeGeneratedClientAccepted' 'Generator matrix evidence'
-    if ($sdkGrade -ne $false) {
-        Add-Failure 'Generator matrix evidence must not claim SDK-grade generated-client acceptance while strict generator validation remains rejected.'
-    }
-
-    $pendingRationale = [string] (Get-RequiredJsonProperty $evidence 'pendingSdkGradeRationale' 'Generator matrix evidence')
-    if ([string]::IsNullOrWhiteSpace($pendingRationale)) {
-        Add-Failure 'Generator matrix evidence must record why SDK-grade generated-client acceptance remains pending.'
-    }
-
-    foreach ($traceId in @('B-043', 'B-044', 'drift-002', 'drift-006', 'drift-008')) {
-        if ($null -eq $evidence.traceability -or $null -eq $evidence.traceability.PSObject.Properties[$traceId]) {
-            Add-Failure "Generator matrix traceability is missing '$traceId'."
-        }
-    }
-
-    $matrixEntries = @($evidence.matrix)
-    $acceptedLanguages = @('TypeScript', 'Python', 'Rust')
-    foreach ($language in $acceptedLanguages) {
-        $entry = $matrixEntries |
-            Where-Object { $_.generator -eq 'OpenAPI Generator' -and $_.language -eq $language } |
-            Select-Object -First 1
-
-        if ($null -eq $entry) {
-            Add-Failure "Generator matrix is missing OpenAPI Generator $language entry."
-            continue
-        }
-
-        if ($entry.outcome -ne 'Accepted with guardrails' -or $entry.exitCode -ne 0) {
-            Add-Failure "OpenAPI Generator $language must be accepted with guardrails and exit code 0; actual outcome '$($entry.outcome)' exitCode '$($entry.exitCode)'."
-        }
-
-        if ([string]::IsNullOrWhiteSpace([string] $entry.outputPath)) {
-            Add-Failure "OpenAPI Generator $language entry is missing outputPath."
-        }
-        else {
-            $outputPath = Join-Path $RepoRoot ([string] $entry.outputPath)
-            if (-not (Test-Path -LiteralPath $outputPath -PathType Container)) {
-                Add-Failure "OpenAPI Generator $language output path is missing: $($entry.outputPath)"
-            }
-        }
-    }
-
-    foreach ($rejected in @(
-            @{ generator = 'Kiota'; language = '.NET' },
-            @{ generator = 'Kiota'; language = 'TypeScript' },
-            @{ generator = 'NSwag'; language = '.NET' }
-        )) {
-        $entry = $matrixEntries |
-            Where-Object { $_.generator -eq $rejected.generator -and $_.language -eq $rejected.language } |
-            Select-Object -First 1
-
-        if ($null -eq $entry) {
-            Add-Failure "Generator matrix is missing $($rejected.generator) $($rejected.language) rejection evidence."
-        }
-        elseif ($entry.outcome -ne 'Rejected') {
-            Add-Failure "$($rejected.generator) $($rejected.language) must remain rejected until schema-shape debt is fixed; actual outcome '$($entry.outcome)'."
-        }
-    }
-
-    foreach ($probeName in @(
-        'TypeScript generated client import/build and PascalCase wire round trip',
-        'Python generated client import/build and UUID wire round trip',
-        'Rust generated client semantic union wire round trip'
-        )) {
-        $probe = @($evidence.probes) | Where-Object { $_.name -eq $probeName } | Select-Object -First 1
-        if ($null -eq $probe) {
-            Add-Failure "Generator matrix is missing required probe '$probeName'."
-        }
-        elseif ($probe.exitCode -ne 0) {
-            Add-Failure "Generator matrix probe '$probeName' failed with exit code $($probe.exitCode)."
-        }
-    }
-
-    foreach ($entry in @($evidence.deterministicRegeneration)) {
-        $path = Join-Path $RepoRoot ([string] $entry.path)
-        $actualHash = Get-DirectoryManifestHash $path
-        if ($actualHash -ne ([string] $entry.manifestSha256).ToLowerInvariant()) {
-            Add-Failure "Generator matrix deterministic hash is stale for $($entry.path). Expected $($entry.manifestSha256), actual $actualHash."
-        }
-    }
-
-    $generatedContractProofs = @(
-        @{ Path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/BranchApiDto.ts'; Strict = 'basedOn: ReferenceApiDto;'; Typed = 'latestCommit: TypedReferenceApiDto;' },
-        @{ Path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/branch_api_dto.py'; Strict = 'based_on: ReferenceApiDto = Field(alias="BasedOn")'; Typed = 'latest_commit: TypedReferenceApiDto = Field(alias="LatestCommit")' },
-        @{ Path = 'sdk/generated/matrix/openapi-generator/rust/src/models/branch_api_dto.rs'; Strict = 'pub based_on: Box<models::ReferenceApiDto>'; Typed = 'pub latest_commit: Box<models::TypedReferenceApiDto>' }
-    )
-
-    foreach ($proof in $generatedContractProofs) {
-        $generatedText = Get-Content -LiteralPath (Join-Path $RepoRoot $proof.Path) -Raw
-        Assert-TextContains $generatedText $proof.Strict "$($proof.Path) must keep BasedOn on the strict Reference schema."
-        Assert-TextContains $generatedText $proof.Typed "$($proof.Path) must deserialize typed latest slots through the sentinel-capable union."
-    }
-
-    $generatedDirectoryVersionText = Get-Content -LiteralPath (Join-Path $RepoRoot 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/DirectoryVersion.ts') -Raw
-    Assert-TextContains $generatedDirectoryVersionText 'recursiveSize?: number;' 'Generated raw DirectoryVersion must keep RecursiveSize optional.'
-
-    Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota and NSwag remain explicitly rejected.'
+    Test-GeneratedSdkMetadataFreshness $RepoRoot $projectionRelativePath (Get-FileSha256 $projectionPath)
 }
 
 function Test-ProtocolVectorProof {
@@ -1719,7 +1578,7 @@ switch ($Check) {
         Test-OpenApiCanonicalVersion $repoRoot
         Test-OpenApiProjections $repoRoot
         Test-OpenApiQuality $repoRoot
-        Test-GeneratedClientMatrixProof $repoRoot
+        Test-GeneratedSdkMetadataProof $repoRoot
         Test-SdkPackageProof $repoRoot
         Test-ProtocolVectorProof $repoRoot
     }
@@ -1727,7 +1586,7 @@ switch ($Check) {
     'CanonicalVersion' { Test-OpenApiCanonicalVersion $repoRoot }
     'Projections' { Test-OpenApiProjections $repoRoot }
     'Quality' { Test-OpenApiQuality $repoRoot }
-    'GeneratedClientMatrix' { Test-GeneratedClientMatrixProof $repoRoot }
+    'GeneratedSdkMetadata' { Test-GeneratedSdkMetadataProof $repoRoot }
     'SdkPackage' { Test-SdkPackageProof $repoRoot }
     'ProtocolVectors' { Test-ProtocolVectorProof $repoRoot }
 }
