@@ -73,7 +73,7 @@ List only surfaces this PR changes or must prove unchanged.
 - Execution mode: direct single-agent | controller/worker
 - Root issue session:
 - Implementation owner: root | worker thread
-- Child context policy: `fork_turns = "none"` | recorded read-only scout exception
+- Child context policy: no inherited conversation history (Codex: `fork_turns = "none"`; Claude Code: a non-fork subagent) | recorded read-only scout exception
 - Shape Reviewer
 - Diagnostic scout used: no | yes, question and result
 - Replacement worker used: N/A in direct mode | no | yes, reason
@@ -89,7 +89,9 @@ List only surfaces this PR changes or must prove unchanged.
 ## Shape Review
 
 - Shape Review started before R1: yes/no
-- Reviewer configuration: GPT-5.6-Luna High, read-only, `fork_turns = "none"` | root fallback
+- Reviewer configuration: read-only, no inherited conversation history (Codex: `fork_turns = "none"`; Claude Code: a non-fork subagent) | root fallback
+- Reviewer model (prefer a different model family from the implementation owner when available):
+- Different model family from the implementation owner: yes | no, reason
 - Reviewed head SHA:
 - HTML artifact or handoff location:
 - Material shape delta: yes/no
