@@ -859,18 +859,18 @@ type ManifestContributionDiagnosisServerTests() =
 
             let exceededReads = ResizeArray<DirectoryVersionId>()
 
-            Assert.ThrowsAsync<RelationshipBoundExceeded>(
-                Func<Task> (fun () ->
-                    diagnoseWith
-                        (createDependencies exceededReads)
-                        "2026-07-27T00:00:00Z"
-                        "diagnosis-test"
-                        CancellationToken.None
-                        (readBound 1)
-                        (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
-                    :> Task)
-            )
-            |> ignore
+            let! _ =
+                Assert.ThrowsAsync<RelationshipBoundExceeded>(
+                    Func<Task> (fun () ->
+                        diagnoseWith
+                            (createDependencies exceededReads)
+                            "2026-07-27T00:00:00Z"
+                            "diagnosis-test"
+                            CancellationToken.None
+                            (readBound 1)
+                            (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+                        :> Task)
+                )
 
             Assert.That(exceededReads.ToArray() = [| directoryVersionId |], Is.True)
         }
@@ -940,18 +940,18 @@ type ManifestContributionDiagnosisServerTests() =
 
             let exceededReads = ResizeArray<DirectoryVersionId>()
 
-            Assert.ThrowsAsync<RelationshipBoundExceeded>(
-                Func<Task> (fun () ->
-                    diagnoseWith
-                        (createDependencies exceededReads)
-                        "2026-07-27T00:00:00Z"
-                        "diagnosis-test"
-                        CancellationToken.None
-                        (readBound 2)
-                        (DiagnosisSelector.ReferenceId(referenceId, Some repositoryId))
-                    :> Task)
-            )
-            |> ignore
+            let! _ =
+                Assert.ThrowsAsync<RelationshipBoundExceeded>(
+                    Func<Task> (fun () ->
+                        diagnoseWith
+                            (createDependencies exceededReads)
+                            "2026-07-27T00:00:00Z"
+                            "diagnosis-test"
+                            CancellationToken.None
+                            (readBound 2)
+                            (DiagnosisSelector.ReferenceId(referenceId, Some repositoryId))
+                        :> Task)
+                )
 
             Assert.That(exceededReads.ToArray() = [| directoryVersionId |], Is.True)
         }
@@ -981,18 +981,19 @@ type ManifestContributionDiagnosisServerTests() =
                     None
                     2L
 
-            Assert.ThrowsAsync<RelationshipBoundExceeded>(
-                Func<Task> (fun () ->
-                    diagnoseWith
-                        deps
-                        "2026-07-27T00:00:00Z"
-                        "diagnosis-test"
-                        CancellationToken.None
-                        (readBound 1)
-                        (DiagnosisSelector.CounterTuple(counterTuple ()))
-                    :> Task)
-            )
-            |> ignore
+            do!
+                Assert.ThrowsAsync<RelationshipBoundExceeded>(
+                    Func<Task> (fun () ->
+                        diagnoseWith
+                            deps
+                            "2026-07-27T00:00:00Z"
+                            "diagnosis-test"
+                            CancellationToken.None
+                            (readBound 1)
+                            (DiagnosisSelector.CounterTuple(counterTuple ()))
+                        :> Task)
+                )
+                :> Task
         }
 
     /// Verifies each exact-relationship page receives only the distinct allowance left after discovery and earlier pages.

@@ -26,8 +26,6 @@ jobs:
       uses: actions/setup-dotnet@v5
       with:
         global-json-file: global.json
-    - name: Install .NET Aspire workload
-      run: dotnet workload install aspire
     - name: Restore dependencies
       env:
         NuGetPackageSourceCredentials_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}

@@ -426,7 +426,7 @@ module LibrarySynchronizationWindowsServerTests =
     let private runGraceWithTokenAsync token workingDirectory serverUri arguments =
         task {
             let cliAssembly =
-                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net10.0", "grace.dll"))
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net11.0", "grace.dll"))
 
             let startInfo = ProcessStartInfo("dotnet")
             startInfo.WorkingDirectory <- workingDirectory
@@ -735,7 +735,7 @@ module LibrarySynchronizationWindowsServerTests =
             ] <- token.Token
 
             startInfo.ArgumentList.Add(
-                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net10.0", "grace.dll"))
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net11.0", "grace.dll"))
             )
 
             startInfo.ArgumentList.Add("watch")

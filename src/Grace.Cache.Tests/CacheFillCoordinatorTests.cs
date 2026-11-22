@@ -65,7 +65,7 @@ public sealed class CacheFillCoordinatorTests
             cancellation.Token);
 
         cancellation.Cancel();
-        Assert.ThrowsAsync<TaskCanceledException>(async () => await follower);
+        await Assert.ThrowsAsync<TaskCanceledException>(async () => await follower);
         fixture.Handler.ReleaseSource.TrySetResult();
         Assert.That((await leader).IsOk, Is.True);
         Assert.Multiple(() =>

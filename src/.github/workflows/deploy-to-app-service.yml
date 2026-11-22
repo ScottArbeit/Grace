@@ -10,7 +10,7 @@ on:
       - main
 
 env:
-  DOTNET_VERSION: "10.0.x"
+  DOTNET_VERSION: "11.0.x"
   ASPNETCORE_ENVIRONMENT: Development
   DOTNET_ENVIRONMENT: Development
 

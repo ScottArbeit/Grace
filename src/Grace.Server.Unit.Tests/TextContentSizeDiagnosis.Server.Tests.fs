@@ -339,28 +339,32 @@ type TextContentSizeDiagnosisTests() =
     /// Rejects unsupported actor storage before obtaining a Cosmos container.
     [<Test>]
     member _.``unsupported providers fail before container access``() =
-        for provider in
-            [
-                ActorStateStorageProvider.MongoDB
-                ActorStateStorageProvider.Unknown
-            ] do
-            let mutable acquired = false
+        /// Requires one unsupported provider to fail with a provider error before the Cosmos container factory runs.
+        let assertRejectedBeforeContainerAccess provider =
+            task {
+                let mutable acquired = false
 
-            let error =
-                Assert.ThrowsAsync<NotSupportedException>(
-                    Func<Task> (fun () ->
-                        readTextContentSizeWith
-                            provider
-                            (fun () ->
-                                acquired <- true
-                                failwith "Container must not be acquired")
-                            scope
-                            CancellationToken.None
-                        :> Task)
-                )
+                let! error =
+                    Assert.ThrowsAsync<NotSupportedException>(
+                        Func<Task> (fun () ->
+                            readTextContentSizeWith
+                                provider
+                                (fun () ->
+                                    acquired <- true
+                                    failwith "Container must not be acquired")
+                                scope
+                                CancellationToken.None
+                            :> Task)
+                    )
 
-            Assert.That(error.Message, Does.Contain "actor state storage provider")
-            Assert.That(acquired, Is.False)
+                Assert.That(error.Message, Does.Contain "actor state storage provider")
+                Assert.That(acquired, Is.False)
+            }
+
+        task {
+            do! assertRejectedBeforeContainerAccess ActorStateStorageProvider.MongoDB
+            do! assertRejectedBeforeContainerAccess ActorStateStorageProvider.Unknown
+        }
 
     /// Discards earlier-page quantities when the next provider read fails.
     [<Test>]

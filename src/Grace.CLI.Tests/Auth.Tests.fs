@@ -97,6 +97,89 @@ module AuthTests =
     /// Runs the scenario with authentication environment variables removed from the process context.
     let private withoutAuthEnv (action: unit -> unit) = clearOidcEnv (fun () -> withEnv Constants.EnvironmentVariables.GraceToken None action)
 
+    /// Consumes one HTTP/1.1 request, including any Content-Length body, so the loopback server never closes the socket with
+    /// unread request bytes, which the client would observe as a connection reset instead of the scripted response.
+    let private readFullRequestAsync (stream: NetworkStream) =
+        task {
+            let headerTerminator = Encoding.ASCII.GetBytes("\r\n\r\n")
+            use received = new MemoryStream()
+            let buffer = Array.zeroCreate<byte> 8192
+            let mutable headerEnd = -1
+            let mutable streamOpen = true
+
+            while headerEnd < 0 && streamOpen do
+                let! read = stream.ReadAsync(buffer, 0, buffer.Length)
+
+                if read = 0 then
+                    streamOpen <- false
+                else
+                    received.Write(buffer, 0, read)
+
+                    headerEnd <-
+                        received
+                            .ToArray()
+                            .AsSpan()
+                            .IndexOf(headerTerminator)
+
+            if headerEnd >= 0 then
+                let bytes = received.ToArray()
+                let headerText = Encoding.ASCII.GetString(bytes, 0, headerEnd)
+
+                /// Reads one request header value by case-insensitive name.
+                let tryHeader (name: string) =
+                    headerText.Split("\r\n")
+                    |> Array.tryPick (fun line ->
+                        let separator = line.IndexOf(':')
+
+                        if separator > 0
+                           && line
+                               .Substring(0, separator)
+                               .Trim()
+                               .Equals(name, StringComparison.OrdinalIgnoreCase) then
+                            Some(line.Substring(separator + 1).Trim())
+                        else
+                            None)
+
+                let bodyStart = headerEnd + headerTerminator.Length
+
+                match tryHeader "Transfer-Encoding" with
+                | Some encoding when encoding.Contains("chunked", StringComparison.OrdinalIgnoreCase) ->
+                    // A chunked body ends with the zero-length chunk followed by an empty trailer line.
+                    let chunkedTerminator = Encoding.ASCII.GetBytes("0\r\n\r\n")
+
+                    let mutable complete =
+                        received
+                            .ToArray()
+                            .AsSpan(bodyStart)
+                            .EndsWith(chunkedTerminator)
+
+                    while not complete && streamOpen do
+                        let! read = stream.ReadAsync(buffer, 0, buffer.Length)
+
+                        if read = 0 then
+                            streamOpen <- false
+                        else
+                            received.Write(buffer, 0, read)
+
+                            complete <-
+                                received
+                                    .ToArray()
+                                    .AsSpan(bodyStart)
+                                    .EndsWith(chunkedTerminator)
+                | _ ->
+                    let contentLength =
+                        tryHeader "Content-Length"
+                        |> Option.map int
+                        |> Option.defaultValue 0
+
+                    let mutable remaining = contentLength - (bytes.Length - bodyStart)
+
+                    while remaining > 0 && streamOpen do
+                        let! read = stream.ReadAsync(buffer, 0, min buffer.Length remaining)
+
+                        if read = 0 then streamOpen <- false else remaining <- remaining - read
+        }
+
     /// Runs the supplied action with single http response applied.
     let private withSingleHttpResponse (statusCode: int) (reasonPhrase: string) (body: string) (action: unit -> unit) =
         use listener = new TcpListener(IPAddress.Loopback, 0)
@@ -108,8 +191,7 @@ module AuthTests =
             task {
                 use client = client
                 use stream = client.GetStream()
-                let buffer = Array.zeroCreate<byte> 8192
-                let! _ = stream.ReadAsync(buffer, 0, buffer.Length)
+                do! readFullRequestAsync stream
                 let bodyBytes = Encoding.UTF8.GetBytes(body)
 
                 let responseHeaders = $"HTTP/1.1 {statusCode} {reasonPhrase}\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n"

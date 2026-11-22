@@ -267,4 +267,4 @@ type OperationalFactsPublisherAppHostTests() =
         Assert.That(source, Does.Contain(".WithEnvironment(OperationsSqlConnectionStringSettingName, operationsSqlConnectionString)"))
         Assert.That(source, Does.Not.Contain("Console.WriteLine(operationsSqlConnectionString"))
         Assert.That(source, Does.Not.Contain("LogInformation(operationsSqlConnectionString"))
-        Assert.That(source, Does.Contain("builder.AddProject(\"grace-operations-worker\""))
+        Assert.That(source, Does.Contain("builder.AddDotnetProject(\"grace-operations-worker\""))

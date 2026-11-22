@@ -67,6 +67,9 @@ module internal OwnerObservationClientFixture =
     /// Sends a real loopback HTTP response while capturing the SDK's method, path, query and headers.
     let withServer status responseBody (action: unit -> Task<'T>) =
         task {
+            // Earlier tests that run the CLI entry point install a process-wide SDK token provider. Clear it so this
+            // single-response server receives the observation request rather than an OIDC discovery call.
+            Grace.SDK.Auth.clearTokenProvider ()
             use port = new TcpListener(IPAddress.Loopback, 0)
             port.Start()
             let number = (port.LocalEndpoint :?> IPEndPoint).Port

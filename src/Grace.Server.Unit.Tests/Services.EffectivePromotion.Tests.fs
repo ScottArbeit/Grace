@@ -148,4 +148,4 @@ type ServicesEffectivePromotionTests() =
     [<Test>]
     member _.DirectReferenceProjectionRejectsCreatedEventWithoutBlake3() =
         Assert.ThrowsAsync<ArgumentException>(Func<Task>(fun () -> Services.projectReferenceEvents [| legacyCreatedReferenceEvent prefixSha256Hash |] :> Task))
-        |> ignore
+        :> Task

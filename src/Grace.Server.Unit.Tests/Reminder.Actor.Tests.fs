@@ -151,7 +151,7 @@ type ReminderActorTests() =
 
             let firstWrite = persistGetOrAddWith false (fun () -> Task.FromException failure) wrapper first
 
-            let escaped = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> firstWrite :> Task))
+            let! escaped = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> firstWrite :> Task))
             Assert.That(escaped, Is.SameAs(failure))
             Assert.That(wrapper.Reminder, Is.EqualTo(first))
 
@@ -182,7 +182,7 @@ type ReminderActorTests() =
 
             let write = persistCreateWith (fun () -> Task.FromException failure) wrapper replacement
 
-            let escaped = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> write :> Task))
+            let! escaped = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> write :> Task))
             Assert.That(escaped, Is.SameAs(failure))
             Assert.That(wrapper.Reminder, Is.EqualTo(replacement))
         }

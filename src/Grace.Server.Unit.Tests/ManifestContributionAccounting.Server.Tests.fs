@@ -703,7 +703,7 @@ type ManifestContributionAccountingServerTests() =
                 }
 
             let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Commit)
-            let _ = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
+            let! _ = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
 
             Assert.That(
                 effectOrder |> Seq.toArray,
@@ -751,7 +751,7 @@ type ManifestContributionAccountingServerTests() =
                 }
 
             let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Checkpoint)
-            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
+            let! error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
 
             Assert.That(error.Message, Does.Contain("different Reference data"))
 
@@ -836,7 +836,7 @@ type ManifestContributionAccountingServerTests() =
             let retryDelivery = { delivery with Metadata = EventMetadata.New "mca-tracer-retry" "unit-test" }
 
             let first = handleReferenceCreatedWith dependencies CancellationToken.None delivery
-            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first))
+            let! _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first))
             do! handleReferenceCreatedWith dependencies CancellationToken.None retryDelivery
 
             let expectedReminderId = Grace.Actors.Reference.automaticPhysicalDeletionReminderId repositoryId referenceId
@@ -934,7 +934,7 @@ type ManifestContributionAccountingServerTests() =
 
             let first = ensureDirectoryVersionManifestWith verify applyContribution ensurePresent relationship CancellationToken.None
 
-            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first :> Task))
+            let! _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first :> Task))
 
             let! second = ensureDirectoryVersionManifestWith verify applyContribution ensurePresent relationship CancellationToken.None
 
@@ -1049,7 +1049,7 @@ type ManifestContributionAccountingServerTests() =
 
             let metadata = EventMetadata.New "directory-delete-restart" "unit-test"
             let first = Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith dependencies dto metadata CancellationToken.None
-            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first :> Task))
+            let! _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first :> Task))
 
             Assert.That(present.Contains manifestRelationship, Is.True)
             Assert.That(present.Contains childRelationship, Is.True)
@@ -1126,7 +1126,7 @@ type ManifestContributionAccountingServerTests() =
                     (EventMetadata.New "directory-delete-exact-unknown" "unit-test")
                     CancellationToken.None
 
-            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
+            let! _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
 
             Assert.That(releaseCalls, Is.EqualTo(1))
             Assert.That(removeCalls, Is.EqualTo(1), "The child relationship must remain untouched after the manifest removal is unknown.")
