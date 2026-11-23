@@ -1,166 +1,18 @@
-# Pull Request
+<!-- markdownlint-disable-file MD041 -->
+Closes #
 
-## Linked issue, outcome, and delivery mode
+## What and why
 
-- Related issue:
-- Parent epic, if any:
-- User-visible or value-bearing outcome:
-- Why this matters for Grace:
-- Delivery mode: mainline slice | epic integration branch | final epic release
+<!-- What changed, and how it helps Grace and its users. -->
 
-For PRs targeting `main`, use `Closes #123` when merge should close the issue. For PRs targeting an epic integration
-branch, use non-closing wording such as `Related to #123` or `Part of #597`.
+## How it was verified
 
-## Baseline admissibility
+<!-- Focused tests and commands you ran, plus manual or runtime checks. GitHub Validate covers the rest. -->
 
-- Base branch and exact SHA:
-- Eventual delivery target:
-- Restore, build, and integration baseline proof:
-- Semantic merge or rebase conflicts: none | owner decision link
-- Prior lineage used as salvage, or explicit ancestry requirement:
-- Baseline Admissibility verdict:
+## Review
 
-## Supported world and quality contract
+<!-- Reviewer and verdict, the findings you accepted and how they were fixed, and any you rejected and why. -->
 
-- Baseline and overrides:
-- Supported actor or client:
-- Environment and topology:
-- Supported producer paths:
-- Explicit non-goals and deferred capabilities:
+## Risks and skipped checks
 
-## Primary invariant and algorithm readiness
-
-- Primary invariant:
-- Authoritative source and commit point:
-- Algorithm witness and verdict, or justified N/A:
-- Required effect-order, residue, restart, retry, cleanup, or concurrency rules:
-
-## Scope and delivery delta
-
-- Changed paths in this PR:
-- Owned-path compliance:
-- Owner-approved expansion, or none:
-- Three-dot issue delta checked:
-- Eventual delivery delta against `main` checked:
-- Deferred or half-active capability inherited from the base: none | owner disposition
-- Accidental or unrelated changes checked:
-
-## Contract and persistence propagation
-
-List only surfaces this PR changes or must prove unchanged.
-
-| Surface | Updated, unchanged, deferred, or N/A | Proof or reason |
-| --- | --- | --- |
-| Public DTO, route, CLI, SDK, event, or error contract | | |
-| Persisted state or filesystem layout | | |
-| OpenAPI or generated artifacts | | |
-| Runtime or Aspire topology | | |
-| Docs and examples | | |
-| Tests and validation | | |
-
-## Proof
-
-- Focused failing proof or prior regression evidence:
-- Positive, negative, and boundary proof:
-- Failure-injection, restart, replay, or concurrency proof when included:
-- Formatting, linting, generated-artifact, freshness, or syntax checks:
-- Manual or runtime evidence:
-- Optional local Fast or Full, with reason:
-- Validation not run and reason:
-
-## Factory run
-
-- Execution mode: direct single-agent | controller/worker
-- Root issue session:
-- Implementation owner: root | worker thread
-- Child context policy: no inherited conversation history (Codex: `fork_turns = "none"`; Claude Code: a non-fork subagent) | recorded read-only scout exception
-- Shape Reviewer
-- Diagnostic scout used: no | yes, question and result
-- Replacement worker used: N/A in direct mode | no | yes, reason
-- Owner stop encountered: no | link and disposition
-
-## Current-head CI
-
-- Final head SHA:
-- GitHub `Validate` state:
-- GitHub Actions run link:
-- Result applies to final head: yes/no
-
-## Shape Review
-
-- Shape Review started before R1: yes/no
-- Reviewer configuration: read-only, no inherited conversation history (Codex: `fork_turns = "none"`; Claude Code: a non-fork subagent) | root fallback
-- Reviewer model (prefer a different model family from the implementation owner when available):
-- Different model family from the implementation owner: yes | no, reason
-- Reviewed head SHA:
-- HTML artifact or handoff location:
-- Material shape delta: yes/no
-- Owner-attention items:
-- Repairs after the reviewed head: none | shape-neutral comparison | regenerated at head SHA
-- Final-head shape coverage: exact-head report | shape-equivalent through `<comparison>`
-- Owner Shape Review approval: pending | included in final PR approval
-
-The automated R1/repair/R2 cycle does not wait for owner Shape Review approval. When a repair changes types, persisted or
-wire shape, identity, ownership, cardinality, lifecycle representation, or correlated data structures, regenerate the
-Shape Review for the repaired head before continuing closure. Final merge still requires explicit owner PR approval,
-which includes approval of the current Shape Review.
-
-## R1 discovery review
-
-- Reviewer configuration: read-only, no inherited implementation turns
-- Candidate head SHA:
-- `dev-process/CODE_REVIEW.md` mode: Discovery review
-- Verdict: PASS | PASS WITH ACCEPTED RISK | REPAIR | OWNER DECISION | SUPERSEDE OR SPLIT
-- Review Discovery Ledger link or summary:
-- Rejected, deferred, accepted-risk, or owner-decision dispositions:
-
-If R1 passed without accepted repairs and final-head CI is green, R2 is not required.
-
-## Repair pass
-
-Complete only when R1 produced accepted findings.
-
-- Same implementation owner continued or resumed:
-- Consolidated repair commits:
-- Ledger status map:
-- Focused regression proof:
-- Repair shape classification: shape-neutral | shape-affecting
-- Shape Review regeneration, when shape-affecting:
-- Scope, delivery mode, delivery delta, and non-goals preserved:
-
-## R2 closure review
-
-Complete only when accepted repairs were made.
-
-- Reviewer: resumed R1 | fresh read-only reviewer because R1 unavailable
-- Final head SHA:
-- `dev-process/CODE_REVIEW.md` mode: Closure review
-- Verdict: VERIFIED | NOT VERIFIED | DISCOVERY ESCAPE | OWNER DECISION | SUPERSEDE OR SPLIT
-- Ledger items verified:
-- Direct repair regressions:
-- Final-head proof and CI verified:
-
-There is no automatic R3. A new material invariant, authority boundary, state machine, product semantic, scope expansion,
-or delivery-base defect stops the run for owner disposition.
-
-## Residual risk, skipped proof, and recovery
-
-- Residual risk:
-- Skipped proof:
-- Rollback, repair, or cleanup notes:
-- Follow-up issues that are real and explicitly out of scope:
-
-## Merge readiness
-
-- [ ] The linked issue still describes the implemented outcome and supported world.
-- [ ] Baseline Admissibility is current and no semantic conflict remains unresolved.
-- [ ] The eventual delivery delta against `main` fits the capability budget.
-- [ ] Explicit non-goals remain absent and no half-active capability was introduced.
-- [ ] Focused proof and final-head GitHub `Validate` pass.
-- [ ] Shape Review is complete and covers the final head or has explicit shape-equivalence evidence.
-- [ ] R1 discovery review is complete.
-- [ ] Accepted R1 ledger items, if any, are closed by R2.
-- [ ] Public, persisted, generated, runtime, and documentation surfaces are current or explicitly waived.
-- [ ] Residual risk and skipped proof are visible.
-- [ ] No owner stop condition remains unresolved.
-- [ ] Scott has explicitly approved the final PR; that approval includes the current Shape Review.
+<!-- Anything not verified, known limitations, follow-up issues. Write "None" if there are none. -->

@@ -1,4 +1,3 @@
-
 # Contracts And Shared Surface
 
 Load this reference for changes to `Grace.Types`, `Grace.Shared`, DTOs, domain events, parameters, serializers, shared
@@ -84,24 +83,8 @@ Guardrails:
 - `ManifestContributionWorkflow` owns bounded contribution progress; do not store per-repository batch progress inside
   `FileManifest`.
 
-## Validation
+## Proof
 
-- Add focused tests in `Grace.Types.Tests` for pure contract semantics.
-- Add consumer tests when the contract affects server, SDK, CLI, actor, or authorization behavior.
-- Run focused tests first, then the selected Grace validation profile.
-
-## Contract Propagation Map
-
-For every public or durable contract change, record each applicable surface as updated, unchanged, waived, or deferred:
-
-- `Grace.Types` DTOs, commands, events, persisted state, serializers, defaults
-- `Grace.Shared` parameters and helpers
-- server parsing, validation, authorization, route metadata, and error envelope
-- CLI parser, JSON output, stdout/stderr, help, schema, and examples
-- SDK/facade client and generated clients
-- static OpenAPI component and aggregate documents
-- events, webhooks, SignalR, watch, search, and projections
-- tests, docs, ADRs, and agent guidance
-
-Accepted inputs must be either implemented, rejected with a clear error, or explicitly documented as informational. Do
-not silently accept no-op values.
+Test pure contract behavior in `Grace.Types.Tests` and add consumer tests where server, SDK, CLI, actor, or
+authorization behavior changes. The propagation chain lives in `src/AGENTS.md`. An accepted input is implemented,
+rejected with a clear error, or documented as informational; never a silent no-op.

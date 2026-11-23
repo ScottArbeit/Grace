@@ -77,17 +77,3 @@ From `./src` for formatting:
 ```powershell
 dotnet tool run fantomas --recurse .
 ```
-
-## HTML Process Artifacts
-
-For requested standalone HTML reports:
-
-- Create one local `.html` file.
-- Use inline CSS and JavaScript.
-- Use inline SVG diagrams when helpful.
-- Inspect with Playwright or a browser to ensure formatting and links work.
-- JavaScript interactivity is welcomed, and can be helpful for complex reports. External libraries are allowed only if:
-  - they are the latest versions
-  - loaded from <https://cdnjs.cloudflare.com>
-  - they don't require a build step.
-- Keep the final chat response brief and include a clickable local path.

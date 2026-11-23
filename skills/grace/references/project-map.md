@@ -1,64 +1,54 @@
 # Grace Project Map
 
-Load this reference when locating code, choosing ownership boundaries, or orienting in an unfamiliar Grace surface.
+Load this when locating code or choosing which project owns a change.
 
-## First Reads
+## First reads
 
-- `CONTEXT.md` defines current product and architecture vocabulary.
-- `README.md` explains the public product model and current developer workflow.
-- `src/AGENTS.md` gives code-wide F# and validation expectations.
-- Project-level `AGENTS.md` files give local rules.
+- `CONTEXT.md`: product and architecture vocabulary.
+- `README.md`: the public product model and developer workflow.
+- `src/AGENTS.md` and the project `AGENTS.md` files.
 
-## Main Projects
+## Projects
 
-| Area | Paths | Notes |
-| ---- | ----- | ----- |
+| Area | Path | Notes |
+| ---- | ---- | ----- |
 | Domain contracts | `src/Grace.Types` | DTOs, events, IDs, discriminated unions, serialization shape |
-| Shared helpers | `src/Grace.Shared` | Parameters, auth helpers, constants, cross-cutting utilities |
+| Shared helpers | `src/Grace.Shared` | Parameters, auth helpers, constants |
 | HTTP API | `src/Grace.Server` | Giraffe handlers, startup, authorization, runtime services |
-| Orleans actors | `src/Grace.Actors` | Grain interfaces and durable workflow implementations |
-| SDK | `src/Grace.SDK` | Thin client calls aligned to server routes and DTOs |
-| CLI | `src/Grace.CLI` | System.CommandLine commands, Spectre.Console output, local state DB |
-| AppHost | `src/Grace.Aspire.AppHost` | Local/Azure topology, emulators, forwarded env vars |
-| Server tests | `src/Grace.Server.Tests` | Aspire-hosted HTTP integration and server-surface actor coverage |
-| Authorization tests | `src/Grace.Authorization.Tests` | RBAC, endpoint manifest, PAT, path permissions |
-| CLI tests | `src/Grace.CLI.Tests` | Parsing, command routing, local history/config behavior |
-| Type tests | `src/Grace.Types.Tests` | Deterministic pure contract semantics |
+| Orleans actors | `src/Grace.Actors` | Grain interfaces and durable workflows |
+| Orleans codegen | `src/Grace.Orleans.CodeGen` | Generated serializers; keep in sync with grain and type changes |
+| SDK | `src/Grace.SDK` | Client calls aligned to server routes and DTOs |
+| CLI | `src/Grace.CLI` | Commands, Spectre.Console output, local state DB |
+| CLI local DB worker | `src/Grace.CLI.LocalStateDb.Worker` | Background worker for the CLI's local SQLite state |
+| Cache | `src/Grace.Cache`, `src/Grace.Cache.Storage` | Localhost-only read boundary and storage for verified cache artifacts |
+| Operations | `src/Grace.Operations`, `.Data`, `.Worker` | Operations boundary, SQL data access, and worker (observations, measurements) |
+| Load | `src/Grace.Load` | Load-generation tooling |
+| AppHost | `src/Grace.Aspire.AppHost`, `src/Grace.Aspire.ServiceDefaults` | Local and Azure topology, emulators, forwarded settings |
+| Static OpenAPI | `src/OpenAPI` | Public API description and generated-client inputs |
+| Tests | `src/Grace.*.Tests` | See the table in `src/AGENTS.md` |
 
-## Useful Search Patterns
+## Search patterns
 
-Use `rg` with concrete paths. On Windows, do not rely on wildcard path expansion.
+Use `rg` with concrete paths; on Windows, don't rely on wildcard path expansion.
 
 ```powershell
 rg -n "module EndpointAuthorizationManifest|endpoint " src/Grace.Server src/Grace.Authorization.Tests
 rg -n "type .*Command|type .*Event|type .*Dto" src/Grace.Types
 rg -n "route \"/|subRoute" src/Grace.Server/Startup.Server.fs
-rg -n "Approval|Webhook|PromotionSet|WorkItem|Queue|Review" src
 rg -n "UploadSession|ContentBlock|ManifestContribution|RepositoryContentCounter" src
 ```
 
-## Current High-Signal Surfaces
+## High-signal surfaces
 
 - Authorization: `src/Grace.Shared/Authorization.Shared.fs`,
-  `src/Grace.Server/Security/EndpointAuthorizationManifest.Server.fs`,
-  `src/Grace.Authorization.Tests`.
+  `src/Grace.Server/Security/EndpointAuthorizationManifest.Server.fs`, `src/Grace.Authorization.Tests`.
 - Webhooks and approvals: `src/Grace.Types/Webhooks.Types.fs`, `src/Grace.Shared/Parameters/Approval.Parameters.fs`,
-  `src/Grace.Shared/Parameters/Webhook.Parameters.fs`, `src/Grace.Server/Approval*.fs`,
-  `src/Grace.Server/Webhook*.fs`, `src/Grace.SDK/Approval.SDK.fs`, `src/Grace.SDK/Webhook.SDK.fs`.
-- Candidate review model: `src/Grace.Types/Review.Types.fs`, `src/Grace.Server/Review*.fs`,
+  `src/Grace.Shared/Parameters/Webhook.Parameters.fs`, `src/Grace.Server/Approval*.fs`, `src/Grace.Server/Webhook*.fs`.
+- Candidate review: `src/Grace.Types/Review.Types.fs`, `src/Grace.Server/Review*.fs`,
   `src/Grace.CLI/Command/Review.CLI.fs`, `src/Grace.CLI/Command/Candidate.CLI.fs`.
-- Promotion flow: `src/Grace.Types/PromotionSet.Types.fs`, `src/Grace.Actors/PromotionSet.Actor.fs`,
-  `src/Grace.Actors/PromotionQueue.Actor.fs`, `src/Grace.Server/PromotionSet.Server.fs`,
-  `src/Grace.Server/Queue.Server.fs`.
-- Manifest-backed storage: `CONTEXT.md`, `src/Grace.Types/UploadSession.Types.fs`,
-  `src/Grace.Types/ContentBlockMetadata.Types.fs`, `src/Grace.Types/ManifestContributionWorkflow.Types.fs`,
-  `src/Grace.Actors/UploadSession.Actor.fs`, `src/Grace.SDK/Storage.SDK.fs`.
-- CLI local state: `.grace/grace-local.db` and sidecar files are internal; avoid treating them as repo changes.
-
-## Boundary Rule
-
-When changing one public surface, inspect its companions before stopping:
-
-```text
-Grace.Types -> Grace.Shared parameters -> Grace.Server -> Grace.SDK -> Grace.CLI -> focused tests -> docs/AGENTS
-```
+- Promotion: `src/Grace.Types/PromotionSet.Types.fs`, `src/Grace.Actors/PromotionSet.Actor.fs`,
+  `src/Grace.Actors/PromotionQueue.Actor.fs`, `src/Grace.Server/PromotionSet.Server.fs`, `src/Grace.Server/Queue.Server.fs`.
+- Manifest-backed storage: `src/Grace.Types/UploadSession.Types.fs`, `src/Grace.Types/ContentBlockMetadata.Types.fs`,
+  `src/Grace.Types/ManifestContributionWorkflow.Types.fs`, `src/Grace.Actors/UploadSession.Actor.fs`,
+  `src/Grace.SDK/Storage.SDK.fs`.
+- Libraries: `docs/Libraries.Design.md`, `src/Grace.CLI/Library/`, `src/Grace.CLI/Command/Library.CLI.fs`.

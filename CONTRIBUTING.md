@@ -30,15 +30,12 @@ This repo is primarily **F#** and targets **.NET 11**.
 
 - Use the **GitHub fork + pull request** workflow.
 - Keep PRs focused (one change per PR whenever practical).
-- Follow the repository development process in [`docs/Development process.md`](./docs/Development%20process.md):
-  create or confirm the GitHub issue, owned paths, risk surfaces, validation plan, docs impact, and definition of done before
-  editing.
-- Use a focused branch for each issue. Maintainers and agents should use issue-owned worktrees for repo-local work.
+- Follow [`docs/Development process.md`](./docs/Development%20process.md): start from a GitHub issue that says what
+  the change should do and why it matters.
+- Use a focused branch for each issue. Maintainers and agents use one worktree per issue for repo-local work.
 - Prefer vertical slices with focused validation and a commit after each completed slice.
-- Before treating coding work as complete, follow the bounded review protocol in
-  `docs/Development process.md`: run one R1 Discovery Review of the coherent candidate, freeze the accepted finite
-  ledger, route accepted findings through one consolidated repair pass, and run one R2 Closure Review only when repairs
-  were required. Do not restart an unlimited whole-feature review after every changed head.
+- Every PR gets one independent review. Accepted findings are fixed in one pass and then rechecked; the review doesn't
+  restart from scratch every time the branch changes.
 - Open normal ready-for-review pull requests unless a maintainer explicitly asks for a draft pull request.
 - Add or update tests when changing behavior.
 - Please add any useful AI prompts you used for diagnosis or implementation to the PR description.
@@ -343,9 +340,7 @@ Prometheus:
 
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
 - [ ] Focused validation for the touched behavior is listed in the PR
-- [ ] R1 Discovery Review completed for the coherent candidate
-- [ ] Accepted R1 findings, if any, were repaired in one consolidated pass and verified by R2 Closure Review
-- [ ] Required GitHub `Validate` passed for the final PR revision
-- [ ] Any genuinely required validation not run is listed with a reason
+- [ ] Independent review done, and accepted findings fixed and rechecked
+- [ ] GitHub `Validate` passed on the final PR revision
+- [ ] Anything not verified is listed with a reason
 - [ ] Documentation updated (if behavior changed)
-- [ ] Docs impact, residual risk, and rollback or recovery notes are recorded when relevant

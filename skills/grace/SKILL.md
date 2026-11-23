@@ -1,35 +1,32 @@
 ---
 name: grace
-description: Route Grace repository work to current workflow, domain, contract, runtime, testing, and documentation guidance.
+description: Grace repository reference. Use when working in Grace to find project ownership, domain rules, contract surfaces, security, runtime and storage guardrails, or docs conventions.
 ---
 
 # Grace
 
-Read root and nearest AGENTS.md before editing. For non-trivial tracked work, use the repository's docs/Development process.md and installed `dev-process`. Current source and live tracker evidence determine implementation facts.
+Start with the root and nearest `AGENTS.md`; `docs/Development process.md` covers tracked work. Current source and the
+live tracker win over anything written here.
 
-## Load the relevant context
+## Load what the task needs
 
 | Task | Reference |
 | --- | --- |
-| Repository layout and project boundaries | [Project map](references/project-map.md) |
-| Tracker, branch, review, validation, or cleanup | [Workflow](references/workflow.md) |
-| Specification and readiness | [Specification profile](references/specification-profile.md), with installed specification |
-| DTOs, events, parameters, serializers, shared code | [Shared contracts](references/contracts-and-shared.md) |
-| HTTP, SDK, CLI, authorization at public entrypoints | [Public surfaces](references/public-surfaces.md) |
-| Orleans, event sourcing, replay, durable transitions | [Actors and durability](references/actors-and-durability.md) |
-| RBAC, PATs, OIDC, TestAuth, path permissions | [Security](references/security-and-auth.md) |
-| Uploads, manifests, ContentBlocks, Service Bus, Aspire | [Runtime and storage](references/runtime-and-storage.md) |
-| Selecting or changing tests | [Tests](references/tests.md) |
-| Contributor, product, or workflow documentation | [Docs](references/docs-and-contributing.md) |
+| Finding code or choosing an owning project | [Project map](references/project-map.md) |
+| DTOs, events, parameters, serializers, shared helpers | [Contracts and shared](references/contracts-and-shared.md) |
+| HTTP routes, SDK, CLI, OpenAPI | [Public surfaces](references/public-surfaces.md) |
+| Orleans grains, event sourcing, idempotency, reminders | [Actors and durability](references/actors-and-durability.md) |
+| RBAC, PATs, OIDC, path permissions, secrets | [Security and auth](references/security-and-auth.md) |
+| Uploads, manifests, webhooks, Service Bus, Aspire, stale authority | [Runtime and storage](references/runtime-and-storage.md) |
+| README, CONTRIBUTING, AGENTS.md, process docs | [Docs and contributing](references/docs-and-contributing.md) |
 
-Load only the references needed for the current slice. The installed `specification` owns feature lifecycle and traceability; `design-readiness` resolves open product/domain/architecture choices; `dev-process` owns delivery. Avoid repeating their full checklists here.
+## Grace defaults
 
-## Grace-specific defaults
-
-Grace uses Product V1 unless the owner chooses another profile. It has no production legacy data; add compatibility or migration behavior only for a requirement that actually exists.
-
-Prefer a vertical slice through the nearest stable public boundary. Propagate a changed public or durable contract through the relevant Types, Shared, Server, Actors, SDK, CLI, generated artifacts, docs, and tests. Preserve established Grace vocabulary.
-
-Use focused local evidence and required GitHub Validate on the final PR revision. Local Fast is optional broad preflight; Full is for integration reproduction or diagnosis. The repository owns current commands and project membership.
-
-Planning-only requests remain planning. Tracker setup and implementation follow the user's requested scope. Use PowerShell and Markdown skills for generated scripts and documents, with PowerShell examples before bash / zsh where applicable. Explain unresolved product decisions through concrete user behavior.
+- Grace is pre-production. Build the right current shape; add migration or compatibility only when an issue asks.
+  Resetting development data does not excuse broken serialization, replay, authorization, or truthful failure.
+- Use existing Grace vocabulary (`CONTEXT.md`). A new domain noun, durable state, state machine, authority, or public
+  lifecycle is Scott's decision, not a local convenience.
+- When writing a specification, cite current code and tests by `path:line`, name the identity tuple and authoritative
+  source for each decision, list the contract surfaces it reaches (chain in `src/AGENTS.md`), and pick an early tracer
+  slice before optional automation or hardening.
+- Explain open product questions in terms of what a user would see.

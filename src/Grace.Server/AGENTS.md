@@ -1,97 +1,18 @@
-# Grace.Server Agents Guide
+# Grace.Server
 
-Global policies live in `../AGENTS.md`. Review them before touching server
-code.
+Hosts the Orleans cluster and the Giraffe HTTP API used by the CLI, SDK, and other clients.
 
-## Purpose
-
-- Host the Orleans cluster, expose HTTP endpoints via Giraffe, and orchestrate
-  startup and configuration for the Grace backend.
-- Provide the primary HTTP surface area consumed by the CLI, SDK, and other
-  integrations.
-
-## Key Patterns
-
-- Use the `task { }` computation expression for async flows. Keep HTTP handlers
-  small and delegate complex logic to separate modules.
-- Follow the Giraffe `HttpHandler` style (`fun next ctx -> task { ... }`) and
-  guard handler bodies with defensive `try/with` blocks when needed.
-- Preserve structured logging (including correlation IDs) and ensure middleware
-  ordering remains stable.
-- Test bootstrap: set `grace__auth__bootstrap__system_admin_user_id` to seed a
-  SystemAdmin assignment at system scope for integration tests.
-- Keep configuration loading and Orleans startup sequencing intact. Changes
-  should be intentional and well documented here.
-- Coordinate contracts and message flows with `Grace.Actors`, `Grace.SDK`, and
-  `Grace.Types` so that clients and grain logic remain in sync.
-- Personal access tokens (PATs) use the `GracePat` auth scheme, `/authenticate/token/*`
-  endpoints, and are governed by `grace__auth__pat__*` lifetime policies.
-  Authorization headers are redacted in request logging.
-- Auth0 JWT bearer validation is configured via
-  `grace__auth__oidc__authority` and `grace__auth__oidc__audience`.
-  Server-hosted interactive login is disabled in this phase.
-
-## Project Rules
-
-1. When modifying `Program.Server.fs`, `OrleansConfig.fs`, or startup modules,
-   verify that ordering, options binding, and health checks remain correct.
-2. Add route-level tests (and, when practical, in-memory Orleans integration
-   tests) for new behaviors or regressions you fix.
-3. Note any unusual hosting assumptions or deployment considerations here so
-   agents avoid unnecessary spelunking.
-
-## DirectoryVersion, TextContent and Artifact observation SQL access
-
-The internal SystemAdmin capture/read routes use `Grace.Operations.Data` and the existing
-`grace__operations__sql__connectionstring` setting. The Operations worker creates their source-specific observation
-tables. SQL is not a Server startup requirement: missing configuration/schema returns unavailable on these routes.
-Preserve live diagnostic dependencies and the separate additive usage worker. Same-ID capture checks SQL before
-repository/source access; new capture checks repository scope and nondeleted state before and after enumeration.
-All three observation handlers use the existing provider-dispatched readers in `Services.Actor.fs`, with scope validation
-from `DirectoryVersion`, `WorkItem` or `Artifact`. Pass `RequestAborted` through lookup, repository checks, collection and acceptance;
-do not add total scan or wrapper deadlines. SQL per-command behavior and short acceptance transactions remain unchanged.
-A failed response may follow a committed row, so errors must direct retries to the same ObservationId without promising rollback.
-Source identity belongs to each route/table; matching GUIDs across the three sources do not identify a combined observation.
-
-## TextContent upload evidence
-
-`TextContentStorage.write` commits `grace_textcontent_format=1`, `grace_utf8_byte_length` as invariant decimal and
-`grace_blake3_hash` as the existing lowercase hash in the same conditional upload as the compressed payload.
-Retries verify metadata and body from one download response against the expected existing TextContent reference.
-Missing, malformed, unsupported or conflicting evidence fails without metadata repair. Ordinary event-backed reads
-keep their existing reference verification. Preserve WorkItem append classification, newly-created cleanup ownership,
-unknown-outcome retention, character limits and scope checks. This adds no Operations dependency or measurement route.
-
-## Owner observation reads
-
-`GET /owner/usage/directory-version-observations/{observationId}` uses explicit historical scope, with no body metadata
-or current-entity lookup. Keep authentication before parsing, OwnerAdmin checks before and after SQL, and cancellation
-before publication. Its local JSON options write exact decimal quantities as strings; shared/admin JSON remains numeric.
-The read does not capture, modify or aggregate observations. Hosted tests retain actual HTTP payloads for client replay.
-
-## Artifact declaration diagnostic
-
-`POST /admin/artifact-size/diagnose` requires SystemAdmin before parsing and reuses explicit three-ID repository
-parameters. `Artifact.DiagnoseSize` uses the provider-dispatched reader in `Services.Actor.fs`, checks the
-nondeleted repository scope before and after enumeration, and returns declared bytes plus distinct Artifact count
-only after complete reads. Use `RequestAborted` without total scan or wrapper deadlines; unsupported providers fail
-before Cosmos container access. Zero is explicit; empty State contributes nothing; malformed or incomplete source
-returns no quantity. The one response record is server-local and the route is intentionally excluded from public
-OpenAPI generation. It has no Blob, SQL, usage, producer or startup dependency. Preserve the two existing diagnostics
-and observation handlers. Hosted acceptance must use actual positive and zero public Artifact Create calls; seeded
-lifecycle documents supplement that test without claiming executed cleanup.
-
-## Validation
-
-`POST /admin/library-content-size/diagnose` is an internal SystemAdmin read. Require permission before parsing and again
-before serialization, explicit three-ID scope, a live nondeleted repository before/after collection, and an unchanged
-epoch with no committed-position regression. The server-local result is the only new response shape. Preserve exact
-Int64 JSON and nanosecond times; no source failure or cancellation may publish a partial quantity. The operator saves
-the full envelope byte-for-byte. It has no SQL observation, public SDK/CLI, broker, mutation or provisioning dependency.
-
-- Update or add tests covering new endpoints or handlers and run
-  `dotnet test --no-build`.
-- Rebuild the solution with `dotnet build --configuration Release` to catch
-  dependency or configuration issues early.
-- Consider running targeted integration smoke tests when touching Orleans
-  clustering or storage configuration.
+- Handlers follow the Giraffe style (`fun next ctx -> task { ... }`). Keep them small and delegate to modules.
+- Every route needs an entry in `Security/EndpointAuthorizationManifest.Server.fs`; the authorization tests check
+  coverage and duplicates. For ID-based routes, load the stored object and authorize against its scope. Filter lists
+  before returning them.
+- Keep middleware order, configuration loading, options binding, health checks, and Orleans startup order intact when
+  editing `Program.Server.fs`, `OrleansConfig.fs`, or startup modules.
+- Keep structured logging and correlation IDs. Authorization headers are redacted in request logs.
+- Auth: Auth0 JWT bearer validation uses `grace__auth__oidc__authority` and `grace__auth__oidc__audience`. PATs use the
+  `GracePat` scheme, the `/authenticate/token/*` routes, and `grace__auth__pat__*` lifetime settings. Server-hosted
+  interactive login is disabled.
+- Integration tests can seed a SystemAdmin at system scope with `grace__auth__bootstrap__system_admin_user_id`.
+- Internal SystemAdmin diagnostic and observation routes document their scope, revalidation, and cancellation rules in
+  `///` comments on their handlers. Read them before changing those routes.
+- Add route-level tests for new endpoints and for regressions you fix.

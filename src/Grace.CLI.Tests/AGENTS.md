@@ -1,42 +1,11 @@
-# Grace.CLI.Tests Agents Guide
+# Grace.CLI.Tests
 
-Read `../AGENTS.md` for global expectations before updating CLI tests.
+CLI behavior tests that run without a server.
 
-## Purpose
-
-- Validate CLI command behavior and helpers without requiring server access.
-- Keep tests deterministic and focused on parsing, command routing, output shaping, and local history/config behavior.
-- Keep pure parse-only coverage separate from stateful command tests so NUnit can parallelize the safe subset.
-
-## Test File Organization
-
-- Match test files to CLI command files where practical:
-  - `Grace.CLI/Command/Agent.CLI.fs` -> `Grace.CLI.Tests/Agent.CLI.Tests.fs`
-  - `Grace.CLI/Command/PromotionSet.CLI.fs` -> `Grace.CLI.Tests/PromotionSet.CLI.Tests.fs`
-  - `Grace.CLI/Command/Queue.CLI.fs` -> `Grace.CLI.Tests/Queue.CLI.Tests.fs`
-  - `Grace.CLI/Command/Review.CLI.fs` -> `Grace.CLI.Tests/Review.CLI.Tests.fs`
-  - `Grace.CLI/Command/WorkItem.CLI.fs` -> `Grace.CLI.Tests/WorkItem.CLI.Tests.fs`
-- Root command behavior belongs in `Grace.CLI.Tests/Program.CLI.Tests.fs`.
-- Pure parser tests belong in dedicated `*.CLI.Parsing.Tests.fs` files and should not touch invocation, console,
-  environment, filesystem, current-directory, local config/history, or SDK identity state.
-- Stateful command invocation, config, environment, console, filesystem, local-state, and SDK identity tests remain in
-  the non-parsing files and stay serialized.
-- Keep auth-focused tests separate for now (`Auth.Tests.fs`, `AuthTokenBundle.Tests.fs`).
-- `LibraryBaseline.Tests.fs` exercises production onboarding with real SQLite and Windows publication plus controlled remote DTO responses. Keep its transaction interruptions and partial-installation capture controls distinct from the actual hosted CLI scenario in `Grace.Server.Tests/LibrarySynchronization.Windows.Server.Tests.fs`.
-
-## Key Patterns
-
-1. Keep tests isolated: back up and restore any files touched under `~/.grace`.
-2. Use FsUnit for assertions and FsCheck for property-based coverage when appropriate.
-3. Prefer deterministic timestamps for history-related tests.
-4. Do not add assembly-level NUnit parallel defaults here until the remaining global/current-process mutations are
-   isolated or proven safe.
-
-## Validation
-
-- Run the matching Release build before any project-specific `dotnet test --no-build` command.
-- Run `dotnet test --configuration Release --no-build src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj` only after that build
-  context exists.
-- Run the smallest focused CLI proof first. Fast is an optional broad preflight; GitHub `Validate` certifies the current
-  pull-request revision. Fast remains one solution-level `dotnet test` invocation with a filter rather than custom
-  per-project process fan-out.
+- Match test files to command files: `Grace.CLI/Command/WorkItem.CLI.fs` -> `WorkItem.CLI.Tests.fs`. Root command
+  behavior goes in `Program.CLI.Tests.fs`.
+- Pure parser tests go in `*.CLI.Parsing.Tests.fs` files, which may run in parallel. They must not touch invocation,
+  console, environment, filesystem, current directory, local config or history, or SDK identity.
+- Everything stateful stays in the non-parsing files, which run serialized. Keep auth tests in their own files.
+- Back up and restore anything touched under `~/.grace`. Use fixed timestamps for history tests.
+- Use FsUnit for assertions and FsCheck where properties add value.
