@@ -47,7 +47,8 @@ retry policy, or capability, report it as a decision for Scott rather than a def
   regressions.
 - Actor calls preserve `CorrelationId` through `RequestContext.Set`; prefer the `CreateActorProxy` helpers over raw
   `IGrainFactory.GetGrain`.
-- Don't comment on formatting that Fantomas, markdownlint, or compiler warnings already enforce.
+- Don't nitpick formatting, but confirm the PR says Fantomas (F#) and markdownlint (Markdown) were run on touched files;
+  `Validate` does not run them.
 
 ## Review passes
 

@@ -30,7 +30,8 @@ the issue. A diagram is not proof.
 
 ## Issues
 
-Create issues with `gh issue create --body-file <file>`, starting from `.github/ISSUE_TEMPLATE/task.md`. One issue owns
+Create issues with `gh issue create --body-file <file>`, copying the sections below the front matter of
+`.github/ISSUE_TEMPLATE/task.md`. One issue owns
 one outcome. List the surfaces it changes so reviewers can check propagation (see `src/AGENTS.md`).
 
 ### Epics
@@ -70,6 +71,9 @@ git worktree add ../Grace-gh-184 -b agent/184-short-slug origin/main
 
 Leave unrelated local changes alone. If the work needs files well outside what the issue described, say so on the issue
 before continuing.
+
+Don't run parallel branches that edit the same `.fsproj` compile list, `Startup.Server.fs`, or shared test helpers; F#
+compile order makes those conflicts predictable. Land them one after another.
 
 ## Building in slices
 

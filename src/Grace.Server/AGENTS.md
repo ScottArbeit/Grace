@@ -7,7 +7,7 @@ Hosts the Orleans cluster and the Giraffe HTTP API used by the CLI, SDK, and oth
   coverage and duplicates. For ID-based routes, load the stored object and authorize against its scope. Filter lists
   before returning them.
 - Keep middleware order, configuration loading, options binding, health checks, and Orleans startup order intact when
-  editing `Program.Server.fs`, `OrleansConfig.fs`, or startup modules.
+  editing `Program.Server.fs`, `Startup.Server.fs`, or other startup modules.
 - Keep structured logging and correlation IDs. Authorization headers are redacted in request logs.
 - Auth: Auth0 JWT bearer validation uses `grace__auth__oidc__authority` and `grace__auth__oidc__audience`. PATs use the
   `GracePat` scheme, the `/authenticate/token/*` routes, and `grace__auth__pat__*` lifetime settings. Server-hosted

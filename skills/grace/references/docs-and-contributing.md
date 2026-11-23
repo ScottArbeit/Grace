@@ -1,7 +1,6 @@
 # Docs And Contributing
 
-Load this reference when updating `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, process docs, Markdown, or HTML
-documentation artifacts.
+Load this reference when updating `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, process docs, or other Markdown.
 
 ## Documentation Defaults
 
