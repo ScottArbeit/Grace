@@ -241,8 +241,8 @@ grace --output Json doctor --select Status
 `Summary.DirectoryCount` are valid; selectors for envelope metadata, predicates, wildcards, functions, renames,
 computed fields, and streaming output are explicit V2 deferrals.
 
-See [Machine-readable CLI output](./docs/Machine-readable%20CLI%20output.md) for agent recipes, JSON examples, final
-inventory totals, source-only commands, and V2 boundaries.
+See [Machine-readable CLI output](./docs/Machine-readable%20CLI%20output.md) for agent recipes, JSON examples, how to
+check a command's JSON support, and V2 boundaries.
 
 ### File an issue if anything seems confusing or rough
 

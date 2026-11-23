@@ -276,7 +276,7 @@ Issue #340 acceptance was audited against `Doctor.CLI.fs`, `CommandOutputContrac
 | Document command semantics, options, exit codes, check catalog, JSON examples, redaction, and repair deferral. | Implemented | This document covers those surfaces. |
 | Keep doctor read-only and avoid command behavior changes. | Implemented | Existing tests cover no config/user-config/local-db/object-cache mutations. |
 | Include stable check IDs, report version, and JSON DTO shape. | Implemented | `doctor-report-v1`, 27 catalog IDs, and `DoctorReportDto` are documented. |
-| Refresh machine-readable CLI inventory evidence. | Implemented | `docs/Machine-readable CLI output.md` keeps registry-backed totals and doctor examples current. |
+| Refresh machine-readable CLI inventory evidence. | Implemented | `CommandOutputContract.CLI.fs` registers doctor's JSON support, and `docs/Machine-readable CLI output.md` documents doctor examples. |
 | Point README and authentication troubleshooting to doctor where useful. | Implemented | README and `docs/Authentication.md` contain short pointers. |
 | Do not recommend repair or automatic repair commands. | Implemented | Repair is documented as deferred; maintenance commands are manual follow-ups only. |
 | Do not document Full/Aspire/cloud probes as v1 behavior. | Implemented | V1 boundaries explicitly exclude those probes. |

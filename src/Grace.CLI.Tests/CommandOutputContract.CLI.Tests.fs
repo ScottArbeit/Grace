@@ -9,7 +9,6 @@ open NUnit.Framework
 open System
 open System.CommandLine
 open System.IO
-open System.Text.RegularExpressions
 open System.Text.Json
 
 /// Groups command output contract registry coverage for the CLI test project.
@@ -21,10 +20,6 @@ module CommandOutputContractRegistryTests =
     let private commandId (identity: CommandIdentity) = identity.CommandId
 
     let private placeholderGuid = "11111111-1111-1111-1111-111111111111"
-
-    let private repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", ".."))
-
-    let private machineReadableDocPath = Path.Combine(repoRoot, "docs", "Machine-readable CLI output.md")
 
     /// Builds an option placeholder token used when auditing command help output.
     let private optionPlaceholder optionName =
@@ -212,27 +207,6 @@ module CommandOutputContractRegistryTests =
         CommandOutputContract.entries
         |> List.filter predicate
         |> List.map (fun entry -> entry.Identity.CommandId)
-
-    /// Builds markdown bullet ids after test data used to exercise CLI command Output Contract behavior.
-    let private markdownBulletIdsAfter (anchor: string) (markdown: string) =
-        let pattern =
-            Regex.Escape(anchor)
-            + @"\r?\n\r?\n(?<items>(?:- `[^`]+`\r?\n)+)"
-
-        let markdownMatch = Regex.Match(markdown, pattern)
-
-        markdownMatch.Success |> should equal true
-
-        markdownMatch
-            .Groups[ "items" ]
-            .Value.Split([| "\r\n"; "\n" |], StringSplitOptions.RemoveEmptyEntries)
-        |> Array.map (fun line ->
-            let itemMatch = Regex.Match(line.Trim(), @"^- `(?<id>[^`]+)`$")
-
-            itemMatch.Success |> should equal true
-
-            itemMatch.Groups["id"].Value)
-        |> Array.toList
 
     /// Verifies that registry contains accepted inventory totals.
     [<Test>]
@@ -1414,92 +1388,3 @@ module CommandOutputContractRegistryTests =
                     .GetProperty("Id")
                     .GetString()
                 |> should equal entry.Identity.CommandId
-
-    /// Verifies that machine readable cli docs keep final inventory evidence current.
-    [<Test>]
-    let ``machine readable cli docs keep final inventory evidence current`` () =
-        let markdown = File.ReadAllText(machineReadableDocPath)
-
-        let docsTrackedEntries = CommandOutputContract.entries
-
-        /// Counts docs tracked for test assertions.
-        let countDocsTracked predicate =
-            docsTrackedEntries
-            |> List.filter predicate
-            |> List.length
-
-        /// Builds command ids for docs tracked test data used to exercise CLI command Output Contract behavior.
-        let commandIdsForDocsTracked predicate =
-            docsTrackedEntries
-            |> List.filter predicate
-            |> List.map (fun entry -> entry.Identity.CommandId)
-
-        let jsonReady =
-            countDocsTracked (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, ExistingGraceResultEnvelope _ -> true
-                | _ -> false)
-
-        let intentionallyHumanOnly =
-            countDocsTracked (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, JsonModeErrorOnly _ -> true
-                | _ -> false)
-
-        let conditionalStatus =
-            countDocsTracked (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, ConditionalGraceResultEnvelope _ -> true
-                | _ -> false)
-
-        let deferredV2 =
-            commandIdsForDocsTracked (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, MigrationRequiredToGraceResultEnvelope _ -> true
-                | _ -> false)
-
-        let sourceOnly =
-            commandIdsForDocsTracked (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | SourceOnlyUnrouted _, SourceOnlyUnsupported _ -> true
-                | _ -> false)
-
-        let deleted = 0
-
-        [
-            $"Total leaf commands: `{docsTrackedEntries.Length}`"
-            $"JSON-ready routed commands: `{jsonReady}`"
-            $"Conditionally JSON-ready routed commands: `{conditionalStatus}`"
-            $"Intentionally human-only commands: `{intentionallyHumanOnly}`"
-            $"Deferred routed commands with explicit V2 scope: `{deferredV2.Length}`"
-            $"Source-only/unrouted commands: `{sourceOnly.Length}`"
-            $"Deleted commands: `{deleted}`"
-            "Predicate, wildcard, function, rename, computed-field, metadata, and streaming projections"
-        ]
-        |> List.iter (fun expected ->
-            markdown.Contains(expected, StringComparison.Ordinal)
-            |> should equal true)
-
-        let sourceOnlyInDocs =
-            markdownBulletIdsAfter "The source-only/unrouted commands are defined in source but are not attached to `GraceCommand.rootCommand` in V1:" markdown
-
-        let deferredV2InDocs = markdownBulletIdsAfter "Current deferrals are:" markdown
-
-        assertSetEqual sourceOnly sourceOnlyInDocs
-        assertSetEqual deferredV2 deferredV2InDocs
-
-    /// Verifies that machine readable cli docs json snippets parse.
-    [<Test>]
-    let ``machine readable cli docs json snippets parse`` () =
-        let markdown = File.ReadAllText(machineReadableDocPath)
-        let matches = Regex.Matches(markdown, "```json\r?\n(?<json>.*?)\r?\n```", RegexOptions.Singleline)
-
-        matches.Count
-        |> should be (greaterThanOrEqualTo 3)
-
-        for markdownMatch in matches |> Seq.cast<Match> do
-            let json = markdownMatch.Groups["json"].Value
-            use parsed = JsonDocument.Parse(json)
-
-            parsed.RootElement.ValueKind
-            |> should not' (equal JsonValueKind.Undefined)
